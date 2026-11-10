@@ -5,14 +5,14 @@ use std::sync::Arc;
 use org_proto::org::OrgChange;
 use org_sync::error::{Refusal, StoreError, SyncError};
 use org_sync::organization::{
-    OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgTxn, ValidatedSnapshot,
+    self, OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgTxn, ValidatedSnapshot,
 };
 use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::OfficeError;
-use crate::store::sync::storage_error;
+use crate::store::sync::{storage_error, sync_error};
 use crate::store::Store;
 use crate::{time, ulid};
 
@@ -56,6 +56,194 @@ pub(crate) fn transact_replication(
     store.sync_write(move |db| attempt(&mut OrganizationTxn(db)))
 }
 
+pub(crate) enum ReplicationBootstrap {
+    Hq {
+        max_snapshot_bytes: u64,
+    },
+    Satellite {
+        authority: Epoch,
+        epoch_base: Digest,
+    },
+}
+
+pub(crate) fn bind_replication(
+    store: &Store,
+    org: OrgId,
+    local: OfficeId,
+    hq: OfficeId,
+    ca: Digest,
+    bootstrap: ReplicationBootstrap,
+) -> Result<(), SyncError> {
+    store.sync_write(move |db| {
+        if native_binding(db).map_err(storage_error)?.is_some() {
+            let current = OrganizationTxn(db).checkpoint()?;
+            return if (current.org_id, current.local_office, current.hq_office, current.ca)
+                == (org.clone(), local.clone(), hq.clone(), ca)
+            {
+                Ok(())
+            } else {
+                Err(Refusal::NotAuthorized.into())
+            };
+        }
+        let stored_org: String = db.query_row(
+            "SELECT value FROM meta WHERE key = 'organization_id'", [], |row| row.get(0),
+        ).map_err(storage_error)?;
+        if stored_org != org.as_str() {
+            return Err(Refusal::InvariantFailure.into());
+        }
+        let (position, digest) = match bootstrap {
+            ReplicationBootstrap::Hq { max_snapshot_bytes } if local == hq => {
+                let native = super::head(db).map_err(storage_error)?;
+                let position = Position {
+                    epoch: Epoch::new(native.epoch).map_err(storage_error)?, seq: native.seq,
+                };
+                let digest = snapshot::legacy_anchor(db, &org, &hq, position, max_snapshot_bytes)?;
+                (position, digest)
+            }
+            ReplicationBootstrap::Satellite { authority, epoch_base } if local != hq => {
+                // An enrolled replica starts from the verified HQ's snapshot or genesis.
+                // Only a fresh office's synthetic local genesis may be replaced here.
+                let fresh: bool = db.query_row(
+                    "SELECT (SELECT count(*) FROM events) = 1
+                        AND EXISTS (SELECT 1 FROM events WHERE epoch = 1 AND seq = 1 AND command_id = 'genesis')
+                        AND NOT EXISTS (SELECT 1 FROM commands)", [], |row| row.get(0),
+                ).map_err(storage_error)?;
+                if !fresh {
+                    return Err(Refusal::InvalidInput.into());
+                }
+                snapshot::clear_projection(db)?;
+                (Position { epoch: authority, seq: 0 }, epoch_base)
+            }
+            _ => return Err(Refusal::InvalidInput.into()),
+        };
+        db.execute(
+            "INSERT INTO org_replica (singleton, org_id, local_office, hq_office, ca,
+                    epoch, seq, digest, highest_epoch, restore_pending, pending_base, protocol_level)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?5, 0, NULL, ?8)",
+            params![org.as_str(), local.as_str(), hq.as_str(), ca.as_bytes(),
+                int(position.epoch.get())?, int(position.seq)?, digest.as_bytes(), PROTOCOL],
+        ).map_err(storage_error)?;
+        Ok(())
+    })
+}
+
+pub(crate) fn replication_checkpoint(store: &Store) -> Result<OrgCheckpoint, SyncError> {
+    store
+        .read(|db| {
+            OrganizationTxn(db)
+                .checkpoint()
+                .map_err(OfficeError::storage)
+        })
+        .map_err(sync_error)
+}
+
+/// `None` means the sender no longer has a chain starting at `after`.
+pub(crate) fn replication_events_after(
+    store: &Store,
+    after: Position,
+    digest: Digest,
+    limit: usize,
+) -> Result<Option<Vec<OrgEvent>>, SyncError> {
+    store
+        .read(|db| {
+            let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+            events_after(&tx, after, digest, limit).map_err(OfficeError::storage)
+        })
+        .map_err(sync_error)
+}
+
+fn events_after(
+    db: &Connection,
+    after: Position,
+    digest: Digest,
+    limit: usize,
+) -> Result<Option<Vec<OrgEvent>>, SyncError> {
+    let head = OrganizationTxn(db).checkpoint()?;
+    if head.local_office != head.hq_office {
+        return Err(Refusal::NotAuthorized.into());
+    }
+    if head.restore_pending {
+        return Err(Refusal::RestorePending.into());
+    }
+    if after.epoch != head.position.epoch || after.seq > head.position.seq {
+        return Ok(None);
+    }
+    if after == head.position {
+        return if digest == head.digest {
+            Ok(Some(Vec::new()))
+        } else {
+            Err(Refusal::Divergence.into())
+        };
+    }
+    let mut expected_seq = after.seq + 1;
+    let first: Option<[u8; 32]> = db
+        .query_row(
+            "SELECT previous FROM org_replica_events WHERE epoch = ?1 AND seq = ?2",
+            (int(after.epoch.get())?, int(expected_seq)?),
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage_error)?;
+    let Some(first) = first else {
+        return Ok(None);
+    };
+    if Digest::from_bytes(first) != digest {
+        return Err(Refusal::Divergence.into());
+    }
+
+    let mut read = db
+        .prepare(
+            "SELECT seq, previous, digest, codec, codec_version, payload
+         FROM org_replica_events WHERE epoch = ?1 AND seq >= ?2 ORDER BY seq LIMIT ?3",
+        )
+        .map_err(storage_error)?;
+    let mut rows = read
+        .query((
+            int(after.epoch.get())?,
+            int(expected_seq)?,
+            i64::try_from(limit).map_err(storage_error)?,
+        ))
+        .map_err(storage_error)?;
+    let mut events = Vec::new();
+    let mut previous = digest;
+    while let Some(row) = rows.next().map_err(storage_error)? {
+        let seq =
+            u64::try_from(row.get::<_, i64>(0).map_err(storage_error)?).map_err(storage_error)?;
+        let stored_previous = Digest::from_bytes(row.get(1).map_err(storage_error)?);
+        let stored_digest = Digest::from_bytes(row.get(2).map_err(storage_error)?);
+        let codec_id: String = row.get(3).map_err(storage_error)?;
+        let codec =
+            Codec::new(codec_id, row.get(4).map_err(storage_error)?).map_err(storage_error)?;
+        let payload: Vec<u8> = row.get(5).map_err(storage_error)?;
+        if seq != expected_seq || stored_previous != previous || seq > head.position.seq {
+            return Err(Refusal::InvariantFailure.into());
+        }
+        let event = OrgEvent::new(
+            head.org_id.clone(),
+            Position {
+                epoch: after.epoch,
+                seq,
+            },
+            previous,
+            codec,
+            payload,
+        )
+        .map_err(|_| Refusal::InvariantFailure)?;
+        if event.digest != stored_digest
+            || (event.position == head.position && event.digest != head.digest)
+        {
+            return Err(Refusal::IntegrityFailure.into());
+        }
+        previous = event.digest;
+        expected_seq += 1;
+        events.push(event);
+    }
+    if events.len() < limit && expected_seq <= head.position.seq {
+        return Err(Refusal::InvariantFailure.into());
+    }
+    Ok(Some(events))
+}
+
 pub(super) struct OrganizationTxn<'a>(pub(super) &'a Connection);
 
 fn epoch(value: i64) -> Result<Epoch, StoreError> {
@@ -79,6 +267,47 @@ pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Posit
     )
     .optional()
     .map_err(OfficeError::storage)
+}
+
+pub(super) fn native_binding(db: &Connection) -> Result<Option<(bool, bool)>, OfficeError> {
+    db.query_row(
+        "SELECT local_office = hq_office, restore_pending FROM org_replica WHERE singleton = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+    .map_err(OfficeError::storage)
+}
+
+pub(super) fn publish_command(
+    db: &Connection,
+    command_id: &str,
+    at: String,
+    changes: Vec<OrgChange>,
+    answer: Answer,
+) -> Result<org_proto::Position, OfficeError> {
+    let payload = serde_json::to_vec(&NativeEvent {
+        command_id: command_id.to_owned(),
+        at,
+        changes,
+        answer: Some(NativeAnswer {
+            params_hash: answer.params_hash,
+            refusal: answer.refusal,
+        }),
+    })
+    .map_err(OfficeError::storage)?;
+    let codec = Codec::new(CODEC, 1).map_err(OfficeError::storage)?;
+    let published = organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
+        .map_err(OfficeError::storage)?;
+    match published {
+        OrgOutput::Published(event) => Ok(org_proto::Position {
+            epoch: event.position.epoch.get(),
+            seq: event.position.seq,
+        }),
+        _ => Err(OfficeError::storage(SyncError::from(
+            Refusal::InvariantFailure,
+        ))),
+    }
 }
 
 impl OrgTxn for OrganizationTxn<'_> {
@@ -217,7 +446,7 @@ impl OrgTxn for OrganizationTxn<'_> {
 }
 
 /// Version-one native log content, including the retained outcome if this is a command.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeEvent {
     command_id: String,
@@ -228,7 +457,7 @@ struct NativeEvent {
 
 // The provisional codec carries pre-X-02 outcomes. Refuse extra fields so newer
 // principal data cannot be accepted and dropped by this adapter.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeAnswer {
     params_hash: String,
@@ -333,6 +562,7 @@ mod tests {
                 org_id: OrgId::new("ORG").unwrap(),
                 office_id: OfficeId::new("HQ").unwrap(),
                 role: PeerRole::Hq,
+                authority: Epoch::new(1).unwrap(),
             }
         }
     }
@@ -347,8 +577,8 @@ mod tests {
         (dir, office)
     }
 
-    fn bound_office(dir: &TempDir, local_id: &'static str) -> Office {
-        let office = Office::create(
+    fn new_office(dir: &TempDir, local_id: &str) -> Office {
+        Office::create(
             dir.path().join(local_id),
             &NewOffice {
                 office_id: local_id.into(),
@@ -359,7 +589,11 @@ mod tests {
             },
             key(),
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn bound_office(dir: &TempDir, local_id: &'static str) -> Office {
+        let office = new_office(dir, local_id);
         // Simulate trusted enrollment at the already materialized genesis checkpoint.
         office
             .org_store()
@@ -519,9 +753,21 @@ mod tests {
     #[test]
     fn snapshot_staging_verifies_ciphertext_and_installs_only_the_org_projection() {
         const MAX_BYTES: u64 = 1024 * 1024;
-        let (dir, satellite) = replica();
-        let hq = bound_office(&dir, "HQ");
-        let first = event(2, Digest::ZERO, COMMAND, "first");
+        let dir = TempDir::new().unwrap();
+        let satellite = new_office(&dir, "SAT");
+        let hq = new_office(&dir, "HQ");
+        let ca = Digest::from_bytes([6; 32]);
+        hq.bind_replication_hq(ca, MAX_BYTES).unwrap();
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                ca,
+                Epoch::new(1).unwrap(),
+                Digest::ZERO,
+            )
+            .unwrap();
+        let anchor = hq.replication_checkpoint().unwrap();
+        let first = event(2, anchor.digest, COMMAND, "first");
         let next = first.clone();
         assert_eq!(
             org_sync::organization::OrgStore::transact(
@@ -539,6 +785,7 @@ mod tests {
             .local_store()
             .run_sql_for_test("INSERT INTO meta VALUES ('outbox', 'pending')");
         let transport_key = Key::from_bytes([9; 32]);
+        assert!(hq.export_replication_snapshot(&key(), MAX_BYTES).is_err());
         let exported = hq
             .export_replication_snapshot(&transport_key, MAX_BYTES)
             .unwrap();
@@ -555,8 +802,13 @@ mod tests {
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         assert!(matches!(
-            satellite
-                .stage_replication_snapshot(&Hq, &exported.manifest, &key(), bytes, MAX_BYTES,),
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &exported.manifest,
+                &Key::from_bytes([4; 32]),
+                bytes,
+                MAX_BYTES,
+            ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
 
@@ -571,7 +823,7 @@ mod tests {
         );
         assert!(organization::install_snapshot(&satellite, staged.clone()).is_err());
         let old = satellite.org_snapshot().unwrap();
-        assert_eq!(old.position.seq, 1);
+        assert_eq!(old.position.seq, 0);
         assert!(old.teams.is_empty());
         satellite
             .org_store()
@@ -598,5 +850,102 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn accepting_a_higher_authority_persists_the_fence_and_rejects_stale_sessions() {
+        use org_sync::organization::{AuthorityRecord, AuthorityVerifier};
+
+        struct VerifiedSignature;
+        impl AuthorityVerifier for VerifiedSignature {
+            fn verify(&self, _: &AuthorityRecord) -> Result<(), Refusal> {
+                Ok(())
+            }
+        }
+
+        let (dir, satellite) = replica();
+        let old = satellite.replication_checkpoint().unwrap();
+        let next = Epoch::new(2).unwrap();
+        let restored_digest = Digest::from_bytes([42; 32]);
+        let output = organization::accept_authority(
+            &satellite,
+            AuthorityRecord {
+                org_id: old.org_id.clone(),
+                hq_office: old.hq_office.clone(),
+                ca: old.ca,
+                epoch: next,
+                restored_position: old.position,
+                restored_digest,
+                signature: Arc::from([1]),
+            },
+            Arc::new(VerifiedSignature),
+        )
+        .unwrap();
+        assert_eq!(
+            output,
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        drop(satellite);
+        let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
+        let recovered = satellite.replication_checkpoint().unwrap();
+        assert_eq!(recovered.position, old.position);
+        assert_eq!(recovered.highest_epoch, next);
+        assert_eq!(recovered.pending_restore_base, Some(restored_digest));
+        assert!(recovered.restore_pending);
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, event(2, old.digest, COMMAND, "stale")),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+    }
+
+    #[test]
+    fn native_hq_submission_advances_the_federation_log_once_per_outcome() {
+        use crate::rules::OrgCommand;
+        use org_proto::org::TeamCreateParams;
+
+        let dir = TempDir::new().unwrap();
+        let hq = new_office(&dir, "HQ");
+        let ca = Digest::from_bytes([6; 32]);
+        hq.bind_replication_hq(ca, 1024 * 1024).unwrap();
+        let anchor = hq.replication_checkpoint().unwrap();
+        assert_ne!(anchor.digest, Digest::ZERO);
+        let new_team = |team_id: &str| {
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: ulid::generate().unwrap(),
+                team_id: team_id.into(),
+                name: "Design".into(),
+                owner_team_id: None,
+            })
+        };
+        let accepted = new_team("teamA");
+        let committed = hq.submit_org(accepted.clone()).unwrap().unwrap();
+        assert_eq!(committed.position.unwrap().seq, 2);
+        assert_eq!(hq.org_head().unwrap().seq, 2);
+        assert_eq!(hq.submit_org(accepted).unwrap().unwrap(), committed);
+        let refused = new_team("teamB");
+        let error = hq.submit_org(refused.clone()).unwrap().unwrap_err();
+        assert_eq!(error.code, org_proto::ErrorCode::AlreadyExists);
+        assert_eq!(hq.org_head().unwrap().seq, 3);
+        assert_eq!(hq.submit_org(refused).unwrap().unwrap_err(), error);
+        assert_eq!(hq.org_head().unwrap().seq, 3);
+        assert!(matches!(
+            hq.replication_events_after(anchor.position, Digest::ZERO, 8),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        let events = hq
+            .replication_events_after(anchor.position, anchor.digest, 8)
+            .unwrap()
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].previous, events[0].digest);
+        assert_eq!(
+            events[1].digest,
+            hq.replication_checkpoint().unwrap().digest
+        );
+        assert!(hq.bind_replication_hq(Digest::ZERO, 1024 * 1024).is_err());
+        hq.bind_replication_hq(ca, 1024 * 1024).unwrap();
+        assert_eq!(hq.org_head().unwrap().seq, 3);
     }
 }

@@ -34,7 +34,10 @@ use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
 mod replication;
-pub(crate) use replication::transact_replication;
+pub(crate) use replication::{
+    bind_replication, replication_checkpoint, replication_events_after, transact_replication,
+    ReplicationBootstrap,
+};
 mod snapshot;
 pub(crate) use snapshot::{export_replication_snapshot, stage_replication_snapshot};
 pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
@@ -464,6 +467,16 @@ pub(crate) fn submit(
     clock_ms: u64,
     command: &OrgCommand,
 ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+    let replicated = match replication::native_binding(db)? {
+        None => false,
+        Some((true, false)) => true,
+        Some(_) => {
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "organization writes require available HQ authority",
+            )))
+        }
+    };
     let command_id = command.command_id();
     let params_hash = fingerprint(command);
     let seen = db
@@ -561,7 +574,28 @@ pub(crate) fn submit(
         .map_err(OfficeError::storage)
     };
     let now = time::format_epoch_ms(now_ms);
-    let changes = match rules::decide(&OrgSql(db), &now, command) {
+    let decision = rules::decide(&OrgSql(db), &now, command);
+    if replicated {
+        let (changes, refusal) = match decision {
+            Ok(changes) => (changes, None),
+            Err(refusal) => (Vec::new(), Some(refusal)),
+        };
+        let position = replication::publish_command(
+            db,
+            command_id,
+            now,
+            changes,
+            Answer {
+                params_hash,
+                refusal: refusal.clone(),
+            },
+        )?;
+        return Ok(match refusal {
+            Some(error) => Err(error),
+            None => Ok(committed(position)),
+        });
+    }
+    let changes = match decision {
         Ok(changes) => changes,
         Err(refusal) => {
             remember(Position { epoch: 0, seq: 0 }, Some(refusal.clone()))?;

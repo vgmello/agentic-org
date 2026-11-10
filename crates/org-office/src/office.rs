@@ -15,7 +15,10 @@ use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 use org_sync::error::SyncError;
-use org_sync::organization::{OrgAttempt, OrgOutput, OrgStore, ValidatedSnapshot, VerifiedPeer};
+use org_sync::organization::{
+    OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgStore, ValidatedSnapshot, VerifiedPeer,
+};
+use org_sync_proto::{Digest, Epoch, OfficeId, OrgId};
 
 use crate::store::org as org_db;
 use crate::store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
@@ -382,6 +385,69 @@ impl Office {
         self.org.read(org_db::snapshot)
     }
 
+    /// Pins trusted HQ CA material and anchors existing organization state at its native head.
+    /// Called by worker composition after the local organization's authority is established.
+    pub fn bind_replication_hq(
+        &self,
+        ca: Digest,
+        max_snapshot_bytes: u64,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.org,
+            org,
+            local.clone(),
+            local,
+            ca,
+            org_db::ReplicationBootstrap::Hq { max_snapshot_bytes },
+        )
+    }
+
+    /// Binds a fresh local office to the CA, HQ and epoch verified by enrollment.
+    pub fn bind_replication_satellite(
+        &self,
+        hq: OfficeId,
+        ca: Digest,
+        authority: Epoch,
+        epoch_base: Digest,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.org,
+            org,
+            local,
+            hq,
+            ca,
+            org_db::ReplicationBootstrap::Satellite {
+                authority,
+                epoch_base,
+            },
+        )
+    }
+
+    /// Returns the committed federation cursor and authority pin for the worker's handshake.
+    pub fn replication_checkpoint(&self) -> Result<OrgCheckpoint, SyncError> {
+        org_db::replication_checkpoint(&self.org)
+    }
+
+    /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
+    pub fn replication_events_after(
+        &self,
+        after: org_sync_proto::Position,
+        digest: Digest,
+        limit: usize,
+    ) -> Result<Option<Vec<OrgEvent>>, SyncError> {
+        org_db::replication_events_after(&self.org, after, digest, limit)
+    }
+
+    fn replication_identity(&self) -> Result<(OrgId, OfficeId), SyncError> {
+        let org =
+            OrgId::new(&self.info.org_id).map_err(org_sync::error::StoreError::unavailable)?;
+        let office = OfficeId::new(&self.info.office_id)
+            .map_err(org_sync::error::StoreError::unavailable)?;
+        Ok((org, office))
+    }
+
     /// Exports the bound HQ's organization tables with a one-time transport key.
     pub fn export_replication_snapshot(
         &self,
@@ -443,9 +509,10 @@ impl Office {
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
         // The clock is read in the writer, so the log's times follow its order.
-        let answer = self
-            .org
-            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))?;
+        let answer = self.org.write_with_batch_abort(
+            move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)),
+            crate::store::sync_aborts_batch,
+        )?;
         // After the commit: whoever follows the log reads it again (a retry of an old command
         // changes nothing, and the extra wake-up is harmless).
         self.changes.bump();

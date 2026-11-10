@@ -16,6 +16,7 @@ pub(crate) mod messages;
 pub(crate) mod org;
 pub(crate) mod status;
 mod sync;
+pub(crate) use sync::aborts_batch as sync_aborts_batch;
 
 use std::any::Any;
 use std::error::Error;

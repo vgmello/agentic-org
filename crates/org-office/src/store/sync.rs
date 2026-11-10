@@ -25,14 +25,14 @@ pub(super) fn storage_error(cause: impl Error + Send + Sync + 'static) -> StoreE
     StoreError::unavailable(cause)
 }
 
-fn aborts_batch(error: &OfficeError) -> bool {
+pub(crate) fn aborts_batch(error: &OfficeError) -> bool {
     error
         .source()
         .and_then(|cause| cause.downcast_ref::<SyncError>())
         .is_some_and(SyncError::aborts_batch)
 }
 
-fn sync_error(error: OfficeError) -> SyncError {
+pub(super) fn sync_error(error: OfficeError) -> SyncError {
     match error {
         OfficeError::Storage(cause) => match cause.downcast::<SyncError>() {
             Ok(error) => *error,

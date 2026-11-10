@@ -50,7 +50,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> io::Result<Self> {
         let name = format!("agentic-org-snapshot-{}", ulid::generate()?);
-        let directory = std::env::temp_dir().join(name);
+        let directory = std::path::absolute(std::env::temp_dir())?.join(name);
         DirBuilder::new().mode(0o700).create(&directory)?;
         Ok(Self(directory))
     }
@@ -156,7 +156,7 @@ fn bounded_rows(db: &Connection, header: Header, limit: u64) -> Result<Projectio
     let mut remaining = limit;
     for ((table, columns, _), output) in TABLES.into_iter().zip(&mut projection.rows) {
         let mut query = db
-            .prepare(&format!("SELECT {columns} FROM {table}"))
+            .prepare(&format!("SELECT {columns} FROM {table} ORDER BY 1"))
             .map_err(OfficeError::storage)?;
         let width = query.column_count();
         let mut rows = query.query([]).map_err(OfficeError::storage)?;
@@ -199,11 +199,39 @@ fn as_office(error: StoreError) -> OfficeError {
     OfficeError::storage(error)
 }
 
+pub(super) fn legacy_anchor(
+    db: &Connection,
+    org: &OrgId,
+    hq: &OfficeId,
+    position: Position,
+    limit: u64,
+) -> Result<Digest, SyncError> {
+    let header = Header {
+        org_id: org.as_str().to_owned(),
+        hq_office: hq.as_str().to_owned(),
+        epoch: position.epoch.get(),
+        sequence: position.seq,
+        digest: *Digest::ZERO.as_bytes(),
+        protocol: PROTOCOL,
+        schema: SCHEMA.version,
+    };
+    let projection = bounded_rows(db, header, limit).map_err(storage_error)?;
+    let mut digest = Sha256::new();
+    digest.update(b"agentic-org:native-snapshot-base:v1\0");
+    serde_json::to_writer(&mut digest, &projection).map_err(storage_error)?;
+    Ok(Digest::from_bytes(digest.finalize().into()))
+}
+
 pub(crate) fn export_replication_snapshot(
     store: &Store,
     transport_key: &Key,
     max_bytes: u64,
 ) -> Result<OrganizationSnapshotExport, OfficeError> {
+    if *transport_key == store.key {
+        return Err(OfficeError::Invalid(
+            "snapshot transport requires a one-time key",
+        ));
+    }
     let (mut manifest, projection) = store.read(|db| {
         let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
         let checkpoint = OrganizationTxn(&tx).checkpoint().map_err(as_office)?;
@@ -270,6 +298,7 @@ pub(crate) fn stage_replication_snapshot(
     if peer.role != PeerRole::Hq
         || peer.org_id != manifest.org_id
         || peer.office_id != manifest.hq_office
+        || peer.authority != manifest.position.epoch
     {
         return Err(Refusal::NotAuthorized.into());
     }
@@ -278,6 +307,13 @@ pub(crate) fn stage_replication_snapshot(
     }
     if manifest.ciphertext_bytes == 0 || manifest.ciphertext_bytes > max_bytes {
         return Err(Refusal::QuotaExceeded.into());
+    }
+    if *transport_key == store.key {
+        return Err(Refusal::InvalidInput.into());
+    }
+    let checkpoint = super::replication::replication_checkpoint(store)?;
+    if !authorized_stage(&checkpoint, &peer) {
+        return Err(Refusal::NotAuthorized.into());
     }
     let scratch = Scratch::new().map_err(storage_error)?;
     let path = scratch.database();
@@ -347,12 +383,9 @@ pub(crate) fn stage_replication_snapshot(
         protocol_level: manifest.protocol_level,
     };
     let id = staged.staging_id.clone();
-    let authority = staged.authority;
     store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
-        if current.org_id != peer.org_id || current.hq_office != peer.office_id
-            || current.highest_epoch != authority || current.local_office == current.hq_office
-        {
+        if !authorized_stage(&current, &peer) {
             return Err(Refusal::NotAuthorized.into());
         }
         db.execute(
@@ -363,6 +396,13 @@ pub(crate) fn stage_replication_snapshot(
         Ok(())
     })?;
     Ok(staged)
+}
+
+fn authorized_stage(current: &OrgCheckpoint, peer: &PeerIdentity) -> bool {
+    current.org_id == peer.org_id
+        && current.hq_office == peer.office_id
+        && current.highest_epoch == peer.authority
+        && current.local_office != current.hq_office
 }
 
 fn decode(body: &[u8]) -> Result<Projection, Refusal> {
@@ -455,12 +495,7 @@ pub(super) fn install(
         return Err(Refusal::Divergence.into());
     }
 
-    db.execute_batch("DELETE FROM org_replica_events; DELETE FROM events;")
-        .map_err(storage_error)?;
-    for (table, _, _) in TABLES.iter().rev() {
-        db.execute(&format!("DELETE FROM {table}"), [])
-            .map_err(storage_error)?;
-    }
+    clear_projection(db)?;
     for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows) {
         let mut insert = db
             .prepare(&format!("INSERT INTO {table} ({columns}) VALUES ({binds})"))
@@ -488,5 +523,15 @@ pub(super) fn install(
         [&staged.staging_id],
     )
     .map_err(storage_error)?;
+    Ok(())
+}
+
+pub(super) fn clear_projection(db: &Connection) -> Result<(), StoreError> {
+    db.execute_batch("DELETE FROM org_replica_events; DELETE FROM events;")
+        .map_err(storage_error)?;
+    for (table, _, _) in TABLES.iter().rev() {
+        db.execute(&format!("DELETE FROM {table}"), [])
+            .map_err(storage_error)?;
+    }
     Ok(())
 }
