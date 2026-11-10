@@ -314,13 +314,7 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
 
 #[test]
 fn loopback_origin_aliases_or_a_different_port_are_refused_before_initialization() {
-    for host in [
-        "localhost",
-        "LOCALHOST.",
-        "x.localhost",
-        "[::1]",
-        "127.0.0.2",
-    ] {
+    for host in ["localhost", "x.localhost", "[::1]", "127.0.0.2"] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = ConfiguredOrigin::parse(&format!(
             "http://{host}:{}",
@@ -338,6 +332,18 @@ fn loopback_origin_aliases_or_a_different_port_are_refused_before_initialization
     let origin = ConfiguredOrigin::parse(&format!("http://127.0.0.1:{different}")).unwrap();
     assert!(
         matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
+    );
+}
+
+#[test]
+fn https_origin_on_a_different_port_is_refused_before_initialization() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = ConfiguredOrigin::parse("https://gateway.test").unwrap();
+    assert_ne!(listener.local_addr().unwrap().port(), 443);
+    let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+    assert!(
+        matches!(run_http(listener, ListenMode::Https(certificates), origin,
+        HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
     );
 }
 

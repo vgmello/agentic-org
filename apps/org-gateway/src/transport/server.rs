@@ -96,15 +96,15 @@ where
     S: Future<Output = ()>,
 {
     limits.validate()?;
+    let address = listener.local_addr()?;
     if matches!(mode, ListenMode::HttpLoopback) {
         origin
-            .validate_http_loopback(listener.local_addr()?)
+            .validate_http_loopback(address)
             .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
-    } else if !origin.is_https() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "HTTPS listener requires an HTTPS origin",
-        ));
+    } else {
+        origin
+            .validate_https(address)
+            .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     }
     listener.set_nonblocking(true)?;
     // X-02: no runtime/thread pool may exist before the host's step-7 handoff.

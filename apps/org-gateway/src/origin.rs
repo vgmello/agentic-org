@@ -1,8 +1,8 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use hyper::Uri;
 
-/// Public browser origin, canonicalized without DNS resolution. This is startup
+/// Public browser origin validated without DNS resolution. This is startup
 /// configuration; it is never inferred from a browser's Host/Origin headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfiguredOrigin {
@@ -15,6 +15,7 @@ pub struct ConfiguredOrigin {
 impl ConfiguredOrigin {
     pub fn parse(value: &str) -> Result<Self, &'static str> {
         if value.len() > 4096
+            || !value.is_ascii()
             || value
                 .bytes()
                 .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == b'#')
@@ -23,8 +24,8 @@ impl ConfiguredOrigin {
         }
         let uri: Uri = value.parse().map_err(|_| "invalid browser origin")?;
         let https = match uri.scheme_str() {
-            Some(scheme) if scheme.eq_ignore_ascii_case("https") => true,
-            Some(scheme) if scheme.eq_ignore_ascii_case("http") => false,
+            Some("https") => true,
+            Some("http") => false,
             _ => return Err("browser origin requires HTTP or HTTPS"),
         };
         if uri
@@ -69,13 +70,11 @@ impl ConfiguredOrigin {
         let ip = bare_host.parse::<IpAddr>().ok();
         let host = match ip {
             Some(IpAddr::V4(ip)) => ip.to_string(),
-            Some(IpAddr::V6(ip)) => format!("[{ip}]"),
-            None => {
-                if !bare_host.is_ascii() || bare_host.contains(':') || raw_host.starts_with('[') {
-                    return Err("invalid browser origin host");
-                }
-                bare_host.to_ascii_lowercase()
+            Some(IpAddr::V6(ip)) => serialize_ipv6_host(ip),
+            None if !raw_host.starts_with('[') && canonical_domain(bare_host) => {
+                bare_host.to_owned()
             }
+            None => return Err("invalid browser origin host"),
         };
         let scheme = if https { "https" } else { "http" };
         let suffix = if port == if https { 443 } else { 80 } {
@@ -83,8 +82,12 @@ impl ConfiguredOrigin {
         } else {
             format!(":{port}")
         };
+        let serialized = format!("{scheme}://{host}{suffix}");
+        if value.strip_suffix('/').unwrap_or(value) != serialized {
+            return Err("browser origin must already be canonical");
+        }
         Ok(Self {
-            serialized: format!("{scheme}://{host}{suffix}"),
+            serialized,
             ip,
             port,
             https,
@@ -99,6 +102,13 @@ impl ConfiguredOrigin {
         self.https
     }
 
+    pub(crate) fn validate_https(&self, listener: SocketAddr) -> Result<(), &'static str> {
+        if !self.is_https() || self.port != listener.port() {
+            return Err("HTTPS origin must use HTTPS and the listener's port");
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_http_loopback(&self, listener: SocketAddr) -> Result<(), &'static str> {
         if self.https
             || !listener.ip().is_loopback()
@@ -108,6 +118,51 @@ impl ConfiguredOrigin {
             return Err("HTTP origin must be the listener's exact loopback IP literal and port");
         }
         Ok(())
+    }
+}
+
+fn canonical_domain(host: &str) -> bool {
+    let last = host.rsplit('.').next().unwrap_or_default();
+    // Browsers interpret a numeric final label as an IPv4 address. The IpAddr
+    // parser already accepted a canonical dotted quad, so aliases fail here.
+    host.len() <= 253
+        && !last.starts_with("0x")
+        && !last.bytes().all(|byte| byte.is_ascii_digit())
+        && host.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'-' | b'_')
+                })
+        })
+}
+
+fn serialize_ipv6_host(ip: Ipv6Addr) -> String {
+    let segments = ip.segments();
+    let (mut longest_start, mut longest_len) = (0, 0);
+    let mut zeroes = 0;
+    for (index, piece) in segments.into_iter().enumerate() {
+        if piece == 0 {
+            zeroes += 1;
+            if zeroes > longest_len {
+                longest_start = index + 1 - zeroes;
+                longest_len = zeroes;
+            }
+        } else {
+            zeroes = 0;
+        }
+    }
+    // WHATWG uses hex for IPv4-mapped addresses, where Rust Display uses a dotted tail.
+    let pieces = segments.map(|piece| format!("{piece:x}"));
+    if longest_len < 2 {
+        format!("[{}]", pieces.join(":"))
+    } else {
+        format!(
+            "[{}::{}]",
+            pieces[..longest_start].join(":"),
+            pieces[longest_start + longest_len..].join(":"),
+        )
     }
 }
 
@@ -124,8 +179,6 @@ mod tests {
             .is_ok());
         for origin in [
             "http://localhost:4321",
-            "http://LOCALHOST:4321",
-            "http://localhost.:4321",
             "http://x.localhost:4321",
             "http://[::1]:4321",
             "http://127.0.0.2:4321",
@@ -152,14 +205,51 @@ mod tests {
     }
 
     #[test]
-    fn serialized_origin_matches_browser_ip_and_default_port_canonicalization() {
+    fn serialized_origin_already_matches_the_browser_origin() {
         for (input, expected) in [
-            ("http://127.0.0.1:80/", "http://127.0.0.1"),
-            ("https://EXAMPLE.TEST:443/", "https://example.test"),
-            ("http://[0:0:0:0:0:0:0:1]:4321", "http://[::1]:4321"),
+            ("http://127.0.0.1/", "http://127.0.0.1"),
+            ("https://example.test", "https://example.test"),
+            ("http://[::1]:4321", "http://[::1]:4321"),
+            ("https://[::ffff:7f00:1]", "https://[::ffff:7f00:1]"),
+            (
+                "https://[2001:db8::1:0:0:1]:8443",
+                "https://[2001:db8::1:0:0:1]:8443",
+            ),
+            (
+                "https://xn--bcher-kva.example",
+                "https://xn--bcher-kva.example",
+            ),
+            ("https://a_b.example", "https://a_b.example"),
             ("https://example.test:8443", "https://example.test:8443"),
         ] {
             assert_eq!(ConfiguredOrigin::parse(input).unwrap().as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn noncanonical_origin_spellings_are_refused() {
+        for invalid in [
+            "HTTP://127.0.0.1",
+            "https://EXAMPLE.TEST",
+            "https://example.test.",
+            "https://example..test",
+            "https://bücher.example",
+            "http://127.0.0.1:80/",
+            "https://example.test:443",
+            "https://example.test:08443",
+            "http://127.1:4321",
+            "http://2130706433:4321",
+            "http://0x7f.0.0.1:4321",
+            "http://0177.0.0.1:4321",
+            "http://127.000.000.001:4321",
+            "https://foo.123",
+            "http://[0:0:0:0:0:0:0:1]:4321",
+            "https://[2001:DB8::1]",
+            "https://[::ffff:127.0.0.1]",
+            "https://[2001:db8:0:0:1::1]:8443",
+            "https://[fe80::1%25en0]",
+        ] {
+            assert!(ConfiguredOrigin::parse(invalid).is_err(), "{invalid}");
         }
     }
 
