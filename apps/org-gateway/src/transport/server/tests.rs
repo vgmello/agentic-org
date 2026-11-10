@@ -28,7 +28,10 @@ struct Running {
 
 impl Running {
     fn start(mode: ListenMode, limits: HttpLimits) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        Self::start_on(TcpListener::bind("127.0.0.1:0").unwrap(), mode, limits)
+    }
+
+    fn start_on(listener: TcpListener, mode: ListenMode, limits: HttpLimits) -> Self {
         let address = listener.local_addr().unwrap();
         let scheme = if matches!(&mode, ListenMode::Https(_)) {
             "https"
@@ -36,6 +39,22 @@ impl Running {
             "http"
         };
         let origin = ConfiguredOrigin::parse(&format!("{scheme}://{address}")).unwrap();
+        Self::start_serving(listener, mode, origin, limits, |_| {
+            Response::builder()
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from_static(b"{}")))
+                .unwrap()
+        })
+    }
+
+    fn start_serving(
+        listener: TcpListener,
+        mode: ListenMode,
+        origin: ConfiguredOrigin,
+        limits: HttpLimits,
+        serve: impl Fn(Request<Incoming>) -> Response<Full<Bytes>> + Send + Sync + 'static,
+    ) -> Self {
+        let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
         let (ready, initialized) = mpsc::channel();
         let (done, completed) = mpsc::channel();
@@ -44,14 +63,9 @@ impl Running {
         let thread = thread::spawn(move || {
             let result = run_http(listener, mode, origin, limits, move || {
                 ready.send(()).unwrap();
-                let handler = move |_request: Request<Incoming>| {
+                let handler = move |request: Request<Incoming>| {
                     observed.fetch_add(1, Ordering::AcqRel);
-                    async {
-                        Ok(Response::builder()
-                            .header("Content-Type", "application/json")
-                            .body(Full::new(Bytes::from_static(b"{}")))
-                            .unwrap())
-                    }
+                    std::future::ready(Ok(serve(request)))
                 };
                 (handler, async {
                     let _ = stopped.await;
@@ -99,6 +113,17 @@ impl Running {
         }
         response
     }
+}
+
+#[test]
+fn plaintext_listener_accepts_its_exact_ipv6_loopback_origin() {
+    let listener = TcpListener::bind("[::1]:0").unwrap();
+    let server = Running::start_on(listener, ListenMode::HttpLoopback, HttpLimits::default());
+    let mut stream = server.connect();
+    stream.write_all(REQUEST).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
 }
 
 impl Drop for Running {
@@ -214,6 +239,12 @@ fn key(which: u8) -> rustls::pki_types::PrivateKeyDer<'static> {
 }
 
 fn tls_request(address: SocketAddr, expected: u8) {
+    let response = tls_exchange(address, expected, REQUEST);
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(body(&response), b"{}");
+}
+
+fn tls_exchange(address: SocketAddr, expected: u8, request: &[u8]) -> Vec<u8> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -250,15 +281,55 @@ fn tls_request(address: SocketAddr, expected: u8) {
                 stream.get_ref().1.alpn_protocol(),
                 Some(b"http/1.1".as_slice())
             );
-            stream.write_all(REQUEST).await.unwrap();
+            stream.write_all(request).await.unwrap();
             let mut response = Vec::new();
             time::timeout(GUARD, stream.read_to_end(&mut response))
                 .await
                 .unwrap()
                 .unwrap();
-            assert!(response.starts_with(b"HTTP/1.1 200"));
-            assert_eq!(body(&response), b"{}");
-        });
+            response
+        })
+}
+
+#[test]
+fn https_static_html_sends_the_upgrade_policy_and_hsts_only_for_its_authority() {
+    use crate::{assets::BuildFiles, Hsts, StaticUi};
+
+    let html = b"<!doctype html><script>0</script>";
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let authority = format!("gateway.test:{}", listener.local_addr().unwrap().port());
+    let origin = ConfiguredOrigin::parse(&format!("https://{authority}")).unwrap();
+    let files = BuildFiles::from_files([("index.html".into(), html.to_vec())]).unwrap();
+    let ui = StaticUi::new(files, origin.clone(), Hsts::On);
+    let server = Running::start_serving(
+        listener,
+        ListenMode::Https(Arc::new(
+            TlsCertificates::new(cert(b'a'), key(b'a')).unwrap(),
+        )),
+        origin,
+        HttpLimits::default(),
+        move |request| ui.serve(&request),
+    );
+
+    for (host, hsts) in [(authority.as_str(), true), ("gateway.test", false)] {
+        let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+        let response = tls_exchange(server.address, b'a', request.as_bytes());
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert_eq!(body(&response), html);
+        let (head, _) = std::str::from_utf8(&response)
+            .unwrap()
+            .split_once("\r\n\r\n")
+            .unwrap();
+        assert!(head.lines().any(|line| {
+            line.starts_with("content-security-policy: default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k=';")
+                && line.ends_with("; upgrade-insecure-requests")
+        }));
+        assert_eq!(
+            head.lines()
+                .find(|line| line.starts_with("strict-transport-security:")),
+            hsts.then_some("strict-transport-security: max-age=31536000"),
+        );
+    }
 }
 
 #[test]
@@ -302,11 +373,8 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
         matches!(run_http(listener, ListenMode::HttpLoopback, origin, limits, fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
     );
     let listener = TcpListener::bind("0.0.0.0:0").unwrap();
-    let origin = ConfiguredOrigin::parse(&format!(
-        "http://127.0.0.1:{}",
-        listener.local_addr().unwrap().port()
-    ))
-    .unwrap();
+    let origin =
+        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     assert!(
         matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
     );

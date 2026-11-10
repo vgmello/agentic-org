@@ -1,9 +1,14 @@
 //! Immutable startup build bytes. HTTP requests never read assets from disk.
 
 use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::Path;
 
+use base64::prelude::*;
 use hyper::body::Bytes;
 use hyper::header::HeaderValue;
+use sha2::{Digest, Sha256};
 
 use crate::csp;
 
@@ -25,11 +30,14 @@ pub enum BuildError {
     JavascriptUrl,
     CspMetaTag,
     InvalidPolicy,
+    UnreadableBuild,
+    UnsafeBuildEntry,
 }
 
 struct BuildFile {
     bytes: Bytes,
     html_policy: Option<HeaderValue>,
+    etag: Option<HeaderValue>,
 }
 
 /// Loaded build files and their validated HTML policies.
@@ -39,6 +47,65 @@ pub struct BuildFiles {
 }
 
 impl BuildFiles {
+    /// Read a release's directory once at startup, with no request-path filesystem access.
+    pub fn from_directory(root: &Path) -> Result<Self, BuildError> {
+        let kind = fs::symlink_metadata(root)
+            .map_err(|_| BuildError::UnreadableBuild)?
+            .file_type();
+        if !kind.is_dir() {
+            return Err(BuildError::UnsafeBuildEntry);
+        }
+        let mut files = Vec::new();
+        let mut pending = vec![(root.to_path_buf(), String::new())];
+        let mut entries = 0;
+        let mut remaining = MAX_BUILD_BYTES;
+        while let Some((directory, prefix)) = pending.pop() {
+            for entry in fs::read_dir(directory).map_err(|_| BuildError::UnreadableBuild)? {
+                let entry = entry.map_err(|_| BuildError::UnreadableBuild)?;
+                entries += 1;
+                if entries > MAX_BUILD_FILES {
+                    return Err(BuildError::TooManyFiles);
+                }
+                let name = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| BuildError::InvalidKey)?;
+                let key = if prefix.is_empty() {
+                    name
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if !valid_key(&key) {
+                    return Err(BuildError::InvalidKey);
+                }
+                let kind = entry.file_type().map_err(|_| BuildError::UnreadableBuild)?;
+                if kind.is_dir() {
+                    pending.push((entry.path(), key));
+                } else if kind.is_file() {
+                    let file = File::open(entry.path()).map_err(|_| BuildError::UnreadableBuild)?;
+                    let metadata = file.metadata().map_err(|_| BuildError::UnreadableBuild)?;
+                    if !metadata.is_file() {
+                        return Err(BuildError::UnsafeBuildEntry);
+                    }
+                    if metadata.len() > remaining as u64 {
+                        return Err(BuildError::TooLarge);
+                    }
+                    let mut bytes = Vec::new();
+                    file.take(remaining as u64 + 1)
+                        .read_to_end(&mut bytes)
+                        .map_err(|_| BuildError::UnreadableBuild)?;
+                    remaining = remaining
+                        .checked_sub(bytes.len())
+                        .ok_or(BuildError::TooLarge)?;
+                    files.push((key, bytes));
+                } else {
+                    return Err(BuildError::UnsafeBuildEntry);
+                }
+            }
+        }
+        Self::from_files(files)
+    }
+
     /// Takes ownership of one complete build; future requests share these bytes.
     /// Relative keys are literal filenames, not URL-encoded request paths.
     pub fn from_files(
@@ -79,9 +146,14 @@ impl BuildFiles {
             } else {
                 None
             };
+            let etag = (html_policy.is_none() && !is_json(&key)).then(|| {
+                let encoded = BASE64_STANDARD.encode(Sha256::digest(&bytes));
+                HeaderValue::from_str(&format!("\"{encoded}\"")).expect("ASCII ETag")
+            });
             let file = BuildFile {
                 bytes: Bytes::from(bytes),
                 html_policy,
+                etag,
             };
             if loaded.insert(key, file).is_some() {
                 return Err(BuildError::DuplicateKey);
@@ -110,6 +182,10 @@ impl BuildFiles {
         self.total_bytes
     }
 
+    pub(crate) fn etag(&self, key: &str) -> Option<&HeaderValue> {
+        self.files.get(key)?.etag.as_ref()
+    }
+
     /// The startup-computed policy for one loaded file and the listener's transport mode.
     pub fn content_security_policy(&self, key: &str, https: bool) -> Option<HeaderValue> {
         match self.files.get(key)?.html_policy.as_ref() {
@@ -124,9 +200,18 @@ impl BuildFiles {
     }
 }
 
-fn is_html(key: &str) -> bool {
+pub(crate) fn is_html(key: &str) -> bool {
     key.rsplit_once('.').is_some_and(|(_, extension)| {
         extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+    })
+}
+
+pub(crate) fn is_json(key: &str) -> bool {
+    key.rsplit_once('.').is_some_and(|(_, extension)| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "json" | "map" | "webmanifest"
+        )
     })
 }
 
@@ -150,6 +235,42 @@ mod tests {
             "index.html".into(),
             b"<html><script>BUILD_A</script></html>".to_vec(),
         )
+    }
+
+    #[test]
+    fn filesystem_loader_owns_the_original_build_and_rejects_symlinks_and_oversize() {
+        use std::os::unix::fs::symlink;
+
+        let build = tempfile::tempdir().unwrap();
+        let entry_path = build.path().join("index.html");
+        fs::write(&entry_path, entry().1).unwrap();
+        let nested = build.path().join("_app");
+        fs::create_dir(&nested).unwrap();
+        let asset = nested.join("asset.js");
+        fs::write(&asset, b"BUILD_A").unwrap();
+        let files = BuildFiles::from_directory(build.path()).unwrap();
+        fs::write(&asset, b"BUILD_B").unwrap();
+        fs::write(&entry_path, b"<script>BUILD_B</script>").unwrap();
+        assert_eq!(files.file("_app/asset.js").unwrap().as_ref(), b"BUILD_A");
+        assert_eq!(files.file("index.html").unwrap().as_ref(), entry().1);
+
+        let unsafe_path = nested.join("link.js");
+        symlink(&asset, &unsafe_path).unwrap();
+        assert!(matches!(
+            BuildFiles::from_directory(build.path()),
+            Err(BuildError::UnsafeBuildEntry)
+        ));
+        fs::remove_file(unsafe_path).unwrap();
+        File::options()
+            .write(true)
+            .open(asset)
+            .unwrap()
+            .set_len(MAX_BUILD_BYTES as u64 + 1)
+            .unwrap();
+        assert!(matches!(
+            BuildFiles::from_directory(build.path()),
+            Err(BuildError::TooLarge)
+        ));
     }
 
     #[test]

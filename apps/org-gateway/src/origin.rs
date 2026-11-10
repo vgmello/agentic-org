@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use hyper::Uri;
 
@@ -102,6 +102,14 @@ impl ConfiguredOrigin {
         self.https
     }
 
+    pub(crate) fn authority(&self) -> &str {
+        &self.serialized[if self.https {
+            "https://".len()
+        } else {
+            "http://".len()
+        }..]
+    }
+
     pub(crate) fn validate_https(&self, listener: SocketAddr) -> Result<(), &'static str> {
         if !self.is_https() || self.port != listener.port() {
             return Err("HTTPS origin must use HTTPS and the listener's port");
@@ -111,7 +119,10 @@ impl ConfiguredOrigin {
 
     pub(crate) fn validate_http_loopback(&self, listener: SocketAddr) -> Result<(), &'static str> {
         if self.https
-            || !listener.ip().is_loopback()
+            || !matches!(
+                listener.ip(),
+                IpAddr::V4(Ipv4Addr::LOCALHOST) | IpAddr::V6(Ipv6Addr::LOCALHOST)
+            )
             || self.ip != Some(listener.ip())
             || self.port != listener.port()
         {
@@ -202,6 +213,19 @@ mod tests {
             .unwrap()
             .validate_http_loopback(v6)
             .is_err());
+    }
+
+    #[test]
+    fn plaintext_startup_rejects_unapproved_bind_addresses_even_with_matching_origins() {
+        for address in ["127.0.0.2:4321", "0.0.0.0:4321"] {
+            let origin = ConfiguredOrigin::parse(&format!("http://{address}")).unwrap();
+            assert!(
+                origin
+                    .validate_http_loopback(address.parse().unwrap())
+                    .is_err(),
+                "{address}"
+            );
+        }
     }
 
     #[test]

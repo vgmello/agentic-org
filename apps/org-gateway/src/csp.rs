@@ -13,7 +13,11 @@ const HTML_TEMPLATE: &str = include_str!("../../../config/csp/html.txt");
 const NON_HTML: &str = include_str!("../../../config/csp/non-html.txt");
 
 pub(crate) fn non_html_policy() -> HeaderValue {
-    HeaderValue::from_static(NON_HTML.trim_end())
+    HeaderValue::from_static(policy_line(NON_HTML))
+}
+
+fn policy_line(source: &'static str) -> &'static str {
+    source.strip_suffix('\n').unwrap_or(source)
 }
 
 pub(crate) fn html_policy(html: &str) -> Result<HeaderValue, BuildError> {
@@ -51,7 +55,7 @@ pub(crate) fn html_policy(html: &str) -> Result<HeaderValue, BuildError> {
         return Err(BuildError::MissingInlineScript);
     }
     let hashes = hashes.into_iter().collect::<Vec<_>>().join(" ");
-    let value = HTML_TEMPLATE.trim_end().replace("{script_hashes}", &hashes);
+    let value = policy_line(HTML_TEMPLATE).replace("{script_hashes}", &hashes);
     HeaderValue::from_str(&value).map_err(|_| BuildError::InvalidPolicy)
 }
 
@@ -89,8 +93,8 @@ mod tests {
 
     #[test]
     fn compiled_policy_sources_match_the_reviewed_literals() {
-        assert_eq!(HTML_TEMPLATE, format!("{EXPECTED_HTML}\n"));
-        assert_eq!(NON_HTML, format!("{EXPECTED_NON_HTML}\n"));
+        assert_eq!(policy_line(HTML_TEMPLATE), EXPECTED_HTML);
+        assert_eq!(policy_line(NON_HTML), EXPECTED_NON_HTML);
         assert_eq!(non_html_policy(), EXPECTED_NON_HTML);
     }
 
