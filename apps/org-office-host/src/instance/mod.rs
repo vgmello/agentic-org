@@ -37,8 +37,9 @@ pub(crate) enum Error {
         kind: u64,
     },
     #[cfg(target_os = "linux")]
-    XfsProbe {
+    FilesystemProbe {
         path: PathBuf,
+        probe: &'static str,
         source: io::Error,
     },
     Busy(PathBuf),
@@ -67,8 +68,8 @@ impl fmt::Display for Error {
                 "unsupported filesystem for the instance root at {} (type {kind:#x}); Linux requires a case-sensitive local filesystem",
                 path.display()),
             #[cfg(target_os = "linux")]
-            Self::XfsProbe { path, source } => write!(f,
-                "cannot establish XFS case sensitivity for instance path {}: {source}", path.display()),
+            Self::FilesystemProbe { path, probe, source } => write!(f,
+                "cannot validate instance path {} with {probe}: {source}", path.display()),
             Self::Io(error) => write!(f, "instance filesystem: {error}"),
         }
     }
@@ -79,7 +80,7 @@ impl std::error::Error for Error {
         match self {
             Self::Io(error) => Some(error),
             #[cfg(target_os = "linux")]
-            Self::XfsProbe { source, .. } => Some(source),
+            Self::FilesystemProbe { source, .. } => Some(source),
             _ => None,
         }
     }

@@ -373,7 +373,7 @@ impl Registry {
             Err(
                 error @ (Error::CaseInsensitive(_)
                 | Error::UnsupportedFilesystem { .. }
-                | Error::XfsProbe { .. }),
+                | Error::FilesystemProbe { .. }),
             ) => {
                 return Err(error);
             }

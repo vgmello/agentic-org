@@ -246,7 +246,11 @@ impl Directory {
         let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
         // SAFETY: fstatfs initializes stats on success for our valid directory fd.
         if unsafe { libc::fstatfs(self.file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error().into());
+            return Err(Error::FilesystemProbe {
+                path: self.path.clone(),
+                probe: "fstatfs",
+                source: io::Error::last_os_error(),
+            });
         }
         // SAFETY: fstatfs succeeded.
         let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
@@ -353,10 +357,14 @@ impl Directory {
     }
 
     pub(super) fn read(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>, Error> {
-        let mut file = match self.open_file(name, libc::O_RDONLY) {
+        let file = match self.open_file(name, libc::O_RDONLY) {
             Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             other => other?,
         };
+        self.read_from(name, file, limit).map(Some)
+    }
+
+    fn read_from(&self, name: &str, mut file: File, limit: usize) -> Result<Vec<u8>, Error> {
         let mut bytes = Vec::new();
         Read::by_ref(&mut file)
             .take((limit + 1) as u64)
@@ -364,8 +372,8 @@ impl Directory {
         if bytes.len() > limit {
             return Err(Error::Unsafe("control file exceeds its size limit"));
         }
-        self.verify()?;
-        Ok(Some(bytes))
+        self.verify_file(name, &file)?;
+        Ok(bytes)
     }
 
     pub(super) fn publish(&self, name: &str, bytes: &[u8], replace: bool) -> Result<(), Error> {
@@ -472,7 +480,11 @@ fn require_case_sensitive(file: &File, path: &Path) -> Result<(), Error> {
     let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
     // SAFETY: the retained directory descriptor and writable output are valid.
     if unsafe { libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().into());
+        return Err(Error::FilesystemProbe {
+            path: path.to_owned(),
+            probe: "fstatfs",
+            source: io::Error::last_os_error(),
+        });
     }
     // SAFETY: fstatfs initialized stats on success.
     let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
@@ -507,7 +519,11 @@ fn check_linux_directory(
     }
     let flags = match flags() {
         Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTTY | libc::EOPNOTSUPP)) => 0,
-        result => result?,
+        result => result.map_err(|source| Error::FilesystemProbe {
+            path: path.to_owned(),
+            probe: "FS_IOC_GETFLAGS",
+            source,
+        })?,
     };
     reject_casefold(path, flags)
 }
@@ -557,8 +573,9 @@ fn xfs_geometry_flags(file: &File) -> io::Result<u32> {
 
 #[cfg(target_os = "linux")]
 fn check_xfs_geometry(path: &Path, flags: io::Result<u32>) -> Result<(), Error> {
-    let flags = flags.map_err(|source| Error::XfsProbe {
+    let flags = flags.map_err(|source| Error::FilesystemProbe {
         path: path.to_owned(),
+        probe: "XFS_IOC_FSGEOMETRY",
         source,
     })?;
     // XFS_FSOP_GEOM_FLAGS_DIRV2CI: legacy ASCII case-insensitive lookups.
@@ -652,6 +669,47 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    #[test]
+    fn checked_reads_refuse_control_entries_replaced_after_open() {
+        use std::os::unix::fs::symlink;
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
+        for replacement in ["symlink", "hardlink", "different-inode"] {
+            let directory = root.child(replacement, true).unwrap();
+            directory.publish("control", b"original", false).unwrap();
+            let held = directory.open_file("control", libc::O_RDONLY).unwrap();
+            let path = directory.path().to_owned();
+            let (ready, replaced) = std::sync::mpsc::channel();
+            let mutator = std::thread::spawn(move || {
+                let control = path.join("control");
+                let target = path.join("target");
+                std::fs::write(&target, b"replacement").unwrap();
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+                std::fs::rename(&control, path.join("previous")).unwrap();
+                match replacement {
+                    "symlink" => symlink(&target, &control).unwrap(),
+                    "hardlink" => std::fs::hard_link(&target, &control).unwrap(),
+                    _ => std::fs::rename(&target, &control).unwrap(),
+                }
+                ready.send(()).unwrap();
+            });
+            replaced.recv().unwrap();
+            assert!(
+                matches!(
+                    directory.read_from("control", held, 64),
+                    Err(Error::Unsafe(_))
+                ),
+                "{replacement} was accepted after opening the original inode"
+            );
+            mutator.join().unwrap();
+            assert_eq!(
+                std::fs::read(directory.path().join("control")).unwrap(),
+                b"replacement"
+            );
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn disk_validation_refuses_a_real_memory_filesystem() {
@@ -690,12 +748,15 @@ mod tests {
                 check_linux_directory(path, kind, || Err(io::Error::from_raw_os_error(errno)))
                     .unwrap();
             }
-            assert!(matches!(
-                check_linux_directory(path, kind, || Err(io::Error::from_raw_os_error(
-                    libc::EACCES
-                ))),
-                Err(Error::Io(_))
-            ));
+            let error = check_linux_directory(path, kind, || {
+                Err(io::Error::from_raw_os_error(libc::EACCES))
+            })
+            .unwrap_err();
+            assert!(
+                matches!(&error, Error::FilesystemProbe { path: reported, probe: "FS_IOC_GETFLAGS", source } if reported == path && source.raw_os_error() == Some(libc::EACCES))
+            );
+            assert!(error.to_string().contains("/disk/instance"));
+            assert!(error.to_string().contains("FS_IOC_GETFLAGS"));
         }
         for kind in [
             0,
@@ -735,7 +796,7 @@ mod tests {
             let error =
                 check_xfs_geometry(path, Err(io::Error::from_raw_os_error(errno))).unwrap_err();
             assert!(
-                matches!(&error, Error::XfsProbe { path: reported, source } if reported == path && source.raw_os_error() == Some(errno))
+                matches!(&error, Error::FilesystemProbe { path: reported, probe: "XFS_IOC_FSGEOMETRY", source } if reported == path && source.raw_os_error() == Some(errno))
             );
             assert!(error.to_string().contains("/disk/xfs"));
         }
