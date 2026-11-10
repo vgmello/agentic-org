@@ -37,12 +37,20 @@ impl Layout {
         }
     }
 
+    pub(crate) fn with_runtime(home: &Path, runtime: &Path) -> Self {
+        Self {
+            run: runtime.to_owned(),
+            host_socket: location::host_socket_path(runtime),
+            ..Self::new(home)
+        }
+    }
+
     /// Every office socket in a home has the same length (12-character handles), so checking
     /// `host.sock` and one sample office socket up front means no create can fail on it later.
     pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
-            location::office_socket_path(&self.home, &sample_id).expect("the sample id is plain");
+            location::office_socket_in(&self.run, &sample_id).expect("the sample id is plain");
         for path in [&self.host_socket, &sample] {
             location::check_socket_path(path).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),

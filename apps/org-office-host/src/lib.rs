@@ -189,6 +189,27 @@ impl Config {
     }
 }
 
+/// Temporary test entry for the private bootstrap while setup's CLI is gated.
+#[cfg(all(feature = "test-support", debug_assertions))]
+pub fn start_instance_for_test(
+    config: Config,
+    locator: &Path,
+    user_temp: &Path,
+    name: Option<&str>,
+    root: &Path,
+) -> Result<Host, HostError> {
+    let registry =
+        instance::registry::Registry::open(locator, user_temp).map_err(instance_error)?;
+    Host::start_instance(config, &registry, name, root)
+}
+
+fn instance_error(error: instance::Error) -> HostError {
+    HostError::Io {
+        context: "preparing the instance",
+        source: io::Error::other(error),
+    }
+}
+
 /// The office home a trusted (release) host serves: its account's own office home,
 /// `<pw_dir>/Library/Application Support/agentic.org`, and only when `org_proto::location`'s
 /// shared rule (`ORG_OFFICE_HOME`, else `$HOME/…`), the one the app and `org-agent` use to find
@@ -277,6 +298,7 @@ pub struct Host {
     offices: Arc<Offices>,
     listener: Option<Listener>,
     lock: Option<HostLock>,
+    instance: Option<instance::registry::Instance>,
 }
 
 impl Host {
@@ -285,6 +307,38 @@ impl Host {
     /// the catalog, has the unfinished office folders discarded in the background, and serves
     /// `host.sock` at once (only `organization.create` waits for the discards).
     pub fn start(config: Config) -> Result<Self, HostError> {
+        Self::start_inner(config, None)
+    }
+
+    /// Private composition entry until org-setup owns the reviewed CLI boundary.
+    #[cfg_attr(
+        not(all(feature = "test-support", debug_assertions)),
+        expect(dead_code, reason = "setup CLI is gated on F1-03")
+    )]
+    fn start_instance(
+        config: Config,
+        registry: &instance::registry::Registry,
+        name: Option<&str>,
+        root: &Path,
+    ) -> Result<Self, HostError> {
+        registry.restore_temp_folders().map_err(instance_error)?;
+        let instance = registry.reserve(name, root).map_err(instance_error)?;
+        Self::start_inner(config, Some(instance))
+    }
+
+    fn start_inner(
+        mut config: Config,
+        instance: Option<instance::registry::Instance>,
+    ) -> Result<Self, HostError> {
+        let layout = match &instance {
+            Some(instance) => {
+                let paths = instance.prepare_layout().map_err(instance_error)?;
+                config.home = paths.office_home;
+                Layout::with_runtime(&config.home, instance.temp_folder())
+            }
+            None => Layout::new(&config.home),
+        };
+
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
         }
@@ -303,23 +357,28 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys =
-            keys::store_for(dev_key_dir, &config.home, code_signing::own_signing).map_err(|e| {
-                match e {
-                    keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
-                    keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
-                    keys::StoreError::KeychainGroupNotEntitled { group } => {
-                        HostError::KeychainGroupNotEntitled { group }
-                    }
-                    keys::StoreError::NotHardened => HostError::NotHardened,
-                }
-            })?;
-        let layout = Layout::new(&config.home);
+        let keys = keys::store_for(
+            dev_key_dir,
+            &config.home,
+            instance.as_ref().map(|i| i.id()),
+            code_signing::own_signing,
+        )
+        .map_err(|e| match e {
+            keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
+            keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
+            keys::StoreError::KeychainGroupNotEntitled { group } => {
+                HostError::KeychainGroupNotEntitled { group }
+            }
+            keys::StoreError::NotHardened => HostError::NotHardened,
+        })?;
         layout.check_socket_paths()?;
         layout.prepare()?;
         let lock = HostLock::acquire(&layout)?;
         // Decided only by the host that holds the home.
-        let sweep_orphans = may_sweep_orphan_keys(&layout.home);
+        let sweep_orphans = match &instance {
+            Some(_) => true, // the key store and orphan record both belong to this instance
+            None => may_sweep_orphan_keys(&layout.home),
+        };
         let server_check =
             ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
                 .map_err(|why| HostError::InvalidAppIdentity { why })?;
@@ -343,6 +402,7 @@ impl Host {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: config.server_program.clone(),
             home: layout.home.clone(),
+            runtime_dir: Some(layout.run.clone()),
             logs_dir: layout.logs.clone(),
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
@@ -381,6 +441,7 @@ impl Host {
             offices,
             listener: Some(listener),
             lock: Some(lock),
+            instance,
         })
     }
 
@@ -415,6 +476,7 @@ impl Host {
             }
         }
         self.lock.take();
+        self.instance.take();
     }
 }
 

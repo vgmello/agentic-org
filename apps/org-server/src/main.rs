@@ -4,6 +4,20 @@
 //! `org_server::run`. All logic is in the library.
 
 fn main() {
+    // Before startup concurrency or key material: inherited by all threads and children.
+    let limits = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: RLIMIT_CORE accepts this valid limits structure.
+    if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) } != 0 {
+        eprintln!(
+            "cannot disable core dumps: {}",
+            std::io::Error::last_os_error()
+        );
+        std::process::exit(1);
+    }
+
     // First thing, before any thread or child exists (see `org_server::fdswap`).
     let control = match org_server::fdswap::take_control_pipe() {
         Ok(control) => control,
