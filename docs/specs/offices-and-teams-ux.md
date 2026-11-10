@@ -45,6 +45,11 @@ X-02 (`org-proto` v2, approved by ada):
   Waiting for approval, then, once HQ approves it, Starting · copying records
   until its first copy of records completes (§6.3); on the joining instance,
   telling the two apart is A102.
+- **Two views of a joining office:** Waiting for approval and the "join ended"
+  row show only in the joining instance's own view (its status and, if it has
+  one, its local status page), never in HQ's Offices list, which keeps §6.3's
+  rows (Wants to join, Invitation cancelled, and the invitation's row after a
+  decline or expiry) (§3.1, §3.3, §5c; OFC-26, OFC-32).
 - **Waiting for running agents:** Create organization and Add office › On this
   instance wait, with Cancel, while agents are running on that instance, until the
   host can ask offices to relaunch their sessions (X-02 Q9) (§5a, §6.2).
@@ -193,17 +198,18 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 | Update needed | `circle-arrow-up` | amber | The office's server is too old for the organization's level | "needs Agentic Org 1.4 or later" |
 | Invited | `mail` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
 | Wants to join | `bell-ring` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
-| Waiting for approval | `hourglass` | amber | The selected joining office awaits HQ approval | "type the code at HQ" |
+| Waiting for approval | `hourglass` | amber | The selected joining office awaits HQ approval. Only in the joining instance's own view, never in HQ's Offices list *(rev 15)* | "type the code at HQ" |
 | Unknown | `circle-help` | gray | The app has no live status for it, or the status is `unknown` or missing (never shown as healthy) *(rev 6, rev 8)* | "Status unknown" |
 
 **From the wire to the label** *(rev 8)*. `OfficeInfo.status` shows as one label:
 
 - `active` → **Online**. `starting` → **Starting**. `update_needed` → **Update needed**. `pending` (invited, not joined yet) → **Invited**.
+- **Two views of a joining office** *(rev 15)*. The joining instance's own view is its `agentic-org status` (and setup) and, if it has one, its local status page. HQ's Offices list is HQ's view. Each shows only its own states, as below (§5c).
 - `starting` with `status_reason: join_pending` (a satellite whose join waits for approval or its first copy of records) *(rev 15)*:
-  - before HQ approves it → **Waiting for approval**, never Starting or Online;
-  - after HQ approves it, while its first copy of records runs → **Starting** with "copying records" (shown as "Starting · copying records", as in §6.3), never Online. The office becomes `active` (**Online**) only once that copy completes (`offices-hq-and-satellites.md`, "Provisioning a satellite", steps 4 and 5; `office-host-boundary.md` §4).
-  - The host reports both phases as `join_pending`. HQ, which approved the join, shows Starting · copying records after approval. For a satellite on this instance, until the instance status read tells the two phases apart (A102), the app shows **Waiting for approval** for the whole of `join_pending`.
-- `unavailable` with a `join_*` reason → **Stopped**, with §3.3's "join ended" row.
+  - In the joining instance's own view: before HQ approves it → **Waiting for approval**, never Starting or Online; after HQ approves it, while its first copy of records runs → **Starting** with "copying records", never Online. The host reports both phases as `join_pending`, so until the instance status read tells them apart (A102), this view shows **Waiting for approval** for the whole of `join_pending`.
+  - In HQ's Offices list: never Waiting for approval. Before approval the request is a **Wants to join** row (§6.1, OFC-5). After approval → **Starting** with "copying records" (shown as "Starting · copying records", as in §6.3), never Online. This holds for an office on HQ's own instance too: a local satellite joins its own instance's HQ (`offices-hq-and-satellites.md`, "Provisioning a satellite", step 3, Checks), and HQ's list shows it as HQ sees it, whatever that instance's status reports.
+  - The office becomes `active` (**Online**) only once that first copy completes (`offices-hq-and-satellites.md`, "Provisioning a satellite", steps 4 and 5; `office-host-boundary.md` §4).
+- `unavailable` with a `join_*` reason → in the joining instance's own view only, **Stopped**, with §3.3's "join ended" row. HQ's Offices list never shows that row: it shows the invitation's own row from §6.3, with **New invitation** and **Remove**.
 - `offline` or `unavailable`, for an office whose local instance reports it stopped → **Stopped**, with §3.3's reason as secondary text. The two look the same; the reason and its action say what differs.
 - **Offline** means an office is not connected to HQ. Distinguish this from a locally confirmed Stopped state and from Unknown when evidence is unavailable.
 - `unknown`, or no status at all → **Unknown** ("Status unknown").
@@ -236,11 +242,11 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
 | `unsupported_version` | "The release components on <office machine / instance> don't match. Run diagnostics and repair the selected instance there." *(rev 8)* | **Show local CLI repair instructions** · Copy details. No office restart until the instance release is repaired. |
 | `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support). No Restart: the contract refuses it. |
-| `join_expired`, `join_cancelled`, `join_rejected` *(rev 15)*: a satellite whose join ended. The host never restarts it, and `office.restart` answers `unavailable` for it | `join_expired`: "Its invitation expired before the join was approved". `join_cancelled`: "Its join was cancelled after 3 wrong check codes". `join_rejected`: "Its join was declined at HQ" | **Remove…** · Copy details. Never Restart office, Try again or Start office. |
+| `join_expired`, `join_cancelled`, `join_rejected` *(rev 15)*: a satellite whose join ended. The host never restarts it, and `office.restart` answers `unavailable` for it. Shown only in the joining instance's own view, never in HQ's Offices list (§3.1, §5c) | `join_expired`: "Its invitation expired before the join was approved". `join_cancelled`: "Its join was cancelled after 3 wrong check codes". `join_rejected`: "Its join was declined at HQ" | **Remove…** · Copy details. Never Restart office, Try again or Start office. |
 | `unknown` (a reason this version doesn't know, from a newer host) | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
 | No `status_reason` (the host doesn't know why) *(rev 8)* | "It isn't running" | **Restart office** · Copy details |
 
-- **Remove…** *(rev 15)*, for a join that ended, can't remove it from the browser: the join lives only on its own instance. It opens a small dialog:
+- **Remove…** *(rev 15)*, for a join that ended, appears only in the joining instance's own view. It can't remove the join from a page: the join lives only on its own instance, and only its CLI removes it. It opens a small dialog:
 
   ```
    Remove Studio Mac's join
@@ -481,8 +487,25 @@ that end it:
 - An identity mismatch and an unsupported version keep their own errors (JOIN-4,
   JOIN-7). Whether they end the join is A102.
 - A join that ended is never reported as an office that joined, and it isn't
-  restarted. HQ's Offices list shows it as §3.3's "join ended" row, when HQ
-  knows about it.
+  restarted.
+
+**Two views of a joining office** *(rev 15)*. The joining instance and HQ each
+show only what they decide or see:
+- **The joining instance's own view**, its `agentic-org status` (and setup) and,
+  if it has one, its local status page: **Waiting for approval** while the join
+  waits, and §3.3's "join ended" row (Stopped, with **Remove…**, which shows
+  `agentic-org office remove-pending <office id>`) once it ends. These never
+  appear in HQ's Offices list.
+- **HQ's Offices list** keeps §6.3's rows: **Wants to join** before approval
+  (§6.1, OFC-5), then Starting · copying records once approved. After 3 wrong
+  check codes the row is **Invitation cancelled**; after a decline or an expired
+  invitation, the invitation's row. Each of these has **New invitation** and
+  **Remove**.
+- An office on HQ's own instance can be in `join_pending` too: a local satellite
+  joins its own instance's HQ (`offices-hq-and-satellites.md`, "Provisioning a
+  satellite", step 3, Checks). HQ's Offices list still shows HQ's view of it;
+  Waiting for approval and the "join ended" row show only in that instance's
+  `agentic-org status`.
 
 **Removing a join** (on the joining machine, through its instance): `agentic-org
 office remove-pending <office id>`. On an instance that has accounts, it asks an
@@ -924,13 +947,13 @@ Two directions, same result:
 - OFC-25 · Add person and the person quick view offer no invite, password or sign-in option.
 
 **Joins that end, waiting for running agents, and offices on this instance (OFC)** *(new, rev 15, §3.3, §5a, §6.2)*
-- OFC-26 · A satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office.
-- OFC-27 · When `office.restart` answers `unavailable` because the office's join ended, the row switches to the join-ended row, with no restart button.
+- OFC-26 · In the joining instance's own view (its status and, if it has one, its local status page), a satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office. HQ's Offices list never shows this row: after 3 wrong check codes, a decline or an expired invitation it shows §6.3's row with New invitation and Remove.
+- OFC-27 · On the joining instance's own status (CLI or local status page), when `office.restart` answers `unavailable` because the office's join ended, the office shows the join-ended row, with no restart action. HQ's Offices list is unaffected and keeps §6.3's rows.
 - OFC-28 · Create organization while agents are running on the HQ instance shows "Waiting for running agents to finish…" with Cancel, and creates the organization only once they're idle; no running agent is stopped or relaunched for it.
 - OFC-29 · Add office › On this instance while agents are running on that instance shows "Waiting for running agents to finish…" with Cancel, and adds the office only once they're idle; no running agent is stopped or relaunched for it.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
 - OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
-- OFC-32 · A satellite whose join is pending (`join_pending`) shows Waiting for approval until HQ approves it, then Starting · copying records until its first copy of records completes, and never Online before then. HQ's Offices list shows Starting · copying records after approval; on the joining instance, until the status read tells the two phases apart (A102), it shows Waiting for approval for the whole of `join_pending`.
+- OFC-32 · In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval until HQ approves it, then Starting · copying records until its first copy of records completes, and never Online before then; until the status read tells the two phases apart (A102), it shows Waiting for approval for the whole of `join_pending`. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.

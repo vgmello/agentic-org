@@ -23,8 +23,10 @@ meaning changed, so no new revision:
   as the Review does (§7.1, STAFF-7).
 - A46's note on an exception for the HR lead's run is superseded: the office
   provisions (§13).
-- Once role files exist, Add agent record picks an existing role, or goes to the
-  owner as "Waiting for you: new role" (§7).
+- Once role files exist, Add agent record uses existing roles only. If none
+  fits, the role field says "No role fits? Use Hire to request a new one." with a
+  link to Hire, and the record can't be submitted with a role that isn't in the
+  list (§7). New roles go through Hire.
 - A hire never waits for running agents: the owning office relaunches its own
   affected sessions between turns (§7), unlike a new organization or office
   (`offices-and-teams-ux.md` rev 15).
@@ -247,9 +249,11 @@ v1 §3.6 holds, with these changes for the office model:
   enforce that approved proposal; authorization alone is not a bypass. Initial
   built-in HR/owner bootstrap during organization creation is the explicit exception.
   No external home path, old-team import or runtime takeover is accepted.
-  *(rev 21)* Once role files exist, Add agent record picks an existing role, or,
-  when none fits, its proposal goes to the owner as "Waiting for you: new role"
-  (§7.1).
+  *(rev 21)* Once role files exist, Add agent record uses existing roles only:
+  its role field lists them. Under it: "No role fits? Use Hire to request a new
+  one.", where Hire links to Hire. The record can't be submitted with a role that
+  isn't in the list, so it never needs a new role and never goes to the owner as
+  "Waiting for you: new role" (§7.1). A new role goes through Hire.
 
 ### 7.1 Who approves a hire (rev 8, the user)
 

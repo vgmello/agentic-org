@@ -690,8 +690,8 @@ on the HQ machine, in a session at that machine:
   "show the recovery code for Lumen Labs", "show the recovery code for Lumen Labs
   again", "record that the recovery code for Lumen Labs is stored". On Linux, the
   password typed at the terminal counts.
-- Over SSH on a Mac, or with no terminal, it can't confirm that, so it shows no
-  code (the table below). It says so before asking anyone to sign in. Over SSH on Linux, with a terminal, it works.
+- Over SSH on a Mac, or with no session at the Mac's screen, it can't confirm
+  that, so it shows no code (the table below). It says so before asking anyone to sign in. Over SSH on Linux, with a terminal, it works.
 - An owner who isn't an instance admin sees the same states in the browser, and
   asks an instance admin to run the command.
 
@@ -774,10 +774,11 @@ Sign in as an instance admin of this instance.
 Username: alex
 Password (not shown as you type):
 
-You'll see this code once. With the recovery package, it's what will
-let you recover Lumen Labs if this machine is lost. Store both away
-from this machine: for example, the code in a password manager on
-another device, or on paper somewhere safe.
+You'll see this code once, until you confirm it's stored. With the
+recovery package, it's what will let you recover Lumen Labs if this
+machine is lost. Store both away from this machine: for example, the
+code in a password manager on another device, or on paper somewhere
+safe.
 Recovering after losing the HQ machine isn't supported yet, but
 keeping the code now is what will make it possible.
 
