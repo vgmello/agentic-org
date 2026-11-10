@@ -14,7 +14,7 @@ mod views;
 
 pub use outcome::{
     CommandEnvelope, CreateState, GatewayError, GatewayErrorCode, MutationOutcome, OperationId,
-    OperationLookup, ReadResponse,
+    OperationLookup, ReadResponse, ResourceAccess,
 };
 pub use session::{
     AccountView, OrganizationLink, SecretText, SessionEstablished, SessionProof, SessionView,
@@ -119,9 +119,10 @@ impl<'de> Deserialize<'de> for Milliseconds {
     }
 }
 
-/// Decode one HTTP JSON object directly into its wire type, with sanitized errors. The
-/// adapter applies finite body/time/rate limits first and wipes credential input buffers.
-pub fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, GatewayError> {
+/// Decode an incoming HTTP request object directly, with sanitized errors. The adapter
+/// applies finite body/time/rate limits first and wipes credential input buffers. This is
+/// ingress validation, never evidence that an already dispatched operation was rejected.
+pub fn decode_request<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, GatewayError> {
     if body.iter().copied().find(|b| !b.is_ascii_whitespace()) != Some(b'{') {
         return Err(GatewayError::new(
             GatewayErrorCode::InvalidRequest,
@@ -130,6 +131,29 @@ pub fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, GatewayE
     }
     serde_json::from_slice(body)
         .map_err(|_| GatewayError::new(GatewayErrorCode::InvalidRequest, "Invalid request shape."))
+}
+
+/// Validate a raw, still encoded path segment before the HTTP framework decodes/routes it.
+/// Decode at most once afterward; encoded separators must never become routing separators.
+/// The client separately segment-encodes IDs and treats an ID separator as a client bug.
+pub fn validate_raw_path_segment(segment: &str) -> Result<(), GatewayError> {
+    let bytes = segment.as_bytes();
+    if segment.is_empty()
+        || [".", "..", "%2e", ".%2e", "%2e.", "%2e%2e"]
+            .iter()
+            .any(|dot| segment.eq_ignore_ascii_case(dot))
+        || bytes.iter().any(|b| matches!(b, b'/' | b'\\'))
+        || bytes
+            .windows(3)
+            .any(|part| matches!(part, [b'%', b'2', b'f' | b'F'] | [b'%', b'5', b'c' | b'C']))
+    {
+        Err(GatewayError::new(
+            GatewayErrorCode::InvalidRequest,
+            "Invalid path segment.",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Explicit browser target. The authenticated pair supplies the actor, never these fields.
@@ -184,6 +208,11 @@ pub enum OperationKind {
 
 pub type OrganizationCreateRequest = CommandEnvelope<crate::OrganizationCreateParams>;
 pub type OfficeRestartRequest = CommandEnvelope<crate::Empty>;
+
+/// Dedicated cancellation has no body ID or business payload; the URL names the original ID.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelRequest {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrganizationList {

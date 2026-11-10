@@ -327,6 +327,35 @@
         "valid": true,
         "target_matches": false
       }
+    },
+    {
+      "name": "positional profile cannot hide retired home",
+      "kind": "org",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "profile": [
+            "engineer",
+            "Staff",
+            null,
+            "codex",
+            null,
+            "on_call",
+            null,
+            "/tmp/public-fixture-home",
+            "sam",
+            "active",
+            null
+          ]
+        }
+      },
+      "expect": {
+        "valid": false
+      }
     }
   ]
 }

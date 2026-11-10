@@ -11,7 +11,11 @@
       "expect": {
         "valid": true,
         "variant": "accepted",
-        "http_status": 202
+        "http_status": 202,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "accepted"
+        }
       }
     },
     {
@@ -25,7 +29,12 @@
       "expect": {
         "valid": true,
         "variant": "completed",
-        "http_status": 200
+        "http_status": 200,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {}
+        }
       }
     },
     {
@@ -42,7 +51,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 409
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "conflict",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -59,7 +76,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 409
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "operation_reused",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -76,7 +101,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 409
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "snapshot_required",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -93,7 +126,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 400
+        "http_status": 400,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "clock_skew",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -110,7 +151,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 400
+        "http_status": 400,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unknown_recipient",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -127,7 +176,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 410
+        "http_status": 410,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "expired",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -144,7 +201,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 426
+        "http_status": 426,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unsupported_version",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -161,7 +226,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 413
+        "http_status": 413,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "too_large",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -178,7 +251,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 503
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unavailable",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -195,7 +276,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 503
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_ready",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -212,7 +301,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 503
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "storage_error",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -229,7 +326,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 503
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "timeout",
+            "message": "Refused."
+          }
+        }
       }
     },
     {
@@ -247,7 +352,16 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 429
+        "http_status": 429,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "rate_limited",
+            "message": "Try later.",
+            "retry_after_ms": 60000
+          }
+        }
       }
     },
     {
@@ -265,11 +379,20 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 401
+        "http_status": 401,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_authorized",
+            "message": "Sign in again.",
+            "session_reason": "session_ended"
+          }
+        }
       }
     },
     {
-      "name": "authenticated scope refused",
+      "name": "visible resource write denied",
       "wire": {
         "operation_id": "01M72N8MG00000000000000006",
         "outcome": "rejected",
@@ -282,7 +405,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 403
+        "http_status": 403,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_authorized",
+            "message": "Not allowed."
+          }
+        }
       }
     },
     {
@@ -295,7 +426,11 @@
       "expect": {
         "valid": true,
         "variant": "unknown",
-        "http_status": 504
+        "http_status": 504,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        }
       }
     },
     {
@@ -312,7 +447,11 @@
       "expect": {
         "valid": true,
         "variant": "unknown",
-        "http_status": 504
+        "http_status": 504,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        }
       }
     },
     {
@@ -329,7 +468,11 @@
       "expect": {
         "valid": true,
         "variant": "unknown",
-        "http_status": 504
+        "http_status": 504,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        }
       }
     },
     {
@@ -345,7 +488,11 @@
       "expect": {
         "valid": true,
         "variant": "unsupported",
-        "http_status": null
+        "http_status": null,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unsupported"
+        }
       }
     },
     {
@@ -517,7 +664,15 @@
       "expect": {
         "valid": true,
         "variant": "rejected",
-        "http_status": 503
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unavailable",
+            "message": "This operation is unavailable."
+          }
+        }
       }
     }
   ]

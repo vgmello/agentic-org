@@ -80,7 +80,7 @@ pub enum ResyncReason {
 
 /// SSE uses `event: frame` and JSON data of this shape. No global SSE ID replaces the scoped
 /// cursors. Short polling returns exactly the same frames. Unknown future frames are explicit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum EventFrame {
@@ -113,6 +113,55 @@ pub enum EventFrame {
     },
     #[serde(other)]
     Unsupported,
+}
+
+impl std::fmt::Debug for EventFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Change {
+                scope,
+                feed,
+                cursor,
+                event,
+                ..
+            } => f
+                .debug_struct("Change")
+                .field("scope", scope)
+                .field("feed", feed)
+                .field("cursor", cursor)
+                .field("event", event)
+                .finish_non_exhaustive(),
+            Self::Ready { subscriptions } => f
+                .debug_struct("Ready")
+                .field("subscriptions", subscriptions)
+                .finish(),
+            Self::Resync {
+                scope,
+                feed,
+                reason,
+            } => f
+                .debug_struct("Resync")
+                .field("scope", scope)
+                .field("feed", feed)
+                .field("reason", reason)
+                .finish(),
+            Self::Heartbeat { server_time_ms } => f
+                .debug_struct("Heartbeat")
+                .field("server_time_ms", server_time_ms)
+                .finish(),
+            Self::SessionEnded { reason } => f
+                .debug_struct("SessionEnded")
+                .field("reason", reason)
+                .finish(),
+            Self::Unavailable { scope, feed, error } => f
+                .debug_struct("Unavailable")
+                .field("scope", scope)
+                .field("feed", feed)
+                .field("error", error)
+                .finish(),
+            Self::Unsupported => f.write_str("Unsupported"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

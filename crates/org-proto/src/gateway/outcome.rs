@@ -82,12 +82,11 @@ fn check_business_params(params: &Value) -> Result<(), &'static str> {
             return Err("retired credential or managed-home input");
         }
     }
-    if object
-        .get("profile")
-        .and_then(Value::as_object)
-        .is_some_and(|profile| profile.contains_key("home"))
-    {
-        return Err("home is managed by the office");
+    if let Some(profile) = object.get("profile") {
+        let profile = profile.as_object().ok_or("profile must be an object")?;
+        if profile.contains_key("home") {
+            return Err("home is managed by the office");
+        }
     }
     Ok(())
 }
@@ -228,6 +227,26 @@ impl GatewayError {
             Unknown => return None,
         })
     }
+
+    /// Adapt an access decision already made by the owning authority. Hidden and missing
+    /// intentionally have one shape; this helper does not decide access or inspect storage.
+    pub fn for_resource_access(access: ResourceAccess) -> Self {
+        match access {
+            ResourceAccess::Missing | ResourceAccess::Hidden => {
+                Self::new(GatewayErrorCode::NotFound, "Not found.")
+            }
+            ResourceAccess::ReadOnly => {
+                Self::new(GatewayErrorCode::NotAuthorized, "Not authorized.")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceAccess {
+    Missing,
+    Hidden,
+    ReadOnly,
 }
 
 impl From<crate::ApiError> for GatewayError {
@@ -374,15 +393,11 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for OperationLookup<T> {
 }
 
 // Track presence separately from Option: even `error:null` is a second payload key.
+#[derive(Default)]
 enum Field<T> {
+    #[default]
     Missing,
     Present(T),
-}
-
-impl<T> Default for Field<T> {
-    fn default() -> Self {
-        Self::Missing
-    }
 }
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Field<T> {

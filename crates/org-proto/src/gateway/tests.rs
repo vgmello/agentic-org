@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, GatewayError> {
     // Fixture credentials are fixed public test strings. Production credentials decode
     // directly from the HTTP buffer, never through this test-only Value path.
-    decode(&serde_json::to_vec(value).unwrap())
+    decode_request(&serde_json::to_vec(value).unwrap())
 }
 
 fn fixture(text: &str, expected_cases: usize) -> Value {
@@ -71,6 +71,7 @@ fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
                 case["name"]
             );
             let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire, case["expect"]["normalized"], "{}", case["name"]);
             assert_eq!(
                 wire["outcome"], case["expect"]["variant"],
                 "{}",
@@ -88,9 +89,21 @@ fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
 fn shared_lookups_distinguish_final_abandonment_from_unresolved_and_expired() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookups.json"),
-        17,
+        21,
     );
     for case in vectors["cases"].as_array().unwrap() {
+        if case["category"] == "cancel" {
+            let response: ReadResponse<CancelResult> = parse(&case["wire"]).unwrap();
+            let ReadResponse::Result(response) = response else {
+                panic!("expected cancel result")
+            };
+            assert_eq!(json!(response.http_status()), case["expect"]["http_status"]);
+            assert_eq!(
+                serde_json::to_value(response).unwrap(),
+                case["expect"]["normalized"]
+            );
+            continue;
+        }
         let response: Result<ReadResponse<OperationLookup<Value>>, _> = parse(&case["wire"]);
         assert_eq!(
             response.is_ok(),
@@ -131,10 +144,24 @@ fn shared_lookups_distinguish_final_abandonment_from_unresolved_and_expired() {
 }
 
 #[test]
+fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity() {
+    assert!(decode_request::<CancelRequest>(b"{}").is_ok());
+    assert!(decode_request::<CancelRequest>(br#"{"operation_id":"a new id"}"#).is_err());
+    let vectors: Value =
+        serde_json::from_str(include_str!("../../test-vectors/v2/gateway-envelopes.json")).unwrap();
+    let request = &vectors["cases"][0]["wire"];
+    let typed: OrganizationCreateRequest = parse(request).unwrap();
+    assert_eq!(typed.params.name, "Acme");
+    let mut invalid = request.clone();
+    invalid["params"] = json!({});
+    assert!(parse::<OrganizationCreateRequest>(&invalid).is_err());
+}
+
+#[test]
 fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-envelopes.json"),
-        15,
+        16,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<CommandEnvelope<Value>, _> = parse(&case["wire"]);
@@ -239,6 +266,65 @@ fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
         crate::ulid_time_ms(clock["operation_id"].as_str().unwrap()),
         Some(server)
     );
+    assert_eq!(vectors["clock_cases"].as_array().unwrap().len(), 2);
+    for case in vectors["clock_cases"].as_array().unwrap() {
+        let server = case["server_time_ms"].as_i64().unwrap();
+        let local = case["browser_time_ms"].as_i64().unwrap();
+        let offset = case["expected_offset_ms"].as_i64().unwrap();
+        assert_eq!(local + offset, server);
+        assert_eq!(
+            crate::ulid_time_ms(case["corrected_operation_id"].as_str().unwrap()),
+            Some(server as u64)
+        );
+        assert_eq!(
+            crate::ulid_time_ms(case["raw_local_operation_id"].as_str().unwrap()),
+            Some(local as u64)
+        );
+        let refusal: GatewayError = parse(&case["raw_local_refusal"]).unwrap();
+        assert_eq!(
+            json!(refusal.http_status(true)),
+            case["expect"]["raw_http_status"]
+        );
+    }
+}
+
+#[test]
+fn shared_idempotency_examples_keep_native_identity_and_trusted_context_distinct() {
+    let vectors = fixture(
+        include_str!("../../test-vectors/v2/gateway-idempotency.json"),
+        4,
+    );
+    assert_eq!(
+        vectors["native_before_move2a_reuse_code"],
+        "invalid_request"
+    );
+    for case in vectors["cases"].as_array().unwrap() {
+        let first: CommandEnvelope<Value> = parse(&case["first"]["wire"]).unwrap();
+        let second: CommandEnvelope<Value> = parse(&case["second"]["wire"]).unwrap();
+        let first_params = first.native_params(OperationKind::Org).unwrap();
+        let second_params = second.native_params(OperationKind::Org).unwrap();
+        assert_eq!(first_params["command_id"], second_params["command_id"]);
+        assert_eq!(first.operation_id, second.operation_id);
+        assert_eq!(
+            first.params == second.params,
+            case["expect"]["same_params"] == true
+        );
+        assert_eq!(
+            case["first"]["trusted_account"] == case["second"]["trusted_account"],
+            case["expect"]["same_account"] == true
+        );
+        let response: MutationOutcome<Value> = parse(&case["response"]).unwrap();
+        assert_eq!(
+            json!(response.http_status(true)),
+            case["expect"]["http_status"]
+        );
+        assert_eq!(serde_json::to_value(response).unwrap(), case["response"]);
+        // The fixture states the later worker replay contract; this crate does not implement it.
+        assert_eq!(
+            case["expect"]["replay"] == true,
+            case["expect"]["same_params"] == true && case["expect"]["same_account"] == true
+        );
+    }
 }
 
 #[test]
@@ -322,7 +408,7 @@ fn credential_diagnostics_never_echo_mistyped_secrets() {
     let proof = SessionProof::parse(proof.clone()).unwrap();
     assert_eq!(format!("{proof:?}"), "SessionProof(<redacted>)");
     let params: SignInParams =
-        decode(br#"{"login":"alex","password":"PUBLIC FIXTURE PASSWORD"}"#).unwrap();
+        decode_request(br#"{"login":"alex","password":"PUBLIC FIXTURE PASSWORD"}"#).unwrap();
     assert!(!format!("{params:?}").contains("PUBLIC FIXTURE PASSWORD"));
     for invalid_proof in [
         "AB".repeat(32),
@@ -336,9 +422,32 @@ fn credential_diagnostics_never_echo_mistyped_secrets() {
         r#"{"login":"alex","password":3141592653589793}"#,
         r#"{"login":"alex","password":-3141592653589793}"#,
     ] {
-        let error = decode::<SignInParams>(raw.as_bytes()).unwrap_err();
+        let error = decode_request::<SignInParams>(raw.as_bytes()).unwrap_err();
         assert!(!format!("{error:?}").contains("314159"));
+        let raw_error = serde_json::from_str::<SignInParams>(raw).unwrap_err();
+        assert!(!raw_error.to_string().contains("314159"));
     }
+}
+
+#[test]
+fn diagnostics_elide_business_payloads_in_requests_outcomes_and_events() {
+    let envelopes: Value =
+        serde_json::from_str(include_str!("../../test-vectors/v2/gateway-envelopes.json")).unwrap();
+    let mut request = envelopes["cases"][0]["wire"].clone();
+    request["params"]["name"] = json!("PRIVATE BUSINESS PAYLOAD");
+    let request: CommandEnvelope<Value> = parse(&request).unwrap();
+    assert!(!format!("{request:?}").contains("PRIVATE BUSINESS PAYLOAD"));
+    let stream: Value =
+        serde_json::from_str(include_str!("../../test-vectors/v2/gateway-stream.json")).unwrap();
+    let mut change = stream["cases"][1]["wire"].clone();
+    change["data"] = json!({"body":"PRIVATE BUSINESS PAYLOAD"});
+    let change: EventFrame = parse(&change).unwrap();
+    assert!(!format!("{change:?}").contains("PRIVATE BUSINESS PAYLOAD"));
+    let result: MutationOutcome<Value> = MutationOutcome::Completed {
+        operation_id: request.operation_id,
+        result: json!({"body":"PRIVATE BUSINESS PAYLOAD"}),
+    };
+    assert!(!format!("{result:?}").contains("PRIVATE BUSINESS PAYLOAD"));
 }
 
 #[test]
@@ -379,5 +488,80 @@ fn version_negotiation_and_clock_values_are_shared_browser_semantics() {
     );
     for raw in ["1.5", "-1", "9007199254740992", "\"1\""] {
         assert!(serde_json::from_str::<Milliseconds>(raw).is_err(), "{raw}");
+    }
+}
+
+#[test]
+fn shared_path_segments_are_refused_before_decoding_or_routing() {
+    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-paths.json"), 17);
+    for case in vectors["cases"].as_array().unwrap() {
+        let raw = case["raw_segment"].as_str().unwrap();
+        let result = validate_raw_path_segment(raw);
+        assert_eq!(
+            result.is_ok(),
+            case["expect"]["valid"] == true,
+            "{}",
+            case["name"]
+        );
+        if let Err(error) = result {
+            assert_eq!(json!(error.code), case["expect"]["code"]);
+            assert_eq!(
+                json!(error.http_status(false)),
+                case["expect"]["http_status"]
+            );
+        }
+    }
+}
+
+#[test]
+fn shared_resource_refusals_hide_existence_and_keep_attempts_distinct_from_lookups() {
+    let vectors = fixture(
+        include_str!("../../test-vectors/v2/gateway-resource-errors.json"),
+        3,
+    );
+    for case in vectors["cases"].as_array().unwrap() {
+        let access = match case["access"].as_str().unwrap() {
+            "missing" => ResourceAccess::Missing,
+            "hidden" => ResourceAccess::Hidden,
+            "read_only" => ResourceAccess::ReadOnly,
+            other => panic!("unknown access decision {other}"),
+        };
+        let error = GatewayError::for_resource_access(access);
+        assert_eq!(
+            json!(error.http_status(true)),
+            case["expect"]["http_status"]
+        );
+        assert_eq!(
+            serde_json::to_value(ReadResponse::<Value>::Error(error)).unwrap(),
+            case["wire"]
+        );
+    }
+    assert_eq!(
+        vectors["cases"][0]["wire"], vectors["cases"][1]["wire"],
+        "hidden and absent must be indistinguishable"
+    );
+    assert_eq!(vectors["attempts"].as_array().unwrap().len(), 2);
+    for trace in vectors["attempts"].as_array().unwrap() {
+        let submitted: MutationOutcome<Value> = parse(&trace["submit"]).unwrap();
+        assert!(
+            matches!(submitted, MutationOutcome::Rejected { ref error, .. } if error.code == GatewayErrorCode::NotFound)
+        );
+        let looked_up: ReadResponse<OperationLookup<Value>> = parse(&trace["lookup"]).unwrap();
+        let resolution = match looked_up {
+            ReadResponse::Error(error) if error.code == GatewayErrorCode::NotFound => "unresolved",
+            ReadResponse::Result(OperationLookup::Outcome {
+                outcome: MutationOutcome::Rejected { error, .. },
+                ..
+            }) if error.code == GatewayErrorCode::NotFound => "rejected",
+            _ => panic!("invalid shared not_found trace"),
+        };
+        assert_eq!(
+            resolution,
+            trace["expect"]["lookup_if_submit_lost"].as_str().unwrap()
+        );
+        // These traces specify the later ledger/client contract, not a storage implementation.
+        assert_eq!(trace["expect"]["keep_draft"], true);
+        assert_eq!(trace["expect"]["auto_resubmit"], false);
+        assert_eq!(trace["expect"]["new_user_attempt"], "new_id");
     }
 }

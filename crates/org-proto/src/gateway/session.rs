@@ -15,14 +15,16 @@ use super::Milliseconds;
 /// let secret = org_proto::gateway::SecretText::new("public test value".into()).unwrap();
 /// let _copy = secret.clone();
 /// ```
-pub struct SecretText(Box<[u8]>);
+pub struct SecretText(Vec<u8>);
 
 impl SecretText {
     pub fn new(text: String) -> Result<Self, &'static str> {
         if text.is_empty() {
             return Err("a secret must be a nonempty string");
         }
-        Ok(Self(text.into_bytes().into_boxed_slice()))
+        // Keep the String's allocation; shrinking into a box could leave a copied secret
+        // in a freed allocation before Drop has a chance to wipe it.
+        Ok(Self(text.into_bytes()))
     }
 
     pub fn expose(&self) -> &str {

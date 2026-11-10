@@ -324,6 +324,78 @@
         "http_status": 410,
         "resolution": "expired"
       }
+    },
+    {
+      "name": "dedicated cancel abandoned",
+      "category": "cancel",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "abandoned"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "abandoned"
+        },
+        "http_status": 200
+      }
+    },
+    {
+      "name": "dedicated cancel linked",
+      "category": "cancel",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "linked"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "linked"
+        },
+        "http_status": 200
+      }
+    },
+    {
+      "name": "dedicated cancel in_progress",
+      "category": "cancel",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "in_progress"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "in_progress"
+        },
+        "http_status": 409
+      }
+    },
+    {
+      "name": "dedicated cancel future_state",
+      "category": "cancel",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "future_state"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "unknown"
+        },
+        "http_status": null
+      }
     }
   ]
 }

@@ -101,11 +101,36 @@ use `not_found`; absent/bad pair uses `not_authorized`.
 
 There is exactly **one operation ID**. Gateway maps it to host `operation_id`, org
 `command_id`, work `change_id` or `msg.send.id` without generating another ID.
+Operation IDs are idempotency keys, not ordering keys (D-GW3, ada
+`01M72X7AAJTVZZW4MCQ6GSK2RV`). Secure random ULIDs need no same-millisecond
+monotonic ordering: receipt and versions determine server order. Concurrent calls
+may coalesce per browser handle; global replay/dedup belongs to the worker, so two
+handles with the same ID, identical params and the same account are safe through
+server replay. Different params/account get operation_reused409 after move2a
+(native invalid_request before it). The ULID time comes from server_time_ms-corrected
+time, never the raw local clock; HQ rejects a new ID over five minutes ahead with
+clock_skew or over29days old with expired. No browser operation registry/outbox.
 Native field does not also appear in browser params. `expected_version` stays in
 the operation's typed params, with the existing per-entity semantics; no second
 envelope version competes with it. Gateway reconstructs the existing typed params
 before hashing/dispatch. Business params are otherwise unchanged. Retired
 `home`/`clear_home`/`profile.home`/`app_token` are refused on presence, including null.
+
+Final D-GW1/D-GW2, ada `01M72WNGF3DJHX1HZXAC2MA8H3`, with Rowan's correction:
+validate raw path segments before routing, without normalizing. Refuse encoded
+`%2f`/`%5c` in any case, raw backslash, empty segments and exact `.`/`..` segments
+(including `%2e` in any case and mixed spellings) with 400 invalid_request.
+Clients segment-encode IDs and treat an ID separator as a client bug. A raw segment
+such as `%252f` represents a literal percent escape; decode at most once, never a
+second time into a separator. The leading root slash is not itself a segment.
+
+Hidden resources and missing resources have the same not_found response. A visible
+resource the caller cannot change is 403 not_authorized; there is no new permission
+code. A confirmed submit not_found is a rejected attempt with nothing applied.
+Grant/scope refusal is not stored at HQ (lookup returns not_found); a rule refusal
+is stored and replays. Keep the draft, never auto-resubmit, and use a new ID for a
+new user-directed attempt. If the submit reply was lost, lookup not_found remains
+unresolved: it cannot prove which of those histories occurred.
 
 ## 4. Browser sessions and failures
 
