@@ -19,7 +19,8 @@
         },
         "normalized": {
           "instance_id": "01M72N8MG00000000000000001"
-        }
+        },
+        "parse_valid": true
       }
     },
     {
@@ -46,7 +47,8 @@
         "normalized": {
           "instance_id": "01M72N8MG00000000000000001",
           "org_id": "01M72N8MG00000000000000003"
-        }
+        },
+        "parse_valid": true
       }
     },
     {
@@ -79,7 +81,8 @@
           "instance_id": "01M72N8MG00000000000000001",
           "org_id": "01M72N8MG00000000000000003",
           "office_id": "01M72N8MG00000000000000005"
-        }
+        },
+        "parse_valid": true
       }
     },
     {
@@ -112,7 +115,8 @@
           "instance_id": "01M72N8MG00000000000000001",
           "org_id": "01M72N8MG00000000000000003",
           "office_id": "01M72N8MG00000000000000005"
-        }
+        },
+        "parse_valid": true
       }
     },
     {
@@ -122,7 +126,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -137,7 +142,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": true
       }
     },
     {
@@ -156,7 +162,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": true
       }
     },
     {
@@ -179,7 +186,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": true
       }
     },
     {
@@ -198,7 +206,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": true
       }
     },
     {
@@ -221,7 +230,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -240,7 +250,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -255,7 +266,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -270,7 +282,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -285,7 +298,8 @@
       "session_instance": "01M72N8MG00000000000000001",
       "expect": {
         "valid": false,
-        "http_status": 400
+        "http_status": 400,
+        "parse_valid": false
       }
     },
     {
@@ -300,6 +314,75 @@
       "session_instance": "01M72N8MG00000000000000005",
       "expect": {
         "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "malformed org with matching instance",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "a/b"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "empty office with matching instance",
+      "kind": "work",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          ""
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "oversize office with matching instance",
+      "kind": "msg",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
         "http_status": 400
       }
     }

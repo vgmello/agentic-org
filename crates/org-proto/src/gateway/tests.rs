@@ -688,12 +688,18 @@ fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_f
 fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookup-query.json"),
-        15,
+        18,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let kind: OperationKind = serde_json::from_value(case["kind"].clone()).unwrap();
         let fields: Vec<(String, String)> = serde_json::from_value(case["fields"].clone()).unwrap();
         let query = LookupQuery::from_fields(fields);
+        assert_eq!(
+            query.is_ok(),
+            case["expect"]["parse_valid"] == true,
+            "{}: query parsing must be tested separately from instance binding",
+            case["name"]
+        );
         let checked = query
             .as_ref()
             .map_err(Clone::clone)
