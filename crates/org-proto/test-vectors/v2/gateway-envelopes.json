@@ -1,0 +1,384 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "one host ID and unchanged versions",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme"
+        }
+      },
+      "route_scope": {
+        "kind": "instance",
+        "instance_id": "01M72N8MG00000000000000001"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": true,
+        "native_params": {
+          "name": "Acme",
+          "operation_id": "01M72N8MG00000000000000006"
+        }
+      }
+    },
+    {
+      "name": "one org ID and unchanged versions",
+      "kind": "org",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "name": "Platform",
+          "expected_version": 3
+        }
+      },
+      "route_scope": {
+        "kind": "organization",
+        "instance_id": "01M72N8MG00000000000000001",
+        "org_id": "01M72N8MG00000000000000003"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": true,
+        "native_params": {
+          "name": "Platform",
+          "expected_version": 3,
+          "command_id": "01M72N8MG00000000000000006"
+        }
+      }
+    },
+    {
+      "name": "one work ID and unchanged versions",
+      "kind": "work",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "params": {
+          "item_id": "task-1",
+          "expected_version": 7
+        }
+      },
+      "route_scope": {
+        "kind": "office",
+        "instance_id": "01M72N8MG00000000000000001",
+        "org_id": "01M72N8MG00000000000000003",
+        "office_id": "01M72N8MG00000000000000005"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": true,
+        "native_params": {
+          "item_id": "task-1",
+          "expected_version": 7,
+          "change_id": "01M72N8MG00000000000000006"
+        }
+      }
+    },
+    {
+      "name": "one msg ID and unchanged versions",
+      "kind": "msg",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "params": {
+          "to": "sam",
+          "text": "Hello"
+        }
+      },
+      "route_scope": {
+        "kind": "office",
+        "instance_id": "01M72N8MG00000000000000001",
+        "org_id": "01M72N8MG00000000000000003",
+        "office_id": "01M72N8MG00000000000000005"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": true,
+        "native_params": {
+          "to": "sam",
+          "text": "Hello",
+          "id": "01M72N8MG00000000000000006"
+        }
+      }
+    },
+    {
+      "name": "refuse duplicate or retired operation_id even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "operation_id": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired command_id even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "command_id": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired change_id even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "change_id": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired id even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "id": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired home even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "home": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired clear_home even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "clear_home": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "refuse duplicate or retired app_token even null",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme",
+          "app_token": null
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "profile home null remains retired",
+      "kind": "org",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "profile": {
+            "home": null
+          }
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "params must be an object",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": []
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "another instance is refused before dispatch",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "name": "Acme"
+        }
+      },
+      "route_scope": {
+        "kind": "instance",
+        "instance_id": "01M72N8MG00000000000000033"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": false
+      }
+    },
+    {
+      "name": "another org is refused before dispatch",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "name": "Acme"
+        }
+      },
+      "route_scope": {
+        "kind": "organization",
+        "instance_id": "01M72N8MG00000000000000001",
+        "org_id": "01M72N8MG00000000000000033"
+      },
+      "expect": {
+        "valid": true,
+        "target_matches": false
+      }
+    },
+    {
+      "name": "positional profile cannot hide retired home",
+      "kind": "org",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "params": {
+          "profile": [
+            "engineer",
+            "Staff",
+            null,
+            "codex",
+            null,
+            "on_call",
+            null,
+            "/tmp/public-fixture-home",
+            "sam",
+            "active",
+            null
+          ]
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "future scope remains invalid for requests",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "project",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "project_id": "future-project"
+        },
+        "params": {
+          "name": "Acme"
+        }
+      },
+      "route_scope": {
+        "kind": "instance",
+        "instance_id": "01M72N8MG00000000000000001"
+      },
+      "expect": {
+        "valid": false
+      }
+    }
+  ]
+}

@@ -353,7 +353,7 @@ fn nibble(c: u8) -> Option<u8> {
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
 // volatile write. `write_volatile` through an exclusive reference is sound.
 #[allow(unsafe_code)]
-fn zero(bytes: &mut [u8]) {
+pub(crate) fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
         unsafe { std::ptr::write_volatile(b, 0) };
