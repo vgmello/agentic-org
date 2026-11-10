@@ -14,6 +14,8 @@
 //! use org_supervise::recovery::scan_one_pass;
 //! ```
 
+mod capture;
+mod checkpoint;
 mod scan;
 mod startup;
 
@@ -21,6 +23,7 @@ pub(crate) use scan::fixed_point;
 pub use scan::{ScanFailure, ScanPass, ScanPort, ScanRequest};
 pub use startup::{recover_startup, RecoveryBatch, RecoveryGone};
 
+use std::collections::BTreeSet;
 use std::io;
 use std::time::Instant;
 
@@ -48,6 +51,10 @@ impl ProcessIdentity {
     fn valid(&self) -> bool {
         valid_pid(self.pid) && !self.started.is_empty() && !self.boot.is_empty()
     }
+
+    fn key(&self) -> (u32, &str, &str) {
+        (self.pid, &self.started, &self.boot)
+    }
 }
 
 fn valid_pid(pid: u32) -> bool {
@@ -60,6 +67,8 @@ pub struct RecoveryRecord {
     mark: String,
     leader: Option<ChildIdentity>,
     tool_sessions: Vec<u32>,
+    // Written before any signal and retained until the consumer retires this row.
+    inventory: Vec<CheckpointTarget>,
 }
 
 impl RecoveryRecord {
@@ -87,6 +96,7 @@ impl RecoveryRecord {
             mark,
             leader,
             tool_sessions,
+            inventory: vec![],
         })
     }
 
@@ -102,6 +112,65 @@ impl RecoveryRecord {
     pub fn tool_sessions(&self) -> &[u32] {
         &self.tool_sessions
     }
+
+    /// Restore the cumulative, plain-data write-ahead inventory from trusted storage.
+    /// Never omit previously saved entries while their owning row still exists.
+    pub fn with_inventory(mut self, inventory: Vec<CheckpointTarget>) -> io::Result<Self> {
+        validate_inventory(&inventory)?;
+        self.inventory = inventory;
+        Ok(self)
+    }
+
+    /// Cumulative inventory; resolved entries remain until the consumer retires the row.
+    pub fn inventory(&self) -> &[CheckpointTarget] {
+        &self.inventory
+    }
+}
+
+/// Maximum number of distinct saved process identities in one record.
+pub const MAX_RECOVERY_TARGETS: usize = 256;
+
+/// Plain persisted data, never a process-signalling capability. Restored only through
+/// the consumer's trusted record store; policy rechecks each exact identity before use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckpointTarget {
+    /// PID, start and boot identity captured before the first signal.
+    pub identity: ProcessIdentity,
+    /// Captured ancestry, excluding this target; empty for a directly marked root/leader.
+    pub ancestry: Vec<ProcessIdentity>,
+}
+
+fn validate_target_count(count: usize) -> io::Result<()> {
+    if count > MAX_RECOVERY_TARGETS {
+        return Err(invalid("recovery inventory exceeds 256 identities"));
+    }
+    Ok(())
+}
+
+fn validate_inventory(inventory: &[CheckpointTarget]) -> io::Result<()> {
+    validate_target_count(inventory.len())?;
+    let mut identities = BTreeSet::new();
+    for target in inventory {
+        if !target.identity.valid()
+            || target.ancestry.len() >= MAX_RECOVERY_TARGETS
+            || !identities.insert(target.identity.key())
+        {
+            return Err(invalid("invalid or duplicate saved process identity"));
+        }
+    }
+    for target in inventory {
+        let mut seen = BTreeSet::new();
+        for ancestor in &target.ancestry {
+            if ancestor.boot != target.identity.boot
+                || ancestor == &target.identity
+                || !seen.insert(ancestor.key())
+                || !identities.contains(&ancestor.key())
+            {
+                return Err(invalid("invalid saved process ancestry"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Consumer-owned read port. Recovery never deletes rows, releases locks or writes SQL.
@@ -110,6 +179,39 @@ pub trait RecoveryRecords {
     type Key;
     /// Read pending records. Read failure aborts before any process operation.
     fn pending(&mut self) -> io::Result<Vec<(Self::Key, RecoveryRecord)>>;
+}
+
+/// Consumer-owned durable write-ahead inventory port. Slice 4a implements only a fake;
+/// B1-12 supplies the office.db adapter. It carries plain data, never a capability.
+///
+/// An external store can implement this without either sealed process port:
+/// ```no_run
+/// use org_supervise::recovery::{CheckpointTarget, RecoveryCheckpoint, RecoveryRecord, RecoveryRecords};
+/// use std::{io, time::Instant};
+/// struct OfficeStore;
+/// impl RecoveryRecords for OfficeStore {
+///     type Key = u64;
+///     fn pending(&mut self) -> io::Result<Vec<(u64, RecoveryRecord)>> { unimplemented!() }
+/// }
+/// impl RecoveryCheckpoint for OfficeStore {
+///     fn checkpoint(&mut self, _: &u64, _: &str, _: &[CheckpointTarget], _: Instant)
+///         -> io::Result<()> { unimplemented!() }
+/// }
+/// ```
+pub trait RecoveryCheckpoint: RecoveryRecords {
+    /// Atomically and durably union this cumulative inventory into the existing
+    /// matching key/mark, before returning success. Retain all earlier entries until
+    /// the row is retired with Gone. Refuse a stale key/mark, overflow or deadline.
+    /// Never create/replace/release a row, release a lock, or change its generation.
+    /// Pending reads must restore the union after a crash. An ambiguous write error
+    /// permits no signal; retry by reloading the durable record.
+    fn checkpoint(
+        &mut self,
+        key: &Self::Key,
+        mark: &str,
+        inventory: &[CheckpointTarget],
+        deadline: Instant,
+    ) -> io::Result<()>;
 }
 
 /// Identity of the supervising user/process and current boot.
@@ -168,6 +270,10 @@ pub enum TargetEvidence {
     /// Snapshot ancestry from a marked process to the target (excluding the target).
     /// Native adapters must preserve this evidence while pinning target identities.
     Descendant(Vec<ProcessIdentity>),
+    /// Historical identity/ancestry from the trusted write-ahead inventory. An exact
+    /// live start/boot match remains a target after its parents exit; native adapters
+    /// still recheck/pin that process and its credentials before signalling.
+    Checkpoint(Vec<ProcessIdentity>),
 }
 
 /// Policy-issued authority for one individual process. No raw PID/group constructor.
@@ -250,6 +356,8 @@ pub trait RecoveryProcesses: sealed::Processes {
     ) -> io::Result<SignalOutcome>;
     /// Wait without reaping until this identity is gone or the deadline is reached.
     /// A reused PID means the old identity is gone, never authority to signal its replacement.
+    /// A deadline of now requests one nonblocking identity check. Absence from the user
+    /// snapshot or inability to read a known PID is not evidence it exited.
     fn wait_exited(&mut self, identity: &ProcessIdentity, deadline: Instant) -> io::Result<bool>;
     /// Monotonic time, explicitly supplied so policy tests need no sleeps.
     fn now(&mut self) -> Instant;

@@ -1,12 +1,13 @@
-use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
+use super::capture::{capture_targets, snapshot_map, CaptureScope};
+use super::checkpoint::TargetCheckpoint;
+
 use super::{
-    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity,
-    ProcessObservation, RecoveryProcesses, RecoveryReport, RecoverySignal, TargetEvidence,
-    VerifiedTarget,
+    check_deadline, checked_context, ProcessIdentity, RecoveryProcesses, RecoveryReport,
+    RecoverySignal,
 };
 
 /// A fresh, crate-issued pass request. Only the supervisor can issue requests, after
@@ -17,16 +18,16 @@ use super::{
 /// let request = ScanRequest { mark: "forged".into(), nonce: [0; 32],
 ///     deadline: std::time::Instant::now(), excluded: None, tool_sessions: vec![] };
 /// ```
-#[derive(Debug)]
-pub struct ScanRequest {
+pub struct ScanRequest<'a> {
     mark: String,
     nonce: [u8; 32],
     deadline: Instant,
     excluded: Option<ProcessIdentity>,
     tool_sessions: Vec<u32>,
+    inventory: &'a mut dyn TargetCheckpoint,
 }
 
-impl ScanRequest {
+impl ScanRequest<'_> {
     /// Non-secret mark to scan for.
     pub fn mark(&self) -> &str {
         &self.mark
@@ -52,13 +53,14 @@ impl ScanRequest {
 pub(super) struct RequestIssuer;
 
 impl RequestIssuer {
-    pub(super) fn issue(
+    pub(super) fn issue<'a>(
         &mut self,
         mark: &str,
         excluded: Option<ProcessIdentity>,
         tool_sessions: &[u32],
         deadline: Instant,
-    ) -> io::Result<ScanRequest> {
+        inventory: &'a mut dyn TargetCheckpoint,
+    ) -> io::Result<ScanRequest<'a>> {
         let mut nonce = [0; 32];
         entropy(&mut nonce)?;
         Ok(ScanRequest {
@@ -67,6 +69,7 @@ impl RequestIssuer {
             deadline,
             excluded,
             tool_sessions: tool_sessions.into(),
+            inventory,
         })
     }
 }
@@ -200,21 +203,6 @@ impl ScanPort for MarkedScan {
     }
 }
 
-fn snapshot_map(
-    snapshot: Vec<ProcessObservation>,
-) -> io::Result<BTreeMap<u32, ProcessObservation>> {
-    let mut map = BTreeMap::new();
-    for process in snapshot {
-        if map.insert(process.pid, process).is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "duplicate PID in process snapshot",
-            ));
-        }
-    }
-    Ok(map)
-}
-
 /// Scan once: snapshot all eligible marked roots and their descendants before any
 /// signals, then kill/wait each verified identity individually. Unreadable environments
 /// are counted/skipped. Zombies and the exact excluded leader are skipped first.
@@ -224,92 +212,37 @@ pub(crate) fn scan_one_pass(
 ) -> Result<ScanPass, ScanFailure> {
     let mut report = RecoveryReport::default();
     let result = (|| {
+        if request.inventory.mark() != request.mark {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "scan checkpoint mark mismatch",
+            ));
+        }
         check_deadline(ops, request.deadline)?;
         let context = checked_context(ops)?;
         let snapshot = snapshot_map(ops.snapshot(request.deadline)?)?;
         check_deadline(ops, request.deadline)?;
-        let mut eligible = BTreeMap::new();
-        for (pid, p) in &snapshot {
-            if p.uid != context.uid {
-                continue;
-            }
-            if p.zombie {
-                report.zombies += 1;
-                continue;
-            }
-            if p.identity
-                .as_ref()
-                .is_some_and(|id| Some(id) == request.excluded.as_ref())
-            {
-                report.excluded += 1;
-                continue;
-            }
-            if p.mark == MarkEvidence::Unreadable {
-                report.unreadable_environments += 1;
-                continue;
-            }
-            if p.identity.is_none() {
-                report.unreadable_identities += 1;
-            }
-            eligible.insert(*pid, p);
-        }
-        let mut targets = BTreeMap::new();
-        let mut queue = VecDeque::new();
-        for (pid, p) in &eligible {
-            if matches!(&p.mark, MarkEvidence::Present(mark) if *mark == request.mark) {
-                let id = safe_identity(p, &context).ok_or_else(|| {
-                    report.refused += 1;
-                    io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "unsafe marked process identity",
-                    )
-                })?;
-                targets.insert(
-                    *pid,
-                    VerifiedTarget {
-                        identity: id.clone(),
-                        mark: request.mark.clone(),
-                        evidence: TargetEvidence::Marked,
-                    },
-                );
-                queue.push_back((*pid, vec![id.clone()]));
-            }
-        }
-        // Snapshot descendants before killing parents. A visited set also bounds malformed cycles.
-        while let Some((parent, ancestry)) = queue.pop_front() {
-            check_deadline(ops, request.deadline)?;
-            for (pid, child) in &eligible {
-                if child.parent != parent || targets.contains_key(pid) {
-                    continue;
-                }
-                let id = safe_identity(child, &context).ok_or_else(|| {
-                    report.refused += 1;
-                    io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "unsafe descendant identity",
-                    )
-                })?;
-                targets.insert(
-                    *pid,
-                    VerifiedTarget {
-                        identity: id.clone(),
-                        mark: request.mark.clone(),
-                        evidence: TargetEvidence::Descendant(ancestry.clone()),
-                    },
-                );
-                let mut next = ancestry.clone();
-                next.push(id.clone());
-                queue.push_back((*pid, next));
-            }
-        }
-        report.found_live = targets.len();
-        let mut targets: Vec<_> = targets.into_values().collect();
+        let mut targets = capture_targets(
+            CaptureScope {
+                mark: &request.mark,
+                excluded: request.excluded.as_ref(),
+                saved: request.inventory.saved(),
+            },
+            &snapshot,
+            &context,
+            ops,
+            request.deadline,
+            &mut report,
+        )?;
         // Tool sessions only affect priority. Unhinted/detached marked tools remain included.
         targets.sort_by_key(|t| {
             !request
                 .tool_sessions
                 .contains(&snapshot[&t.identity.pid].session)
         });
+        // This write commits the entire cumulative inventory before the first kill.
+        check_deadline(ops, request.deadline)?;
+        request.inventory.save(&targets, request.deadline)?;
         for target in targets {
             check_deadline(ops, request.deadline)?;
             report.signals += 1;
@@ -348,19 +281,22 @@ pub(crate) fn fixed_point(
     ops: &mut dyn RecoveryProcesses,
     scan: &mut dyn ScanPort,
     deadline: Instant,
+    inventory: &mut dyn TargetCheckpoint,
 ) -> Result<RecoveryReport, ScanFailure> {
     let mut report = RecoveryReport::default();
     let mut issuer = RequestIssuer;
     for _ in 0..3 {
-        let next = (|| {
-            check_deadline(ops, deadline)?;
-            let request = issuer.issue(mark, excluded.clone(), tool_sessions, deadline)?;
-            Ok::<_, io::Error>((request.nonce, request))
-        })();
-        let (nonce, request) = next.map_err(|error| ScanFailure {
+        check_deadline(ops, deadline).map_err(|error| ScanFailure {
             error,
             report: std::mem::take(&mut report),
         })?;
+        let request = issuer
+            .issue(mark, excluded.clone(), tool_sessions, deadline, inventory)
+            .map_err(|error| ScanFailure {
+                error,
+                report: std::mem::take(&mut report),
+            })?;
+        let nonce = request.nonce;
         let pass = match scan.scan_pass(request, ops) {
             Ok(pass) => pass,
             Err(failure) => {
@@ -409,12 +345,15 @@ pub(crate) fn fixed_point(
 #[cfg(test)]
 pub(super) mod test_support {
     use super::*;
-    pub(in crate::recovery) fn issue(
+    pub(in crate::recovery) fn issue<'a>(
         mark: &str,
         excluded: Option<ProcessIdentity>,
         deadline: Instant,
-    ) -> ScanRequest {
-        RequestIssuer.issue(mark, excluded, &[], deadline).unwrap()
+        inventory: &'a mut dyn TargetCheckpoint,
+    ) -> ScanRequest<'a> {
+        RequestIssuer
+            .issue(mark, excluded, &[], deadline, inventory)
+            .unwrap()
     }
     pub(in crate::recovery) fn corrupt(pass: &mut ScanPass, mark: bool) {
         if mark {

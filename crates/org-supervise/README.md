@@ -94,20 +94,32 @@ No changes to `org-runtime` or adoption by the host are part of this delivery.
 
 ## Recovery policy (B3-02.4a)
 
-`recovery::recover_startup` reads a consumer-owned `RecoveryRecords` port. It never
-releases a storage row, writes SQL or releases a session lock. The caller excludes
+`recovery::recover_startup` reads a consumer-owned `RecoveryRecords` port and uses
+`RecoveryCheckpoint` for durable target inventory. It never retires a storage row,
+writes SQL or releases a session lock. The caller excludes
 concurrent spawning with the same mark. A mark-only record covers a crash before
 identity persistence. A matching recorded leader receives TERM and up to five
 seconds to exit; captured surviving descendants are checked/killed individually.
 Reused PIDs, process groups and session hints cannot authorize a signal. A reboot
 invalidates recorded identity/group hints but does not skip the full current mark scan.
 
+Before TERM or KILL, the caller's checkpoint store durably appends the identities
+and ancestry of every captured target to the matching row's inventory. The union
+never shrinks and is capped at 256 identities; write failure or overflow permits
+no signal or completion. Retry reloads this inventory, checks exact PID, start
+and boot identity against a complete current snapshot, and still runs the full
+mark scan. A reparented child stays a target after its parent exits. Resolved
+entries remain until the consumer retires the row. The public store port carries
+plain data; the scan journal and proof issuance stay private to the crate.
+
 One scan pass captures all marked roots and descendants before killing them. It
 always includes the full user-process enumeration, regardless of tool-session hints.
 Zombies and an exact optional owned probe leader are skipped before environment
 reads. S0 unreadable environments are counted and skipped, without failing the scan;
-the caller surfaces these counts as warnings. A known target whose identity cannot
-be verified leaves recovery unresolved. No process environment bodies are retained.
+the caller surfaces these counts as warnings. A known live saved target skipped
+under S0 prevents an empty pass, without making the pass itself fail. A known
+target whose identity cannot be verified leaves recovery unresolved. No process
+environment bodies are retained.
 
 A shared crate-internal coordinator runs at most three passes, with a fresh
 getentropy/getrandom nonce each time. It validates the echoed mark and nonce, waits

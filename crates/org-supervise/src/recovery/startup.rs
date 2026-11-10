@@ -1,12 +1,14 @@
-use std::collections::BTreeMap;
 use std::io;
 use std::time::{Duration, Instant};
 
+use super::capture::{capture_targets, confirm_absent, snapshot_map, CaptureScope};
+use super::checkpoint::{Journal, TargetCheckpoint};
 use super::fixed_point;
+use super::RecoveryCheckpoint;
 use super::{
-    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity,
-    ProcessObservation, RecoveryContext, RecoveryProcesses, RecoveryRecord, RecoveryRecords,
-    RecoveryReport, RecoverySignal, ScanFailure, ScanPort, TargetEvidence, VerifiedTarget,
+    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity, RecoveryContext,
+    RecoveryProcesses, RecoveryRecord, RecoveryReport, RecoverySignal, ScanFailure, ScanPort,
+    TargetEvidence, VerifiedTarget,
 };
 
 /// Sealed policy completion, bound to one persisted mark. The consumer must still
@@ -29,7 +31,7 @@ impl RecoveryGone {
     pub fn mark(&self) -> &str {
         &self.mark
     }
-    /// Completion counts and S0 warnings. No storage row has been changed.
+    /// Completion counts and S0 warnings. No storage row has been retired.
     pub fn report(&self) -> &RecoveryReport {
         &self.report
     }
@@ -52,100 +54,13 @@ fn leader_identity(record: &RecoveryRecord) -> Option<ProcessIdentity> {
     })
 }
 
-// Capture the recorded leader's descendants before TERM can orphan them. Other
-// marked roots are still discovered by the mandatory post-kill full scan.
-fn leader_targets(
-    snapshot: Vec<ProcessObservation>,
-    expected: &ProcessIdentity,
-    record: &RecoveryRecord,
-    context: &RecoveryContext,
-    report: &mut RecoveryReport,
-) -> io::Result<Vec<VerifiedTarget>> {
-    let mut processes = BTreeMap::new();
-    for process in snapshot {
-        if processes.insert(process.pid, process).is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "duplicate PID in process snapshot",
-            ));
-        }
-    }
-    let Some(leader) = processes.get(&expected.pid) else {
-        return Ok(vec![]);
-    };
-    if !leader.zombie && leader.identity.is_none() {
-        report.unreadable_identities += 1;
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "recorded leader identity is unreadable",
-        ));
-    }
-    if leader.identity.as_ref() != Some(expected) {
-        return Ok(vec![]);
-    }
-    if leader.zombie {
-        report.zombies += 1;
-        return Ok(vec![]);
-    }
-    if safe_identity(leader, context).is_none()
-        || leader.mark != MarkEvidence::Present(record.mark().into())
-    {
-        report.refused += 1;
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "recorded leader cannot be verified",
-        ));
-    }
-    let mut targets = vec![VerifiedTarget {
-        identity: expected.clone(),
-        mark: record.mark().into(),
-        evidence: TargetEvidence::RecordedLeader,
-    }];
-    let mut index = 0;
-    while index < targets.len() {
-        let parent = &targets[index];
-        let mut ancestry = match &parent.evidence {
-            TargetEvidence::Descendant(chain) => chain.clone(),
-            _ => vec![],
-        };
-        ancestry.push(parent.identity.clone());
-        let parent_pid = parent.identity.pid;
-        for child in processes.values() {
-            if child.parent != parent_pid
-                || child.uid != context.uid
-                || child.zombie
-                || targets.iter().any(|t| t.identity.pid == child.pid)
-            {
-                continue;
-            }
-            if child.mark == MarkEvidence::Unreadable {
-                report.unreadable_environments += 1;
-                continue;
-            }
-            let identity = safe_identity(child, context).ok_or_else(|| {
-                report.refused += 1;
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "recorded descendant cannot be verified",
-                )
-            })?;
-            targets.push(VerifiedTarget {
-                identity: identity.clone(),
-                mark: record.mark().into(),
-                evidence: TargetEvidence::Descendant(ancestry.clone()),
-            });
-        }
-        index += 1;
-    }
-    Ok(targets)
-}
-
 fn stop_recorded(
     record: &RecoveryRecord,
     context: &RecoveryContext,
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
     report: &mut RecoveryReport,
+    inventory: &mut dyn TargetCheckpoint,
 ) -> io::Result<()> {
     let Some(expected) = leader_identity(record) else {
         return Ok(());
@@ -155,43 +70,98 @@ fn stop_recorded(
         return Ok(());
     }
     check_deadline(ops, deadline)?;
-    let targets = leader_targets(ops.snapshot(deadline)?, &expected, record, context, report)?;
-    let Some(leader) = targets.first() else {
-        return Ok(());
+    let snapshot = snapshot_map(ops.snapshot(deadline)?)?;
+    let Some(observed) = snapshot.get(&expected.pid) else {
+        return confirm_absent(&expected, ops, deadline);
     };
+    if observed.zombie {
+        return Ok(());
+    }
+    let Some(identity) = &observed.identity else {
+        report.unreadable_identities += 1;
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "recorded leader identity is unreadable",
+        ));
+    };
+    if identity != &expected {
+        return Ok(());
+    }
+    let evidence = if safe_identity(observed, context).is_none()
+        || observed.mark == MarkEvidence::Unreadable
+    {
+        None
+    } else if matches!(&observed.mark, MarkEvidence::Present(mark) if mark == record.mark()) {
+        Some(TargetEvidence::RecordedLeader)
+    } else {
+        inventory
+            .saved()
+            .iter()
+            .find(|saved| saved.identity == expected)
+            .map(|saved| TargetEvidence::Checkpoint(saved.ancestry.clone()))
+    };
+    let Some(evidence) = evidence else {
+        report.refused += 1;
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "recorded leader cannot be verified",
+        ));
+    };
+    let leader = VerifiedTarget {
+        identity: expected.clone(),
+        mark: record.mark().into(),
+        evidence,
+    };
+    // TERM can end detached marked tool parents too. Preserve every captured root and
+    // descendant before that signal, then rediscover survivors with a fresh full scan.
+    let mut observed_report = RecoveryReport::default();
+    let targets = capture_targets(
+        CaptureScope {
+            mark: record.mark(),
+            excluded: None,
+            saved: inventory.saved(),
+        },
+        &snapshot,
+        context,
+        ops,
+        deadline,
+        &mut observed_report,
+    );
+    observed_report.found_live = 0; // pre-TERM capture is not a validated scan pass
+    report.append(observed_report);
+    let targets = targets?;
+    check_deadline(ops, deadline)?;
+    inventory.save(&targets, deadline)?;
     check_deadline(ops, deadline)?;
     report.signals += 1;
-    ops.signal_checked(leader, RecoverySignal::Terminate, deadline)?;
+    ops.signal_checked(&leader, RecoverySignal::Terminate, deadline)?;
     check_deadline(ops, deadline)?;
     let grace = (ops.now() + Duration::from_secs(5)).min(deadline);
     let leader_gone = ops.wait_exited(&expected, grace)?;
     check_deadline(ops, deadline)?;
-    // No bare killpg for a non-child: every surviving captured member is checked individually.
-    for (index, target) in targets.iter().enumerate() {
-        if index == 0 && leader_gone {
-            continue;
-        }
-        check_deadline(ops, deadline)?;
+    if !leader_gone {
+        // No non-child group signal. The post-kill full scan handles the remaining
+        // individual identities, including the saved descendants if TERM orphaned them.
         report.signals += 1;
-        ops.signal_checked(target, RecoverySignal::Kill, deadline)?;
+        ops.signal_checked(&leader, RecoverySignal::Kill, deadline)?;
         check_deadline(ops, deadline)?;
         let until = (ops.now() + Duration::from_secs(1)).min(deadline);
-        if !ops.wait_exited(&target.identity, until)? {
+        if !ops.wait_exited(&expected, until)? {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "recorded process still live after kill",
+                "recorded leader still live after kill",
             ));
         }
     }
     check_deadline(ops, deadline)
 }
 
-/// Recover pending records without mutating storage. The caller excludes concurrent
+/// Recover pending records with durable target checkpoints, without retiring rows. The caller excludes concurrent
 /// reuse of their marks and retains locks until its own outcome/row update commits.
 /// A matching leader gets TERM first and up to five seconds; captured survivors are
 /// checked/killed individually. The full scan always runs, even after leader failure.
 /// Only a final validated empty pass can produce a mark-bound [`RecoveryGone`].
-pub fn recover_startup<R: RecoveryRecords>(
+pub fn recover_startup<R: RecoveryCheckpoint>(
     records: &mut R,
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
@@ -199,7 +169,7 @@ pub fn recover_startup<R: RecoveryRecords>(
     recover_with_scan(records, ops, &mut super::scan::MarkedScan, deadline)
 }
 
-pub(super) fn recover_with_scan<R: RecoveryRecords>(
+pub(super) fn recover_with_scan<R: RecoveryCheckpoint>(
     records: &mut R,
     ops: &mut dyn RecoveryProcesses,
     scan: &mut dyn ScanPort,
@@ -213,7 +183,18 @@ pub(super) fn recover_with_scan<R: RecoveryRecords>(
     };
     for (key, record) in pending {
         let mut report = RecoveryReport::default();
-        let leader = stop_recorded(&record, &context, ops, deadline, &mut report);
+        let mut inventory = Journal::new(records, &key, &record);
+        let leader = stop_recorded(
+            &record,
+            &context,
+            ops,
+            deadline,
+            &mut report,
+            &mut inventory,
+        );
+        if leader.is_err() {
+            inventory.refuse_signals();
+        }
         let scan_result = fixed_point(
             record.mark(),
             None,
@@ -221,6 +202,7 @@ pub(super) fn recover_with_scan<R: RecoveryRecords>(
             ops,
             scan,
             deadline,
+            &mut inventory,
         );
         let failure = match scan_result {
             Ok(scan_report) => {

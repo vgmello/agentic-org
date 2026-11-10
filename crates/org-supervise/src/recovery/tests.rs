@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
+use std::{cell::RefCell, rc::Rc};
 
 use super::scan::{fixed_point, scan_one_pass, test_support, MarkedScan, RequestIssuer};
 use super::*;
@@ -42,9 +43,13 @@ fn record(leader: bool) -> RecoveryRecord {
     .unwrap()
 }
 
+#[derive(Default)]
 struct Records {
     rows: Vec<(u32, RecoveryRecord)>,
     fail: bool,
+    checkpoint_failure: bool,
+    checkpoints: usize,
+    committed: Rc<RefCell<Vec<CheckpointTarget>>>,
 }
 impl RecoveryRecords for Records {
     type Key = u32;
@@ -56,10 +61,40 @@ impl RecoveryRecords for Records {
         }
     }
 }
+impl RecoveryCheckpoint for Records {
+    fn checkpoint(
+        &mut self,
+        key: &u32,
+        mark: &str,
+        inventory: &[CheckpointTarget],
+        _: Instant,
+    ) -> io::Result<()> {
+        self.checkpoints += 1;
+        if self.checkpoint_failure {
+            return Err(io::Error::other("checkpoint failed"));
+        }
+        validate_inventory(inventory)?;
+        let row = self
+            .rows
+            .iter_mut()
+            .find(|(id, row)| id == key && row.mark() == mark)
+            .ok_or_else(|| io::Error::other("stale recovery key/mark"))?;
+        assert!(
+            row.1.inventory.iter().all(|old| inventory.contains(old)),
+            "inventory shrank"
+        );
+        row.1.inventory = inventory.to_vec();
+        *self.committed.borrow_mut() = inventory.to_vec();
+        Ok(())
+    }
+}
+fn journal(store: &mut Records) -> checkpoint::Journal<'_, Records> {
+    checkpoint::Journal::new(store, &7, &record(false))
+}
 fn records(leader: bool) -> Records {
     Records {
         rows: vec![(7, record(leader))],
-        fail: false,
+        ..Records::default()
     }
 }
 
@@ -78,11 +113,14 @@ struct Processes {
     snapshots: VecDeque<Vec<ProcessObservation>>,
     actions: Vec<Action>,
     term_exits: bool,
+    term_removes: Option<u32>,
     kill_exits: bool,
     signal_failure: Option<u32>,
     wait_failure: bool,
     snapshot_failure: bool,
+    hidden_from_snapshot: Option<u32>,
     reused_on_signal: Option<u32>,
+    checkpoint_checks: Option<Rc<RefCell<Vec<CheckpointTarget>>>>,
 }
 impl Processes {
     fn new(live: Vec<ProcessObservation>) -> Self {
@@ -97,11 +135,14 @@ impl Processes {
             snapshots: VecDeque::new(),
             actions: vec![],
             term_exits: false,
+            term_removes: None,
             kill_exits: true,
             signal_failure: None,
             wait_failure: false,
             snapshot_failure: false,
+            hidden_from_snapshot: None,
             reused_on_signal: None,
+            checkpoint_checks: None,
         }
     }
     fn deadline(&self) -> Instant {
@@ -138,7 +179,12 @@ impl RecoveryProcesses for Processes {
         if let Some(next) = self.snapshots.pop_front() {
             self.live = next;
         }
-        Ok(self.live.clone())
+        Ok(self
+            .live
+            .iter()
+            .filter(|p| self.hidden_from_snapshot != Some(p.pid))
+            .cloned()
+            .collect())
     }
     fn signal_checked(
         &mut self,
@@ -147,6 +193,15 @@ impl RecoveryProcesses for Processes {
         _: Instant,
     ) -> io::Result<SignalOutcome> {
         let pid = target.identity().pid;
+        if let Some(checkpoint) = &self.checkpoint_checks {
+            assert!(
+                checkpoint
+                    .borrow()
+                    .iter()
+                    .any(|saved| &saved.identity == target.identity()),
+                "signal issued before its durable checkpoint"
+            );
+        }
         self.actions.push(Action::Signal(pid, signal, self.now));
         assert_eq!(target.mark(), MARK);
         if self.signal_failure == Some(pid) {
@@ -169,6 +224,11 @@ impl RecoveryProcesses for Processes {
             || (signal == RecoverySignal::Kill && self.kill_exits)
         {
             self.remove(pid);
+        }
+        if signal == RecoverySignal::Terminate {
+            if let Some(tool) = self.term_removes {
+                self.remove(tool);
+            }
         }
         Ok(SignalOutcome::Signalled)
     }
@@ -197,8 +257,13 @@ impl RecoveryProcesses for Processes {
 }
 
 fn run(leader: bool, ops: &mut Processes) -> RecoveryBatch<u32> {
+    run_store(&mut records(leader), ops)
+}
+
+fn run_store(store: &mut Records, ops: &mut Processes) -> RecoveryBatch<u32> {
     let deadline = ops.deadline();
-    recover_startup(&mut records(leader), ops, deadline).unwrap()
+    ops.checkpoint_checks = Some(store.committed.clone());
+    recover_startup(store, ops, deadline).unwrap()
 }
 
 #[test]
@@ -324,7 +389,9 @@ fn recovery_excludes_only_exact_unreaped_leader_identity_before_environment_read
     let excluded = leader.identity.clone();
     let mut ops = Processes::new(vec![leader.clone(), marked(200)]);
     let deadline = ops.deadline();
-    let request = test_support::issue(MARK, excluded.clone(), deadline);
+    let mut store = records(false);
+    let mut inventory = journal(&mut store);
+    let request = test_support::issue(MARK, excluded.clone(), deadline, &mut inventory);
     let pass = scan_one_pass(request, &mut ops).unwrap();
     assert_eq!(pass.report().excluded, 1);
     assert_eq!(pass.report().unreadable_environments, 0);
@@ -332,7 +399,7 @@ fn recovery_excludes_only_exact_unreaped_leader_identity_before_environment_read
     leader.identity.as_mut().unwrap().started = "replacement".into();
     leader.mark = MarkEvidence::Present(MARK.into());
     let mut ops = Processes::new(vec![leader]);
-    let request = test_support::issue(MARK, excluded, ops.deadline());
+    let request = test_support::issue(MARK, excluded, ops.deadline(), &mut inventory);
     assert_eq!(
         scan_one_pass(request, &mut ops).unwrap().report().excluded,
         0
@@ -549,7 +616,9 @@ fn recovery_rejects_wrong_mark_and_nonce_even_on_empty_pass() {
 #[test]
 fn recovery_one_pass_never_hides_a_fixed_point_loop() {
     let mut ops = Processes::new(vec![marked(200)]);
-    let request = test_support::issue(MARK, None, ops.deadline());
+    let mut store = records(false);
+    let mut inventory = journal(&mut store);
+    let request = test_support::issue(MARK, None, ops.deadline(), &mut inventory);
     let pass = scan_one_pass(request, &mut ops).unwrap();
     assert_eq!(pass.found_live(), 1);
     assert_eq!(pass.report().passes, 1);
@@ -568,10 +637,27 @@ fn recovery_fixed_point_waits_one_second_and_requires_final_empty_pass() {
     let mut ops = Processes::new(vec![marked(200)]);
     let start = ops.now;
     let deadline = ops.deadline();
-    let report = fixed_point(MARK, None, &[], &mut ops, &mut MarkedScan, deadline).unwrap();
+    let mut store = records(false);
+    let mut inventory = journal(&mut store);
+    let report = fixed_point(
+        MARK,
+        None,
+        &[],
+        &mut ops,
+        &mut MarkedScan,
+        deadline,
+        &mut inventory,
+    )
+    .unwrap();
     assert_eq!(report.passes, 2);
     assert_eq!(ops.now, start + Duration::from_secs(1));
-    assert_eq!(ops.actions.last(), Some(&Action::Snapshot));
+    assert_eq!(
+        ops.actions
+            .iter()
+            .filter(|a| **a == Action::Snapshot)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -580,9 +666,13 @@ fn recovery_two_issuers_never_repeat_a_nonce_in_ten_thousand_requests() {
     let mut second = RequestIssuer;
     let mut seen = BTreeSet::new();
     let deadline = Instant::now() + Duration::from_secs(30);
+    let mut store = records(false);
+    let mut inventory = journal(&mut store);
     for _ in 0..10_000 {
         for issuer in [&mut first, &mut second] {
-            let request = issuer.issue(MARK, None, &[], deadline).unwrap();
+            let request = issuer
+                .issue(MARK, None, &[], deadline, &mut inventory)
+                .unwrap();
             assert!(seen.insert(*request.nonce()));
         }
     }
@@ -636,7 +726,7 @@ fn recovery_multiple_records_retain_unresolved_key_without_releasing_any_row() {
     let other = RecoveryRecord::new("other".into(), None, vec![]).unwrap();
     let mut store = Records {
         rows: vec![(7, record(false)), (8, other)],
-        fail: false,
+        ..Records::default()
     };
     let mut ops = Processes::new(vec![marked(200)]);
     ops.signal_failure = Some(200);
@@ -763,4 +853,273 @@ fn recovery_unreadable_descendant_environment_is_s0_skipped() {
     assert_eq!(ops.signals(), [(200, RecoverySignal::Kill)]);
     assert_eq!(batch.gone[0].1.report().unreadable_environments, 2);
     assert_eq!(ops.live[0].pid, 201);
+}
+
+#[test]
+fn recovery_failed_descendant_cleanup_cannot_allow_false_gone_on_retry() {
+    let child = process(201, 200, MarkEvidence::Absent);
+    let mut ops = Processes::new(vec![marked(200), child]);
+    ops.signal_failure = Some(201);
+    let mut store = records(false);
+    let deadline = ops.deadline();
+    let first = recover_startup(&mut store, &mut ops, deadline).unwrap();
+    assert!(first.gone.is_empty());
+    assert_eq!(first.unresolved.len(), 1);
+    assert_eq!(ops.live[0].pid, 201);
+    assert_eq!(ops.live[0].parent, 1);
+    ops.signal_failure = None;
+    let deadline = ops.deadline();
+    let second = recover_startup(&mut store, &mut ops, deadline).unwrap();
+    assert!(
+        second.gone.is_empty() || ops.live.iter().all(|p| p.pid != 201),
+        "retry must not issue Gone while captured descendant remains live"
+    );
+}
+
+#[test]
+fn recovery_crash_reload_preserves_targets_before_first_signal_and_after_term() {
+    for leader in [false, true] {
+        let pid = if leader { 100 } else { 200 };
+        let mut store = records(leader);
+        let mut ops = Processes::new(vec![
+            marked(pid),
+            process(pid + 1, pid, MarkEvidence::Absent),
+        ]);
+        ops.term_exits = leader;
+        // Mark-only: crash after write-ahead commit before the first signal took effect.
+        // Recorded leader: TERM exits/reparents; the subsequent child kill fails.
+        ops.signal_failure = Some(if leader { pid + 1 } else { pid });
+        assert!(run_store(&mut store, &mut ops).gone.is_empty());
+        assert_eq!(store.rows[0].1.inventory().len(), 2);
+        assert_eq!(
+            ops.signals()[0].1,
+            if leader {
+                RecoverySignal::Terminate
+            } else {
+                RecoverySignal::Kill
+            }
+        );
+        let mut loaded = Records {
+            rows: store.rows.clone(),
+            ..Records::default()
+        };
+        // No previous in-memory adapter state. The parent is gone; the saved child
+        // now has an unmarked descendant that must also be captured before any kill.
+        let mut next = Processes::new(vec![
+            process(pid + 1, 1, MarkEvidence::Absent),
+            process(pid + 2, pid + 1, MarkEvidence::Absent),
+            process(400, 1, MarkEvidence::Absent),
+        ]);
+        assert!(run_store(&mut loaded, &mut next).unresolved.is_empty());
+        assert_eq!(
+            next.signals(),
+            [
+                (pid + 1, RecoverySignal::Kill),
+                (pid + 2, RecoverySignal::Kill)
+            ]
+        );
+        assert_eq!(next.live[0].pid, 400);
+        assert_eq!(loaded.rows.len(), 1);
+        assert_eq!(loaded.rows[0].1.inventory().len(), 3); // append, never discard resolved root
+    }
+}
+
+#[test]
+fn recovery_wait_failure_after_parent_exit_cannot_erase_child_inventory() {
+    let mut store = records(false);
+    let mut ops = Processes::new(vec![marked(200), process(201, 200, MarkEvidence::Absent)]);
+    ops.wait_failure = true;
+    assert!(run_store(&mut store, &mut ops).gone.is_empty());
+    assert_eq!(ops.live[0].pid, 201);
+    ops.wait_failure = false;
+    assert!(run_store(&mut store, &mut ops).unresolved.is_empty());
+    assert!(ops.live.is_empty());
+    assert_eq!(store.rows[0].1.inventory().len(), 2);
+}
+
+#[test]
+fn recovery_checkpoint_failure_prevents_every_signal_and_gone() {
+    for leader in [false, true] {
+        let pid = if leader { 100 } else { 200 };
+        let mut store = records(leader);
+        store.checkpoint_failure = true;
+        let mut ops = Processes::new(vec![
+            marked(pid),
+            process(pid + 1, pid, MarkEvidence::Absent),
+        ]);
+        let batch = run_store(&mut store, &mut ops);
+        assert!(batch.gone.is_empty());
+        assert_eq!(batch.unresolved.len(), 1);
+        assert!(ops.signals().is_empty());
+        assert_eq!(ops.live.len(), 2);
+        assert!(store.rows[0].1.inventory().is_empty());
+        assert!(store.checkpoints > 0);
+    }
+}
+
+#[test]
+fn recovery_257_captured_identities_refuse_before_signal_or_partial_write() {
+    for leader in [false, true] {
+        let mut store = records(leader);
+        let live = if leader {
+            std::iter::once(marked(100))
+                .chain((101..357).map(|pid| process(pid, 100, MarkEvidence::Absent)))
+                .collect()
+        } else {
+            (200..457).map(marked).collect()
+        };
+        let mut ops = Processes::new(live);
+        assert!(run_store(&mut store, &mut ops).gone.is_empty());
+        assert!(ops.signals().is_empty());
+        assert_eq!(ops.live.len(), 257);
+        assert_eq!(store.checkpoints, 0);
+        assert!(store.rows[0].1.inventory().is_empty());
+    }
+}
+
+#[test]
+fn recovery_inventory_cap_includes_resolved_entries_in_cumulative_union() {
+    let inventory = (1000..1256)
+        .map(|pid| CheckpointTarget {
+            identity: marked(pid).identity.unwrap(),
+            ancestry: vec![],
+        })
+        .collect();
+    let mut store = records(false);
+    store.rows[0].1 = record(false).with_inventory(inventory).unwrap();
+    let mut ops = Processes::new(vec![]);
+    assert!(run_store(&mut store, &mut ops).unresolved.is_empty()); // exactly 256 allowed
+    let writes = store.checkpoints;
+    ops.live.push(marked(200));
+    assert!(run_store(&mut store, &mut ops).gone.is_empty());
+    assert!(ops.signals().is_empty());
+    assert_eq!(store.checkpoints, writes);
+    assert_eq!(store.rows[0].1.inventory().len(), 256);
+}
+
+fn saved_parent_and_child() -> Vec<CheckpointTarget> {
+    let parent = marked(200).identity.unwrap();
+    vec![
+        CheckpointTarget {
+            identity: parent.clone(),
+            ancestry: vec![],
+        },
+        CheckpointTarget {
+            identity: marked(201).identity.unwrap(),
+            ancestry: vec![parent],
+        },
+    ]
+}
+
+#[test]
+fn recovery_saved_target_requires_exact_pid_start_and_boot_match() {
+    for change in 0..4 {
+        let mut store = records(false);
+        store.rows[0].1 = record(false)
+            .with_inventory(saved_parent_and_child())
+            .unwrap();
+        let mut child = process(201, 1, MarkEvidence::Absent);
+        match change {
+            1 => child.identity.as_mut().unwrap().started = "reused".into(),
+            2 => child.identity.as_mut().unwrap().boot = "reboot".into(),
+            3 => {
+                child.pid = 202;
+                child.identity.as_mut().unwrap().pid = 202;
+            }
+            _ => {}
+        }
+        let mut ops = Processes::new(vec![child]);
+        if change == 2 {
+            ops.context.boot = "reboot".into();
+        }
+        assert!(run_store(&mut store, &mut ops).unresolved.is_empty());
+        if change == 0 {
+            assert_eq!(ops.signals(), [(201, RecoverySignal::Kill)]);
+        } else {
+            assert!(ops.signals().is_empty());
+            assert_eq!(ops.live.len(), 1);
+        }
+        assert_eq!(store.rows[0].1.inventory().len(), 2);
+    }
+}
+
+#[test]
+fn recovery_known_saved_target_with_unreadable_environment_is_skipped_but_not_forgotten() {
+    let mut store = records(false);
+    store.rows[0].1 = record(false)
+        .with_inventory(saved_parent_and_child())
+        .unwrap();
+    let mut ops = Processes::new(vec![process(201, 1, MarkEvidence::Unreadable)]);
+    let batch = run_store(&mut store, &mut ops);
+    assert!(batch.gone.is_empty());
+    assert!(ops.signals().is_empty());
+    assert_eq!(batch.unresolved[0].1.report.passes, 3); // S0 passes themselves succeed
+    assert_eq!(batch.unresolved[0].1.report.unreadable_environments, 3);
+    assert_eq!(
+        batch.unresolved[0].1.error.kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(store.rows[0].1.inventory().len(), 2);
+}
+
+#[test]
+fn recovery_pass_rejects_checkpoint_for_different_mark_even_when_empty() {
+    let mut store = records(false);
+    let mut inventory = journal(&mut store);
+    let mut ops = Processes::new(vec![]);
+    let request = test_support::issue("another-mark", None, ops.deadline(), &mut inventory);
+    assert_eq!(
+        scan_one_pass(request, &mut ops).unwrap_err().error.kind(),
+        io::ErrorKind::InvalidData
+    );
+    assert!(ops.actions.is_empty());
+    assert_eq!(store.checkpoints, 0);
+}
+
+#[test]
+fn recovery_term_checkpoint_includes_detached_marked_tool_tree() {
+    let mut store = records(true);
+    let mut ops = Processes::new(vec![
+        marked(100),
+        marked(200),
+        process(201, 200, MarkEvidence::Absent),
+    ]);
+    ops.term_exits = true;
+    ops.term_removes = Some(200);
+    let batch = run_store(&mut store, &mut ops);
+    assert!(batch.unresolved.is_empty());
+    assert!(
+        ops.live.is_empty(),
+        "TERM orphaned an unmarked detached tool descendant"
+    );
+    assert_eq!(
+        ops.signals(),
+        [
+            (100, RecoverySignal::Terminate),
+            (201, RecoverySignal::Kill)
+        ]
+    );
+    assert_eq!(store.rows[0].1.inventory().len(), 3);
+}
+
+#[test]
+fn recovery_missing_snapshot_entry_is_not_proof_a_known_process_exited() {
+    for leader in [false, true] {
+        let mut store = records(leader);
+        let pid = if leader { 100 } else { 201 };
+        if !leader {
+            store.rows[0].1 = record(false)
+                .with_inventory(saved_parent_and_child())
+                .unwrap();
+        }
+        let mut ops = Processes::new(vec![process(pid, 1, MarkEvidence::Absent)]);
+        ops.hidden_from_snapshot = Some(pid);
+        let batch = run_store(&mut store, &mut ops);
+        assert!(
+            batch.gone.is_empty(),
+            "known live identity was filtered from user enumeration"
+        );
+        assert!(ops.signals().is_empty());
+        assert_eq!(ops.live[0].pid, pid);
+    }
 }
