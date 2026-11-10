@@ -1246,12 +1246,14 @@ fn recovery_torn_snapshot_cannot_attach_old_ppid_to_reused_intermediary() {
     bridge.identity.as_mut().unwrap().started = "replacement".into();
     let child = process(202, 201, MarkEvidence::Absent);
     let mut ops = Processes::new(vec![marked(200), bridge, child]);
-    let batch = run(false, &mut ops);
+    let mut store = records(false);
+    let batch = run_store(&mut store, &mut ops);
     assert!(batch.gone.is_empty());
     assert!(
         ops.signals().is_empty(),
         "a reused parent PID cannot establish ancestry"
     );
+    assert_eq!(store.checkpoints, 0);
 }
 
 #[test]
@@ -1259,10 +1261,29 @@ fn recovery_cyclic_snapshot_cannot_authorize_descendant_signal() {
     let root = process(200, 201, MarkEvidence::Present(MARK.into()));
     let child = process(201, 200, MarkEvidence::Absent);
     let mut ops = Processes::new(vec![root, child]);
-    let batch = run(false, &mut ops);
+    let mut store = records(false);
+    let batch = run_store(&mut store, &mut ops);
     assert!(batch.gone.is_empty());
     assert!(
         ops.signals().is_empty(),
         "cyclic parent links cannot establish ancestry"
     );
+    assert_eq!(store.checkpoints, 0);
+}
+
+#[test]
+fn recovery_detects_torn_parent_identity_even_if_replacement_is_a_zombie() {
+    let mut bridge = process(201, 200, MarkEvidence::Unreadable);
+    bridge.identity.as_mut().unwrap().started = "zombie-replacement".into();
+    bridge.zombie = true;
+    let child = process(202, 201, MarkEvidence::Absent);
+    let mut ops = Processes::new(vec![marked(200), bridge, child]);
+    let mut store = records(false);
+    let batch = run_store(&mut store, &mut ops);
+    assert!(
+        batch.gone.is_empty(),
+        "filtering must not hide an inconsistent parent identity"
+    );
+    assert!(ops.signals().is_empty());
+    assert_eq!(store.checkpoints, 0);
 }

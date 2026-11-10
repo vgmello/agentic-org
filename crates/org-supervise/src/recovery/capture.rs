@@ -42,17 +42,15 @@ pub(super) fn confirm_absent(
     Ok(())
 }
 
-// Check exact parent observations before using any edge. A torn or cyclic graph
-// is an incomplete snapshot, so it must fail before the checkpoint or any signal.
-fn verified_children<'a>(
-    processes: &BTreeMap<u32, &'a ProcessObservation>,
-    context: &RecoveryContext,
+// Validate topology against the entire snapshot. Filtering for signal eligibility
+// first could hide evidence of a reused PID (for example, a zombie replacement).
+fn validated_parent_links(
+    snapshot: &BTreeMap<u32, ProcessObservation>,
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
-) -> io::Result<BTreeMap<u32, Vec<&'a ProcessObservation>>> {
-    let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
+) -> io::Result<BTreeMap<u32, u32>> {
     let mut parents = BTreeMap::new();
-    for child in processes.values() {
+    for child in snapshot.values() {
         check_deadline(ops, deadline)?;
         let Some(parent) = &child.parent else {
             continue;
@@ -63,7 +61,7 @@ fn verified_children<'a>(
                 "invalid captured parent identity",
             ));
         }
-        let Some(observed) = processes.get(&parent.pid) else {
+        let Some(observed) = snapshot.get(&parent.pid) else {
             continue;
         };
         let Some(identity) = &observed.identity else {
@@ -75,10 +73,7 @@ fn verified_children<'a>(
                 "captured parent identity changed",
             ));
         }
-        if safe_identity(observed, context).is_some() {
-            parents.insert(child.pid, parent.pid);
-            children.entry(parent.pid).or_default().push(child);
-        }
+        parents.insert(child.pid, parent.pid);
     }
     let mut finished = BTreeSet::new();
     for mut pid in parents.keys().copied() {
@@ -98,7 +93,7 @@ fn verified_children<'a>(
         }
         finished.extend(path);
     }
-    Ok(children)
+    Ok(parents)
 }
 
 /// Mark roots and any known earlier targets, plus an optional exact owned leader exclusion.
@@ -116,6 +111,7 @@ pub(super) fn capture_targets(
     deadline: Instant,
     report: &mut RecoveryReport,
 ) -> io::Result<Vec<VerifiedTarget>> {
+    let parent_links = validated_parent_links(snapshot, ops, deadline)?;
     let mut eligible = BTreeMap::new();
     for (pid, p) in snapshot {
         if p.uid != context.uid {
@@ -229,7 +225,15 @@ pub(super) fn capture_targets(
         ancestry_nodes.insert(saved.identity.pid, (None, id));
         queue.push_back((saved.identity.pid, true));
     }
-    let children = verified_children(&eligible, context, ops, deadline)?;
+    let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
+    for (child, parent) in parent_links {
+        let (Some(child), Some(observed)) = (eligible.get(&child), eligible.get(&parent)) else {
+            continue;
+        };
+        if safe_identity(observed, context).is_some() {
+            children.entry(parent).or_default().push(child);
+        }
+    }
     // Mark each observed node once. Reconstruct a
     // bounded ancestry chain only for a readable target, not for each S0 link.
     while let Some((parent, from_checkpoint)) = queue.pop_front() {
