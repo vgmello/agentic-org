@@ -7,6 +7,9 @@
 //! Linux casefold directories (ext4/f2fs) are unsupported and refused along the root path.
 //! Linux accepts case-sensitive ext4, XFS, btrfs, f2fs and overlayfs paths only;
 //! XFS geometry must positively exclude ASCII-CI. ZFS is unsupported in v1.
+//! Locks serialize cooperating writers. Deliberate same-UID mutation outside the
+//! locks is outside v1's threat model. The final metadata check before rename
+//! narrows the replacement window; it is not an atomic inode compare-and-swap.
 
 mod directory;
 pub(crate) mod registry;

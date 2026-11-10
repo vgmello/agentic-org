@@ -45,6 +45,19 @@ impl Drop for Directory {
 
 pub(super) struct FileLock(File);
 
+/// Checked bytes plus the retained inode required for a later conditional update.
+pub(super) struct ControlFile {
+    file: File,
+    bytes: Vec<u8>,
+}
+
+impl std::ops::Deref for ControlFile {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 impl std::ops::Deref for FileLock {
     type Target = File;
     fn deref(&self) -> &File {
@@ -356,7 +369,7 @@ impl Directory {
         Ok(file)
     }
 
-    pub(super) fn read(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>, Error> {
+    pub(super) fn read(&self, name: &str, limit: usize) -> Result<Option<ControlFile>, Error> {
         let file = match self.open_file(name, libc::O_RDONLY) {
             Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             other => other?,
@@ -364,7 +377,7 @@ impl Directory {
         self.read_from(name, file, limit).map(Some)
     }
 
-    fn read_from(&self, name: &str, mut file: File, limit: usize) -> Result<Vec<u8>, Error> {
+    fn read_from(&self, name: &str, mut file: File, limit: usize) -> Result<ControlFile, Error> {
         let mut bytes = Vec::new();
         Read::by_ref(&mut file)
             .take((limit + 1) as u64)
@@ -373,12 +386,30 @@ impl Directory {
             return Err(Error::Unsafe("control file exceeds its size limit"));
         }
         self.verify_file(name, &file)?;
-        Ok(bytes)
+        Ok(ControlFile { file, bytes })
     }
 
-    pub(super) fn publish(&self, name: &str, bytes: &[u8], replace: bool) -> Result<(), Error> {
+    pub(super) fn publish(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        previous: Option<&ControlFile>,
+    ) -> Result<ControlFile, Error> {
+        self.publish_after_staging(name, bytes, previous, || {})
+    }
+
+    fn publish_after_staging(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        previous: Option<&ControlFile>,
+        before_commit: impl FnOnce(),
+    ) -> Result<ControlFile, Error> {
         let to = leaf(name)?;
         self.verify()?;
+        if let Some(previous) = previous {
+            self.verify_file(name, &previous.file)?;
+        }
         let temporary = format!(".instance-{}.tmp", crate::ids::generate()?);
         let mut file = self.open_file(&temporary, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)?;
         let result = (|| {
@@ -388,9 +419,13 @@ impl Directory {
             self.verify_file(&temporary, &file)?;
             let from = leaf(&temporary)?;
             let fd = self.file.as_raw_fd();
+            before_commit();
+            if let Some(previous) = previous {
+                self.verify_file(name, &previous.file)?;
+            }
             // SAFETY: both names are module-owned components relative to our retained fd.
             let rc = unsafe {
-                if replace {
+                if previous.is_some() {
                     libc::renameat(fd, from.as_ptr(), fd, to.as_ptr())
                 } else {
                     rename_exclusive(fd, &from, &to)
@@ -406,7 +441,11 @@ impl Directory {
         let temporary = cstring(std::ffi::OsStr::new(&temporary))?;
         // SAFETY: removes only our own temporary name; after publication it is absent.
         unsafe { libc::unlinkat(self.file.as_raw_fd(), temporary.as_ptr(), 0) };
-        result
+        result?;
+        Ok(ControlFile {
+            file,
+            bytes: bytes.to_vec(),
+        })
     }
 
     pub(super) fn is_empty(&self) -> Result<bool, Error> {
@@ -670,6 +709,80 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn updates_require_the_current_retained_control_handle() {
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
+        let first = directory.publish("control", b"first", None).unwrap();
+        let second = directory
+            .publish("control", b"second", Some(&first))
+            .unwrap();
+        assert!(directory
+            .publish("control", b"stale", Some(&first))
+            .is_err());
+        assert!(directory.publish("control", b"unclaimed", None).is_err());
+        assert_eq!(
+            std::fs::read(directory.path().join("control")).unwrap(),
+            b"second"
+        );
+        directory
+            .publish("control", b"third", Some(&second))
+            .unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("control")).unwrap(),
+            b"third"
+        );
+    }
+
+    #[test]
+    fn updates_refuse_control_entries_replaced_since_the_checked_read() {
+        use std::os::unix::fs::symlink;
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
+        for replacement in ["symlink", "hardlink", "different-inode"] {
+            for during_staging in [false, true] {
+                let directory = root
+                    .child(&format!("{replacement}-{during_staging}"), true)
+                    .unwrap();
+                directory.publish("control", b"original", None).unwrap();
+                let before = directory.read("control", 64).unwrap().unwrap();
+                assert_eq!(&*before, b"original");
+                let control = directory.path().join("control");
+                let target = directory.path().join("target");
+                let identity = std::cell::Cell::new(None);
+                let replace = || {
+                    std::fs::write(&target, b"replacement").unwrap();
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
+                    std::fs::rename(&control, directory.path().join("previous")).unwrap();
+                    match replacement {
+                        "symlink" => symlink(&target, &control).unwrap(),
+                        "hardlink" => std::fs::hard_link(&target, &control).unwrap(),
+                        _ => std::fs::rename(&target, &control).unwrap(),
+                    }
+                    identity.set(Some(std::fs::symlink_metadata(&control).unwrap().ino()));
+                };
+                let result = if during_staging {
+                    directory.publish_after_staging("control", b"update", Some(&before), replace)
+                } else {
+                    replace();
+                    directory.publish("control", b"update", Some(&before))
+                };
+                assert!(
+                    result.is_err(),
+                    "{replacement} was overwritten, during_staging={during_staging}"
+                );
+                assert_eq!(
+                    Some(std::fs::symlink_metadata(&control).unwrap().ino()),
+                    identity.get()
+                );
+                assert_eq!(std::fs::read(&control).unwrap(), b"replacement");
+            }
+        }
+    }
+
+    #[test]
     fn checked_reads_refuse_control_entries_replaced_after_open() {
         use std::os::unix::fs::symlink;
         let temporary = tempfile::tempdir().unwrap();
@@ -677,7 +790,7 @@ mod tests {
         let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         for replacement in ["symlink", "hardlink", "different-inode"] {
             let directory = root.child(replacement, true).unwrap();
-            directory.publish("control", b"original", false).unwrap();
+            directory.publish("control", b"original", None).unwrap();
             let held = directory.open_file("control", libc::O_RDONLY).unwrap();
             let path = directory.path().to_owned();
             let (ready, replaced) = std::sync::mpsc::channel();

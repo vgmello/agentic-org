@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::directory::{absolute, paths_overlap, Directory, Identity};
+use super::directory::{absolute, paths_overlap, ControlFile, Directory, Identity};
 use super::temp;
 use super::{Error, Name};
 
@@ -158,7 +158,7 @@ impl Instance {
         self.root.path()
     }
 
-    fn config(&self) -> Result<Config, Error> {
+    fn config(&self) -> Result<(Config, ControlFile), Error> {
         self.root.verify()?;
         let bytes = self
             .root
@@ -166,7 +166,7 @@ impl Instance {
             .ok_or(Error::Unsafe("ready instance configuration is missing"))?;
         let config: Config = decode(&bytes)?;
         config.validate(&self.binding)?;
-        Ok(config)
+        Ok((config, bytes))
     }
 
     pub(crate) fn verify(&self) -> Result<(), Error> {
@@ -191,7 +191,7 @@ impl Instance {
         if !org_office_launch::is_plain_id(office) {
             return Err(Error::Invalid("office ID must be plain"));
         }
-        let mut config = self.config()?;
+        let (mut config, previous) = self.config()?;
         let parent = self.instance_temp()?;
         if let Some(handle) = config.office_temp_handles.get(office) {
             let directory = parent.child(handle, true)?;
@@ -202,7 +202,8 @@ impl Instance {
             config.office_temp_handles.values().map(String::as_str),
         )?;
         config.office_temp_handles.insert(office.to_owned(), handle);
-        self.root.publish(CONFIG, &encode(&config)?, true)?;
+        self.root
+            .publish(CONFIG, &encode(&config)?, Some(&previous))?;
         Ok(directory.path().to_owned())
     }
 }
@@ -234,7 +235,7 @@ impl Registry {
     /// The returned canonical paths are a snapshot taken under the locator lock.
     pub(crate) fn restore_temp_folders(&self) -> Result<Vec<PathBuf>, Error> {
         let lock = self.directory.lock_file(LOCK)?;
-        let locator = self.load()?;
+        let (locator, _previous) = self.load()?;
         self.user_temp.verify()?;
         let parent = self.user_temp.child("ao", true)?;
         let mut paths = Vec::new();
@@ -256,7 +257,7 @@ impl Registry {
         self.directory.verify()?;
         self.user_temp.verify()?;
         let registry_lock = self.directory.lock_file(LOCK)?;
-        let mut locator = self.load()?;
+        let (mut locator, mut previous) = self.load()?;
         let mut root = match self.check_roots(&locator, &name, &path)? {
             Some(root) => root,
             None => Directory::open(&path, true)?,
@@ -308,16 +309,17 @@ impl Registry {
                     },
                     phase: Phase::Reserved,
                 });
-                self.save(&locator, &registry_lock)?;
+                previous = Some(self.save(&locator, &registry_lock, previous.as_ref())?);
                 locator.entries.len() - 1
             }
         };
-        self.finish(locator, index, root, &registry_lock)
+        self.finish(locator, index, root, &registry_lock, previous.as_ref())
     }
 
-    fn load(&self) -> Result<Locator, Error> {
-        let locator = match self.directory.read(REGISTRY, MAX_BYTES)? {
-            Some(bytes) => decode::<Locator>(&bytes)?,
+    fn load(&self) -> Result<(Locator, Option<ControlFile>), Error> {
+        let previous = self.directory.read(REGISTRY, MAX_BYTES)?;
+        let locator = match previous.as_ref() {
+            Some(bytes) => decode::<Locator>(bytes)?,
             None => Locator {
                 version: 1,
                 user_temp: self.user_temp.path().to_owned(),
@@ -356,7 +358,7 @@ impl Registry {
                 ));
             }
         }
-        Ok(locator)
+        Ok((locator, previous))
     }
 
     fn check_roots(
@@ -464,6 +466,7 @@ impl Registry {
         index: usize,
         root: Directory,
         lock: &File,
+        previous: Option<&ControlFile>,
     ) -> Result<Instance, Error> {
         let entry = &locator.entries[index];
         let expected = Config {
@@ -477,13 +480,13 @@ impl Registry {
                 config.validate(&expected.binding)?;
             }
             None if entry.phase == Phase::Reserved => {
-                root.publish(CONFIG, &encode(&expected)?, false)?;
+                root.publish(CONFIG, &encode(&expected)?, None)?;
             }
             None => return Err(Error::Unsafe("ready instance configuration is missing")),
         }
         if entry.phase == Phase::Reserved {
             locator.entries[index].phase = Phase::Ready;
-            self.save(&locator, lock)?;
+            self.save(&locator, lock, previous)?;
         }
         self.directory.verify_file(LOCK, lock)?;
         self.user_temp.verify()?;
@@ -499,9 +502,15 @@ impl Registry {
         Ok(instance)
     }
 
-    fn save(&self, locator: &Locator, lock: &File) -> Result<(), Error> {
+    fn save(
+        &self,
+        locator: &Locator,
+        lock: &File,
+        previous: Option<&ControlFile>,
+    ) -> Result<ControlFile, Error> {
         self.directory.verify_file(LOCK, lock)?;
-        self.directory.publish(REGISTRY, &encode(locator)?, true)
+        self.directory
+            .publish(REGISTRY, &encode(locator)?, previous)
     }
 }
 

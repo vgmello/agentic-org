@@ -246,7 +246,7 @@ fn an_empty_locator_still_refuses_a_changed_user_temp_base_with_its_own_diagnost
         entries: Vec::new(),
     };
     let lock = fixture.registry.directory.lock_file(LOCK).unwrap();
-    fixture.registry.save(&locator, &lock).unwrap();
+    fixture.registry.save(&locator, &lock, None).unwrap();
     drop(lock);
     let message = match fixture.registry.restore_temp_folders() {
         Err(error) => error.to_string(),
@@ -349,9 +349,12 @@ fn an_interrupted_reservation_reuses_its_committed_id() {
     // config durably present before the ready marker. Neither may mint another ID.
     for remove_config in [true, false] {
         let lock = fixture.registry.directory.lock_file(LOCK).unwrap();
-        let mut locator = fixture.registry.load().unwrap();
+        let (mut locator, previous) = fixture.registry.load().unwrap();
         locator.entries[0].phase = Phase::Reserved;
-        fixture.registry.save(&locator, &lock).unwrap();
+        fixture
+            .registry
+            .save(&locator, &lock, previous.as_ref())
+            .unwrap();
         drop(lock);
         if remove_config {
             fs::remove_file(&config_path).unwrap();
