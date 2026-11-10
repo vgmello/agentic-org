@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { markdown, type Inline } from '$lib/chat/markdown';
+	import { markdown, type Inline } from '$lib/modules/messaging/markdown';
 
 	/** A message's text, drawn from the safe Markdown tree: text nodes only, links for http(s), chips for item numbers. */
 	let { body }: { body: string } = $props();
 	const blocks = $derived(markdown(body));
-
 </script>
 
 {#snippet inl(items: Inline[])}

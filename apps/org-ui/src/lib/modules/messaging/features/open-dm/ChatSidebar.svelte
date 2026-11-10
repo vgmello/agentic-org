@@ -1,8 +1,8 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
-	import type { ChatContext } from '$lib/chat/engine';
-	import { PRESENCE_WORD, type ChatView, type ConversationRow, type Sidebar } from '$lib/chat/model';
-	import Avatar from './Avatar.svelte';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
+	import { PRESENCE_WORD, type ChatView, type ConversationRow, type Sidebar } from '$lib/modules/messaging/model';
+	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
 
 	/** The left column (CHAT-1): Needs you, Mentions, Threads, channels, direct messages, and what is read as the owner. */
 	let {
