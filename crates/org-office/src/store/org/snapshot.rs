@@ -1,7 +1,7 @@
 //! A snapshot is an encrypted, allowlisted organization projection. Install it inside
 //! the writer transaction that advances the cursor. Local office data lives elsewhere.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, DirBuilder};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::DirBuilderExt;
@@ -325,7 +325,7 @@ pub(crate) fn stage_replication_snapshot(
     if *transport_key == store.key {
         return Err(Refusal::InvalidInput.into());
     }
-    let checkpoint = super::replication::replication_checkpoint(store)?;
+    let checkpoint = super::replication::staging_checkpoint(store)?;
     check_stage(&checkpoint, &peer, mode, manifest.position, manifest.digest)?;
     let scratch = Scratch::new().map_err(storage_error)?;
     let path = scratch.database();
@@ -464,6 +464,9 @@ fn check_stage(
         ) if current.highest_epoch == authority
             && current.pending_restore_base == Some(restored_digest) =>
         {
+            if position.seq == 0 && digest != restored_digest {
+                return Err(Refusal::Divergence);
+            }
             Ok(())
         }
         _ => Err(Refusal::RestorePending),
@@ -497,7 +500,10 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         })
         .filter(|member| member.owner)
         .try_fold(0, |count, owner| {
-            if owner.kind != org_proto::org::MemberKind::Person || owner.agent.is_some() {
+            if owner.kind != org_proto::org::MemberKind::Person
+                || owner.agent.is_some()
+                || owner.reports_to_member_id.is_some()
+            {
                 return Err(Refusal::IntegrityFailure);
             }
             Ok(count + 1)
@@ -509,15 +515,18 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         .iter()
         .map(|row| &row[1])
         .filter(|cell| !matches!(cell, Cell::Null));
+    let team_members: HashSet<_> = memberships.iter().map(|row| (&row[1], &row[2])).collect();
     if owner_count != 1
         || !distinct(handles)
         || !distinct(teams.iter().map(|row| (&row[1], &row[2])))
-        || !distinct(memberships.iter().map(|row| (&row[1], &row[2])))
+        || team_members.len() != memberships.len()
         || !distinct(links.iter().map(|row| (&row[1], &row[2])))
         || members.iter().any(|row| !references(&row[2], &member_ids))
-        || teams
-            .iter()
-            .any(|row| !references(&row[1], &team_ids) || !references(&row[3], &member_ids))
+        || teams.iter().any(|row| {
+            !references(&row[1], &team_ids)
+                || !references(&row[3], &member_ids)
+                || (!matches!(row[3], Cell::Null) && !team_members.contains(&(&row[0], &row[3])))
+        })
         || areas.iter().any(|row| !references(&row[1], &project_ids))
         || memberships
             .iter()
@@ -525,10 +534,37 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         || links
             .iter()
             .any(|row| !references(&row[1], &project_ids) || !references(&row[2], &team_ids))
+        || !acyclic(members, 2)
+        || !acyclic(teams, 1)
     {
         return Err(Refusal::IntegrityFailure);
     }
     Ok(())
+}
+
+fn acyclic(rows: &[Vec<Cell>], parent_column: usize) -> bool {
+    let parents: HashMap<_, _> = rows
+        .iter()
+        .filter_map(|row| match (&row[0], &row[parent_column]) {
+            (Cell::Text(child), Cell::Text(parent)) => Some((child.as_str(), parent.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut complete = HashSet::new();
+    let mut visiting = HashSet::new();
+    for mut current in parents.keys().copied() {
+        while let Some(parent) = parents.get(current) {
+            if complete.contains(current) {
+                break;
+            }
+            if !visiting.insert(current) {
+                return false;
+            }
+            current = parent;
+        }
+        complete.extend(visiting.drain());
+    }
+    true
 }
 
 fn distinct<T: Eq + std::hash::Hash>(values: impl IntoIterator<Item = T>) -> bool {
@@ -554,12 +590,14 @@ fn references(cell: &Cell, ids: &HashSet<&str>) -> bool {
 }
 
 fn valid_row(table: &str, row: &[Cell]) -> bool {
+    if table == "commands" {
+        return valid_command_row(row);
+    }
     let Some(Cell::Text(id)) = row.first() else {
         return false;
     };
     let Some(Cell::Text(body)) = row.last() else {
-        // Legacy operation rows predate the persisted result body.
-        return table == "commands" && matches!(row.last(), Some(Cell::Null));
+        return false;
     };
     match table {
         "members" => serde_json::from_str::<Member>(body).is_ok_and(|member| {
@@ -586,8 +624,32 @@ fn valid_row(table: &str, row: &[Cell]) -> bool {
                 && matches_text(&row[1], Some(&link.project_id))
                 && matches_text(&row[2], Some(&link.team_id))
         }),
-        "commands" => serde_json::from_str::<Answer>(body).is_ok(),
         _ => false,
+    }
+}
+
+fn valid_command_row(row: &[Cell]) -> bool {
+    let [Cell::Text(id), Cell::Integer(epoch), Cell::Integer(seq), Cell::Text(expires), answer] =
+        row
+    else {
+        return false;
+    };
+    if ulid::time_ms(id).is_none()
+        || crate::time::parse_rfc3339_ms(expires).is_none()
+        || *epoch < 0
+        || *seq < 0
+        || (*epoch == 0) != (*seq == 0)
+    {
+        return false;
+    }
+    match answer {
+        // Older operation rows may predate the persisted result body.
+        Cell::Null => true,
+        Cell::Text(body) => serde_json::from_str::<Answer>(body).is_ok_and(|answer| {
+            super::valid_fingerprint(&answer.params_hash)
+                && answer.refusal.is_some() == (*epoch == 0)
+        }),
+        Cell::Integer(_) => false,
     }
 }
 
@@ -650,7 +712,7 @@ pub(super) fn install(
         }
     }
     db.execute(
-        "UPDATE org_replica SET protocol_level = ?1",
+        "UPDATE org_replica SET protocol_level = ?1, awaiting_snapshot = 0",
         [next.protocol_level],
     )
     .map_err(storage_error)?;
@@ -670,4 +732,28 @@ pub(super) fn clear_projection(db: &Connection) -> Result<(), StoreError> {
             .map_err(storage_error)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_row_requires_the_columns_the_receiver_will_insert() {
+        let mut row = vec![
+            Cell::Text("01ARZ3NDEKTSV4RRFFQ69G5FAV".into()),
+            Cell::Integer(1),
+            Cell::Integer(2),
+            Cell::Null,
+            Cell::Text(format!(r#"{{"params_hash":"{}"}}"#, "12".repeat(32))),
+        ];
+        assert!(!valid_row("commands", &row));
+        row[3] = Cell::Text("2016-08-29T00:00:00.000Z".into());
+        assert!(valid_row("commands", &row));
+        row[4] = Cell::Null;
+        assert!(
+            valid_row("commands", &row),
+            "legacy result body can be NULL"
+        );
+    }
 }

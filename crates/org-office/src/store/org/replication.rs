@@ -33,6 +33,8 @@ pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              restore_pending INTEGER NOT NULL CHECK (restore_pending IN (0, 1)),
              pending_base BLOB CHECK (length(pending_base) = 32),
              protocol_level INTEGER NOT NULL CHECK (protocol_level > 0),
+             awaiting_snapshot INTEGER NOT NULL CHECK (awaiting_snapshot IN (0, 1)),
+             CHECK (awaiting_snapshot = 0 OR local_office <> hq_office),
              CHECK ((epoch < highest_epoch) = (pending_base IS NOT NULL)),
              CHECK (epoch = highest_epoch OR restore_pending = 1)
          ) STRICT;
@@ -123,10 +125,10 @@ pub(crate) fn bind_replication(
         };
         db.execute(
             "INSERT INTO org_replica (singleton, org_id, local_office, hq_office, ca,
-                    epoch, seq, digest, highest_epoch, restore_pending, pending_base, protocol_level)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?5, 0, NULL, ?8)",
+                    epoch, seq, digest, highest_epoch, restore_pending, pending_base, protocol_level, awaiting_snapshot)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?5, 0, NULL, ?8, ?9)",
             params![org.as_str(), local.as_str(), hq.as_str(), ca.as_bytes(),
-                int(position.epoch.get())?, int(position.seq)?, digest.as_bytes(), PROTOCOL],
+                int(position.epoch.get())?, int(position.seq)?, digest.as_bytes(), PROTOCOL, local != hq],
         ).map_err(storage_error)?;
         store_snapshot_base(db, position, digest)?;
         Ok(())
@@ -134,9 +136,23 @@ pub(crate) fn bind_replication(
 }
 
 pub(crate) fn replication_checkpoint(store: &Store) -> Result<OrgCheckpoint, SyncError> {
+    read_checkpoint(store, false)
+}
+
+pub(super) fn staging_checkpoint(store: &Store) -> Result<OrgCheckpoint, SyncError> {
+    read_checkpoint(store, true)
+}
+
+fn read_checkpoint(store: &Store, allow_unmaterialized: bool) -> Result<OrgCheckpoint, SyncError> {
     store
         .read(|db| {
-            OrganizationTxn(db)
+            let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+            if !allow_unmaterialized && awaiting_snapshot(&tx).map_err(OfficeError::storage)? {
+                return Err(OfficeError::storage(SyncError::from(
+                    Refusal::RecoveryRequired,
+                )));
+            }
+            OrganizationTxn(&tx)
                 .checkpoint()
                 .map_err(OfficeError::storage)
         })
@@ -261,18 +277,36 @@ pub(super) fn int(value: u64) -> Result<i64, StoreError> {
 }
 
 pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Position>, OfficeError> {
+    let row = db
+        .query_row(
+            "SELECT epoch, seq, awaiting_snapshot FROM org_replica WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    org_proto::Position {
+                        epoch: row.get::<_, i64>(0)? as u64,
+                        seq: row.get::<_, i64>(1)? as u64,
+                    },
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(OfficeError::storage)?;
+    match row {
+        Some((_, true)) => Err(OfficeError::NotFound),
+        Some((position, false)) => Ok(Some(position)),
+        None => Ok(None),
+    }
+}
+
+fn awaiting_snapshot(db: &Connection) -> Result<bool, StoreError> {
     db.query_row(
-        "SELECT epoch, seq FROM org_replica WHERE singleton = 1",
+        "SELECT awaiting_snapshot FROM org_replica WHERE singleton = 1",
         [],
-        |row| {
-            Ok(org_proto::Position {
-                epoch: row.get::<_, i64>(0)? as u64,
-                seq: row.get::<_, i64>(1)? as u64,
-            })
-        },
+        |row| row.get(0),
     )
-    .optional()
-    .map_err(OfficeError::storage)
+    .map_err(storage_error)
 }
 
 pub(super) fn native_binding(db: &Connection) -> Result<Option<(bool, bool)>, OfficeError> {
@@ -446,6 +480,9 @@ impl OrgTxn for OrganizationTxn<'_> {
     }
 
     fn apply_event(&mut self, event: &OrgEvent) -> Result<(), SyncError> {
+        if awaiting_snapshot(self.0)? {
+            return Err(Refusal::RecoveryRequired.into());
+        }
         if event.codec.id() != CODEC || event.codec.version() != 1 {
             return Err(Refusal::IntegrityFailure.into());
         }
@@ -533,11 +570,7 @@ impl NativeEvent {
         }
         let expires = match &self.answer {
             Some(answer) => {
-                if answer.params_hash.len() != 64
-                    || !answer
-                        .params_hash
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                if !super::valid_fingerprint(&answer.params_hash)
                     || (answer.refusal.is_some() && !self.changes.is_empty())
                 {
                     return Err(Refusal::IntegrityFailure.into());
@@ -629,6 +662,17 @@ mod tests {
         }
     }
 
+    struct HqAt(Epoch);
+
+    impl VerifiedPeer for HqAt {
+        fn identity(&self) -> PeerIdentity {
+            PeerIdentity {
+                authority: self.0,
+                ..Hq.identity()
+            }
+        }
+    }
+
     fn key() -> Key {
         Key::from_bytes([3; 32])
     }
@@ -662,7 +706,7 @@ mod tests {
             .write(move |db| {
                 db.execute(
                     "INSERT INTO org_replica VALUES (1, 'ORG', ?1, 'HQ', zeroblob(32),
-                                            1, 1, zeroblob(32), 1, 0, NULL, 1)",
+                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0)",
                     [local_id],
                 )
                 .map_err(OfficeError::storage)?;
@@ -801,7 +845,7 @@ mod tests {
         assert_eq!(office.org_snapshot().unwrap(), original);
         office.org_store().run_sql_for_test(
             "INSERT INTO org_replica VALUES (1, 'ORG', 'SAT', 'HQ', zeroblob(32),
-                                            1, 1, zeroblob(32), 1, 0, NULL, 1)",
+                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0)",
         );
         assert!(matches!(
             organization::apply(&office, &Hq, event(2, Digest::ZERO, COMMAND, "first")).unwrap(),
@@ -907,9 +951,8 @@ mod tests {
              BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
         );
         assert!(organization::install_snapshot(&satellite, staged.clone()).is_err());
-        let old = satellite.org_snapshot().unwrap();
-        assert_eq!(old.position.seq, 0);
-        assert!(old.teams.is_empty());
+        assert!(satellite.org_snapshot().is_err());
+        let old = org_proto::Position { epoch: 1, seq: 0 };
         satellite
             .org_store()
             .run_sql_for_test("DROP TRIGGER fail_copy;");
@@ -925,7 +968,7 @@ mod tests {
             Some("pending")
         );
         assert_eq!(satellite.org_store().meta("sender_local").unwrap(), None);
-        assert!(!satellite.org_can_resume_from(old.position).unwrap());
+        assert!(!satellite.org_can_resume_from(old).unwrap());
         assert!(satellite.org_can_resume_from(installed.position).unwrap());
         let second = event(3, first.digest, SECOND, "second");
         assert!(matches!(
@@ -935,7 +978,7 @@ mod tests {
                 ..
             }
         ));
-        assert!(satellite.org_changes_after(old.position, 10).is_err());
+        assert!(satellite.org_changes_after(old, 10).is_err());
         assert!(matches!(
             organization::apply(&satellite, &Hq, first).unwrap(),
             OrgOutput::Ack {
@@ -987,6 +1030,91 @@ mod tests {
             stage(),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
+    }
+
+    #[test]
+    fn snapshot_refuses_team_cycles_and_leads_without_a_membership() {
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                Digest::ZERO,
+                Epoch::new(1).unwrap(),
+                Digest::ZERO,
+            )
+            .unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        let transport_key = Key::from_bytes([8; 32]);
+        let stage = || {
+            let export = hq
+                .export_replication_snapshot(&transport_key, MAX_BYTES)
+                .unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &export.manifest,
+                &transport_key,
+                export.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        hq.org_store().run_sql_for_test("INSERT INTO teams VALUES
+            ('a', 'b', 'a', NULL, '{\"id\":\"a\",\"owner_team_id\":\"b\",\"name\":\"a\",\"version\":1}'),
+            ('b', 'a', 'b', NULL, '{\"id\":\"b\",\"owner_team_id\":\"a\",\"name\":\"b\",\"version\":1}')");
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store().run_sql_for_test("DELETE FROM teams;");
+        let owner = hq.org_snapshot().unwrap().members[0].id.clone();
+        hq.org_store()
+            .write(move |db| {
+                let team = org_proto::org::Team {
+                    id: "team".into(),
+                    owner_team_id: None,
+                    name: "team".into(),
+                    lead_member_id: Some(owner.clone()),
+                    version: 1,
+                };
+                apply_changes(db, &[OrgChange::TeamUpserted { team }])?;
+                Ok(((), None))
+            })
+            .unwrap();
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+    }
+
+    #[test]
+    fn newly_enrolled_satellite_requires_a_snapshot_at_a_restored_epoch_zero() {
+        let dir = TempDir::new().unwrap();
+        let satellite = new_office(&dir, "SAT");
+        let epoch = Epoch::new(2).unwrap();
+        let base = Digest::from_bytes([7; 32]);
+        satellite
+            .bind_replication_satellite(OfficeId::new("HQ").unwrap(), Digest::ZERO, epoch, base)
+            .unwrap();
+        drop(satellite);
+        let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
+        assert!(matches!(
+            satellite.replication_checkpoint(),
+            Err(SyncError::Refused(Refusal::RecoveryRequired))
+        ));
+        assert!(satellite.org_snapshot().is_err());
+        let sample = event(1, base, COMMAND, "incomplete");
+        let incoming = OrgEvent::new(
+            sample.org_id,
+            Position { epoch, seq: 1 },
+            base,
+            sample.codec,
+            sample.payload,
+        )
+        .unwrap();
+        assert!(organization::apply(&satellite, &HqAt(epoch), incoming).is_err());
     }
 
     #[test]
@@ -1122,22 +1250,13 @@ mod tests {
             Err(SyncError::Refused(Refusal::NotAuthorized))
         ));
 
-        struct RestoredHq(Epoch);
-        impl VerifiedPeer for RestoredHq {
-            fn identity(&self) -> PeerIdentity {
-                PeerIdentity {
-                    authority: self.0,
-                    ..Hq.identity()
-                }
-            }
-        }
         let transport_key = Key::from_bytes([8; 32]);
         let exported = hq
             .export_replication_snapshot(&transport_key, MAX_BYTES)
             .unwrap();
         let stage = |mode| {
             satellite.stage_replication_snapshot(
-                &RestoredHq(next),
+                &HqAt(next),
                 &exported.manifest,
                 &transport_key,
                 exported.ciphertext.as_slice(),
@@ -1155,6 +1274,25 @@ mod tests {
                 restored_digest: Digest::ZERO
             }),
             Err(SyncError::Refused(Refusal::RestorePending))
+        ));
+        hq.org_store()
+            .run_sql_for_test("UPDATE org_replica SET digest = zeroblob(32);");
+        let wrong = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &HqAt(next),
+                &wrong.manifest,
+                &transport_key,
+                wrong.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::RecoveryWarningShown {
+                    authority: next,
+                    restored_digest
+                }
+            ),
+            Err(SyncError::Refused(Refusal::Divergence))
         ));
         let staged = stage(SnapshotStageMode::RecoveryWarningShown {
             authority: next,

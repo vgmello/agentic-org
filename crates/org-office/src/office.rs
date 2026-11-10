@@ -427,7 +427,8 @@ impl Office {
         )
     }
 
-    /// Returns the committed federation cursor and authority pin for the worker's handshake.
+    /// Returns the materialized federation cursor and authority pin for the worker's handshake.
+    /// A fresh satellite requires its initial snapshot before it can advertise a cursor.
     pub fn replication_checkpoint(&self) -> Result<OrgCheckpoint, SyncError> {
         org_db::replication_checkpoint(&self.org)
     }
