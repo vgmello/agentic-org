@@ -61,6 +61,7 @@ X-02 (`org-proto` v2, approved by ada):
   `set-password`, `reset-password`), and the admin grant alone opens no
   organization (its A86, resolved).
 Also new: JOIN-17 (remove-pending refusals, including a non-admin) and JOIN-18 (noninteractive setup ends with waiting_for_idle); §5b lists every HQ-machine command that needs the instance-admin grant.
+Also new: JOIN-20 and §5c "Signing in first" (a join on an instance with accounts needs an instance admin).
 
 - *(Review of 07a8a4b)* **Waiting for running agents** ends only when no agent
   session on that instance is running: each agent Asleep, Paused or stopped. An
@@ -535,6 +536,17 @@ satellite"). The examples use instance `default`; for another instance every
 command shown includes `--name <instance>`. `01JBX7…` stands for the office's
 full ID, which setup always prints in full.
 
+**Signing in first** *(rev 15)*. On an instance that already has accounts (for
+example a satellite office joining on the HQ instance), `office.join` needs an
+instance admin's session (`offices-hq-and-satellites.md`, "Provisioning a
+satellite", step 3; X-02 Q9). Setup asks for an instance admin's username and
+password before it hands over the invitation, with the sign-in failures of the
+account table in `server-installation-and-access-ux.md` §4a.2. An account
+without the grant is refused: "sam isn't an instance admin, so it can't join
+offices on this instance. Sign in as an instance admin of instance default." and
+nothing is sent to HQ. On an instance with no accounts yet (a new satellite
+machine), setup asks for no sign-in here.
+
 **While the join waits** (the host reports `join_pending`), setup shows its state,
 the check code and the last error, if any:
 
@@ -667,7 +679,7 @@ show only what they decide or see:
 
 **Removing a join** (on the joining machine, through its instance): `agentic-org
 office remove-pending <office id>`. On an instance that has accounts, it asks an
-instance admin to sign in first, as setup does there. Its sign-in failures use
+instance admin to sign in first, as setup does when it joins ("Signing in first", above). Its sign-in failures use
 the account commands' words (`server-installation-and-access-ux.md` §4a.2,
 SIGN-30), in the table below.
 
@@ -1114,6 +1126,7 @@ Two directions, same result:
 - JOIN-17 · *(new, rev 15)* Each row of §5c's `office remove-pending` table shows its copy and exit status and removes nothing; signed in as an account without the instance-admin grant it's refused with "<username> isn't an instance admin, so it can't remove join requests…".
 - JOIN-18 · *(new, rev 15, A101; rewritten, review of 02316bb)* Setup's wait for running agents names each one, with "(Always on)" after Always-on agents and "Always-on agents keep running until you pause them. Pause them in the app." while one is listed. Noninteractive setup that reaches it ends with the `waiting_for_idle` result and §5c's message: the names, "This instance finishes the join when they stop", and "To cancel the join: agentic-org office remove-pending <office id>" with this join's office ID. `agentic-org status` shows the same lines and `agentic-org doctor` the wait with the names, until it ends or the join is cancelled.
 - JOIN-19 · *(new, rev 15, review of 02316bb)* `agentic-org office remove-pending <office id>` on a join waiting for running agents asks "Cancel joining <organization> as <office>? The join hasn't reached HQ yet. [y/N]", with no mention of HQ approval, and after y in a terminal prints "Cancelled. <office> wasn't added to instance <name>…", leaving the instance with no office or pending join for it. Any other answer, no terminal, or a join that reached HQ before y cancels nothing, with §5c's copy and exit status Error.
+- JOIN-20 · *(new, rev 15)* On an instance that has accounts, setup asks for an instance admin's sign-in before joining; an account without the instance-admin grant is refused with "<username> isn't an instance admin, so it can't join offices on this instance…" and no join request reaches HQ. On an instance with no accounts, setup asks for no sign-in.
 
 **Offices (OFC)**
 - OFC-1 · *(rev 12)* HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.

@@ -13,8 +13,9 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
-**Fixes within revision 21 (2026-11-10, review of 98fa8fe).** No criterion's
-meaning changed, so no new revision:
+**Fixes within revision 21 (2026-11-10, review of 98fa8fe).** Still revision 21
+(not yet on v1 with these fixes). STAFF-4 is rewritten (Add agent record uses
+existing roles only) and STAFF-8 is added (a hire never waits); the rest:
 - A stalled hire reads "Approved, not hired: <failed step>" in §7.1 too, as in
   APPR-10.
 - The owning office, not the HR lead, does Offboard's provisioning cleanup, so
