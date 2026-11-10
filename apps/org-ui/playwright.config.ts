@@ -20,7 +20,7 @@ export default defineConfig({
 		...(webkit ? [{
 			name: 'webkit',
 			testMatch: 'offices.spec.ts',
-			grep: /BUG-27/,
+			grep: /BUG-27|BUG-24: pointer/,
 			use: { browserName: 'webkit' as const, baseURL: `http://localhost:${port}` }
 		}] : [])
 	],

@@ -103,7 +103,8 @@
 // A new deadline gets an immediate sample. Repeated reads of the same deadline don't advance the clock.
 let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
 let countdownClock = $state(Date.now());
-$effect(() => {
+// Capture the new deadline before rendering its visible and accessible text.
+$effect.pre(() => {
 	deadlineSamples = sampleRestartDeadlines(current, untrack(() => deadlineSamples), Date.now());
 });
 	onMount(() => {

@@ -175,6 +175,8 @@ describe('OFC-11..13 why an office stopped', () => {
 		expect(text('restarts_exhausted')).toBe("It kept stopping, so it won't restart on its own");
 		expect(text('storage_error')).toBe("It can't read or write its data on this Mac");
 		expect(text('unsupported_version')).toBe("The release components on hq-machine don't match. Run diagnostics and repair the selected instance there.");
+		expect(whyStopped({ ...stopped('unsupported_version'), host: 'This Mac' }, NOW))
+			.toBe("The release components on the office's machine don't match. Run diagnostics and repair the selected instance there.");
 		expect(text('invalid_request')).toBe("It couldn't start because of an internal error");
 		expect(text('in_use')).toContain('still in use');
 		for (const r of ['unknown', 'from_the_future', 'constructor', 'toString']) expect(text(r)).toBe("It stopped for a reason this version doesn't know");

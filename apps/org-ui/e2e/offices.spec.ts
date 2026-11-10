@@ -381,6 +381,23 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(instructions).not.toBeVisible();
 });
 
+test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', async ({ page, browserName }) => {
+	await openOffices(page);
+	const row = rows(page).first();
+	await expect(row).toContainText('Online');
+	await pushOffice(page, { host: 'This Mac', status: 'unavailable', status_reason: 'unsupported_version' });
+	await row.getByRole('button').click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('office-why')).toHaveText("The release components on the office's machine don't match. Run diagnostics and repair the selected instance there.");
+	const show = sheet.getByRole('button', { name: 'Show local CLI repair instructions', exact: true });
+	await sheet.getByRole('button', { name: 'Close', exact: true }).focus();
+	if (browserName === 'webkit') await show.click();
+	else await show.dispatchEvent('click'); // Model WebKit's click without native focus in the default suite.
+	await expect(sheet.getByRole('button', { name: 'Hide repair instructions', exact: true })).toBeFocused();
+	await expect(sheet.getByText("On the office's machine, run:", { exact: true })).toBeVisible();
+	await shot(page, 'office-repair-pointer-focus');
+});
+
 test('BUG-25: the Offices footer text meets 4.5:1 contrast', async ({ page }) => {
 	await openOffices(page);
 	const footer = page.getByText('Shown from this Mac.', { exact: true });
@@ -417,11 +434,32 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await page.clock.runFor(10_000); // Establish the existing countdown clock's last sample.
 	const current = (await page.evaluate(() => Date.now())) + 4_000;
 	await page.clock.setSystemTime(new Date(current)); // A push arrives before the next timer tick.
+	await row.evaluate((el) => {
+		const seconds: number[] = [];
+		const record = (text: string | null) => {
+			const countdown = text?.match(/Restarting in (\d+) s/);
+			if (countdown) seconds.push(Number(countdown[1]));
+		};
+		const observer = new MutationObserver((changes) => {
+			for (const change of changes) {
+				record(change.oldValue);
+				record(change.target.textContent);
+			}
+		});
+		observer.observe(el, { childList: true, characterData: true, characterDataOldValue: true, subtree: true });
+		Object.assign(window, { __officeCountdownWrites: { seconds, stop: () => observer.disconnect() } });
+	});
 	const pending = { status: 'offline', status_reason: 'crashed', next_restart_at: new Date(current + 45_000).toISOString() } as const;
 	await pushOffice(page, pending);
 	await expect(row).toContainText('Stopped');
 	await shot(page, 'office-countdown-new-push', { settle: false });
 	await expect(row).toContainText('Restarting in 45 s');
+	const written = await page.evaluate(() => {
+		const log = (window as unknown as { __officeCountdownWrites: { seconds: number[]; stop: () => void } }).__officeCountdownWrites;
+		log.stop();
+		return [...new Set(log.seconds)];
+	});
+	expect(written).toEqual([45]);
 	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
 	await page.clock.setSystemTime(new Date(current + 2_000));
 	await pushOffice(page, pending); // The same deadline is reported again before a tick.

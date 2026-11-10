@@ -177,6 +177,11 @@ const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, st
 type OfficeStop = Pick<OfficeInfo, 'host' | 'status' | 'status_reason' | 'next_restart_at'>;
 export type RestartDeadlineSample = { deadline: string; observedAt: number };
 
+/** The legacy host label refers to the office machine, not the device running the browser. */
+export function repairLocation(host: string): string {
+	return host === 'This Mac' ? "the office's machine" : host;
+}
+
 /** A new pending deadline is sampled once; another office or a repeated report cannot move that sample. */
 export function sampleRestartDeadlines(
 	offices: readonly Pick<OfficeInfo, 'id' | 'status' | 'next_restart_at'>[],
@@ -222,7 +227,7 @@ export function secondsUntil(nextRestartAt: string | undefined, now: Date): numb
 export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
 	if (o.status_reason === 'unsupported_version')
-		return `The release components on ${o.host} don't match. Run diagnostics and repair the selected instance there.`;
+		return `The release components on ${repairLocation(o.host)} don't match. Run diagnostics and repair the selected instance there.`;
 	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
 	// A restart whose time has come is not announced as "in 0 s": the next status will say what happened.
