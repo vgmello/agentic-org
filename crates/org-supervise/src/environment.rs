@@ -89,14 +89,21 @@ impl Environment {
                 "GIT_CONFIG_NOSYSTEM" | "GIT_CONFIG_GLOBAL" | "GIT_CONFIG_COUNT"
             ) || indexed(name_text, "GIT_CONFIG_KEY_")
                 || indexed(name_text, "GIT_CONFIG_VALUE_");
-            if !(name_text.starts_with("ORG_") || name_text == "GH_CONFIG_DIR" || git)
+            if !is_context_name(name)
                 || name_text == "ORG_SESSION_MARK"
+                || (name_text.starts_with("GIT_CONFIG_") && !git)
             {
                 return Err(invalid("name is not in the context environment allowlist"));
             }
             self.insert(name.clone(), value.clone())?;
         }
         Ok(self)
+    }
+
+    /// Probes reject the whole context namespace, including names that are not
+    /// admitted by the more precise caller-context allowlist above.
+    pub(crate) fn carries_context(&self) -> bool {
+        self.0.keys().any(|name| is_context_name(name))
     }
 
     /// Apply the mapper-owned policy; collisions are errors even for equal values.
@@ -132,6 +139,11 @@ impl Environment {
         self.0.insert(name, value);
         Ok(())
     }
+}
+
+fn is_context_name(name: &OsStr) -> bool {
+    let name = name.as_encoded_bytes();
+    name.starts_with(b"ORG_") || name.starts_with(b"GIT_CONFIG_") || name == b"GH_CONFIG_DIR"
 }
 
 fn indexed(name: &str, prefix: &str) -> bool {

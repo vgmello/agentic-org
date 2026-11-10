@@ -303,15 +303,15 @@ scoped session contract, never an exported desktop app token.
 `crates/org-mailbox`'s `Mailbox` struct owns the in-memory `WaiterRegistry` and snooze deadline min-heap, keeping all waiter and wake-up logic inside `org-mailbox` so `crates/org-office/src/store.rs` (`MessageStore`) remains a pure storage implementation that never calls back into `org-mailbox`:
 
 - **Boundary rule:** Every message delivery and state transition — local `send`/`ask`/`reply`, local `defer`/`done`/`read`, synced `WorkChange` application, `resolve_pending_references`, and offline spool ingest — is invoked through `Mailbox` methods. After `store.commit_message(...)` or `store.update_state_local(...)` returns `Ok(...)`, **`Mailbox` notifies `WaiterRegistry` in memory (`< 1 ms`)**.
-- **Snooze timer min-heap & startup rebuild (`L-a`):** `WaiterRegistry` maintains a `BTreeSet<(Instant, String, String)>` of active time-based `(snoozed_until, to_member_id, msg_id)` deadlines.
-  - On `org-server` startup, `Mailbox::new` initializes this heap from `store.list_active_snooze_deadlines()`, and updates it whenever `msg.defer` or `apply_synced_state` sets or clears a `snoozed_until` timestamp.
+- **Snooze timer min-heap & startup rebuild (`L-a`):** `Mailbox` maintains active `(snoozed_until, to_member_id, msg_id)` deadlines in a `BTreeSet<(i64, String, String)>`, keyed by wall-clock epoch milliseconds from its `Clock`. The stored deadlines are UTC strings, and a snooze is due when the wall clock passes it (as `check_notify` decides). An `Instant` taken at startup would drift from the wall clock across a sleep or clock change (`org-mailbox`'s `snoozes.rs`).
+  - On `org-server` startup, a triage-enabled mailbox is constructed with `Mailbox::with_triage`, which seeds its timers from `store.list_active_snooze_deadlines()`. Triage transitions update them whenever a `snoozed_until` timestamp is set or cleared; the same invariant applies to future sync integration.
   - When a `msg.wait` call blocks for `to_member_id`, its wait timeout is bounded by `MIN(request_timeout, next_snooze_deadline_for_member)`. When the snooze deadline arrives, `Mailbox` runs `store.check_notify(...)` to release the due snooze in `msg_unread` (`snoozed → unread`, `triage_gen += 1`) and returns the newly due message to the waiting `msg.wait` caller immediately.
 
 **Race-free "register before check" and "claim before commit" protocol (`M-C`):**
 1. **`msg.wait { timeout_ms, from?, urgent_only? }`:**
    - **Step 1 (Register):** Inserts an inbox waiter handle into `WaiterRegistry`.
    - **Step 2 (Check):** Releases any due time-based snoozes (`snoozed_until <= now_utc`) and queries `peek_next_unread` for the oldest unsnoozed unread message for `to_member_id` (matching `from` and `urgent_only` if given).
-     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`.
+     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`. (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids, the oldest first in commit order, so one check stays bounded however many requests expired; the Mailbox expires those and the next check reports the rest.
    - **Step 3 (Complete or block):** If a matching unread message is found (or if a concurrent `Mailbox` commit completed the waiter handle during Step 2), removes the waiter handle and returns that message immediately **without** marking it read. Otherwise, blocks on the waiter handle until woken by `Mailbox` or until `timeout_ms` elapses (returning `null`, which makes `org-agent msg wait` exit `2`).
 2. **Claim-before-commit on `msg.ask` replies (zero double-wake window, `M-C`):**
    - **Step 1 (Register ask waiter):** `Mailbox::ask` registers a reply waiter for `(ask.id, recipient_member_id)` in `WaiterRegistry` **before** calling `store.commit_message` (or `store.find_reply_for_ask` on an idempotent re-ask).
@@ -774,6 +774,8 @@ pub trait MessageStore {
     /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
     /// (amended 2026-11-08: store split, ada) Read-only: it changes and deletes nothing. The Mailbox
     /// decides what to do with `expired_ids` (through `TriageStore`).
+    /// (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids,
+    /// the oldest first (commit order); the next call reports the rest once the Mailbox has expired these.
     /// (amended 2026-11-08: store split, ada) It reads a fresh snapshot each call, never a long-lived read
     /// transaction, so a waiter woken by a commit sees that commit.
     fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;
