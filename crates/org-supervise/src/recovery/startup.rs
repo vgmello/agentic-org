@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -6,9 +7,9 @@ use super::checkpoint::{Journal, TargetCheckpoint};
 use super::fixed_point;
 use super::RecoveryCheckpoint;
 use super::{
-    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity, RecoveryContext,
-    RecoveryProcesses, RecoveryRecord, RecoveryReport, RecoverySignal, ScanFailure, ScanPort,
-    TargetEvidence, VerifiedTarget,
+    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity,
+    ProcessObservation, RecoveryContext, RecoveryProcesses, RecoveryRecord, RecoveryReport,
+    RecoverySignal, ScanFailure, ScanPort, TargetEvidence, VerifiedTarget,
 };
 
 /// Sealed policy completion, bound to one persisted mark. The consumer must still
@@ -52,6 +53,36 @@ fn leader_identity(record: &RecoveryRecord) -> Option<ProcessIdentity> {
         started: id.started.clone(),
         boot: id.boot.clone(),
     })
+}
+
+fn checkpoint_capture(
+    mark: &str,
+    snapshot: &BTreeMap<u32, ProcessObservation>,
+    context: &RecoveryContext,
+    ops: &mut dyn RecoveryProcesses,
+    deadline: Instant,
+    report: &mut RecoveryReport,
+    inventory: &mut dyn TargetCheckpoint,
+) -> io::Result<Vec<VerifiedTarget>> {
+    let mut observed_report = RecoveryReport::default();
+    let targets = capture_targets(
+        CaptureScope {
+            mark,
+            excluded: None,
+            saved: inventory.saved(),
+        },
+        snapshot,
+        context,
+        ops,
+        deadline,
+        &mut observed_report,
+    );
+    observed_report.found_live = 0; // pre-signal capture is not a validated scan pass
+    report.append(observed_report);
+    let targets = targets?;
+    check_deadline(ops, deadline)?;
+    inventory.save(&targets, deadline)?;
+    Ok(targets)
 }
 
 fn stop_recorded(
@@ -114,24 +145,15 @@ fn stop_recorded(
     };
     // TERM can end detached marked tool parents too. Preserve every captured root and
     // descendant before that signal, then rediscover survivors with a fresh full scan.
-    let mut observed_report = RecoveryReport::default();
-    let targets = capture_targets(
-        CaptureScope {
-            mark: record.mark(),
-            excluded: None,
-            saved: inventory.saved(),
-        },
+    checkpoint_capture(
+        record.mark(),
         &snapshot,
         context,
         ops,
         deadline,
-        &mut observed_report,
-    );
-    observed_report.found_live = 0; // pre-TERM capture is not a validated scan pass
-    report.append(observed_report);
-    let targets = targets?;
-    check_deadline(ops, deadline)?;
-    inventory.save(&targets, deadline)?;
+        report,
+        inventory,
+    )?;
     check_deadline(ops, deadline)?;
     report.signals += 1;
     ops.signal_checked(&leader, RecoverySignal::Terminate, deadline)?;
@@ -140,17 +162,31 @@ fn stop_recorded(
     let leader_gone = ops.wait_exited(&expected, grace)?;
     check_deadline(ops, deadline)?;
     if !leader_gone {
-        // No non-child group signal. The post-kill full scan handles the remaining
-        // individual identities, including the saved descendants if TERM orphaned them.
-        report.signals += 1;
-        ops.signal_checked(&leader, RecoverySignal::Kill, deadline)?;
-        check_deadline(ops, deadline)?;
-        let until = (ops.now() + Duration::from_secs(1)).min(deadline);
-        if !ops.wait_exited(&expected, until)? {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "recorded leader still live after kill",
-            ));
+        // The leader can start new tools during grace. Refresh the entire checkpoint
+        // before KILL, then signal only the freshly verified leader identity. The full
+        // scan handles other saved survivors after the leader exits.
+        let snapshot = snapshot_map(ops.snapshot(deadline)?)?;
+        let targets = checkpoint_capture(
+            record.mark(),
+            &snapshot,
+            context,
+            ops,
+            deadline,
+            report,
+            inventory,
+        )?;
+        if let Some(leader) = targets.iter().find(|target| target.identity == expected) {
+            check_deadline(ops, deadline)?;
+            report.signals += 1;
+            ops.signal_checked(leader, RecoverySignal::Kill, deadline)?;
+            check_deadline(ops, deadline)?;
+            let until = (ops.now() + Duration::from_secs(1)).min(deadline);
+            if !ops.wait_exited(&expected, until)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "recorded leader still live after kill",
+                ));
+            }
         }
     }
     check_deadline(ops, deadline)

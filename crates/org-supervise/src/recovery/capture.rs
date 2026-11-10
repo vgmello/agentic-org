@@ -102,7 +102,7 @@ pub(super) fn capture_targets(
                     evidence: TargetEvidence::Marked,
                 },
             );
-            queue.push_back((*pid, vec![id.clone()]));
+            queue.push_back((*pid, vec![id.clone()], false));
         }
     }
     // Restore targets observed before earlier parent kills, even after reparenting
@@ -158,12 +158,12 @@ pub(super) fn capture_targets(
                 evidence: TargetEvidence::Checkpoint(saved.ancestry.clone()),
             },
         );
-        let mut chain = saved.ancestry.clone();
-        chain.push(saved.identity.clone());
-        queue.push_back((saved.identity.pid, chain));
+        // The saved ancestry explains this anchor's authority, not its current parent
+        // links. Descendants discovered now start a new chain at the live anchor.
+        queue.push_back((saved.identity.pid, vec![saved.identity.clone()], true));
     }
     // Snapshot descendants before killing parents. A visited set also bounds malformed cycles.
-    while let Some((parent, ancestry)) = queue.pop_front() {
+    while let Some((parent, ancestry, from_checkpoint)) = queue.pop_front() {
         check_deadline(ops, deadline)?;
         for (pid, child) in &eligible {
             if child.parent != parent || targets.contains_key(pid) {
@@ -182,12 +182,16 @@ pub(super) fn capture_targets(
                 VerifiedTarget {
                     identity: id.clone(),
                     mark: scope.mark.into(),
-                    evidence: TargetEvidence::Descendant(ancestry.clone()),
+                    evidence: if from_checkpoint {
+                        TargetEvidence::CheckpointDescendant(ancestry.clone())
+                    } else {
+                        TargetEvidence::Descendant(ancestry.clone())
+                    },
                 },
             );
             let mut next = ancestry.clone();
             next.push(id.clone());
-            queue.push_back((*pid, next));
+            queue.push_back((*pid, next, from_checkpoint));
         }
     }
     report.found_live = targets.len() + pending_unreadable;

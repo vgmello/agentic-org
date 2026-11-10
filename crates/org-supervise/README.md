@@ -104,12 +104,13 @@ Reused PIDs, process groups and session hints cannot authorize a signal. A reboo
 invalidates recorded identity/group hints but does not skip the full current mark scan.
 
 Before TERM or KILL, the caller's checkpoint store durably appends the identities
-and ancestry of every captured target to the matching row's inventory. The union
-never shrinks and is capped at 256 identities; write failure or overflow permits
+and ancestry of every captured target to the matching row's inventory. If the
+leader survives TERM grace, refresh that capture before KILL. The union never shrinks and is capped at 256 identities; write failure or overflow permits
 no signal or completion. Retry reloads this inventory, checks exact PID, start
 and boot identity against a complete current snapshot, and still runs the full
-mark scan. A reparented child stays a target after its parent exits. Resolved
-entries remain until the consumer retires the row. The public store port carries
+mark scan. A reparented child stays a target after its parent exits. Newly found
+descendants of a restored target use a fresh ancestry chain rooted at that live
+target; its earlier parents are not part of the new snapshot. Resolved entries remain until the consumer retires the row. The public store port carries
 plain data; the scan journal and proof issuance stay private to the crate.
 
 One scan pass captures all marked roots and descendants before killing them. It

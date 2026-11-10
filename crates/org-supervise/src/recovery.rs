@@ -270,6 +270,9 @@ pub enum TargetEvidence {
     /// Snapshot ancestry from a marked process to the target (excluding the target).
     /// Native adapters must preserve this evidence while pinning target identities.
     Descendant(Vec<ProcessIdentity>),
+    /// One snapshot's ancestry from a verified, previously saved live anchor.
+    /// The anchor's own historical parents are not links in this snapshot chain.
+    CheckpointDescendant(Vec<ProcessIdentity>),
     /// Historical identity/ancestry from the trusted write-ahead inventory. An exact
     /// live start/boot match remains a target after its parents exit; native adapters
     /// still recheck/pin that process and its credentials before signalling.
@@ -321,9 +324,11 @@ pub enum SignalOutcome {
 /// interrupted syscalls. No operation reaps a child or signals a numeric process group.
 ///
 /// Linux adapters require pidfd support and pin snapshot identities before any signal;
-/// ENOSYS/EPERM must refuse, never fall back to kill(pid). macOS adapters recheck start,
-/// boot, credentials and mark/ancestry evidence immediately before an individual kill;
-/// the residual non-child PID race must remain explicit. Inability to verify a known
+/// ENOSYS/EPERM must refuse, never fall back to kill(pid). macOS adapters recheck target
+/// start, boot and credentials immediately before an individual kill, and the mark for
+/// directly marked targets. Preserve descendant ancestry from its captured snapshot;
+/// a captured parent may already have exited. Checkpoint ancestry is historical, not a
+/// current parent chain. The residual non-child PID race must remain explicit. Inability to verify a known
 /// target is an error. Identity reuse may be reported Gone, without hitting the new PID.
 ///
 /// External implementations are refused, including an otherwise complete fake:

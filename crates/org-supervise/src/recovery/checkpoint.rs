@@ -61,9 +61,9 @@ impl<R: RecoveryCheckpoint> TargetCheckpoint for Journal<'_, R> {
             }
             if !inventory.iter().any(|old| old.identity == target.identity) {
                 let ancestry = match &target.evidence {
-                    TargetEvidence::Descendant(chain) | TargetEvidence::Checkpoint(chain) => {
-                        chain.clone()
-                    }
+                    TargetEvidence::Descendant(chain)
+                    | TargetEvidence::CheckpointDescendant(chain)
+                    | TargetEvidence::Checkpoint(chain) => chain.clone(),
                     _ => vec![],
                 };
                 inventory.push(CheckpointTarget {

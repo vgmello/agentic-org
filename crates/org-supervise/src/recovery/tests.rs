@@ -48,6 +48,7 @@ struct Records {
     rows: Vec<(u32, RecoveryRecord)>,
     fail: bool,
     checkpoint_failure: bool,
+    checkpoint_failure_at: Option<usize>,
     checkpoints: usize,
     committed: Rc<RefCell<Vec<CheckpointTarget>>>,
 }
@@ -70,7 +71,7 @@ impl RecoveryCheckpoint for Records {
         _: Instant,
     ) -> io::Result<()> {
         self.checkpoints += 1;
-        if self.checkpoint_failure {
+        if self.checkpoint_failure || self.checkpoint_failure_at == Some(self.checkpoints) {
             return Err(io::Error::other("checkpoint failed"));
         }
         validate_inventory(inventory)?;
@@ -112,8 +113,10 @@ struct Processes {
     live: Vec<ProcessObservation>,
     snapshots: VecDeque<Vec<ProcessObservation>>,
     actions: Vec<Action>,
+    signal_evidence: Vec<(u32, TargetEvidence)>,
     term_exits: bool,
     term_removes: Option<u32>,
+    spawn_during_grace: Option<ProcessObservation>,
     kill_exits: bool,
     signal_failure: Option<u32>,
     wait_failure: bool,
@@ -134,8 +137,10 @@ impl Processes {
             live,
             snapshots: VecDeque::new(),
             actions: vec![],
+            signal_evidence: vec![],
             term_exits: false,
             term_removes: None,
+            spawn_during_grace: None,
             kill_exits: true,
             signal_failure: None,
             wait_failure: false,
@@ -203,6 +208,7 @@ impl RecoveryProcesses for Processes {
             );
         }
         self.actions.push(Action::Signal(pid, signal, self.now));
+        self.signal_evidence.push((pid, target.evidence().clone()));
         assert_eq!(target.mark(), MARK);
         if self.signal_failure == Some(pid) {
             return Err(io::Error::other("checked signal failed"));
@@ -242,6 +248,13 @@ impl RecoveryProcesses for Processes {
             .iter()
             .any(|p| p.identity.as_ref() == Some(identity) && !p.zombie);
         if live {
+            if self
+                .spawn_during_grace
+                .as_ref()
+                .is_some_and(|child| child.parent == identity.pid)
+            {
+                self.live.push(self.spawn_during_grace.take().unwrap());
+            }
             self.now = deadline;
         }
         Ok(!live)
@@ -317,7 +330,7 @@ fn recovery_recorded_leader_gets_term_then_five_second_grace_then_checked_kill()
         .iter()
         .filter(|a| **a == Action::Snapshot)
         .count();
-    assert_eq!(snapshots, 3); // pre-TERM, marked survivor, final empty
+    assert_eq!(snapshots, 4); // pre-TERM, refreshed pre-KILL, marked survivor, final empty
 }
 
 #[test]
@@ -921,6 +934,27 @@ fn recovery_crash_reload_preserves_targets_before_first_signal_and_after_term() 
         assert_eq!(next.live[0].pid, 400);
         assert_eq!(loaded.rows.len(), 1);
         assert_eq!(loaded.rows[0].1.inventory().len(), 3); // append, never discard resolved root
+        let grandchild = loaded.rows[0]
+            .1
+            .inventory()
+            .iter()
+            .find(|t| t.identity.pid == pid + 2)
+            .unwrap();
+        assert_eq!(
+            grandchild
+                .ancestry
+                .iter()
+                .map(|p| p.pid)
+                .collect::<Vec<_>>(),
+            [pid + 1],
+            "new snapshot ancestry must start at the live saved anchor, not its historical parent"
+        );
+        assert!(next
+            .signal_evidence
+            .iter()
+            .any(|(target, evidence)| *target == pid + 2
+                && matches!(evidence, TargetEvidence::CheckpointDescendant(chain)
+                if chain.iter().map(|p| p.pid).eq([pid+1]))));
     }
 }
 
@@ -1121,5 +1155,39 @@ fn recovery_missing_snapshot_entry_is_not_proof_a_known_process_exited() {
         );
         assert!(ops.signals().is_empty());
         assert_eq!(ops.live[0].pid, pid);
+    }
+}
+
+#[test]
+fn recovery_checkpoints_children_created_during_term_grace_before_final_kill() {
+    for fail_refresh in [false, true] {
+        let mut store = records(true);
+        if fail_refresh {
+            store.checkpoint_failure_at = Some(2);
+        }
+        let mut ops = Processes::new(vec![marked(100)]);
+        ops.spawn_during_grace = Some(process(101, 100, MarkEvidence::Absent));
+        let batch = run_store(&mut store, &mut ops);
+        if fail_refresh {
+            assert!(batch.gone.is_empty());
+            assert_eq!(ops.signals(), [(100, RecoverySignal::Terminate)]);
+            assert_eq!(ops.live.len(), 2);
+            assert_eq!(store.rows[0].1.inventory().len(), 1);
+        } else {
+            assert!(batch.unresolved.is_empty());
+            assert!(
+                ops.live.is_empty(),
+                "a child born during TERM grace survived Gone"
+            );
+            assert_eq!(
+                ops.signals(),
+                [
+                    (100, RecoverySignal::Terminate),
+                    (100, RecoverySignal::Kill),
+                    (101, RecoverySignal::Kill)
+                ]
+            );
+            assert_eq!(store.rows[0].1.inventory().len(), 2);
+        }
     }
 }
