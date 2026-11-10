@@ -12,11 +12,7 @@
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
-	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
-	import EditAgentDialog from '$lib/components/EditAgentDialog.svelte';
-	import HowItRunsDialog from '$lib/components/HowItRunsDialog.svelte';
-	import OffboardAgentDialog from '$lib/components/OffboardAgentDialog.svelte';
-	import PauseAgentDialog from '$lib/components/PauseAgentDialog.svelte';
+	import { AddAgentSheet, EditAgentDialog, HowItRunsDialog, OffboardAgentDialog, PauseAgentDialog } from '$lib/modules/employees';
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
 	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';

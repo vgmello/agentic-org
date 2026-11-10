@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 8
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -12,6 +12,17 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
+
+**Revision 9 (2026-11-10):** follows `server-installation-and-access-ux.md` rev 5
+(X-02 §6.2, §6.4 and Q8). Row 1.7 collects the code with `agentic-org recovery
+release`, interrupts it after the code is shown, and shows it again with
+`--redeliver`. Row 2.5 expects noninteractive setup to end with the recovery code
+waiting, and to collect it later at the machine. Rows 1.7 and 2.5 cite the new
+RCV criteria. No criteria changed here.
+Later in revision 9 (Rowan's answers A99 and A100, 2026-11-10; X-02 Q9): row 1.7
+expects one confirmation per run, the Recovery row's new copy with the count of
+second showings, and `agentic-org recovery status` listing who showed the code
+and when; it also cites RCV-24 and RCV-25.
 
 **Revision 8 (2026-11-10):** 3a.14 checks project creation in the chart only (Activity has no row for it). In §7, an Optional row that can't run in the setup is Blocked with the reason, doesn't change the run's result and files no bug. §7's timing rule says the office, not the HR lead, provisions an approved hire. No criteria changed.
 
@@ -71,7 +82,7 @@ that any of these checks ran.
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 | Required |
 | 1.5 | Attempt unauthenticated and cross-origin mutation/stream access | Refuse without disclosing protected data; browser auth does not grant a local agent owner rights | SRV-7, SIGN-1, SIGN-4 | Required |
 | 1.6 | Create a second HQ organization through the same listener as an instance admin; repeat as an organization owner without that right | One gateway listener routes both HQs; owner-only creation refused; host keys never reach gateway/CLI | SRV-24, OFC-14, OFC-19, OFC-22 | Required |
-| 1.7 | Provision recovery material, interrupt protected delivery before acknowledgement, resume, and retain the encrypted package/code off HQ | Same CA/code on pending retry; no secret in status/logs; acknowledged delivery is not later redisplayed. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25, RCV-1, RCV-6, RCV-8, RCV-10 | Required |
+| 1.7 | Provision recovery material; at the HQ machine run `agentic-org recovery release`, interrupt it after the code is shown and before `yes`, run it again without and then with `--redeliver`, confirm, and retain the encrypted package/code off HQ; then run it again, and run `agentic-org recovery status` | Same CA/code on pending retry; without `--redeliver` no code, with it the same code; each run that shows the code asks once to confirm it's you; the browser shows Shown, not confirmed, then "Recovery code shown on <date> (shown again once, on <date>) · collected on <date>."; `recovery status` lists both showings with the account and time, and no code; no secret in status/logs; acknowledged code is not shown again, even with `--redeliver`. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25, RCV-1, RCV-6, RCV-8, RCV-10, RCV-18, RCV-19, RCV-23, RCV-24, RCV-25 | Required |
 
 ## 2. Named instances and setup failures
 
@@ -81,7 +92,7 @@ that any of these checks ran.
 | 2.2 | Repeat `lab` setup concurrently; try another name pointing to the same data root/alias | One persisted identity and service; duplicate storage writer refused before database access | SRV-4, SRV-6 | Required |
 | 2.3 | Configure an occupied port | Actionable conflict; no silent endpoint change or corruption of another instance | SRV-4 | Required |
 | 2.4 | Interrupt setup before/after office provisioning markers, then repeat | Resume recorded operation; no duplicate office, lost key or destructive discard of committed data | SRV-6 | Required |
-| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider | Same result as wizard when valid; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26 | Required |
+| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider; later collect the recovery code at the machine | Same result as wizard when valid, except the recovery code, which stays waiting until `agentic-org recovery release` at the machine; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26, RCV-20 | Required |
 | 2.6 | Use default/lab and a hostile dev server on the same host; copy/overwrite cookies and try read, mutation, stream, refresh/proof recovery and logout | No cross-origin/instance authority without the matching proof; proof never enters URL/log/redirect; valid paired sessions still work | SRV-23 | Required |
 | 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27, SIGN-14, SIGN-20 | Required |
 

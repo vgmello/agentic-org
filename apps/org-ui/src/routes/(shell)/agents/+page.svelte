@@ -4,7 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
-	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
+	import { AddAgentSheet } from '$lib/modules/employees';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { filterRoster, roster, runModeLabel, runtimeLabel, type RosterFilter } from '$lib/org/agents';

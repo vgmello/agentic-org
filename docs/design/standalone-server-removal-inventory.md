@@ -165,7 +165,7 @@ The following are observed at the base commit, not implementation guesses:
 | Organization | `src/lib/org/api.ts` selects a Tauri implementation or browser mock | Authenticated snapshot/command/feed APIs with existing version checks |
 | Work | `src/lib/work/index.ts` selects browser mock or shell path; comments say the real office work surface is pending | Audit and implement each advertised task/bug/request operation; API outage never becomes sample work |
 | Chat | `src/lib/chat/index.ts` always exports `createMockChat` | Real conversation/message operations or an explicit unavailable feature state; no fabricated reply |
-| Processes | `src/lib/processes/world.ts` builds `sampleWorld` | Connect production views to real process documents when supported; keep samples only in fixtures |
+| Processes | `src/lib/modules/processes/world.ts` builds `sampleWorld` | Connect production views to real process documents when supported; keep samples only in fixtures |
 | Copilot and other staged features | Explicit mock modules exist; no complete backend audit is claimed here | Inventory consumers during implementation; report unsupported capabilities instead of making sample results look real |
 
 The pivot does not promise that every mocked feature is implemented by replacing
