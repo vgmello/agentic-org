@@ -96,7 +96,7 @@
 		{/if}
 		<SheetClose>
 			{#snippet child({ props })}
-				<Button variant="ghost" size="icon-sm" class="absolute top-4 right-4 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" {...props}>
+				<Button variant="ghost" size="icon-sm" class="absolute top-4 right-4 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" {...props}>
 					<X aria-hidden="true" />
 					<span class="sr-only">Close</span>
 				</Button>

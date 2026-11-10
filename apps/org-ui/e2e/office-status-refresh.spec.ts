@@ -78,11 +78,11 @@ for (const unrelated of [false, true]) {
 
 type PeekPair = {
 	started: Promise<void>[];
-	release: (index: number) => Promise<void>;
+	release: (index: number) => Promise<'fulfilled' | 'rejected'>;
 };
 
-async function holdOverlappingRefreshes(page: Page) {
-	await page.evaluate(async () => {
+async function holdOverlappingRefreshes(page: Page, newer: 'online' | 'failed' | 'missing' = 'online') {
+	await page.evaluate(async (newer) => {
 		// Use the same canonical fake as the route and the original deferred-read helper.
 		const modulePath = '/e2e/fakes/office-api.ts';
 		const { officeApi } = await import(modulePath);
@@ -104,6 +104,8 @@ async function holdOverlappingRefreshes(page: Page) {
 				office.status_reason = index === 0 ? 'crashed' : undefined;
 				starts[index]();
 				await gates[index];
+				if (index === 1 && newer === 'failed') throw new Error('The office did not answer this refresh.');
+				if (index === 1 && newer === 'missing') return organizations.filter((organization: { id: string }) => organization.id !== connection.organization.id);
 				return organizations;
 			})();
 			return pending[index];
@@ -112,16 +114,21 @@ async function holdOverlappingRefreshes(page: Page) {
 		officeApi.restartOffice = async () => undefined;
 		(window as unknown as { __officePeekPair: PeekPair }).__officePeekPair = {
 			started,
-			release: async (index) => { releases[index](); await pending[index]; }
+			release: async (index) => {
+				releases[index]();
+				try { await pending[index]; return 'fulfilled'; } catch { return 'rejected'; }
+			}
 		};
-	});
+	}, newer);
 }
 
-async function releasePeek(page: Page, index: number) {
-	await page.evaluate(async (index) => {
-		await (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.release(index);
+async function releasePeek(page: Page, index: number, rejected = false) {
+	const result = await page.evaluate(async (index) => {
+		const outcome = await (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.release(index);
 		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		return outcome;
 	}, index);
+	expect(result).toBe(rejected ? 'rejected' : 'fulfilled');
 }
 
 test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer restart refresh without a push', async ({ page }) => {
@@ -147,3 +154,62 @@ test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer resta
 	expect(await hq.innerText()).not.toContain('Stopped');
 	await shot(page, 'office-refresh-newer-restart');
 });
+
+for (const newerFirst of [false, true]) {
+	test(`OFC-12 / BUG-48: a failed newer refresh does not discard an older successful answer (${newerFirst ? 'failure' : 'answer'} first)`, async ({ page }) => {
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.clock.install();
+		await holdOverlappingRefreshes(page, 'failed');
+		await page.getByRole('link', { name: 'Offices', exact: true }).click();
+		await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]);
+		const hq = page.getByTestId('office-row').first();
+		await expect(hq).toContainText('Online');
+		await hq.getByRole('button').first().click();
+		await page.clock.fastForward(30_000);
+		await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[1]);
+		await shot(page, `office-failed-newer-${newerFirst ? 'failure' : 'answer'}-pending`, { settle: false });
+		if (newerFirst) await releasePeek(page, 1, true);
+		await releasePeek(page, 0);
+		expect(await hq.innerText()).toContain('Stopped');
+		if (!newerFirst) await releasePeek(page, 1, true);
+		expect(await hq.innerText()).toContain('It stopped unexpectedly');
+		await expect(hq.getByRole('button').first()).toHaveAccessibleName(/Stopped/);
+		await expect(page.getByTestId('live-status')).toContainText('Stopped');
+		await expect(page.getByRole('dialog').locator('dd').filter({ has: page.locator('[data-status-icon]') })).toContainText('Stopped');
+		await shot(page, `office-failed-newer-${newerFirst ? 'failure' : 'answer'}-stopped`, { context: page.getByRole('dialog') });
+	});
+}
+
+for (const newer of ['failed', 'missing'] as const) {
+	test(`OFC-12 / BUG-48: ${newer === 'failed' ? 'a newer push' : 'a successful empty result'} still supersedes an older read`, async ({ page }) => {
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.clock.install();
+		await holdOverlappingRefreshes(page, newer);
+		await page.getByRole('link', { name: 'Offices', exact: true }).click();
+		await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]);
+		const hq = page.getByTestId('office-row').first();
+		await expect(hq).toContainText('Online');
+		await page.clock.fastForward(30_000);
+		await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[1]);
+		if (newer === 'failed') {
+			await page.evaluate(async () => {
+				const path = '/e2e/fakes/office-api.ts';
+				const { officeApi } = await import(path);
+				const connection = (await officeApi.connections()).at(-1)!;
+				(window as unknown as { __mockOfficeStatus: (update: object) => void }).__mockOfficeStatus({ kind: 'office', office: { ...connection.office, status: 'starting' } });
+			});
+			await expect(hq).toContainText('Starting');
+		}
+		await releasePeek(page, 1, newer === 'failed');
+		await releasePeek(page, 0);
+		expect(await hq.innerText()).toContain(newer === 'failed' ? 'Starting' : 'Online');
+		expect(await hq.innerText()).not.toContain('Stopped');
+		await shot(page, `office-refresh-${newer === 'failed' ? 'push-after-failure' : 'newer-empty-result'}`);
+	});
+}

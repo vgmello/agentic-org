@@ -174,8 +174,9 @@ test('PROC-18 / BUG-18: keyboard Close has the token focus ring and restores foc
 		document.body.append(token);
 		const color = getComputedStyle(token).color;
 		token.remove();
-		return { width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor, token: color };
+		return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor, token: color };
 	});
+	expect(ring.style).toBe('solid');
 	expect(ring.width).toBe('2px');
 	expect(ring.offset).toBe('2px');
 	expect(ring.color).toBe(ring.token);
