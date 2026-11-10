@@ -33,7 +33,7 @@
 				<SheetDescription class="flex flex-wrap items-center gap-2">
 					<ProcessBadges level={doc.location.level} scopeName={entry?.scopeName ?? off?.scopeName} version={doc.version} />
 					{#if entry?.sealed}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200"><Lock class="size-3.5" aria-hidden="true" /> Sealed</span>{/if}
-					{#if off}<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300"><PowerOff class="size-3.5" aria-hidden="true" /> Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span>{/if}
+					{#if off}<span class="inline-flex min-w-0 max-w-full items-start gap-x-1 text-xs/5 text-gray-300"><PowerOff class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" /><span class="min-w-0 [overflow-wrap:anywhere]">Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span></span>{/if}
 				</SheetDescription>
 			</SheetHeader>
 			<div class="space-y-5 px-4 pb-6 text-sm/6">
@@ -47,7 +47,7 @@
 				</dl>
 
 				{#if off}
-					<p class="rounded-md bg-white/5 p-2 text-gray-200 outline-1 -outline-offset-1 outline-white/10" data-testid="off-why">Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}. The process it turns off stays as written at the level above.</p>
+					<p class="rounded-md bg-white/5 p-2 text-gray-200 outline-1 -outline-offset-1 outline-white/10 [overflow-wrap:anywhere]" data-testid="off-why">Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}. The process it turns off stays as written at the level above.</p>
 				{/if}
 				{#if chain.length > 0}
 					<section aria-labelledby="why-title" data-testid="why">

@@ -132,6 +132,22 @@ test('PROC-9 / BUG-17: an unbroken process title wraps clear of the sheet close 
 	expect(textRight).toBeLessThanOrEqual(close!.x - 8);
 });
 
+test('PROC-9 / BUG-17: a turned-off sheet wraps a long source name and explanation', async ({ page }) => {
+	await page.setViewportSize({ width: 960, height: 640 });
+	const project = 'Atlas'.repeat(90);
+	await sampleNames(page, { Atlas: project });
+	await open(page, '?place=project:atl');
+	await expect(page.getByRole('heading', { name: `Processes · ${project} (project)` })).toBeVisible();
+	await page.getByTestId('turned-off-row').click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('off-why')).toContainText(`Turned off for ${project}: we report daily.`);
+	await shot(page, 'processes-bug17-long-turned-off-960', { context: sheet });
+	const bounds = await sheet.evaluate((element) => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }));
+	expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1);
+	await sheet.getByTestId('off-why').scrollIntoViewIfNeeded();
+	await shot(page, 'processes-bug17-long-off-reason-960', { context: sheet });
+});
+
 test('PROC-9 / BUG-18: the process side panel is 440px at the minimum window', async ({ page }) => {
 	await page.setViewportSize({ width: 960, height: 640 });
 	await open(page);
