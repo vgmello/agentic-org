@@ -12,13 +12,13 @@
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
-	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
+	import AddAgentSheet from '$lib/modules/employees/features/hire-employee/AddAgentSheet.svelte';
 	import BringInDialog from '$lib/components/BringInDialog.svelte';
 	import { announceBroughtIn, idsOf } from '$lib/import/after';
-	import EditAgentDialog from '$lib/components/EditAgentDialog.svelte';
-	import HowItRunsDialog from '$lib/components/HowItRunsDialog.svelte';
-	import OffboardAgentDialog from '$lib/components/OffboardAgentDialog.svelte';
-	import PauseAgentDialog from '$lib/components/PauseAgentDialog.svelte';
+	import EditAgentDialog from '$lib/modules/employees/features/edit-profile/EditAgentDialog.svelte';
+	import HowItRunsDialog from '$lib/modules/employees/features/configure-run/HowItRunsDialog.svelte';
+	import OffboardAgentDialog from '$lib/modules/employees/features/offboard-employee/OffboardAgentDialog.svelte';
+	import PauseAgentDialog from '$lib/modules/employees/features/pause-employee/PauseAgentDialog.svelte';
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
 	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';
