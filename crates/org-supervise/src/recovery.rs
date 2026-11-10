@@ -15,6 +15,11 @@
 //! ```
 
 mod capture;
+#[cfg(target_os = "linux")]
+#[path = "recovery/native/linux.rs"]
+mod native;
+#[cfg(target_os = "linux")]
+pub use native::NativeRecovery;
 mod checkpoint;
 mod scan;
 mod startup;
@@ -451,3 +456,26 @@ fn safe_identity<'a>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os = "linux")]
+fn native_mark(bytes: &[u8]) -> MarkEvidence {
+    if !bytes.is_empty() && bytes.last() != Some(&0) {
+        return MarkEvidence::Unreadable;
+    }
+    let mut marks = bytes
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| entry.strip_prefix(b"ORG_SESSION_MARK="));
+    let Some(value) = marks.next() else {
+        return MarkEvidence::Absent;
+    };
+    if marks.next().is_some() {
+        return MarkEvidence::Unreadable;
+    }
+    let Ok(value) = std::str::from_utf8(value) else {
+        return MarkEvidence::Unreadable;
+    };
+    if SessionMark::new(value.into()).is_err() {
+        return MarkEvidence::Unreadable;
+    }
+    MarkEvidence::Present(value.into())
+}
