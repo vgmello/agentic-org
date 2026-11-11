@@ -17,8 +17,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+use super::command_expiry_ms;
 use super::replication::{int, NativeAnswer, OrganizationTxn, PROTOCOL};
-use super::{command_expiry_ms, SCHEMA};
 use crate::error::OfficeError;
 use crate::key::Key;
 use crate::organization::{is_offboarded, valid_owner};
@@ -30,6 +30,9 @@ mod scratch;
 use scratch::Scratch;
 
 pub(super) const CODEC: &str = "org.native.snapshot";
+/// Changes only with the negotiated codec/profile freeze, independently of local
+/// org.db schema migrations. The legacy replicated projection remains version 2.
+const SNAPSHOT_PROJECTION_SCHEMA: i64 = 2;
 const ARTIFACT_SCHEMA: &str = "CREATE TABLE snapshot (body BLOB NOT NULL) STRICT";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -237,7 +240,7 @@ pub(super) fn legacy_anchor(
         sequence: position.seq,
         digest: *Digest::ZERO.as_bytes(),
         protocol: PROTOCOL,
-        schema: SCHEMA.version,
+        schema: SNAPSHOT_PROJECTION_SCHEMA,
     };
     let projection = bounded_rows(db, header, limit).map_err(storage_error)?;
     let mut digest = Sha256::new();
@@ -270,7 +273,7 @@ pub(crate) fn export_replication_snapshot(
             position: checkpoint.position,
             digest: checkpoint.digest,
             protocol_level: checkpoint.protocol_level,
-            schema: SCHEMA.version,
+            schema: SNAPSHOT_PROJECTION_SCHEMA,
             ciphertext_bytes: 0,
             ciphertext_digest: Digest::ZERO,
         };
@@ -336,7 +339,7 @@ pub(crate) fn stage_replication_snapshot(
         manifest.position,
         manifest.digest,
     )?;
-    if manifest.schema != SCHEMA.version || manifest.protocol_level != PROTOCOL {
+    if manifest.schema != SNAPSHOT_PROJECTION_SCHEMA || manifest.protocol_level != PROTOCOL {
         return Err(Refusal::UnsupportedVersion.into());
     }
     if manifest.ciphertext_bytes == 0 || manifest.ciphertext_bytes > max_bytes {
@@ -960,7 +963,7 @@ pub(super) fn install(
             sequence: next.position.seq,
             digest: *next.digest.as_bytes(),
             protocol: next.protocol_level,
-            schema: SCHEMA.version,
+            schema: SNAPSHOT_PROJECTION_SCHEMA,
         })
     {
         return Err(Refusal::Divergence.into());
