@@ -134,12 +134,6 @@ impl OrgSql<'_> {
     }
 }
 
-fn valid_owner(member: &Member) -> bool {
-    member.kind == MemberKind::Person
-        && member.agent.is_none()
-        && member.reports_to_member_id.is_none()
-}
-
 /// The key a member's handle is compared by, or `None` for the owner (whose display name is not
 /// a handle).
 fn handle_key(member: &Member) -> Option<String> {

@@ -6,9 +6,8 @@ use org_proto::org::OrgChange;
 use org_sync::error::{Refusal, SyncError};
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::organization::{is_offboarded, valid_owner};
 use crate::store::sync::storage_error;
-
-use crate::store::org::valid_owner;
 
 /// Remember relationships that the delta can remove, and preserve the owner identity.
 pub(super) fn before_apply(
@@ -23,7 +22,7 @@ pub(super) fn before_apply(
             OrgChange::MembershipUpserted { membership } => &membership.id,
             OrgChange::MembershipRemoved { membership_id } => membership_id,
             OrgChange::MemberUpserted { member } => {
-                let was_owner = is_owner(db, &member.id)?;
+                let (was_owner, was_offboarded) = member_protections(db, &member.id)?;
                 let can_create_owner = genesis
                     && !genesis_owner_created
                     && !exists(
@@ -33,14 +32,19 @@ pub(super) fn before_apply(
                     )?;
                 if (member.owner && (!valid_owner(member) || (!was_owner && !can_create_owner)))
                     || (!member.owner && was_owner)
+                    || (was_offboarded && !is_offboarded(member))
                 {
                     return Err(Refusal::IntegrityFailure.into());
                 }
                 genesis_owner_created |= member.owner && !was_owner;
                 continue;
             }
-            OrgChange::MemberRemoved { member_id } if is_owner(db, member_id)? => {
-                return Err(Refusal::IntegrityFailure.into());
+            OrgChange::MemberRemoved { member_id } => {
+                let (owner, offboarded) = member_protections(db, member_id)?;
+                if owner || offboarded {
+                    return Err(Refusal::IntegrityFailure.into());
+                }
+                continue;
             }
             _ => continue,
         };
@@ -113,12 +117,17 @@ pub(super) fn after_apply(
     Ok(())
 }
 
-fn is_owner(db: &Connection, id: &str) -> Result<bool, SyncError> {
-    exists(
-        db,
-        "SELECT EXISTS(SELECT 1 FROM members WHERE id = ?1 AND handle_key IS NULL)",
-        [id],
-    )
+fn member_protections(db: &Connection, id: &str) -> Result<(bool, bool), SyncError> {
+    Ok(db
+        .query_row(
+            "SELECT handle_key IS NULL, json_extract(body, '$.agent.status') IS 'offboarded'
+         FROM members WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(storage_error)?
+        .unwrap_or_default())
 }
 
 fn exists(db: &Connection, query: &str, params: impl rusqlite::Params) -> Result<bool, SyncError> {
@@ -144,8 +153,12 @@ const INVALID_MEMBER: &str = "WITH RECURSIVE managers(id) AS (
     UNION SELECT m.reports_to_member_id FROM members m JOIN managers ON managers.id = m.id
 ) SELECT EXISTS(SELECT 1 FROM members m WHERE m.id = ?1 AND (
     (m.reports_to_member_id IS NOT NULL AND NOT EXISTS(
-        SELECT 1 FROM members WHERE id = m.reports_to_member_id)) OR
+        SELECT 1 FROM members manager WHERE manager.id = m.reports_to_member_id AND (
+            json_extract(m.body, '$.agent.status') IS 'offboarded' OR
+            json_extract(manager.body, '$.agent.status') IS NOT 'offboarded'))) OR
     EXISTS(SELECT 1 FROM managers WHERE id = ?1) OR
     (json_extract(m.body, '$.agent.status') = 'offboarded' AND (
         EXISTS(SELECT 1 FROM memberships WHERE member_id = ?1) OR
-        EXISTS(SELECT 1 FROM teams WHERE lead_member_id = ?1)))))";
+        EXISTS(SELECT 1 FROM teams WHERE lead_member_id = ?1) OR
+        EXISTS(SELECT 1 FROM members report WHERE report.reports_to_member_id = ?1
+            AND json_extract(report.body, '$.agent.status') IS NOT 'offboarded')))))";

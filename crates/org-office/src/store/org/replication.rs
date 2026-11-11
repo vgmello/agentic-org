@@ -917,6 +917,110 @@ mod tests {
             .is_none());
     }
 
+    fn agent_member(
+        id: &str,
+        status: org_proto::org::AgentStatus,
+        manager: Option<&str>,
+    ) -> org_proto::org::Member {
+        serde_json::from_value(json!({
+            "id": id, "kind": "agent", "name": id, "office_id": "HQ", "version": 1,
+            "reports_to_member_id": manager,
+            "agent": { "role": "engineer", "title": "Engineer", "runtime": "codex", "messaging_name": id, "status": status },
+        })).unwrap()
+    }
+
+    #[test]
+    fn replicated_offboarding_preserves_only_historical_reports() {
+        use org_proto::org::AgentStatus::{Active, Offboarded};
+        let (_dir, satellite) = replica();
+        let current = satellite.replication_checkpoint().unwrap();
+        let delta = |seq, previous, id: &str, members: Vec<org_proto::org::Member>| {
+            OrgEvent::new(
+                current.org_id.clone(),
+                Position {
+                    epoch: current.position.epoch,
+                    seq,
+                },
+                previous,
+                Codec::new(CODEC, 1).unwrap(),
+                serde_json::to_vec(&NativeEvent {
+                    command_id: id.into(),
+                    at: "2026-11-08T12:00:00.000Z".into(),
+                    changes: members
+                        .into_iter()
+                        .map(|member| OrgChange::MemberUpserted { member })
+                        .collect(),
+                    answer: Some(NativeAnswer {
+                        params_hash: "12".repeat(32),
+                        refusal: None,
+                    }),
+                })
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let seed = delta(
+            2,
+            current.digest,
+            COMMAND,
+            vec![
+                agent_member("manager", Active, None),
+                agent_member("current", Active, Some("manager")),
+                agent_member("history", Offboarded, Some("manager")),
+            ],
+        );
+        let prior = seed.digest;
+        organization::apply(&satellite, &Hq, seed).unwrap();
+        let manager = agent_member("manager", Offboarded, None);
+        assert!(matches!(
+            organization::apply(
+                &satellite,
+                &Hq,
+                delta(3, prior, SECOND, vec![manager.clone()])
+            ),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        let valid = delta(
+            3,
+            prior,
+            SECOND,
+            vec![manager, agent_member("current", Active, None)],
+        );
+        let prior = valid.digest;
+        organization::apply(&satellite, &Hq, valid).unwrap();
+        let invalid = delta(
+            4,
+            prior,
+            "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            vec![agent_member("current", Active, Some("manager"))],
+        );
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, invalid),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        let reactivated = delta(
+            4,
+            prior,
+            "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            vec![agent_member("manager", Active, None)],
+        );
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, reactivated),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        let state = satellite.org_snapshot().unwrap();
+        assert_eq!(
+            state
+                .members
+                .iter()
+                .find(|member| member.id == "history")
+                .unwrap()
+                .reports_to_member_id
+                .as_deref(),
+            Some("manager")
+        );
+    }
+
     #[test]
     fn failed_log_insert_rolls_back_domain_and_outcome_before_acknowledgment() {
         let (_dir, office) = replica();
@@ -1282,6 +1386,91 @@ mod tests {
             stage(),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
+    }
+
+    #[test]
+    fn snapshot_refuses_live_relationships_with_offboarded_agents() {
+        use org_proto::org::AgentStatus::{Active, Offboarded};
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                Digest::ZERO,
+                Epoch::new(1).unwrap(),
+                Digest::ZERO,
+            )
+            .unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        let transport_key = Key::from_bytes([8; 32]);
+        let stage = || {
+            let export = hq
+                .export_replication_snapshot(&transport_key, MAX_BYTES)
+                .unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &export.manifest,
+                &transport_key,
+                export.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        let inject = |changes: Vec<OrgChange>| {
+            hq.org_store()
+                .write(move |db| apply_changes(db, &changes).map(|()| ((), None)))
+                .unwrap();
+        };
+        inject(vec![
+            OrgChange::MemberUpserted {
+                member: agent_member("manager", Offboarded, None),
+            },
+            OrgChange::MemberUpserted {
+                member: agent_member("report", Active, Some("manager")),
+            },
+        ]);
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        inject(vec![
+            OrgChange::MemberUpserted {
+                member: agent_member("report", Offboarded, Some("manager")),
+            },
+            OrgChange::TeamUpserted {
+                team: org_proto::org::Team {
+                    id: "team".into(),
+                    name: "Team".into(),
+                    owner_team_id: None,
+                    lead_member_id: Some("manager".into()),
+                    version: 1,
+                },
+            },
+            OrgChange::MembershipUpserted {
+                membership: org_proto::org::Membership {
+                    id: "membership".into(),
+                    team_id: "team".into(),
+                    member_id: "manager".into(),
+                    title_in_team: None,
+                    version: 1,
+                },
+            },
+        ]);
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        inject(vec![
+            OrgChange::MembershipRemoved {
+                membership_id: "membership".into(),
+            },
+            OrgChange::TeamDeleted {
+                team_id: "team".into(),
+            },
+        ]);
+        assert!(stage().is_ok());
     }
 
     #[test]

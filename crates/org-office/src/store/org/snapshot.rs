@@ -21,6 +21,7 @@ use super::replication::{int, OrganizationTxn, PROTOCOL};
 use super::{Answer, SCHEMA};
 use crate::error::OfficeError;
 use crate::key::Key;
+use crate::organization::{is_offboarded, valid_owner};
 use crate::private_fs::private_file;
 use crate::store::{connect, sync::storage_error, Store};
 use crate::ulid;
@@ -526,19 +527,32 @@ fn decode(body: &[u8]) -> Result<Projection, Refusal> {
 
 fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
     let [members, teams, projects, areas, memberships, links, commands] = &value.rows;
-    let mut owners = members
-        .iter()
-        .filter_map(|row| match row.last() {
-            Some(Cell::Text(body)) => serde_json::from_str::<Member>(body).ok(),
-            _ => None,
-        })
-        .filter(|member| member.owner);
+    let mut member_by_id = HashMap::with_capacity(members.len());
+    for row in members {
+        let [Cell::Text(id), _, _, Cell::Text(body)] = row.as_slice() else {
+            return Err(Refusal::IntegrityFailure);
+        };
+        let member: Member = serde_json::from_str(body).map_err(|_| Refusal::IntegrityFailure)?;
+        member_by_id.insert(id.as_str(), member);
+    }
+    let mut owners = member_by_id.values().filter(|member| member.owner);
     let owner = owners.next().ok_or(Refusal::IntegrityFailure)?;
-    if owners.next().is_some() || !super::valid_owner(&owner) {
+    if owners.next().is_some() || !valid_owner(owner) {
         return Err(Refusal::IntegrityFailure);
     }
-    let owner = Cell::Text(owner.id);
-    let member_ids = row_ids(members);
+    let valid_team_member = |cell: &Cell| match cell {
+        Cell::Text(id) => member_by_id
+            .get(id.as_str())
+            .is_some_and(|member| !member.owner && !is_offboarded(member)),
+        _ => false,
+    };
+    let invalid_reporting = member_by_id.values().any(|member| {
+        member.reports_to_member_id.as_deref().is_some_and(|id| {
+            member_by_id
+                .get(id)
+                .is_none_or(|manager| is_offboarded(manager) && !is_offboarded(member))
+        })
+    });
     let team_ids = row_ids(teams);
     let project_ids = row_ids(projects);
     let handles = members
@@ -550,17 +564,16 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         || !distinct(teams.iter().map(|row| (&row[1], &row[2])))
         || team_members.len() != memberships.len()
         || !distinct(links.iter().map(|row| (&row[1], &row[2])))
-        || members.iter().any(|row| !references(&row[2], &member_ids))
+        || invalid_reporting
         || teams.iter().any(|row| {
             !references(&row[1], &team_ids)
-                || !references(&row[3], &member_ids)
-                || row[3] == owner
-                || (!matches!(row[3], Cell::Null) && !team_members.contains(&(&row[0], &row[3])))
+                || (!matches!(row[3], Cell::Null)
+                    && (!valid_team_member(&row[3]) || !team_members.contains(&(&row[0], &row[3]))))
         })
         || areas.iter().any(|row| !references(&row[1], &project_ids))
-        || memberships.iter().any(|row| {
-            row[2] == owner || !references(&row[1], &team_ids) || !references(&row[2], &member_ids)
-        })
+        || memberships
+            .iter()
+            .any(|row| !references(&row[1], &team_ids) || !valid_team_member(&row[2]))
         || links
             .iter()
             .any(|row| !references(&row[1], &project_ids) || !references(&row[2], &team_ids))

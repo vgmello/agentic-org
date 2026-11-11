@@ -1,11 +1,19 @@
 //! Organization-owned validation, identity and relationship invariants.
 use super::OrgView;
-use org_proto::org::{AgentStatus, Member, AGENT_TEXT_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE};
+use org_proto::org::{
+    AgentStatus, Member, MemberKind, AGENT_TEXT_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
+};
 use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 use std::collections::HashSet;
 
 pub(crate) fn fail(code: ErrorCode, message: &str) -> ApiError {
     ApiError::new(code, message)
+}
+
+pub(crate) fn valid_owner(member: &Member) -> bool {
+    member.kind == MemberKind::Person
+        && member.agent.is_none()
+        && member.reports_to_member_id.is_none()
 }
 
 /// Whether `member` is an agent that was offboarded: a record that is history.
