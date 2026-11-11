@@ -156,6 +156,24 @@ mod development {
         fs::write(path, bytes).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     }
+    fn output(command: &mut std::process::Command) -> std::process::Output {
+        use std::process::Stdio;
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!("host-secret test child timed out: {output:?}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        child.wait_with_output().unwrap()
+    }
     #[test]
     fn dev_operations_reopen_and_permissions_follow_the_contract() {
         let f = Fixture::new();
@@ -342,10 +360,10 @@ mod development {
         let store = f.open(A).unwrap();
         let temporary = f.dir(A).join(format!(".put.{B}"));
         write(&temporary, b"active owner");
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = output(std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "host_secrets::tests::development::lock_is_exclusive_across_processes_and_released_on_drop", "--nocapture"])
             .current_dir(f.base.parent().unwrap())
-            .env(MARKER, f.base.parent().unwrap()).output().unwrap();
+            .env(MARKER, f.base.parent().unwrap()));
         assert!(output.status.success(), "{output:?}");
         assert!(
             temporary.exists(),
@@ -473,9 +491,9 @@ mod development {
             assert!(s.list().unwrap().is_empty());
             return;
         }
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = output(std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "host_secrets::tests::development::unknown_names_are_logged_without_echoing_untrusted_bytes", "--nocapture"])
-            .env(MARKER, "1").output().unwrap();
+            .env(MARKER, "1"));
         assert!(output.status.success(), "{output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
