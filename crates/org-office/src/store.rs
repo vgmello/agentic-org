@@ -16,20 +16,14 @@ pub(crate) mod messages;
 pub(crate) mod org;
 #[cfg_attr(
     not(test),
-    expect(
-        dead_code,
-        reason = "A1 origin capability is wired by the next WorkTxn slice"
-    )
+    expect(dead_code, reason = "work capabilities are wired to RPC by slice C")
 )]
 pub(crate) mod origin;
 pub(crate) mod status;
 mod sync;
 #[cfg_attr(
     not(test),
-    expect(
-        dead_code,
-        reason = "A1 item/event kernel is wired by the later native WorkTxn slice"
-    )
+    expect(dead_code, reason = "work capabilities are wired to RPC by slice C")
 )]
 pub(crate) mod work;
 
@@ -60,7 +54,7 @@ pub(crate) type Undo = Box<dyn FnOnce() + Send>;
 
 /// One request for the writer. `attempt` may run more than once: if a request aborts the
 /// batch's transaction, every other request runs again in a fresh one (after its `Undo`).
-struct WriteJob {
+pub(crate) struct WriteJob {
     attempt: Box<Attempt>,
     abort_batch: fn(&OfficeError) -> bool,
     /// Called once, after commit or rollback, with how this request ended.
@@ -187,9 +181,20 @@ impl Store {
     /// are replayed in a fresh transaction, just as after a SQLite-initiated abort.
     pub(crate) fn write_with_batch_abort<R: Send + 'static>(
         &self,
-        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
         abort_batch: fn(&OfficeError) -> bool,
     ) -> Result<R, OfficeError> {
+        let (job, answer) = Self::job_with_batch_abort(work, abort_batch);
+        self.send_job(job)?;
+        answer
+            .recv()
+            .map_err(|_| failure("the storage writer stopped"))?
+    }
+
+    pub(crate) fn job_with_batch_abort<R: Send + 'static>(
+        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        abort_batch: fn(&OfficeError) -> bool,
+    ) -> (WriteJob, mpsc::Receiver<Result<R, OfficeError>>) {
         let (reply, answer) = mpsc::sync_channel(1);
         let slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
         let attempt = {
@@ -212,13 +217,16 @@ impl Store {
                 let _ = reply.send(result);
             }),
         };
+        (job, answer)
+    }
+
+    pub(crate) fn send_job(&self, job: WriteJob) -> Result<(), OfficeError> {
         let stopped = || failure("the storage writer stopped");
         self.jobs
             .as_ref()
             .ok_or_else(stopped)?
             .send(job)
-            .map_err(|_| stopped())?;
-        answer.recv().map_err(|_| stopped())?
+            .map_err(|_| stopped())
     }
 
     /// Runs `work` on a reader connection: an idle one if there is one, else a new one.
@@ -671,6 +679,42 @@ mod tests {
 
     fn open_in(dir: &TempDir) -> Store {
         open_store(&dir.path().join("office.db"), &key(), Opening::New).unwrap()
+    }
+
+    #[test]
+    fn writer_job_builder_defers_work_and_replies_after_commit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = TempDir::new().unwrap();
+        let store = open_in(&dir);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let (job, reply) = Store::job_with_batch_abort(
+            move |db| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                db.execute("INSERT INTO meta VALUES ('job', 'committed')", [])
+                    .map_err(OfficeError::storage)?;
+                Ok((42, None))
+            },
+            |_| false,
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(reply.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        store.send_job(job).unwrap();
+        assert_eq!(
+            reply
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap(),
+            42
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let value: String = store
+            .read(|db| {
+                db.query_row("SELECT value FROM meta WHERE key='job'", [], |r| r.get(0))
+                    .map_err(OfficeError::storage)
+            })
+            .unwrap();
+        assert_eq!(value, "committed");
     }
 
     // The registry operations the engine's tests drive the writer with. (The engine itself

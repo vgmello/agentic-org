@@ -14,6 +14,8 @@ fn tag(error: &WorkCallError) -> &'static str {
         WorkCallError::RefsMismatch => "RefsMismatch",
         WorkCallError::DuplicatePut => "DuplicatePut",
         WorkCallError::CallFailed => "CallFailed",
+        WorkCallError::ResultBeforeRecord => "ResultBeforeRecord",
+        WorkCallError::Port(_) => "Port",
         WorkCallError::Store(_) => "Store",
     }
 }
@@ -619,7 +621,7 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
         mpsc,
     };
     use std::time::Duration;
-    for mode in ["clean", "begin-failure", "store-sentinel"] {
+    for mode in ["clean", "begin-failure", "store-sentinel", "other-invalid"] {
         let (root, store) = fixture();
         initialize_origin(&store);
         let before = snapshot(&store);
@@ -648,6 +650,9 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
         queue
             .send(WriteJob {
                 attempt: Box::new(move |db| {
+                    if mode == "other-invalid" && counter.load(Ordering::SeqCst) > 0 {
+                        return Err(OfficeError::Invalid("other"));
+                    }
                     attempt(db, &attempt_slot, |call| {
                         let n = counter.fetch_add(1, Ordering::SeqCst);
                         if n > 0 && mode == "store-sentinel" {
@@ -700,7 +705,14 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
                 ));
                 assert_eq!(attempts.load(Ordering::SeqCst), 2);
             } else {
-                assert!(matches!(e, WorkCallError::Store(OfficeError::Storage(_))));
+                if mode == "other-invalid" {
+                    assert!(matches!(
+                        e,
+                        WorkCallError::Store(OfficeError::Invalid("other"))
+                    ));
+                } else {
+                    assert!(matches!(e, WorkCallError::Store(OfficeError::Storage(_))));
+                }
                 assert_eq!(attempts.load(Ordering::SeqCst), 1);
             }
             assert_eq!(snapshot(&store), before);
@@ -837,4 +849,39 @@ fn work_call_outside_writer_is_refused_before_callback_or_feed_allocation() {
     drop(store);
     let store = reopen(&root);
     assert_eq!(snapshot(&store), before);
+}
+
+#[test]
+fn poisoned_error_slot_is_recovered_and_cleared_before_the_next_attempt() {
+    let (_root, store) = fixture();
+    let slot = Arc::new(Mutex::new(Some(WorkCallError::CallFailed)));
+    let poison = slot.clone();
+    assert!(std::panic::catch_unwind(move || {
+        let _held = poison.lock().unwrap();
+        panic!("test slot poison");
+    })
+    .is_err());
+    assert!(matches!(
+        finish::<()>(Err(OfficeError::Invalid(ROLLBACK)), &slot),
+        Err(WorkCallError::CallFailed)
+    ));
+    let writer_slot = slot.clone();
+    store
+        .write(move |db| attempt(db, &writer_slot, |_| Ok(())).map(|()| ((), None)))
+        .unwrap();
+    assert!(slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_none());
+    let writer_slot = slot.clone();
+    let result = store.write(move |db| {
+        attempt(db, &writer_slot, |_| {
+            Err::<(), _>(WorkCallError::AlreadyRecorded)
+        })
+        .map(|()| ((), None))
+    });
+    assert!(matches!(
+        finish(result, &slot),
+        Err(WorkCallError::AlreadyRecorded)
+    ));
 }

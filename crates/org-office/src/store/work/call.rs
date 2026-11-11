@@ -2,16 +2,16 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, PoisonError};
 
 use org_proto::work::{EventRef, WorkEvent, WorkPosition};
 use org_proto::Position;
-use org_work::StoredItem;
+use org_work::{NumberScope, StoreError, StoredItem, StoredResult};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
 use crate::store::origin::{self, OriginRef};
-use crate::store::Store;
+use crate::store::{Store, WriteJob};
 use crate::OfficeError;
 
 pub(super) const ROLLBACK: &str = "internal work call rollback";
@@ -24,19 +24,23 @@ pub(super) enum WorkCallError {
     RefsMismatch,
     DuplicatePut,
     CallFailed,
+    ResultBeforeRecord,
+    Port(StoreError),
     Store(OfficeError),
 }
 
 impl fmt::Display for WorkCallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Unrecorded => "work call finish: unrecorded puts",
+            Self::Unrecorded => "work call finish: unrecorded writes",
             Self::AlreadyRecorded => "work call write: already recorded",
             Self::NothingToRecord => "work call record_change: no puts",
             Self::InvalidRefs => "work call record_change: invalid refs",
             Self::RefsMismatch => "work call record_change: refs mismatch",
             Self::DuplicatePut => "work call put_item: duplicate put",
             Self::CallFailed => "work call write: call failed",
+            Self::ResultBeforeRecord => "work call result: changes not recorded",
+            Self::Port(_) => "work call callback failed",
             Self::Store(_) => "work call storage step failed",
         })
     }
@@ -53,6 +57,7 @@ impl std::error::Error for WorkCallError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Store(error) => Some(error),
+            Self::Port(error) => Some(error),
             _ => None,
         }
     }
@@ -72,6 +77,22 @@ pub(super) struct WorkCall<'a> {
     puts: Vec<OriginRef>,
     keys: BTreeSet<(String, u64)>,
     state: State,
+    result_written: bool,
+}
+
+pub(super) struct Reply<T> {
+    answer: mpsc::Receiver<Result<T, OfficeError>>,
+    slot: Arc<Mutex<Option<WorkCallError>>>,
+}
+
+impl<T> Reply<T> {
+    pub(super) fn recv(self) -> Result<T, WorkCallError> {
+        let result = self
+            .answer
+            .recv()
+            .unwrap_or_else(|_| Err(crate::store::failure("the storage writer stopped")));
+        finish(result, &self.slot)
+    }
 }
 
 pub(super) fn transact<T: Send + 'static>(
@@ -86,13 +107,22 @@ pub(super) fn transact_with_abort<T: Send + 'static>(
     callback: impl Fn(&mut WorkCall<'_>) -> Result<T, WorkCallError> + Send + 'static,
     abort_batch: fn(&OfficeError) -> bool,
 ) -> Result<T, WorkCallError> {
+    let (job, reply) = transact_job(move |db| run(db, &callback), abort_batch);
+    store.send_job(job).map_err(WorkCallError::Store)?;
+    reply.recv()
+}
+
+pub(super) fn transact_job<T: Send + 'static>(
+    callback: impl Fn(&Connection) -> Result<T, WorkCallError> + Send + 'static,
+    abort_batch: fn(&OfficeError) -> bool,
+) -> (WriteJob, Reply<T>) {
     let slot = Arc::new(Mutex::new(None));
     let attempt_slot = Arc::clone(&slot);
-    let result = store.write_with_batch_abort(
-        move |db| attempt(db, &attempt_slot, |call| callback(call)).map(|value| (value, None)),
+    let (job, answer) = Store::job_with_batch_abort(
+        move |db| bridge(&attempt_slot, || callback(db)).map(|value| (value, None)),
         abort_batch,
     );
-    finish(result, &slot)
+    (job, Reply { answer, slot })
 }
 
 /// Error bridge shared by the writer attempt and its eventual committed reply.
@@ -101,12 +131,19 @@ pub(super) fn attempt<T>(
     slot: &Mutex<Option<WorkCallError>>,
     callback: impl FnOnce(&mut WorkCall<'_>) -> Result<T, WorkCallError>,
 ) -> Result<T, OfficeError> {
-    *slot.lock().expect("slot only moves errors") = None;
-    match run(db, callback) {
+    bridge(slot, || run(db, callback))
+}
+
+fn bridge<T>(
+    slot: &Mutex<Option<WorkCallError>>,
+    callback: impl FnOnce() -> Result<T, WorkCallError>,
+) -> Result<T, OfficeError> {
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    match callback() {
         Ok(value) => Ok(value),
         Err(WorkCallError::Store(error)) => Err(error),
         Err(error) => {
-            *slot.lock().expect("slot only moves errors") = Some(error);
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
             Err(OfficeError::Invalid(ROLLBACK))
         }
     }
@@ -119,7 +156,7 @@ pub(super) fn finish<T>(
     match result {
         Err(error) if matches!(error, OfficeError::Invalid(ROLLBACK)) => Err(slot
             .lock()
-            .expect("writer finished with slot")
+            .unwrap_or_else(PoisonError::into_inner)
             .take()
             .unwrap_or(WorkCallError::Store(error))),
         other => other.map_err(WorkCallError::Store),
@@ -141,6 +178,7 @@ pub(super) fn run<T>(
         puts: Vec::new(),
         keys: BTreeSet::new(),
         state: State::Open,
+        result_written: false,
     };
     let value = callback(&mut call)?;
     match call.state {
@@ -151,12 +189,50 @@ pub(super) fn run<T>(
 }
 
 impl WorkCall<'_> {
+    pub(super) fn conn(&self) -> &Connection {
+        self.db
+    }
+
     fn writable(&self) -> Result<(), WorkCallError> {
+        if self.result_written {
+            return Err(WorkCallError::AlreadyRecorded);
+        }
         match self.state {
             State::Finalized => Err(WorkCallError::AlreadyRecorded),
             State::Failed => Err(WorkCallError::CallFailed),
             _ => Ok(()),
         }
+    }
+
+    pub(super) fn allocate_number(&mut self, scope: &NumberScope) -> Result<u64, WorkCallError> {
+        self.writable()?;
+        let value = super::metadata::allocate_number(self.db, scope).map_err(|error| {
+            self.state = State::Failed;
+            WorkCallError::Store(error)
+        })?;
+        self.state = State::Writing;
+        Ok(value)
+    }
+
+    pub(super) fn put_change_result(
+        &mut self,
+        id: &str,
+        result: &StoredResult,
+    ) -> Result<(), WorkCallError> {
+        if self.result_written {
+            return Err(WorkCallError::AlreadyRecorded);
+        }
+        match self.state {
+            State::Writing => return Err(WorkCallError::ResultBeforeRecord),
+            State::Failed => return Err(WorkCallError::CallFailed),
+            _ => {}
+        }
+        super::metadata::put_change_result(self.db, id, result).map_err(|error| {
+            self.state = State::Failed;
+            WorkCallError::Store(error)
+        })?;
+        self.result_written = true;
+        Ok(())
     }
 
     pub(super) fn put_item(

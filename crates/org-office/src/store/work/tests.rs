@@ -15,7 +15,7 @@ use org_work::{StoredComment, StoredLink};
 use rusqlite::{params, types::Value, Connection};
 use std::sync::Arc;
 
-fn fixture() -> (tempfile::TempDir, Store) {
+pub(super) fn fixture() -> (tempfile::TempDir, Store) {
     fixture_for_schema(&OFFICE_SCHEMA)
 }
 
@@ -45,7 +45,7 @@ fn native_work_schema_supports_item_event_and_id_storage() {
     assert_eq!(events.len(), 1);
 }
 
-const T0: u64 = 1_793_000_000_000;
+pub(super) const T0: u64 = 1_793_000_000_000;
 
 fn core_task(seed: u128, with_step: bool) -> (Arc<MemStore>, WorkService<Arc<MemStore>>, String) {
     let id = org_work::ulid_from_parts(T0, seed * 10 + 1);
@@ -86,7 +86,7 @@ fn core_task(seed: u128, with_step: bool) -> (Arc<MemStore>, WorkService<Arc<Mem
     (store, service, id)
 }
 
-fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<WorkEvent>) {
+pub(super) fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<WorkEvent>) {
     let (store, _, id) = core_task(seed, with_step);
     let mut saved = store.snapshot();
     let item = saved.items.remove(&id).unwrap();
@@ -97,7 +97,7 @@ fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<WorkEvent>) {
     (item, events)
 }
 
-fn reopen(root: &tempfile::TempDir) -> Store {
+pub(super) fn reopen(root: &tempfile::TempDir) -> Store {
     Store::open(
         &root.path().join("office.db"),
         &Key::from_bytes([42; 32]),
@@ -107,7 +107,7 @@ fn reopen(root: &tempfile::TempDir) -> Store {
     .unwrap()
 }
 
-fn initialize_origin(store: &Store) {
+pub(super) fn initialize_origin(store: &Store) {
     store
         .write(|db| {
             db.execute("INSERT INTO meta VALUES ('office_id','OFFICE1')", [])
