@@ -1313,8 +1313,7 @@ fn recovery_job_capture_enforces_its_own_cap_and_late_optional_proof() {
             deadline,
             &mut report,
         )
-        .err()
-        .expect("capture itself must refuse before any journal or signal");
+        .expect_err("capture itself must refuse before any journal or signal");
         assert_eq!(
             error.kind(),
             if late {
