@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { untrack, type ComponentProps } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
@@ -25,7 +25,8 @@
 		officeId,
 		officeName,
 		organization,
-		ondone
+		ondone,
+		onCloseAutoFocus
 	}: {
 		open: boolean;
 		/** What the chart shows: teams and managers to choose from. */
@@ -37,6 +38,7 @@
 		officeName: string;
 		organization: string;
 		ondone: (result: { memberId: string; name: string; problems: string[] }) => void;
+		onCloseAutoFocus?: ComponentProps<typeof SheetContent>['onCloseAutoFocus'];
 	} = $props();
 
 	const RUNTIMES = ['claude_code', 'codex', 'antigravity'] as const;
@@ -145,7 +147,7 @@
 </script>
 
 <Sheet bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<SheetContent side="right" class="w-full max-w-md overflow-y-auto">
+	<SheetContent side="right" class="w-full max-w-md overflow-y-auto" {onCloseAutoFocus}>
 		<SheetHeader>
 			<SheetTitle>Add an agent</SheetTitle>
 			<SheetDescription>For an agent that already runs on this Mac. It will be reachable by everyone in {organization}.</SheetDescription>

@@ -1,13 +1,17 @@
 <script lang="ts">
-	import { invalidate } from '$app/navigation';
+	import { onDestroy } from 'svelte';
+	import { afterNavigate, beforeNavigate, goto, invalidate } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import AgentStatusIcon from '$lib/components/AgentStatusIcon.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
-	import { AddAgentSheet } from '$lib/modules/employees';
+	import { AGENTS_QUERY_LIMIT, AddAgentSheet, consumeAgentsAddIntent, normalizeAgentsQuery } from '$lib/modules/employees';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import { Label } from '$lib/components/ui/label';
 	import { filterRoster, roster, runModeLabel, runtimeLabel, type RosterFilter } from '$lib/org/agents';
 	import { orgApi } from '$lib/org/api';
 	import { withoutFormer } from '$lib/org/model';
@@ -19,7 +23,12 @@
 	const offices = $derived(connection.organization.offices);
 	const rows = $derived(roster(full, offices));
 	let filter = $state<RosterFilter>('all');
-	const shown = $derived(filterRoster(rows, filter));
+	let searchText = $state(normalizeAgentsQuery(page.url.searchParams.get('q') ?? ''));
+	const query = $derived(normalizeAgentsQuery(searchText));
+	const needle = $derived(query.toLowerCase());
+	const shown = $derived(filterRoster(rows, filter).filter((row) =>
+		row.member.name.toLowerCase().includes(needle) || (row.member.agent?.title ?? '').toLowerCase().includes(needle)
+	));
 	const counts = $derived({
 		all: filterRoster(rows, 'all').length,
 		active: filterRoster(rows, 'active').length,
@@ -35,6 +44,52 @@
 
 	const session = $derived(sessionFor(orgApi, connection.organization.id));
 	let adding = $state(false);
+	let addButton = $state<HTMLButtonElement | null>(null);
+	let searchInput = $state<HTMLInputElement | null>(null);
+	let openedFromUrl = $state(false);
+	// A mounted route already has its loaded/available roster; extend this value when per-operation Add capabilities land.
+	// Intent gating is defensive: afterNavigate has settled and pending navigation cancels its task, so canAdd is true there today.
+	const canAdd = $derived(!navigating.to);
+	function openAdd() {
+		openedFromUrl = false;
+		adding = true;
+	}
+	function restoreAddFocus(event: Event) {
+		if (!openedFromUrl) return;
+		event.preventDefault();
+		(canAdd ? addButton : searchInput)?.focus();
+	}
+
+	function changeQuery(value: string) {
+		searchText = value;
+		const next = new URL(page.url);
+		const q = normalizeAgentsQuery(value);
+		if (q) next.searchParams.set('q', q);
+		else next.searchParams.delete('q');
+		if (next.href !== page.url.href) void goto(next, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	async function handleUrl() {
+		const incoming = normalizeAgentsQuery(page.url.searchParams.get('q') ?? '');
+		// Keep an in-progress trailing space so typing a multiword query remains possible.
+		if (normalizeAgentsQuery(searchText) !== incoming) searchText = incoming;
+		const intent = consumeAgentsAddIntent(page.url, { canAdd, alreadyOpen: adding });
+		if (!intent) return;
+		if (intent.open) {
+			openedFromUrl = true;
+			adding = true;
+		}
+		// Navigation's replaceState option keeps SvelteKit's URL/history metadata in sync too.
+		await goto(intent.url, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+	let navigationTask: ReturnType<typeof setTimeout> | undefined;
+	beforeNavigate(() => clearTimeout(navigationTask));
+	onDestroy(() => clearTimeout(navigationTask));
+	afterNavigate(() => {
+		clearTimeout(navigationTask);
+		// Kit restores fragment focus in a task; consume after it so it cannot restore the old intent URL.
+		navigationTask = setTimeout(handleUrl, 0);
+	});
 	async function added(r: { memberId: string; name: string; problems: string[] }) {
 		await invalidate('app:org');
 		if (r.problems.length === 0) toast.success(`Added ${r.name}. Everyone in ${connection.organization.name} can reach ${r.name}.`);
@@ -53,8 +108,13 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-x-2">
-			<Button onclick={() => (adding = true)}><Plus aria-hidden="true" /> Add agent</Button>
+			<Button bind:ref={addButton} disabled={!canAdd} onclick={openAdd}><Plus aria-hidden="true" /> Add agent</Button>
 		</div>
+	</div>
+	<div class="max-w-md space-y-2">
+		<Label for="agents-query" class="block text-sm/6 font-medium text-white">Search agents</Label>
+		<Input bind:ref={searchInput} id="agents-query" type="search" maxlength={AGENTS_QUERY_LIMIT} value={searchText} aria-describedby="agents-query-hint" class="border-0 bg-white/5 px-3 py-1.5 text-base text-white shadow-none outline-1 outline-solid -outline-offset-1 outline-gray-500 sm:text-sm/6 md:text-sm/6 dark:bg-white/5 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" oninput={(event) => changeQuery(event.currentTarget.value)} onblur={() => (searchText = normalizeAgentsQuery(searchText))} />
+		<p id="agents-query-hint" class="text-xs/5 text-gray-400">Name or role title</p>
 	</div>
 
 	{#if rows.length === 0}
@@ -63,7 +123,7 @@
 			<h2 class="mt-4 text-base/7 font-semibold text-white">No agents yet</h2>
 			<p class="mt-1 max-w-sm text-sm/6 text-gray-400">Agents are the AI employees of your organization. Add the first one to start giving them work.</p>
 			<div class="mt-6 flex flex-wrap justify-center gap-3">
-				<Button onclick={() => (adding = true)}>Add your first agent</Button>
+				<Button disabled={!canAdd} onclick={openAdd}>Add your first agent</Button>
 			</div>
 		</div>
 	{:else}
@@ -81,7 +141,7 @@
 		</div>
 
 		{#if shown.length === 0}
-			<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-400 outline-1 -outline-offset-1 outline-white/10" data-testid="no-match">No {filter} agents.</p>
+			<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-400 outline-1 -outline-offset-1 outline-white/10" data-testid="no-match">{query ? 'No agents match your search.' : `No ${filter} agents.`}</p>
 		{:else}
 			<div class="overflow-x-auto border-y border-white/5 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-indigo-400 focus-visible:-outline-offset-2">
 				<table class="w-full text-left text-sm/6" data-testid="agent-roster">
@@ -126,4 +186,4 @@
 	{/if}
 </div>
 
-<AddAgentSheet bind:open={adding} snapshot={withoutFormer(full)} fullSnapshot={full} {session} officeId={connection.office.id} officeName={connection.office.name} organization={connection.organization.name} ondone={added} />
+<AddAgentSheet bind:open={adding} snapshot={withoutFormer(full)} fullSnapshot={full} {session} officeId={connection.office.id} officeName={connection.office.name} organization={connection.organization.name} ondone={added} onCloseAutoFocus={restoreAddFocus} />
