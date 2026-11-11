@@ -4,6 +4,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+pub mod rights;
+
 use std::io::{self, BufRead, BufReader, Read};
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::Duration;

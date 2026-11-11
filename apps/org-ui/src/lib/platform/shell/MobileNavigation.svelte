@@ -7,6 +7,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { registerModalBack } from './modal-back';
+	import { focusDestinationHeading } from './focus-destination';
 
 	let { connection, onWiden }: { connection: Connection; onWiden: () => void } = $props();
 	const menuId = $props.id();
@@ -82,14 +83,6 @@
 	function closeForNavigation() {
 		closingForNavigation = true;
 		open = false;
-	}
-	async function focusDestinationHeading() {
-		await tick();
-		const heading = document.querySelector<HTMLElement>('main h1');
-		if (heading) {
-			heading.tabIndex = -1;
-			heading.focus({ preventScroll: true });
-		}
 	}
 	function focusNavigationControl() {
 		if ((innerWidth.current ?? 0) >= 640) onWiden();

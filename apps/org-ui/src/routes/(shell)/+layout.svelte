@@ -6,7 +6,8 @@
 	import { Toaster } from '$lib/components/ui/sonner';
 
 	import { onDestroy, onMount } from 'svelte';
-	import { invalidate } from '$app/navigation';
+	import { goto, invalidate } from '$app/navigation';
+	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
 	import { orgApi } from '$lib/org/api';
 	import { noteChanged } from '$lib/org/live';
@@ -108,7 +109,7 @@
 <!-- The app fills the window edge to edge. -->
 <div class="fixed inset-0 overflow-hidden bg-gray-800">
 	<div bind:this={desktopNavigation} class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72">
-		<Sidebar connection={data.connection} />
+		<Sidebar connection={data.connection} onNavigate={(event, href) => selectDesktopSection(event, href, goto)} />
 	</div>
 	<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72">
 		<ShellTopbar heading={navFor(page.url.pathname)?.name}>
