@@ -223,7 +223,7 @@ test('CHAT-10: extra announcements are folded into a thread under the last one',
 	await open(page);
 	await go(page, 'general');
 	const root = messages(page).filter({ hasText: 'Ready for review: create-org' });
-	await expect(root.getByTestId('replies-link')).toHaveText('↳ 3 replies · Sam Okafor posted 3 more updates');
+	await expect(root.getByTestId('replies-link')).toHaveText('3 replies · Sam Okafor posted 3 more updates');
 	await root.getByTestId('replies-link').click();
 	await expect(page.getByTestId('thread-panel')).toContainText('Merged the review fixes.');
 	// The folded updates are not in the channel itself.

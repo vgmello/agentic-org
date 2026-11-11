@@ -106,7 +106,7 @@ for (const place of ['conversation', 'thread'] as const) {
 		if (place === 'thread') {
 			await expect(root).not.toHaveText(previousCount);
 			await expect(area.getByTestId('thread-count')).toHaveText('4 replies');
-			await expect(root).toHaveAccessibleName('↳ 4 replies');
+			await expect(root).toHaveAccessibleName('4 replies');
 		}
 		await shot(page, `chat-live-${place}-delivered`);
 		expect.soft(pendingOffers).toEqual([]);
@@ -128,7 +128,7 @@ test('CHAT-8 BUG-66: the first reply adds an accessible counter without announci
 	await composer.fill('First delivered handoff reply');
 	await composer.press('Control+Enter');
 	await expect(pane.getByTestId('message-body').filter({ hasText: 'First delivered handoff reply' })).toBeVisible();
-	await expect(handoff.getByRole('button', { name: '↳ 1 reply', exact: true })).toBeVisible();
+	await expect(handoff.getByRole('button', { name: '1 reply', exact: true })).toBeVisible();
 	await expect(pane.getByTestId('thread-count')).toHaveText('1 reply');
 	const offers = await take(page);
 	expect(offers).toHaveLength(1);
