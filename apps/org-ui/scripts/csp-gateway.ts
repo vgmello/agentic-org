@@ -19,7 +19,7 @@ export function gatewayExecutable(output: string): string {
 	throw new Error('Cargo did not report the csp_harness executable');
 }
 
-function execute(command: string, args: string[], cwd: string, env = process.env, capture = false): Promise<string> {
+export function execute(command: string, args: string[], cwd: string, env = process.env, capture = false): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, { cwd, env, stdio: ['ignore', capture ? 'pipe' : 'inherit', 'inherit'] });
 		let output = '';

@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execute } from '../../../scripts/csp-gateway';
 
 const runner = fileURLToPath(new URL('../../../scripts/csp-gateway.ts', import.meta.url));
 const roots: string[] = [];
@@ -21,6 +22,15 @@ it('refuses serving without the freshly built executable instead of searching PA
 	const result = spawnSync('bun', [runner, 'serve'], { env, encoding: 'utf8' });
 	expect(result.status).toBe(1);
 	expect(result.stderr).toContain('Run bun run test:e2e:csp-gateway to build the gateway first');
+});
+
+it('preserves a split UTF-8 character in captured Cargo artifact stdout', async () => {
+	const root = await directory();
+	const cargo = join(root, 'cargo');
+	const artifact = { reason: 'compiler-artifact', target: { name: 'csp_harness', kind: ['example'] }, executable: '/tmp/ü-target/csp_harness' };
+	const line = JSON.stringify(artifact) + '\n';
+	await executable(cargo, `const fs=require('node:fs');const bytes=Buffer.from(${JSON.stringify(line)});const split=bytes.indexOf(0xc3)+1;fs.writeSync(1,bytes.subarray(0,split));setTimeout(()=>fs.writeSync(1,bytes.subarray(split)),50);`);
+	expect(await execute(cargo, [], root, process.env, true)).toBe(line);
 });
 
 it('stops on a failed Cargo build even if stdout contains an executable artifact', async () => {
