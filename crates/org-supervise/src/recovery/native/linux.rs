@@ -66,7 +66,14 @@ impl NativeRecovery {
             .map_err(|_| invalid("invalid procfs root descriptor metadata"))?;
         let procfs_mount_id = number(field(root_info, "mnt_id:")?.trim().as_bytes())?;
         check_mount(&procfs, procfs_mount_id, deadline)?;
-        let boot = read_at(&procfs, c"sys/kernel/random/boot_id", 128, Some(deadline))?;
+        // Container runtimes may mount /proc/sys read-only on its own mount.
+        let boot = open_at(
+            &procfs,
+            c"sys/kernel/random/boot_id",
+            0,
+            libc::RESOLVE_NO_SYMLINKS,
+        )?;
+        let boot = read_bounded(boot, 128, Some(deadline))?;
         let boot = std::str::from_utf8(&boot)
             .map_err(|_| invalid("invalid procfs boot identity"))?
             .trim();
@@ -99,7 +106,7 @@ impl NativeRecovery {
         };
         let credentials = match credentials(&pin.directory, deadline) {
             Ok(credentials) => credentials,
-            Err(err) if vanished(&err) && exited(&pin.fd, Instant::now())? => return Ok(None),
+            Err(err) if vanished(&err) && exited(&pin.fd, None)? => return Ok(None),
             Err(err) => return Err(err),
         };
         if credentials.uid[0] != self.context.uid {
@@ -115,7 +122,7 @@ impl NativeRecovery {
         };
         // A zombie thread-group leader can still have live workers. Only the
         // process pidfd certifies exit of the whole group.
-        let exited = exited(&pin.fd, Instant::now())?;
+        let exited = exited(&pin.fd, None)?;
         if exited && !pin.stat.zombie {
             return Ok(None);
         }
@@ -144,7 +151,12 @@ impl NativeRecovery {
             // Open the identity-bound procfs directory before the numeric pidfd
             // lookup. Reading stat through that directory afterward proves the
             // old PID could not have been reaped and reassigned between opens.
-            let directory = open_at(&self.procfs, &name, libc::O_DIRECTORY);
+            let directory = open_at(
+                &self.procfs,
+                &name,
+                libc::O_DIRECTORY,
+                libc::RESOLVE_NO_XDEV,
+            );
             let fd = match pidfd(pid) {
                 Ok(fd) => fd,
                 Err(err) if vanished(&err) => return Ok(None),
@@ -156,7 +168,7 @@ impl NativeRecovery {
             });
             match capture {
                 Ok((directory, stat)) => {
-                    if exited(&fd, Instant::now())? && !stat.zombie {
+                    if exited(&fd, None)? && !stat.zombie {
                         return Ok(None);
                     }
                     return Ok(Some(Pin {
@@ -219,14 +231,14 @@ impl RecoveryProcesses for NativeRecovery {
             // the end excludes reuse during the observation of the child's PPID.
             let current = match read_stat(&child.directory, row.pid, Some(deadline)) {
                 Ok(stat) => stat,
-                Err(err) if vanished(&err) && exited(&child.fd, Instant::now())? => continue,
+                Err(err) if vanished(&err) && exited(&child.fd, None)? => continue,
                 Err(err) => return Err(err),
             };
             if current.started == child.stat.started
                 && current.parent == child.stat.parent
                 && !current.zombie
-                && !exited(&child.fd, Instant::now())?
-                && !exited(&parent.fd, Instant::now())?
+                && !exited(&child.fd, None)?
+                && !exited(&parent.fd, None)?
             {
                 row.parent = Some(self.identity(current.parent, parent.stat));
             }
@@ -291,7 +303,7 @@ impl RecoveryProcesses for NativeRecovery {
             }
             Ok(())
         })();
-        if exited(&pin.fd, Instant::now())? {
+        if exited(&pin.fd, None)? {
             return Ok(SignalOutcome::Gone);
         }
         verified?;
@@ -316,6 +328,8 @@ impl RecoveryProcesses for NativeRecovery {
         if !valid_pid(identity.pid) {
             return Err(invalid("invalid process wait identity"));
         }
+        // An already-expired deadline requests one nonblocking observation.
+        let deadline = (Instant::now() < deadline).then_some(deadline);
         if let Some(pin) = self
             .pins
             .get(&identity.pid)
@@ -323,10 +337,11 @@ impl RecoveryProcesses for NativeRecovery {
         {
             return exited(&pin.fd, deadline);
         }
-        // The policy may request an observation with an already-expired deadline.
-        // Take one bounded procfs reading rather than interpreting the deadline as exit.
-        let read_deadline = (Instant::now() < deadline).then_some(deadline);
-        let Some(pin) = self.pin(identity.pid, read_deadline)? else {
+        let pin = self.pin(identity.pid, deadline)?;
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Ok(false);
+        }
+        let Some(pin) = pin else {
             return Ok(true);
         };
         if pin.stat.started.to_string() != identity.started {
@@ -603,20 +618,27 @@ fn check_time(deadline: Instant) -> io::Result<()> {
     }
 }
 
-fn open_at(directory: &File, name: &CStr, flags: libc::c_int) -> io::Result<File> {
-    // SAFETY: directory and NUL-terminated path stay live. No create flag is supplied.
+fn open_at(directory: &File, name: &CStr, flags: libc::c_int, resolve: u64) -> io::Result<File> {
+    // SAFETY: open_how contains only integer fields. Zero initializes mode.
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags =
+        (flags | libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK) as u64;
+    how.resolve = resolve;
+    // SAFETY: live dirfd, NUL-terminated path and correctly sized open_how.
     let fd = unsafe {
-        libc::openat(
+        libc::syscall(
+            libc::SYS_openat2,
             directory.as_raw_fd(),
             name.as_ptr(),
-            flags | libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            &how,
+            std::mem::size_of_val(&how),
         )
     };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: openat returned a new descriptor.
-    Ok(unsafe { File::from_raw_fd(fd) })
+    // SAFETY: openat2 returned a new descriptor.
+    Ok(unsafe { File::from_raw_fd(fd as libc::c_int) })
 }
 
 fn read_at(
@@ -628,7 +650,14 @@ fn read_at(
     if let Some(deadline) = deadline {
         check_time(deadline)?;
     }
-    let mut file = open_at(directory, name, 0)?.take((limit + 1) as u64);
+    // Process records and descriptor metadata must be from the held procfs
+    // instance. A bind mount can otherwise substitute another process's data.
+    let file = open_at(directory, name, 0, libc::RESOLVE_NO_XDEV)?;
+    read_bounded(file, limit, deadline)
+}
+
+fn read_bounded(file: File, limit: usize, deadline: Option<Instant>) -> io::Result<Vec<u8>> {
+    let mut file = file.take((limit + 1) as u64);
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
     loop {
@@ -690,42 +719,91 @@ fn send(fd: &OwnedFd, signal: libc::c_int) -> io::Result<()> {
     Ok(())
 }
 
-fn exited(fd: &OwnedFd, deadline: Instant) -> io::Result<bool> {
+fn exited(fd: &OwnedFd, deadline: Option<Instant>) -> io::Result<bool> {
     let mut slot = libc::pollfd {
         fd: fd.as_raw_fd(),
         events: libc::POLLIN,
         revents: 0,
     };
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+    poll_until(deadline, Instant::now, |remaining| {
         let timeout = libc::timespec {
             tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
             tv_nsec: remaining.subsec_nanos() as _,
         };
         // SAFETY: one valid slot for a held pidfd, a finite timeout and no signal mask.
-        let result = unsafe { libc::ppoll(&mut slot, 1, &timeout, std::ptr::null()) };
-        if result < 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::Interrupted && Instant::now() < deadline {
-                continue;
-            }
-            return Err(err);
+        match unsafe { libc::ppoll(&mut slot, 1, &timeout, std::ptr::null()) } {
+            result if result < 0 => Err(io::Error::last_os_error()),
+            0 => Ok(false),
+            _ if slot.revents & (libc::POLLIN | libc::POLLHUP) != 0 => Ok(true),
+            _ => Err(io::Error::other("unexpected pidfd poll event")),
         }
-        if result > 0 {
-            if slot.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
-                return Ok(true);
-            }
-            return Err(io::Error::other("unexpected pidfd poll event"));
-        }
-        if Instant::now() >= deadline {
+    })
+}
+
+fn poll_until(
+    deadline: Option<Instant>,
+    mut now: impl FnMut() -> Instant,
+    mut poll: impl FnMut(Duration) -> io::Result<bool>,
+) -> io::Result<bool> {
+    loop {
+        let current = now();
+        let remaining = match deadline {
+            Some(deadline) if current >= deadline => return Ok(false),
+            Some(deadline) => deadline.duration_since(current),
+            None => Duration::ZERO,
+        };
+        let ready = poll(remaining);
+        // ppoll can observe readiness on a rescan after its timer expires.
+        if deadline.is_some_and(|deadline| now() >= deadline) {
             return Ok(false);
+        }
+        match ready {
+            Ok(false) if deadline.is_some() => continue,
+            Err(err) if deadline.is_some() && err.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_stat, validate_mountinfo, Stat};
+    use super::{open_at, parse_stat, poll_until, validate_mountinfo, Stat};
+    use std::cell::Cell;
+    use std::fs::File;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn process_record_open_rejects_crossing_a_mount() {
+        let root = File::open("/").unwrap();
+        let err = open_at(&root, c"proc", libc::O_DIRECTORY, libc::RESOLVE_NO_XDEV).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EXDEV));
+    }
+
+    #[test]
+    fn pidfd_readiness_after_the_deadline_is_not_completion() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_millis(30);
+        let clock = Cell::new(start);
+        let gone = poll_until(
+            Some(deadline),
+            || clock.get(),
+            |_| {
+                clock.set(deadline);
+                Ok(true)
+            },
+        )
+        .unwrap();
+        assert!(!gone);
+        assert!(poll_until(
+            None,
+            || clock.get(),
+            |remaining| {
+                assert!(remaining.is_zero());
+                Ok(true)
+            }
+        )
+        .unwrap());
+    }
 
     #[test]
     fn checks_the_held_procfs_mount_for_filtering() {

@@ -10,11 +10,13 @@ use super::{
     VerifiedTarget,
 };
 
-// SDK sys/proc_info.h. libproc reports enumeration lengths in bytes.
-const PROC_RUID_ONLY: libc::c_uint = 5;
+// SDK sys/proc_info.h.
 const PROC_FLAG_LP64: u32 = 0x10;
 const PROC_FLAG_PSUGID: u32 = 0x2000;
 const MAX_LISTED_PIDS: usize = 131_072;
+// SDK sys/sysctl.h. The LP64 kinfo_proc ABI is the same on arm64 and x86_64.
+const KINFO_PROC_SIZE: usize = 648;
+const KINFO_PROC_PID_OFFSET: usize = 40;
 const MAX_ARG_BYTES: usize = 2 * 1024 * 1024;
 const EXIT_RECHECK_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -137,47 +139,60 @@ impl NativeRecovery {
 
     fn pids(&self, deadline: Instant) -> io::Result<Vec<libc::pid_t>> {
         check_time(deadline)?;
-        // SAFETY: null sizing query for same-real-UID process IDs.
-        let estimate = unsafe {
-            libc::proc_listpids(PROC_RUID_ONLY, self.context.uid, std::ptr::null_mut(), 0)
-        };
-        if estimate <= 0 {
-            return Err(io::Error::other("cannot size the recovery process list"));
+        // KERN_PROC_RUID sizes the kernel's iteration under the process-list
+        // lock and reports ENOMEM instead of silently capping the result.
+        let mut oid = [
+            libc::CTL_KERN,
+            libc::KERN_PROC,
+            libc::KERN_PROC_RUID,
+            self.context.uid as libc::c_int,
+        ];
+        let mut capacity = 0;
+        // SAFETY: valid OID and size output, with no read or write data buffer.
+        if unsafe {
+            libc::sysctl(
+                oid.as_mut_ptr(),
+                oid.len() as _,
+                std::ptr::null_mut(),
+                &mut capacity,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
         }
-        let width = std::mem::size_of::<libc::pid_t>();
-        let mut capacity = (estimate as usize)
-            .div_ceil(width)
-            .saturating_add(16)
-            .min(MAX_LISTED_PIDS);
+        let maximum = MAX_LISTED_PIDS * KINFO_PROC_SIZE;
+        if capacity < KINFO_PROC_SIZE || capacity > maximum {
+            return Err(invalid("invalid recovery process list size"));
+        }
         loop {
             check_time(deadline)?;
-            let mut pids = vec![0; capacity];
-            let size = capacity * width;
-            // SAFETY: writable PID buffer with its byte size, bounded to c_int.
-            let count = unsafe {
-                libc::proc_listpids(
-                    PROC_RUID_ONLY,
-                    self.context.uid,
-                    pids.as_mut_ptr().cast(),
-                    size as _,
+            let mut bytes = vec![0; capacity];
+            let mut count = bytes.len();
+            // SAFETY: a valid OID and writable buffer with an exact byte size.
+            let result = unsafe {
+                libc::sysctl(
+                    oid.as_mut_ptr(),
+                    oid.len() as _,
+                    bytes.as_mut_ptr().cast(),
+                    &mut count,
+                    std::ptr::null_mut(),
+                    0,
                 )
             };
-            if count <= 0 || !(count as usize).is_multiple_of(width) {
-                return Err(io::Error::other("invalid recovery process list"));
+            if result == 0 {
+                check_time(deadline)?;
+                let capture = bytes
+                    .get(..count)
+                    .ok_or_else(|| invalid("invalid recovery process list length"))?;
+                return proc_list_pids(capture, self.context.pid as libc::pid_t);
             }
-            if (count as usize) < size {
-                pids.truncate(count as usize / width);
-                if !pids.contains(&(self.context.pid as libc::pid_t)) {
-                    return Err(io::Error::other(
-                        "recovery process list omits the supervisor",
-                    ));
-                }
-                return Ok(pids);
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ENOMEM) || capacity == maximum {
+                return Err(err);
             }
-            if capacity == MAX_LISTED_PIDS {
-                return Err(io::Error::other("recovery process list may be truncated"));
-            }
-            capacity = (capacity * 2).min(MAX_LISTED_PIDS);
+            capacity = (capacity * 2).min(maximum);
         }
     }
 }
@@ -309,6 +324,15 @@ impl RecoveryProcesses for NativeRecovery {
             return Err(unsafe_target());
         }
         let mark = self.mark(&before, deadline)?;
+        let Some(after) = bsd_info(identity.pid)? else {
+            return Ok(SignalOutcome::Gone);
+        };
+        if !live_matches(&after, identity) {
+            return Ok(SignalOutcome::Gone);
+        }
+        if !safe_credentials(&after, self.context.uid) {
+            return Err(unsafe_target());
+        }
         let direct = matches!(
             target.evidence(),
             TargetEvidence::Marked | TargetEvidence::RecordedLeader
@@ -320,15 +344,6 @@ impl RecoveryProcesses for NativeRecovery {
                 io::ErrorKind::PermissionDenied,
                 "recovery mark changed or is unreadable",
             ));
-        }
-        let Some(after) = bsd_info(identity.pid)? else {
-            return Ok(SignalOutcome::Gone);
-        };
-        if !live_matches(&after, identity) {
-            return Ok(SignalOutcome::Gone);
-        }
-        if !safe_credentials(&after, self.context.uid) {
-            return Err(unsafe_target());
         }
         check_time(deadline)?;
         let signal = match signal {
@@ -380,6 +395,24 @@ impl RecoveryProcesses for NativeRecovery {
         std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
         Ok(())
     }
+}
+
+fn proc_list_pids(bytes: &[u8], supervisor: libc::pid_t) -> io::Result<Vec<libc::pid_t>> {
+    let (rows, remainder) = bytes.as_chunks::<KINFO_PROC_SIZE>();
+    if !remainder.is_empty() {
+        return Err(invalid("short kinfo_proc record"));
+    }
+    let pids: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let pid = &row[KINFO_PROC_PID_OFFSET..][..std::mem::size_of::<libc::pid_t>()];
+            libc::pid_t::from_ne_bytes(pid.try_into().unwrap())
+        })
+        .collect();
+    if !pids.contains(&supervisor) {
+        return Err(invalid("recovery process list omits the supervisor"));
+    }
+    Ok(pids)
 }
 
 fn wait_after_registration(
@@ -555,10 +588,25 @@ fn procargs_mark(bytes: &[u8], expected_size: usize) -> MarkEvidence {
 
 #[cfg(test)]
 mod tests {
-    use super::{procargs_mark, wait_after_registration};
+    use super::{
+        proc_list_pids, procargs_mark, wait_after_registration, KINFO_PROC_PID_OFFSET,
+        KINFO_PROC_SIZE,
+    };
     use crate::recovery::MarkEvidence;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn process_list_rejects_partial_records_and_missing_supervisor() {
+        let mut bytes = vec![0; 2 * KINFO_PROC_SIZE];
+        for (index, pid) in [54i32, 56].into_iter().enumerate() {
+            let field = index * KINFO_PROC_SIZE + KINFO_PROC_PID_OFFSET;
+            bytes[field..field + 4].copy_from_slice(&pid.to_ne_bytes());
+        }
+        assert_eq!(proc_list_pids(&bytes, 54).unwrap(), [54, 56]);
+        assert!(proc_list_pids(&bytes[..bytes.len() - 1], 54).is_err());
+        assert!(proc_list_pids(&bytes, 55).is_err());
+    }
 
     #[test]
     fn an_empty_exit_queue_does_not_wait_out_the_deadline() {

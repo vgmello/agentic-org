@@ -141,15 +141,16 @@ continues to use the same policy and checkpoint contract.
 
 On Linux, the adapter checks the procfs PID namespace and requires an unfiltered
 procfs mount. It binds each pidfd to an open procfs process directory before
-reading identity. It verifies that the
-environment read covers the entire procfs address range. It retains the pidfds
+reading identity and rejects mount crossings when opening process records.
+It verifies that the environment read covers the entire procfs address range. It retains the pidfds
 through a scan, rechecks credentials and mark evidence before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd
 operations fail recovery. A zombie group leader with live worker threads
 remains unresolved if its mark is unreadable. The pidfd reports exit of the
 whole thread group and leaves status available to the owner.
 
-On macOS, the adapter reads start identity and credentials through libproc and
+On macOS, the adapter enumerates same-real-UID processes through
+`KERN_PROC_RUID`, reads start identity and credentials through libproc, and
 reads the mark from a bounded `KERN_PROCARGS2` record. Restricted or incomplete
 records are unreadable under S0. Identical duplicate marks count as one mark.
 Parent links compare both identities around the PPID observation. Individual
