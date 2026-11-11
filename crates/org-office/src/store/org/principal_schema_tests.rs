@@ -290,7 +290,13 @@ struct AgentInputParams {
 #[test]
 fn stored_v1_agent_fingerprint_matches_both_profile_forms() {
     use sha2::{Digest as _, Sha256};
-    for case in fingerprint_vectors()["org"].as_array().unwrap() {
+    let vectors = fingerprint_vectors();
+    let cases = vectors["org"].as_array().unwrap();
+    assert!(
+        !cases.is_empty(),
+        "stored v1 fingerprint vectors are required"
+    );
+    for case in cases {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("org.db");
         let legacy = open(&path, Opening::New, &LEGACY_V1);
