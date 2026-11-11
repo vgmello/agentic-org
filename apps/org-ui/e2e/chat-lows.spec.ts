@@ -226,3 +226,82 @@ test('CHAT-34 BUG-63: disabled management leaves the Conversations overlay open'
 	await expect(page.getByRole('dialog')).toHaveCount(1);
 	await shot(page, 'chat-stopped-conversation-sheet');
 });
+
+test('CHAT-32 CHAT-33 BUG-62: Search has one history entry and results restore through Back', async ({ page, browserName }) => {
+	await open(page);
+	await channel(page, 'c-general', '#general');
+	await expect(page).toHaveURL(/\?c=c-general$/);
+	const initialLength = await page.evaluate(() => history.length);
+	const search = page.getByRole('searchbox', { name: 'Search chat' });
+	await search.pressSequentially('has:ask');
+	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('has:ask');
+	await expect(page).toHaveTitle(fullTitle('Search'));
+	const query = 'has:ask in:#atlas';
+	await search.pressSequentially(' in:#atlas');
+	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe(query);
+	await expect(search).toBeFocused();
+	expect(await page.evaluate(() => history.length)).toBe(initialLength + 1);
+	if (browserName === 'chromium') {
+		const session = await page.context().newCDPSession(page);
+		const { entries } = await session.send('Page.getNavigationHistory');
+		await session.detach();
+		const channelEntry = entries.find((entry) => new URL(entry.url).search === '?c=c-general');
+		expect(channelEntry?.title).toBe(fullTitle('#general'));
+	}
+	await page.goBack();
+	await expect(page).toHaveURL(/\?c=c-general$/);
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await expect(search).toHaveValue('');
+	await page.goForward();
+	await expect(search).toHaveValue(query);
+	await expect(page).toHaveTitle(fullTitle('Search'));
+	await page.reload();
+	await expect(search).toHaveValue(query);
+	await expect(page).toHaveTitle(fullTitle('Search'));
+	const result = page.getByTestId('message-list').getByTestId('message').filter({ hasText: 'Block bug reports' });
+	await result.getByRole('button', { name: 'Open in conversation', exact: true }).click();
+	await expect(page).toHaveTitle(fullTitle('#atlas'));
+	await expect(page).toHaveURL(/c=c-project-atlas.*m=/);
+	await expect(search).toHaveValue('');
+	await page.goBack();
+	await expect(search).toHaveValue(query);
+	await expect(result).toBeVisible();
+	await shot(page, 'chat-history-search-results-restored');
+});
+
+test('CHAT-32 CHAT-33 BUG-62: clearing Search returns to its place without another history entry', async ({ page }) => {
+	await open(page);
+	await channel(page, 'c-general', '#general');
+	await expect(page).toHaveURL(/\?c=c-general$/);
+	const search = page.getByRole('searchbox', { name: 'Search chat' });
+	await search.fill('has:ask');
+	await expect(page).toHaveTitle(fullTitle('Search'));
+	await search.fill('');
+	await expect(page).toHaveURL(/\?c=c-general$/);
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await page.goBack();
+	await expect(page).toHaveTitle(fullTitle('Needs you'));
+	await visit(page, '/chat?c=c-general&q=has%3Aask');
+	await expect(search).toHaveValue('has:ask');
+	await search.fill('');
+	await expect(page).toHaveURL(/\?c=c-general$/);
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await shot(page, 'chat-history-search-cleared');
+});
+
+test('CHAT-32 CHAT-33 BUG-62: Back and reload resolve the same empty-organization place', async ({ page }) => {
+	await open(page, '?org=empty');
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await side(page).getByTestId('mentions-link').click();
+	await expect(page).toHaveTitle(fullTitle('Mentions'));
+	await page.goBack();
+	await expect(page).toHaveURL(/\?org=empty$/);
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await page.reload();
+	await expect(page).toHaveTitle(fullTitle('#general'));
+	await side(page).getByRole('button', { name: 'Needs you', exact: true }).click();
+	await expect(page).toHaveURL(/v=needs/);
+	await page.reload();
+	await expect(page).toHaveTitle(fullTitle('Needs you'));
+	await shot(page, 'chat-history-explicit-empty-needs-you');
+});
