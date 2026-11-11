@@ -497,3 +497,62 @@ test('AGENT-3 URL q: a missing optional role title still supports name search', 
 	await expect(rows(page)).toContainText('Noor Haddad');
 	await shot(page, 'agents-query-optional-title');
 });
+
+
+test('AGENT-3 URL q: a lowercase query finds a mixed-case fixture role title', async ({ page }) => {
+	await createOrg(page);
+	await mockOrgApi(page, () => 'const titleCaseView = orgApi.view.bind(orgApi); orgApi.view = async (...args) => { const view = structuredClone(await titleCaseView(...args)); view.snapshot.members.find((member) => member.id === "noor").agent.title = "Web Engineer"; return view; };');
+	await visit(page, '/agents?q=web%20engineer');
+	await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('web engineer');
+	await expect(rows(page)).toHaveCount(1);
+	await expect(rows(page)).toContainText('Noor Haddad');
+	await expect(rows(page)).toContainText('Web Engineer');
+	await page.getByLabel('Search agents', { exact: true }).fill('WEB ENGINEER');
+	await expect(rows(page)).toHaveCount(1);
+	await shot(page, 'agents-query-mixed-title');
+});
+
+test('AGENT-3 URL q: the first rendered field and roster already reflect the incoming query', async ({ page }) => {
+	await createOrg(page);
+	await page.addInitScript(() => {
+		const observer = new MutationObserver(() => {
+			const input = document.querySelector<HTMLInputElement>('#agents-query');
+			if (!input || !document.querySelector('[data-testid="agent-roster"]')) return;
+			(window as Window & { __firstAgentsRender?: unknown }).__firstAgentsRender = {
+				query: input.value,
+				rows: [...document.querySelectorAll('[data-testid="agent-row"] th a')].map((link) => link.textContent)
+			};
+			observer.disconnect();
+		});
+		observer.observe(document, { childList: true, subtree: true });
+	});
+	await visit(page, '/agents?q=noor');
+	await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('noor');
+	const first = await page.evaluate(() => (window as Window & { __firstAgentsRender?: unknown }).__firstAgentsRender);
+	expect(first).toEqual({ query: 'noor', rows: ['Noor Haddad'] });
+	await shot(page, 'agents-query-first-render');
+});
+
+test('AGENT-4 URL add: already-open intent preserves the empty-organization opener focus', async ({ page }) => {
+	await createOrg(page);
+	await visit(page, '/agents?org=empty');
+	const opener = page.getByRole('button', { name: 'Add your first agent', exact: true });
+	await opener.focus(); await opener.press('Enter');
+	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByLabel('Name', { exact: true }).fill('Kept empty-org draft');
+	await dialog.evaluate((element) => {
+		const link = document.createElement('a');
+		link.href = '/agents?org=empty&add=1'; link.textContent = 'Repeat empty-org Add intent';
+		element.prepend(link);
+	});
+	const entries = await page.evaluate(() => history.length);
+	await dialog.getByRole('link', { name: 'Repeat empty-org Add intent' }).click();
+	await expect.poll(() => page.evaluate(() => history.length)).toBe(entries + 1);
+	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
+	await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Kept empty-org draft');
+	await page.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+	await expect(opener).toBeFocused();
+	await shot(page, 'agents-add-already-open-empty-focus');
+});

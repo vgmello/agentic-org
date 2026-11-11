@@ -23,7 +23,7 @@
 	const offices = $derived(connection.organization.offices);
 	const rows = $derived(roster(full, offices));
 	let filter = $state<RosterFilter>('all');
-	let searchText = $state('');
+	let searchText = $state(normalizeAgentsQuery(page.url.searchParams.get('q') ?? ''));
 	const query = $derived(normalizeAgentsQuery(searchText));
 	const needle = $derived(query.toLowerCase());
 	const shown = $derived(filterRoster(rows, filter).filter((row) =>
@@ -48,6 +48,7 @@
 	let searchInput = $state<HTMLInputElement | null>(null);
 	let openedFromUrl = $state(false);
 	// A mounted route already has its loaded/available roster; extend this value when per-operation Add capabilities land.
+	// Intent gating is defensive: afterNavigate has settled and pending navigation cancels its task, so canAdd is true there today.
 	const canAdd = $derived(!navigating.to);
 	function openAdd() {
 		openedFromUrl = false;
