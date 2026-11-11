@@ -464,6 +464,7 @@ fn contradictions_in_retained_overlap_are_detected_in_both_directions_and_code()
     for ack in [
         store.ack(0, 3, &[]),
         store.ack(0, 3, &[1, 2]),
+        store.ack(0, 3, &[2, 3]),
         store.ack(0, 5, &[]),
     ] {
         store.refused(&store.peer(), ack, Refusal::ConflictingProof);
@@ -642,15 +643,19 @@ fn entirely_pruned_replays_need_no_outcome_query_or_save() {
         store.apply(store.ack(0, 2, &[2])).unwrap(),
         LocalStreamOutput::Duplicate
     );
+    assert_eq!(
+        store.apply(store.ack(0, 1, &[1])).unwrap(),
+        LocalStreamOutput::Duplicate
+    );
     assert_eq!(store.snapshot(), before);
 }
 #[test]
 fn overlap_filters_out_pruned_and_new_rejections_but_checks_retained_upper_boundary() {
     let mut store = Memory::new("A", 8);
     store.apply(store.ack(0, 3, &[1, 3])).unwrap();
-    store.prune(1);
+    store.prune(2);
     assert_eq!(
-        store.apply(store.ack(0, 5, &[1, 3, 4])).unwrap(),
+        store.apply(store.ack(0, 5, &[1, 2, 3, 4])).unwrap(),
         LocalStreamOutput::Advanced { from: 3, to: 5 }
     );
     store.refused(
@@ -767,5 +772,48 @@ fn receipt_reader_reuses_queue_context_and_integrity_validation_before_any_write
             }
         };
         store.refused(&store.peer(), store.ack(0, 2, &[]), expected);
+    }
+}
+
+#[test]
+fn conflicting_receipt_is_batch_fatal_while_gap_is_not() {
+    assert!(SyncError::from(Refusal::ConflictingProof).aborts_batch());
+    assert!(!SyncError::from(Refusal::Gap).aborts_batch());
+}
+#[test]
+fn native_rejection_sequence_strictly_below_base_or_previous_is_an_invariant_failure() {
+    for descending in [false, true] {
+        let mut store = Memory::new("A", 4);
+        store.apply(store.ack(0, 3, &[2, 3])).unwrap();
+        let data = store.snapshot();
+        let mut rows = vec![data
+            .outcomes
+            .values()
+            .find(|r| r.key.seq.get() == 3)
+            .unwrap()
+            .clone()];
+        if descending {
+            rows.push(
+                data.outcomes
+                    .values()
+                    .find(|r| r.key.seq.get() == 2)
+                    .unwrap()
+                    .clone(),
+            );
+            store.rows = Some(rows);
+            store.refused(
+                &store.peer(),
+                store.ack(1, 3, &[2, 3]),
+                Refusal::InvariantFailure,
+            );
+        } else {
+            rows[0].key.seq = SourceSeq::new(1).unwrap();
+            store.rows = Some(rows);
+            store.refused(
+                &store.peer(),
+                store.ack(2, 3, &[3]),
+                Refusal::InvariantFailure,
+            );
+        }
     }
 }

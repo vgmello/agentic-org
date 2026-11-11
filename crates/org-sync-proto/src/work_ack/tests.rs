@@ -121,6 +121,7 @@ fn ack_proof_binds_each_field_and_empty_rejected_list() {
         assert_ne!(work_ack_proof_digest_v1(&changed).unwrap(), digest);
     }
     for (base, through, seq, valid) in [
+        (1, 3, 0, false),
         (1, 3, 1, false),
         (1, 3, 2, true),
         (1, 3, 3, true),
