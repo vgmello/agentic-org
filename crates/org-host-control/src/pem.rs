@@ -24,7 +24,7 @@ impl Der {
 
 impl Drop for Der {
     fn drop(&mut self) {
-        zero(&mut self.0);
+        org_proto::zero_bytes(&mut self.0);
     }
 }
 
@@ -52,6 +52,14 @@ pub(crate) fn first_block(text: &str, labels: &[&str]) -> Result<Der, InvalidPem
         .min_by_key(|&(at, _)| at)
         .ok_or(InvalidPem)?;
     let body_at = begin_at + format!("-----BEGIN {label}-----").len();
+    // RFC 7468: the body starts on the line after BEGIN.
+    let body_at = if text[body_at..].starts_with("\r\n") {
+        body_at + 2
+    } else if text[body_at..].starts_with('\n') {
+        body_at + 1
+    } else {
+        return Err(InvalidPem);
+    };
     let end_at =
         line_start_find(text, &format!("-----END {label}-----"), body_at).ok_or(InvalidPem)?;
     decode_base64(&text[body_at..end_at])
@@ -75,7 +83,7 @@ fn decode_base64(body: &str) -> Result<Der, InvalidPem> {
     let mut quantum = [0u8; 4];
     let decoded = decode_into(body, &mut out.0, &mut quantum);
     // On every path: the last quantum holds key bits.
-    zero(&mut quantum);
+    org_proto::zero_bytes(&mut quantum);
     decoded?;
     if out.0.is_empty() {
         return Err(InvalidPem);
@@ -137,20 +145,6 @@ fn decode_into(body: &str, out: &mut Vec<u8>, quantum: &mut [u8; 4]) -> Result<(
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove (best effort, as `org-proto` does for
-/// its secrets).
-// The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes that
-// are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
-// volatile write. `write_volatile` through an exclusive reference is sound.
-#[allow(unsafe_code)]
-fn zero(bytes: &mut [u8]) {
-    for b in bytes.iter_mut() {
-        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
-    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +201,7 @@ mod tests {
             // A begin or an end line that doesn't start a line.
             "x-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----\nTWFu-----END PRIVATE KEY-----\n",
+            "-----BEGIN PRIVATE KEY-----TWFu\n-----END PRIVATE KEY-----\n",
         ] {
             assert!(first_block(bad, PRIVATE_KEY).is_err(), "{bad:?}");
         }

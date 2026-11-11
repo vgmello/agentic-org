@@ -130,6 +130,7 @@ pub use principal::{
     GRANT_MAC_DOMAIN,
 };
 pub use retired::Retired;
+pub use token::zero as zero_bytes;
 pub use token::{
     AppToken, DbKey, GrantKey, GrantMac, APP_TOKEN_BYTES, DB_KEY_BYTES, GRANT_KEY_BYTES,
     GRANT_MAC_BYTES,
