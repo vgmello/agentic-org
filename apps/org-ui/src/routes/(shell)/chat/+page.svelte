@@ -674,16 +674,16 @@
 					</ul>
 				{:else if conversation && convView}
 					{#key conversation.id}
-						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
+						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions">
 							{#if !conversation.members.includes(ctx.owner)}
 								<p class="mb-2 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="reading-as-owner">You're reading as the owner. You can reply here.</p>
 							{/if}
 							{#each convView.shown as m, i (m.id)}
 								{#if dayChange(convView.shown, i)}
-									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400" aria-live="off"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
 								{/if}
 								{#if m.id === newAt}
-									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" aria-live="off" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
 								{/if}
 								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
 							{:else}
@@ -712,9 +712,9 @@
 									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
 								</div>
 							{/if}
-							{@render undeliveredRows(pendingHere)}
 						</div>
 					{/key}
+					{@render undeliveredRows(pendingHere)}
 				{/if}
 			</div>
 
