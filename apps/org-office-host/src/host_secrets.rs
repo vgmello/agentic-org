@@ -2,6 +2,8 @@
 
 #[cfg(debug_assertions)]
 pub(crate) mod dev;
+#[cfg(target_os = "macos")]
+mod keychain;
 #[cfg(test)]
 mod tests;
 
@@ -83,6 +85,7 @@ impl fmt::Debug for Value {
 
 #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.2b hostdb"))]
 pub(crate) trait HostSecrets: Send + Sync {
+    /// TLS items are add-only; a duplicate preserves the first stored value.
     fn put(&self, name: &Name, value: &Value) -> Result<(), Error>;
     fn load(&self, name: &Name) -> Result<Option<Value>, Error>;
     fn delete(&self, name: &Name) -> Result<(), Error>;
@@ -102,10 +105,91 @@ pub(crate) enum Error {
     Unsafe,
     InUse,
     CaseAlias,
+    #[cfg(target_os = "macos")]
+    Os(i32),
     Io(io::ErrorKind),
 }
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Self::Io(e.kind())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SelectionError {
+    InvalidInstance,
+    #[cfg(debug_assertions)]
+    NoDevBase,
+    NoGroup,
+    NotEntitled,
+    NotHardened,
+    #[cfg(not(target_os = "macos"))]
+    Unsupported,
+    #[cfg(debug_assertions)]
+    Storage(Error),
+}
+#[cfg_attr(not(test), expect(dead_code, reason = "hostdb activation"))]
+fn store_for(
+    dev_base: Option<&std::path::Path>,
+    home: &std::path::Path,
+    instance: &str,
+    own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
+) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
+    if org_proto::ulid_time_ms(instance).is_none() {
+        return Err(SelectionError::InvalidInstance);
+    }
+    #[cfg(debug_assertions)]
+    {
+        let _ = own_signing;
+        let base = dev_base.ok_or(SelectionError::NoDevBase)?;
+        dev::DevSecrets::open(base, home, instance)
+            .map(|s| std::sync::Arc::new(s) as _)
+            .map_err(SelectionError::Storage)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (dev_base, home);
+        release_store(
+            option_env!("ORG_HOST_KEYCHAIN_GROUP"),
+            instance,
+            own_signing,
+        )
+    }
+}
+#[cfg_attr(
+    all(debug_assertions, not(test)),
+    expect(dead_code, reason = "release selection")
+)]
+fn release_store(
+    group: Option<&str>,
+    instance: &str,
+    own_signing: impl FnOnce() -> Option<crate::code_signing::Signing>,
+) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
+    if org_proto::ulid_time_ms(instance).is_none() {
+        return Err(SelectionError::InvalidInstance);
+    }
+    let group = group
+        .filter(|g| !g.trim().is_empty())
+        .ok_or(SelectionError::NoGroup)?;
+    let signing = own_signing().ok_or(SelectionError::NotHardened)?;
+    if !signing
+        .keychain_access_groups
+        .as_ref()
+        .is_some_and(|groups| groups.iter().any(|g| g == group))
+    {
+        return Err(SelectionError::NotEntitled);
+    }
+    if !crate::code_signing::hardened_and_clean(&signing) {
+        return Err(SelectionError::NotHardened);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        keychain::Keychain::new(group, instance)
+            .map(|s| std::sync::Arc::new(s) as _)
+            .map_err(|_| SelectionError::InvalidInstance)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(SelectionError::Unsupported)
     }
 }

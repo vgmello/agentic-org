@@ -151,7 +151,10 @@ impl HostSecrets for DevSecrets {
             return Err(Error::TooLarge);
         }
         let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
-        self.item(name.as_str())?;
+        let add_only = name.as_str().starts_with("tls.");
+        if self.item(name.as_str())?.is_some() && add_only {
+            return Ok(());
+        }
         let temporary = format!(".put.{}", crate::ids::generate()?);
         // O_EXCL is defence in depth against a random temporary-name collision.
         let mut file = at(
@@ -164,11 +167,27 @@ impl HostSecrets for DevSecrets {
             owned(&file, false)?;
             file.write_all(value.expose())?;
             file.sync_all()?;
+            #[cfg(test)]
+            super::tests::before_publish(&self.path);
             let (from, to) = (cstring(&temporary)?, cstring(name.as_str())?);
             let dir = self.directory.as_raw_fd();
-            // SAFETY: checked leaves within the retained directory; rename never follows a symlink.
-            if unsafe { libc::renameat(dir, from.as_ptr(), dir, to.as_ptr()) } != 0 {
-                return Err(io::Error::last_os_error().into());
+            // SAFETY: checked leaves and retained fd; TLS link is exclusive and never replaces.
+            let result = unsafe {
+                if add_only {
+                    libc::linkat(dir, from.as_ptr(), dir, to.as_ptr(), 0)
+                } else {
+                    libc::renameat(dir, from.as_ptr(), dir, to.as_ptr())
+                }
+            };
+            if result != 0 {
+                let error = io::Error::last_os_error();
+                if !add_only || error.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(error.into());
+                }
+                self.item(name.as_str())?;
+            }
+            if add_only {
+                self.remove(&temporary)?;
             }
             self.directory.sync_all()?;
             Ok(())
