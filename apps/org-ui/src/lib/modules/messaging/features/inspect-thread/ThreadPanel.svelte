@@ -14,6 +14,7 @@
 		conversation,
 		ctx,
 		chatState,
+		sidebarInline = true,
 		now,
 		officeRunning,
 		readOnly = false,
@@ -31,6 +32,8 @@
 		conversation: Conversation;
 		ctx: ChatContext;
 		chatState: ChatState;
+		/** Whether the conversation list occupies its inline 256px column. */
+		sidebarInline?: boolean;
 		now: string;
 		officeRunning: boolean;
 		/** The bridge preview: asks to the owner and approvals are read-only, and nothing is posted. */
@@ -49,14 +52,19 @@
 	const replies = $derived(repliesTo(chatState, root.id));
 	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
+	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+	export function focusClose() {
+		closeButton?.focus({ preventScroll: true });
+		closeButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
 </script>
 
-<aside class="absolute inset-y-0 right-0 left-64 z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
-	<div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
-		<h2 class="text-sm/6 font-semibold text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
-		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close thread" onclick={onclose}><X aria-hidden="true" /></Button>
+<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-[256px]' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
+		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
 	</div>
-	<div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-3" role="log" aria-label="Thread messages" aria-live="polite" aria-relevant="additions text">
+	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]" role="log" data-focus-scope aria-label="Thread messages" aria-live="polite" aria-relevant="additions text">
 		<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		<p class="px-2 pt-2 text-xs/5 text-gray-400" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
 		{#each replies as r (r.id)}

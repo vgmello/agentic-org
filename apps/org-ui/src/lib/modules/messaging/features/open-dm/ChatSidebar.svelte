@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { tick, untrack } from 'svelte';
+	import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '$lib/components/ui/sheet';
 	import Plus from '@lucide/svelte/icons/plus';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { PRESENCE_WORD, type ChatView, type ConversationRow, type Sidebar } from '$lib/modules/messaging/model';
@@ -9,6 +11,11 @@
 		bar,
 		view,
 		ctx,
+		container,
+		id,
+		inline = $bindable(true),
+		open = $bindable(false),
+		onCloseFocus,
 		onselect,
 		onnewchannel,
 		onnewmessage
@@ -16,9 +23,14 @@
 		bar: Sidebar;
 		view: ChatView;
 		ctx: ChatContext;
+		container?: HTMLElement;
+		id: string;
+		inline?: boolean;
+		open?: boolean;
+		onCloseFocus: () => void;
 		onselect: (v: ChatView) => void;
-		onnewchannel: () => void;
-		onnewmessage: () => void;
+		onnewchannel: (opener: HTMLElement) => void;
+		onnewmessage: (opener: HTMLElement) => void;
 	} = $props();
 
 	const item = 'flex w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
@@ -26,6 +38,41 @@
 	const off = 'text-gray-300 hover:bg-white/5 hover:text-white';
 	const here = (v: ChatView, id?: string) => view.type === v.type && (v.type !== 'conversation' || (view.type === 'conversation' && view.id === id));
 	const unreadThreads = $derived(bar.threads.reduce((n, t) => n + t.new_replies, 0));
+	let nav = $state<HTMLElement | undefined>();
+	let bounds = $state({ left: 0, top: 0, width: 0, height: 0 });
+	function placeSheet(rect: DOMRect) {
+		const top = Math.max(0, rect.top);
+		bounds = { left: rect.left, top, width: rect.width, height: Math.max(0, Math.min(rect.bottom, innerHeight) - top) };
+	}
+	// The product breakpoint is the available Chat content width, not the viewport.
+	$effect(() => {
+		const element = container;
+		if (!element) return;
+		const measure = () => {
+			if (!element.isConnected) return;
+			const rect = element.getBoundingClientRect();
+			const active = document.activeElement;
+			const wasInList = !!active && !!nav?.contains(active);
+			const wasInline = inline;
+			inline = rect.width >= 768;
+			placeSheet(rect);
+			if (inline) open = false;
+			if (wasInline && !inline && wasInList) void tick().then(() => {
+				if (!open && (document.activeElement === document.body || document.activeElement === active)) onCloseFocus();
+			});
+		};
+		untrack(measure);
+		const observer = new ResizeObserver(measure);
+		observer.observe(element);
+		window.addEventListener('resize', measure);
+		return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
+	});
+	export function focusSelected(preferred?: HTMLElement) {
+		const item = preferred && nav?.contains(preferred) ? preferred : nav?.querySelector<HTMLElement>('[aria-current="true"]') ?? nav?.querySelector<HTMLElement>('button');
+		const group = item?.closest('details');
+		if (group instanceof HTMLDetailsElement) group.open = true;
+		item?.focus();
+	}
 </script>
 
 {#snippet row(r: ConversationRow)}
@@ -52,7 +99,8 @@
 	</li>
 {/snippet}
 
-<nav class="flex h-full w-64 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-white/10 bg-black/10 p-3" aria-label="Chat">
+{#snippet navigation()}
+<nav bind:this={nav} class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-white/10 bg-black/10 p-3" aria-label="Chat">
 	<ul class="space-y-0.5">
 		<li>
 			<button type="button" class="{item} {here({ type: 'needs' }) ? on : off}" aria-current={here({ type: 'needs' }) ? 'true' : undefined} data-testid="needs-you-link" onclick={() => onselect({ type: 'needs' })}>
@@ -79,7 +127,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="channels">
 			{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1" onclick={onnewchannel}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
+		<button type="button" class="{item} {off} mt-1" onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
 	</div>
 
 	<div>
@@ -87,7 +135,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="dms">
 			{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1" onclick={onnewmessage}><Plus class="size-4" aria-hidden="true" /> New message</button>
+		<button type="button" class="{item} {off} mt-1" onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
 	</div>
 
 	{#if bar.asOwner.length}
@@ -99,3 +147,30 @@
 		</details>
 	{/if}
 </nav>
+{/snippet}
+
+{#if inline}
+	<div class="h-full w-[256px] shrink-0">{@render navigation()}</div>
+{:else}
+	<Sheet bind:open>
+		<SheetContent
+			{id}
+			side="left"
+			class="gap-0 border-white/10 bg-gray-800 p-0 text-white"
+			style={`left:${bounds.left}px;top:${bounds.top}px;width:${Math.min(256, bounds.width)}px;height:${bounds.height}px;bottom:auto;right:auto;`}
+			onOpenAutoFocus={(event) => {
+				event.preventDefault();
+				// On short screens the shell can scroll before the list opens.
+				if (container) placeSheet(container.getBoundingClientRect());
+				void tick().then(() => open && focusSelected());
+			}}
+			onCloseAutoFocus={(event) => { event.preventDefault(); onCloseFocus(); }}
+		>
+			<SheetHeader class="shrink-0 border-b border-white/10 p-4 pr-12">
+				<SheetTitle>Conversations</SheetTitle>
+				<SheetDescription class="sr-only">Choose a conversation or start a new one.</SheetDescription>
+			</SheetHeader>
+			<div class="min-h-0 flex-1">{@render navigation()}</div>
+		</SheetContent>
+	</Sheet>
+{/if}

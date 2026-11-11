@@ -11,6 +11,7 @@
 		conversation,
 		ctx,
 		chatState,
+		sidebarInline = true,
 		officeRunning = true,
 		projectName,
 		onclose,
@@ -23,6 +24,8 @@
 		conversation: Conversation;
 		ctx: ChatContext;
 		chatState: ChatState;
+		/** Whether the conversation list occupies its inline 256px column. */
+		sidebarInline?: boolean;
 		officeRunning?: boolean;
 		/** What an automatic channel follows, in words: "the Atlas project". */
 		projectName: (c: Conversation) => string | undefined;
@@ -43,22 +46,27 @@
 		{ id: 'muted', label: 'Muted' }
 	];
 	const presenceOf = (id: string, kind: 'agent' | 'person'): Presence => chatState.presence[id] ?? (kind === 'agent' ? 'offline' : 'online');
+	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+	export function focusClose() {
+		closeButton?.focus({ preventScroll: true });
+		closeButton?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	}
 </script>
 
-<aside class="absolute inset-y-0 right-0 left-64 z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Members" data-testid="members-panel">
-	<div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
-		<h2 class="text-sm/6 font-semibold text-white">{titleOf(conversation, ctx, ctx.owner)} <span class="font-normal text-gray-400">· {members.length} {members.length === 1 ? 'member' : 'members'}</span></h2>
-		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close members" onclick={onclose}><X aria-hidden="true" /></Button>
+<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-[256px]' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800" aria-label="Members" data-testid="members-panel">
+	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">{titleOf(conversation, ctx, ctx.owner)} <span class="font-normal text-gray-400">· {members.length} {members.length === 1 ? 'member' : 'members'}</span></h2>
+		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close members" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
 	</div>
 	<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
 		{#if follows}<p class="rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300">This channel follows {follows}: its members and name change with it.</p>{/if}
 		<ul class="space-y-3">
 			{#each members as m (m.id)}
-				<li class="flex items-center gap-x-3" data-testid="member-row">
+				<li class="flex items-center gap-x-3 max-[640px]:flex-wrap max-[640px]:gap-y-2" data-testid="member-row">
 					<Avatar name={m.name} kind={m.kind} presence={presenceOf(m.id, m.kind)} />
-					<div class="min-w-0 flex-1">
+					<div class="min-w-0 flex-1 max-[640px]:basis-[200px]">
 						<p class="truncate text-sm/6 font-semibold text-white">{m.name}{#if m.owner}{' '}<span class="font-normal text-gray-400">(you)</span>{/if}</p>
-						<p class="text-xs/5 text-gray-400">{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'} · {PRESENCE_WORD[presenceOf(m.id, m.kind)]} · @{m.handle}</p>
+						<p class="text-xs/5 break-words text-gray-400">{m.kind === 'agent' ? 'Agent' : m.owner ? 'Owner' : 'Person'} · {PRESENCE_WORD[presenceOf(m.id, m.kind)]} · @{m.handle}</p>
 					</div>
 					{#if m.kind === 'agent' && conversation.kind !== 'dm'}
 						<label class="sr-only" for="mute-{m.id}">How you hear from {m.name} here</label>
