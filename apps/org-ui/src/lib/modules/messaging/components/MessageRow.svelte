@@ -4,6 +4,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
 	import type { ChatContext } from '../engine';
+	import type { DraftText } from '../drafts/store';
 	import { clockTime, collapse, foldedWords, KIND_MARK, KIND_WORD, muteOf, nameOf, repliesTo } from '../model';
 	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '../types';
 	import AskCard from '../features/answer-ask/AskCard.svelte';
@@ -20,6 +21,7 @@
 		officeRunning = true,
 		where,
 		inThread = false,
+		askDraftFor,
 		delivery,
 		onreact,
 		onthread,
@@ -40,6 +42,7 @@
 		officeRunning?: boolean;
 		where?: string;
 		inThread?: boolean;
+		askDraftFor?: (askId: string) => DraftText;
 		delivery?: { status: 'sending' | 'failed'; error?: string };
 		onreact?: (m: ChatMessage, r: Reaction) => void;
 		onthread?: (m: ChatMessage) => void;
@@ -61,6 +64,9 @@
 	const mode = $derived(from?.kind === 'agent' ? muteOf(chatState, message.conversation_id, message.from) : 'none');
 	const mark = $derived(KIND_MARK[message.kind]);
 	const card = $derived(message.kind === 'request' || message.kind === 'handoff');
+	const messageId = $derived(message.id);
+	const isRequest = $derived(message.kind === 'request');
+	const askDraft = $derived(isRequest ? askDraftFor?.(messageId) : undefined);
 	const bridgeName = $derived({ slack: 'Slack', teams: 'Teams', discord: 'Discord' }[message.bridge ?? 'slack']);
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
 </script>
@@ -81,7 +87,7 @@
 
 		{#if card}
 			<div class="mt-1">
-				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
+				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
 			</div>
 		{:else}
 			<div class="mt-0.5" data-testid="message-body">
