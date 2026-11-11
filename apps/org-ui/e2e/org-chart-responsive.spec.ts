@@ -161,7 +161,7 @@ for (const width of [320, 960]) {
 				}), `focus step ${index} is visible and unobscured`).toBe(true);
 				if (index === 3 || index === sequence.length - 1) await shot(page, `bug2-focus-${index}-${width}-${scale * 100}`);
 				// Native macOS WebKit uses Option+Tab to include buttons in keyboard traversal.
-				if (index + 1 < sequence.length) await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+				if (index + 1 < sequence.length) await page.keyboard.press(browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab');
 			}
 			await expectControlsFit(page, actions);
 		});
