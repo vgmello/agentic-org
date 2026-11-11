@@ -18,6 +18,11 @@ pub enum Refusal {
     /// The same identity conflicts with previously retained history.
     Divergence,
     InvariantFailure,
+    WrongStream,
+    Malformed,
+    Gap,
+    AheadOfForwarded,
+    ConflictingProof,
 }
 impl Refusal {
     pub fn code(self) -> &'static str {
@@ -33,6 +38,11 @@ impl Refusal {
             Self::IntegrityFailure => "integrity_failure",
             Self::Divergence => "divergence",
             Self::InvariantFailure => "invariant_failure",
+            Self::WrongStream => "wrong_stream",
+            Self::Malformed => "malformed",
+            Self::Gap => "gap",
+            Self::AheadOfForwarded => "ahead_of_forwarded",
+            Self::ConflictingProof => "conflicting_proof",
         }
     }
 }
@@ -84,7 +94,10 @@ impl SyncError {
         matches!(
             self,
             Self::Refused(
-                Refusal::IntegrityFailure | Refusal::Divergence | Refusal::InvariantFailure
+                Refusal::IntegrityFailure
+                    | Refusal::Divergence
+                    | Refusal::InvariantFailure
+                    | Refusal::ConflictingProof
             )
         )
     }
