@@ -32,7 +32,7 @@ async function restored(field: Locator, text: string) {
 	await expect.poll(() => field.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd])).toEqual([text.length, text.length]);
 }
 
-test('CHAT-1/3 BUG-62: each history entry names its own Chat place', async ({ page, browserName }) => {
+test('CHAT-32 CHAT-33 BUG-62: each history entry names its own Chat place', async ({ page, browserName }) => {
 	await open(page);
 	await expect(page).toHaveTitle(fullTitle('Needs you'));
 	await side(page).getByTestId('mentions-link').click();
@@ -57,7 +57,7 @@ test('CHAT-1/3 BUG-62: each history entry names its own Chat place', async ({ pa
 	await shot(page, 'chat-history-own-place-titles');
 });
 
-test('CHAT-2/3/11 BUG-63: stopped office disables channel and DM management', async ({ page }) => {
+test('CHAT-34 CHAT-35 BUG-63: stopped office disables channel and DM management', async ({ page }) => {
 	await open(page, '?chat=offline');
 	await channel(page, 'c-release-v1', '#release-v1');
 	await expect(page.getByTestId('office-down')).toBeVisible();
@@ -84,7 +84,7 @@ test('CHAT-2/3/11 BUG-63: stopped office disables channel and DM management', as
 });
 
 for (const kind of ['channel', 'DM'] as const) {
-	test(`CHAT-2/3 BUG-63: an open ${kind} dialog cannot submit after the office stops`, async ({ page }) => {
+	test(`CHAT-34 BUG-63: an open ${kind} dialog cannot submit after the office stops`, async ({ page }) => {
 		await open(page);
 		await mainNav(page).getByRole('link', { name: 'Agents', exact: true }).click();
 		await expect(page).toHaveURL(/\/agents$/);
@@ -126,7 +126,7 @@ for (const kind of ['channel', 'DM'] as const) {
 }
 
 for (const focus of ['Send', 'Also send'] as const) {
-	test(`CHAT-8: Escape from ${focus} closes Thread and preserves the reply`, async ({ page }) => {
+	test(`CHAT-27 CHAT-28: Escape from ${focus} closes Thread and preserves the reply`, async ({ page }) => {
 		await open(page);
 		await openReleaseThread(page);
 		const composer = thread(page).getByTestId('composer');
@@ -141,38 +141,42 @@ for (const focus of ['Send', 'Also send'] as const) {
 	});
 }
 
-test('CHAT-5/8: Close keeps independent ask and thread drafts', async ({ page }) => {
-	await open(page);
-	await channel(page, 'c-project-atlas', '#atlas');
-	const openAskThread = async (body: string) => {
-		const message = page.getByTestId('message-list').getByTestId('message').filter({ hasText: body });
-		await message.hover();
-		await message.getByRole('button', { name: 'Reply in thread', exact: true }).click();
-	};
-	await openAskThread('Block bug reports');
-	const composer = thread(page).getByTestId('composer');
-	const card = thread(page).getByTestId('ask-card');
-	const reply = card.getByRole('button', { name: 'Reply…', exact: true });
-	await composer.fill('The thread reply');
-	await reply.click();
-	await card.getByRole('textbox').fill('The separate answer');
-	await thread(page).getByRole('button', { name: 'Close thread', exact: true }).click();
-	await expect(thread(page)).toHaveCount(0);
-	await openAskThread('Block bug reports');
-	await restored(composer, 'The thread reply');
-	await reply.click();
-	await restored(card.getByRole('textbox'), 'The separate answer');
-	await openAskThread('Publish the 0.2 release notes');
-	await expect(composer).toHaveValue('');
-	await composer.fill('A different thread draft');
-	await openAskThread('Block bug reports');
-	await restored(composer, 'The thread reply');
-	await reply.click();
-	await restored(card.getByRole('textbox'), 'The separate answer');
-	await shot(page, 'chat-restored-thread-and-ask-drafts');
-});
+for (const action of ['Reply', 'Reject'] as const) {
+	test(`CHAT-27: Close and thread switching keep the ask ${action} draft and thread reply separate`, async ({ page }) => {
+		await open(page);
+		await channel(page, 'c-project-atlas', '#atlas');
+		const firstAsk = action === 'Reply' ? 'Block bug reports' : 'Publish the 0.2 release notes';
+		const otherAsk = action === 'Reply' ? 'Publish the 0.2 release notes' : 'Block bug reports';
+		const openAskThread = async (body: string) => {
+			const message = page.getByTestId('message-list').getByTestId('message').filter({ hasText: body });
+			await message.hover();
+			await message.getByRole('button', { name: 'Reply in thread', exact: true }).click();
+		};
+		await openAskThread(firstAsk);
+		const composer = thread(page).getByTestId('composer');
+		const card = thread(page).getByTestId('ask-card');
+		const reply = card.getByRole('button', { name: `${action}…`, exact: true });
+		await composer.fill('The thread reply');
+		await reply.click();
+		await card.getByRole('textbox').fill('The separate answer');
+		await thread(page).getByRole('button', { name: 'Close thread', exact: true }).click();
+		await expect(thread(page)).toHaveCount(0);
+		await openAskThread(firstAsk);
+		await restored(composer, 'The thread reply');
+		await reply.click();
+		await restored(card.getByRole('textbox'), 'The separate answer');
+		await openAskThread(otherAsk);
+		await expect(composer).toHaveValue('');
+		await composer.fill('A different thread draft');
+		await openAskThread(firstAsk);
+		await restored(composer, 'The thread reply');
+		await reply.click();
+		await restored(card.getByRole('textbox'), 'The separate answer');
+		await shot(page, `chat-restored-thread-and-ask-${action.toLowerCase()}`);
+	});
+}
 
-test('CHAT-8: thread draft survives same-tab navigation, then send and reload clear it', async ({ page }) => {
+test('CHAT-27: thread draft survives same-tab navigation, then send and reload clear it', async ({ page }) => {
 	await open(page);
 	await openReleaseThread(page);
 	const composer = thread(page).getByTestId('composer');
@@ -195,7 +199,7 @@ test('CHAT-8: thread draft survives same-tab navigation, then send and reload cl
 	await shot(page, 'chat-reload-clears-thread-draft');
 });
 
-test('CHAT-9 BUG-45d: punctuation after a slash word stays literal', async ({ page }) => {
+test('CHAT-26 BUG-45d: punctuation after a slash word stays literal', async ({ page }) => {
 	await open(page);
 	await channel(page, 'c-general', '#general');
 	const composer = page.getByTestId('composer');
