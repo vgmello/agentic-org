@@ -753,3 +753,26 @@ fn account_recovery_and_bootstrap_ops_have_their_wire_shapes() {
 }
 
 mod listen_vectors;
+
+/// The gateway's rendezvous lines carry exactly their fields: a key or token a buggy host adds is
+/// refused, never silently dropped (as for launch v3's lines).
+#[test]
+fn gateway_lines_refuse_unknown_fields() {
+    let mut first = serde_json::to_value(GatewayFirstLine {
+        rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
+        instance_id: "01JINS0000000000000000000A".into(),
+    })
+    .unwrap();
+    let mut ready = serde_json::json!({"v": 1, "event": "ready_for_secrets"});
+    let mut handoff = serde_json::to_value(GatewayHandoff).unwrap();
+    // Each decodes as written, so each refusal below is the extra key's alone.
+    serde_json::from_value::<GatewayFirstLine>(first.clone()).unwrap();
+    serde_json::from_value::<GatewayReadyForSecrets>(ready.clone()).unwrap();
+    serde_json::from_value::<GatewayHandoff>(handoff.clone()).unwrap();
+    first["db_key"] = serde_json::json!("01".repeat(32));
+    ready["grant_key"] = serde_json::json!("secret");
+    handoff["app_token"] = serde_json::json!("secret");
+    assert!(serde_json::from_value::<GatewayFirstLine>(first).is_err());
+    assert!(serde_json::from_value::<GatewayReadyForSecrets>(ready).is_err());
+    assert!(serde_json::from_value::<GatewayHandoff>(handoff).is_err());
+}

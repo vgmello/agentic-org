@@ -25,6 +25,7 @@ pub struct GatewayFirstLine {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FirstLineWire<T> {
     v: u32,
     rendezvous: T,
@@ -106,6 +107,7 @@ pub enum LandlockEnforcement {
 const READY_FOR_SECRETS: &str = "ready_for_secrets";
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReadyWire<E> {
     v: u32,
     event: E,
@@ -157,6 +159,7 @@ pub struct GatewayHandoff;
 pub const GATEWAY_HANDOFF_FDS: [GatewayFd; 2] = [GatewayFd::Transfer, GatewayFd::Listener];
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HandoffWire {
     v: u32,
     fds: Vec<GatewayFd>,
