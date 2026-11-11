@@ -452,6 +452,7 @@ for (const text of [1, 2]) {
 		await expect.poll(() => controls.evaluateAll((elements) => Math.min(...elements.map((e) => parseFloat(getComputedStyle(e).fontSize) * new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a)))).toBeGreaterThanOrEqual(12);
 		await expect(controls.first()).toHaveAttribute('data-fit-text', '');
 		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		await shot(page, `oc1-readable-collapse-card-${text}`, { context: controls.first().locator('..') });
 		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
 		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
 		await shot(page, `oc1-collapse-control-readable-${text}`);
