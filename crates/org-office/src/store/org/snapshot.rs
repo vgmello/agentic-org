@@ -17,8 +17,8 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transact
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::replication::{int, OrganizationTxn, PROTOCOL};
-use super::{Answer, SCHEMA};
+use super::replication::{int, NativeAnswer, OrganizationTxn, PROTOCOL};
+use super::SCHEMA;
 use crate::error::OfficeError;
 use crate::key::Key;
 use crate::organization::{is_offboarded, valid_owner};
@@ -104,12 +104,22 @@ impl From<&OrganizationSnapshotManifest> for Header {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(untagged)]
 enum Cell {
     Null,
     Integer(i64),
     Text(String),
+}
+
+impl Cell {
+    fn sql_value(&self) -> ValueRef<'_> {
+        match self {
+            Self::Null => ValueRef::Null,
+            Self::Integer(value) => ValueRef::Integer(*value),
+            Self::Text(value) => ValueRef::Text(value.as_bytes()),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -122,6 +132,7 @@ struct Projection {
 
 // Ordered to install the owning rows before their relationships. The list is an allowlist,
 // independent of both the sender's schema and unrelated local tables.
+const ENTITY_TABLES: usize = TABLES.len() - 1;
 const TABLES: [(&str, &str, &str); 7] = [
     (
         "members",
@@ -409,7 +420,7 @@ pub(crate) fn stage_replication_snapshot(
     staged.staging_id = store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
         check_stage(&current, &peer, mode, position, digest)?;
-        check_native_sequence(db, &current, &projection)?;
+        check_projection_continuity(db, &current, &projection)?;
         let epoch = int(position.epoch.get())?;
         let seq = int(position.seq)?;
         if let Some(committed) = installed_stage_id(db, position, digest)? {
@@ -486,21 +497,100 @@ fn check_stage(
     }
 }
 
-fn check_native_sequence(
+/// Returns whether the snapshot keeps the current native state and its replay history.
+fn check_projection_continuity(
     db: &Connection,
     current: &OrgCheckpoint,
     incoming: &Projection,
-) -> Result<(), SyncError> {
+) -> Result<bool, SyncError> {
     if incoming.header.epoch != current.position.epoch.get()
         || super::replication::awaiting_snapshot(db)?
     {
-        return Ok(());
+        return Ok(false);
     }
     let local = super::head(db).map_err(storage_error)?;
-    if incoming.native_seq < local.seq
-        || (incoming.header.sequence == current.position.seq && incoming.native_seq != local.seq)
-    {
+    let native_advance = incoming
+        .native_seq
+        .checked_sub(local.seq)
+        .ok_or(Refusal::Divergence)?;
+    let federation_advance = incoming
+        .header
+        .sequence
+        .checked_sub(current.position.seq)
+        .ok_or(Refusal::Divergence)?;
+    if native_advance > federation_advance {
         return Err(Refusal::Divergence.into());
+    }
+    let preserve_native = native_advance == 0;
+    if preserve_native {
+        if !same_entity_rows(db, incoming)? {
+            return Err(Refusal::Divergence.into());
+        }
+    } else {
+        check_protected_members(db, &incoming.rows[0])?;
+    }
+    Ok(preserve_native)
+}
+
+fn same_entity_rows(db: &Connection, incoming: &Projection) -> Result<bool, StoreError> {
+    for ((table, columns, _), rows) in TABLES.into_iter().zip(&incoming.rows).take(ENTITY_TABLES) {
+        let mut query = db
+            .prepare(&format!("SELECT {columns} FROM {table} ORDER BY 1"))
+            .map_err(storage_error)?;
+        let mut stored = query.query([]).map_err(storage_error)?;
+        let mut ordered: Vec<_> = rows.iter().collect();
+        ordered.sort_unstable_by(|left, right| left[0].cmp(&right[0]));
+        for expected in ordered {
+            let Some(current) = stored.next().map_err(storage_error)? else {
+                return Ok(false);
+            };
+            for (column, value) in expected.iter().enumerate() {
+                let local = current.get_ref(column).map_err(storage_error)?;
+                let incoming = value.sql_value();
+                if local == incoming {
+                    continue;
+                }
+                if column + 1 != expected.len() || !same_json_body(local, incoming)? {
+                    return Ok(false);
+                }
+            }
+        }
+        if stored.next().map_err(storage_error)?.is_some() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn same_json_body(local: ValueRef<'_>, incoming: ValueRef<'_>) -> Result<bool, StoreError> {
+    let (ValueRef::Text(local), ValueRef::Text(incoming)) = (local, incoming) else {
+        return Ok(false);
+    };
+    let local: serde_json::Value = serde_json::from_slice(local).map_err(storage_error)?;
+    let incoming: serde_json::Value = serde_json::from_slice(incoming).map_err(storage_error)?;
+    Ok(local == incoming)
+}
+
+fn check_protected_members(db: &Connection, incoming: &[Vec<Cell>]) -> Result<(), SyncError> {
+    let members = member_rows(incoming)?;
+    let mut query = db
+        .prepare(
+            "SELECT id, handle_key FROM members WHERE handle_key IS NULL
+         OR json_extract(body, '$.agent.status') IS 'offboarded'",
+        )
+        .map_err(storage_error)?;
+    let mut stored = query.query([]).map_err(storage_error)?;
+    while let Some(row) = stored.next().map_err(storage_error)? {
+        let id: String = row.get(0).map_err(storage_error)?;
+        let handle: Option<String> = row.get(1).map_err(storage_error)?;
+        let member = members.get(id.as_str()).ok_or(Refusal::Divergence)?;
+        let preserved = match handle {
+            None => member.owner,
+            Some(handle) => super::preserves_offboarded_handle(member, &handle),
+        };
+        if !preserved {
+            return Err(Refusal::Divergence.into());
+        }
     }
     Ok(())
 }
@@ -527,14 +617,7 @@ fn decode(body: &[u8]) -> Result<Projection, Refusal> {
 
 fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
     let [members, teams, projects, areas, memberships, links, commands] = &value.rows;
-    let mut member_by_id = HashMap::with_capacity(members.len());
-    for row in members {
-        let [Cell::Text(id), _, _, Cell::Text(body)] = row.as_slice() else {
-            return Err(Refusal::IntegrityFailure);
-        };
-        let member: Member = serde_json::from_str(body).map_err(|_| Refusal::IntegrityFailure)?;
-        member_by_id.insert(id.as_str(), member);
-    }
+    let member_by_id = member_rows(members)?;
     let mut owners = member_by_id.values().filter(|member| member.owner);
     let owner = owners.next().ok_or(Refusal::IntegrityFailure)?;
     if owners.next().is_some() || !valid_owner(owner) {
@@ -590,6 +673,18 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         return Err(Refusal::IntegrityFailure);
     }
     Ok(())
+}
+
+fn member_rows(members: &[Vec<Cell>]) -> Result<HashMap<&str, Member>, Refusal> {
+    let mut member_by_id = HashMap::with_capacity(members.len());
+    for row in members {
+        let [Cell::Text(id), _, _, Cell::Text(body)] = row.as_slice() else {
+            return Err(Refusal::IntegrityFailure);
+        };
+        let member: Member = serde_json::from_str(body).map_err(|_| Refusal::IntegrityFailure)?;
+        member_by_id.insert(id.as_str(), member);
+    }
+    Ok(member_by_id)
 }
 
 fn acyclic(rows: &[Vec<Cell>], parent_column: usize) -> bool {
@@ -695,7 +790,7 @@ fn valid_command_row(row: &[Cell]) -> bool {
     match answer {
         // Older operation rows may predate the persisted result body.
         Cell::Null => true,
-        Cell::Text(body) => serde_json::from_str::<Answer>(body).is_ok_and(|answer| {
+        Cell::Text(body) => serde_json::from_str::<NativeAnswer>(body).is_ok_and(|answer| {
             super::valid_fingerprint(&answer.params_hash)
                 && answer.refusal.is_some() == (*epoch == 0)
         }),
@@ -747,14 +842,14 @@ pub(super) fn install(
     }
 
     let current = OrganizationTxn(db).checkpoint()?;
-    check_native_sequence(db, &current, &projection)?;
+    let preserve_native = check_projection_continuity(db, &current, &projection)?;
     // An exact materialized checkpoint needs only a commit receipt. Keep its
     // native replay history and its older federation base intact.
     let replace = current.position != next.position
         || current.digest != next.digest
         || super::replication::awaiting_snapshot(db)?;
     if replace {
-        replace_projection(db, next.protocol_level, projection)?;
+        replace_projection(db, next.protocol_level, projection, preserve_native)?;
     }
     db.execute(
         "INSERT INTO org_snapshot_install VALUES (1, ?1, ?2, ?3, ?4)
@@ -798,20 +893,25 @@ fn replace_projection(
     db: &Connection,
     protocol_level: u32,
     projection: Projection,
+    preserve_native: bool,
 ) -> Result<(), StoreError> {
-    clear_projection(db)?;
-    for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows) {
+    let first_table = if preserve_native {
+        db.execute_batch("DELETE FROM org_replica_events; DELETE FROM commands;")
+            .map_err(storage_error)?;
+        ENTITY_TABLES
+    } else {
+        clear_projection(db)?;
+        0
+    };
+    for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows).skip(first_table)
+    {
         let mut insert = db
             .prepare(&format!("INSERT INTO {table} ({columns}) VALUES ({binds})"))
             .map_err(storage_error)?;
         for row in rows {
-            let values = row.iter().map(|value| {
-                ToSqlOutput::Borrowed(match value {
-                    Cell::Null => ValueRef::Null,
-                    Cell::Integer(value) => ValueRef::Integer(*value),
-                    Cell::Text(value) => ValueRef::Text(value.as_bytes()),
-                })
-            });
+            let values = row
+                .iter()
+                .map(|value| ToSqlOutput::Borrowed(value.sql_value()));
             insert
                 .execute(params_from_iter(values))
                 .map_err(storage_error)?;
@@ -851,6 +951,11 @@ mod tests {
         assert!(!valid_row("commands", &row));
         row[3] = Cell::Text("2016-08-29T00:00:00.000Z".into());
         assert!(valid_row("commands", &row));
+        row[4] = Cell::Text(format!(
+            r#"{{"params_hash":"{}","principal":"unavailable-in-v1"}}"#,
+            "12".repeat(32)
+        ));
+        assert!(!valid_row("commands", &row));
         row[4] = Cell::Null;
         assert!(
             valid_row("commands", &row),

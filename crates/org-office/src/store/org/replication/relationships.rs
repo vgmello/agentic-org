@@ -6,7 +6,8 @@ use org_proto::org::OrgChange;
 use org_sync::error::{Refusal, SyncError};
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::organization::{is_offboarded, valid_owner};
+use crate::organization::valid_owner;
+use crate::store::org::preserves_offboarded_handle;
 use crate::store::sync::storage_error;
 
 /// Remember relationships that the delta can remove, and preserve the owner identity.
@@ -22,7 +23,7 @@ pub(super) fn before_apply(
             OrgChange::MembershipUpserted { membership } => &membership.id,
             OrgChange::MembershipRemoved { membership_id } => membership_id,
             OrgChange::MemberUpserted { member } => {
-                let (was_owner, was_offboarded) = member_protections(db, &member.id)?;
+                let (was_owner, offboarded_handle) = member_protections(db, &member.id)?;
                 let can_create_owner = genesis
                     && !genesis_owner_created
                     && !exists(
@@ -32,7 +33,9 @@ pub(super) fn before_apply(
                     )?;
                 if (member.owner && (!valid_owner(member) || (!was_owner && !can_create_owner)))
                     || (!member.owner && was_owner)
-                    || (was_offboarded && !is_offboarded(member))
+                    || offboarded_handle
+                        .as_deref()
+                        .is_some_and(|handle| !preserves_offboarded_handle(member, handle))
                 {
                     return Err(Refusal::IntegrityFailure.into());
                 }
@@ -41,7 +44,7 @@ pub(super) fn before_apply(
             }
             OrgChange::MemberRemoved { member_id } => {
                 let (owner, offboarded) = member_protections(db, member_id)?;
-                if owner || offboarded {
+                if owner || offboarded.is_some() {
                     return Err(Refusal::IntegrityFailure.into());
                 }
                 continue;
@@ -117,11 +120,12 @@ pub(super) fn after_apply(
     Ok(())
 }
 
-fn member_protections(db: &Connection, id: &str) -> Result<(bool, bool), SyncError> {
+fn member_protections(db: &Connection, id: &str) -> Result<(bool, Option<String>), SyncError> {
     Ok(db
         .query_row(
-            "SELECT handle_key IS NULL, json_extract(body, '$.agent.status') IS 'offboarded'
-         FROM members WHERE id = ?1",
+            "SELECT handle_key IS NULL,
+                    CASE WHEN json_extract(body, '$.agent.status') IS 'offboarded' THEN handle_key END
+             FROM members WHERE id = ?1",
             [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )

@@ -557,9 +557,9 @@ struct NativeEvent {
 // principal data cannot be accepted and dropped by this adapter.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct NativeAnswer {
-    params_hash: String,
-    refusal: Option<org_proto::ApiError>,
+pub(super) struct NativeAnswer {
+    pub(super) params_hash: String,
+    pub(super) refusal: Option<org_proto::ApiError>,
 }
 
 impl NativeEvent {
@@ -1006,6 +1006,16 @@ mod tests {
         );
         assert!(matches!(
             organization::apply(&satellite, &Hq, reactivated),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        let mut renamed = agent_member("manager", Offboarded, None);
+        renamed.agent.as_mut().unwrap().messaging_name = "released-handle".into();
+        assert!(matches!(
+            organization::apply(
+                &satellite,
+                &Hq,
+                delta(4, prior, "01ARZ3NDEKTSV4RRFFQ69G5FAX", vec![renamed])
+            ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         let state = satellite.org_snapshot().unwrap();
@@ -1474,6 +1484,105 @@ mod tests {
     }
 
     #[test]
+    fn same_epoch_snapshot_preserves_owner_and_offboarded_members() {
+        use crate::rules::OrgCommand;
+        use org_proto::org::{AgentStatus, TeamCreateParams};
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let (dir, satellite) = replica();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        hq.submit_org(OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: ulid::generate().unwrap(),
+            team_id: "team".into(),
+            name: "Team".into(),
+            owner_team_id: None,
+        }))
+        .unwrap()
+        .unwrap();
+        let key = Key::from_bytes([8; 32]);
+        let stage = || {
+            let snapshot = hq.export_replication_snapshot(&key, MAX_BYTES).unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &snapshot.manifest,
+                &key,
+                snapshot.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+
+        let owner = satellite.org_snapshot().unwrap().members.remove(0);
+        let original_hq_owner = hq.org_snapshot().unwrap().members.remove(0).id;
+        let history = agent_member("history", AgentStatus::Offboarded, None);
+        let copied = history.clone();
+        satellite
+            .org_store()
+            .write(move |db| {
+                apply_changes(
+                    db,
+                    &[OrgChange::MemberUpserted {
+                        member: copied.clone(),
+                    }],
+                )
+                .map(|()| ((), None))
+            })
+            .unwrap();
+        hq.org_store()
+            .write(move |db| {
+                apply_changes(
+                    db,
+                    &[
+                        OrgChange::MemberRemoved {
+                            member_id: original_hq_owner.clone(),
+                        },
+                        OrgChange::MemberUpserted {
+                            member: owner.clone(),
+                        },
+                    ],
+                )
+                .map(|()| ((), None))
+            })
+            .unwrap();
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+
+        let inject_history = |member: org_proto::org::Member| {
+            hq.org_store()
+                .write(move |db| {
+                    apply_changes(
+                        db,
+                        &[OrgChange::MemberUpserted {
+                            member: member.clone(),
+                        }],
+                    )
+                    .map(|()| ((), None))
+                })
+                .unwrap();
+        };
+        inject_history(agent_member("history", AgentStatus::Active, None));
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        let mut renamed = history.clone();
+        renamed.agent.as_mut().unwrap().messaging_name = "new-handle".into();
+        inject_history(renamed);
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        inject_history(history);
+        assert!(stage().is_ok());
+    }
+
+    #[test]
     fn newly_enrolled_satellite_requires_a_snapshot_at_a_restored_epoch_zero() {
         let dir = TempDir::new().unwrap();
         let satellite = new_office(&dir, "SAT");
@@ -1858,6 +1967,46 @@ mod tests {
         assert_eq!(
             organization::install_snapshot(&satellite, same_head).unwrap(),
             OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(satellite.org_changes_after(prior, 8).unwrap(), before);
+        hq.submit_org(new_team("teamD", "Design"))
+            .unwrap()
+            .unwrap_err();
+        let stage_latest = || {
+            let export = hq
+                .export_replication_snapshot(&transport_key, MAX_BYTES)
+                .unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &export.manifest,
+                &transport_key,
+                export.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        hq.org_store()
+            .run_sql_for_test("UPDATE org_replica SET native_seq = 5");
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(r#"UPDATE org_replica SET native_seq = 3;
+            INSERT INTO teams VALUES ('extra', NULL, 'extra', NULL, '{"id":"extra","name":"extra","version":1}');"#);
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store()
+            .run_sql_for_test("DELETE FROM teams WHERE id = 'extra'");
+        let pending = stage_latest().unwrap();
+        assert_eq!(
+            organization::install_snapshot(&satellite, pending).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(
+            satellite.replication_checkpoint().unwrap().position,
+            hq.replication_checkpoint().unwrap().position
         );
         assert_eq!(satellite.org_changes_after(prior, 8).unwrap(), before);
         assert!(hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).is_err());

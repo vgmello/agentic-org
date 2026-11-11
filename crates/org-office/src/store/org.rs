@@ -146,6 +146,11 @@ fn handle_key(member: &Member) -> Option<String> {
     })
 }
 
+fn preserves_offboarded_handle(member: &Member, retained_handle: &str) -> bool {
+    crate::organization::is_offboarded(member)
+        && handle_key(member).as_deref() == Some(retained_handle)
+}
+
 impl OrgView for OrgSql<'_> {
     fn team(&self, id: &str) -> Option<Team> {
         self.one("SELECT body FROM teams WHERE id = ?1", [id])
