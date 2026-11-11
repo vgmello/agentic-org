@@ -9,6 +9,20 @@ use super::*;
 const MARK: &str = "recovery-fake-session";
 
 #[test]
+fn native_mark_identical_duplicates_count_once_on_each_platform() {
+    for bytes in [
+        b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0".as_slice(),
+        b"ORG_SESSION_MARK=a\0OTHER=value\0ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0",
+    ] {
+        assert_eq!(native_mark(bytes), MarkEvidence::Present("a".into()));
+    }
+    assert_eq!(
+        native_mark(b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0"),
+        MarkEvidence::Unreadable
+    );
+}
+
+#[test]
 fn native_guards_recheck_the_exact_mark_before_direct_signals() {
     for evidence in [
         TargetEvidence::Marked,
@@ -34,7 +48,10 @@ fn native_guards_recheck_the_exact_mark_before_direct_signals() {
             &target,
             &MarkEvidence::Present(MARK.into())
         ));
-        assert!(!signal_mark_matches(&target, &MarkEvidence::Unreadable));
+        assert_eq!(
+            signal_mark_matches(&target, &MarkEvidence::Unreadable),
+            matches!(target.evidence(), TargetEvidence::Checkpoint(_))
+        );
         for changed in [MarkEvidence::Absent, MarkEvidence::Present("other".into())] {
             assert_eq!(signal_mark_matches(&target, &changed), !direct);
         }
@@ -187,6 +204,10 @@ struct Processes {
     snapshot_failure: bool,
     hidden_from_snapshot: Option<u32>,
     reused_on_signal: Option<u32>,
+    job_reuse: bool,
+    job_error: bool,
+    job_late: bool,
+    expected_at_term: Vec<ProcessIdentity>,
     checkpoint_checks: Option<Rc<RefCell<Vec<CheckpointTarget>>>>,
 }
 impl Processes {
@@ -211,6 +232,10 @@ impl Processes {
             snapshot_failure: false,
             hidden_from_snapshot: None,
             reused_on_signal: None,
+            job_reuse: false,
+            job_error: false,
+            job_late: false,
+            expected_at_term: vec![],
             checkpoint_checks: None,
         }
     }
@@ -255,6 +280,61 @@ impl RecoveryProcesses for Processes {
             .cloned()
             .collect())
     }
+    fn verify_recorded_job(
+        &mut self,
+        target: &ProcessIdentity,
+        leader: &ChildIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool> {
+        if self.job_error {
+            if self.job_late {
+                self.now = deadline;
+            }
+            return Err(io::Error::other("job observation failed"));
+        }
+        if self.job_reuse {
+            self.job_reuse = false;
+            if let Some(current) = self.live.iter_mut().find(|p| p.pid == leader.pid) {
+                current.identity.as_mut().unwrap().started = "start-101".into();
+                current.mark = MarkEvidence::Absent;
+            }
+            for current in &mut self.live {
+                current.parent = None;
+            }
+        }
+        let now = self.now;
+        let result = job::verify(
+            target,
+            leader,
+            &self.context,
+            deadline,
+            || now,
+            |id| {
+                let Some(p) = self.live.iter().find(|p| p.pid == id.pid) else {
+                    return Ok(None);
+                };
+                let Some(identity) = &p.identity else {
+                    return Ok(None);
+                };
+                let order = identity
+                    .started
+                    .strip_prefix("start-")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                Ok(Some(job::JobObservation {
+                    identity: identity.clone(),
+                    order: (order, 0),
+                    group: p.group,
+                    session: p.session,
+                    safe: safe_identity(p, &self.context).is_some() && !p.zombie,
+                }))
+            },
+        );
+        if self.job_late {
+            self.now = deadline;
+        }
+        result
+    }
     fn signal_checked(
         &mut self,
         target: &VerifiedTarget,
@@ -263,6 +343,17 @@ impl RecoveryProcesses for Processes {
     ) -> io::Result<SignalOutcome> {
         let pid = target.identity().pid;
         if let Some(checkpoint) = &self.checkpoint_checks {
+            if signal == RecoverySignal::Terminate {
+                for expected in &self.expected_at_term {
+                    assert!(
+                        checkpoint
+                            .borrow()
+                            .iter()
+                            .any(|saved| &saved.identity == expected),
+                        "job member must be saved before leader TERM"
+                    );
+                }
+            }
             assert!(
                 checkpoint
                     .borrow()
@@ -1154,7 +1245,7 @@ fn recovery_saved_target_requires_exact_pid_start_and_boot_match() {
 }
 
 #[test]
-fn recovery_refuses_term_for_a_checkpointed_leader_with_unreadable_environment() {
+fn recovery_checkpointed_unreadable_leader_gets_term_after_checkpoint() {
     let leader = process(100, 1, MarkEvidence::Unreadable);
     let inventory = vec![CheckpointTarget {
         identity: leader.identity.clone().unwrap(),
@@ -1163,38 +1254,281 @@ fn recovery_refuses_term_for_a_checkpointed_leader_with_unreadable_environment()
     let mut store = records(true);
     store.rows[0].1 = record(true).with_inventory(inventory.clone()).unwrap();
     let mut ops = Processes::new(vec![leader]);
-
+    ops.term_exits = true;
+    ops.checkpoint_checks = Some(Rc::clone(&store.committed));
     let batch = run_store(&mut store, &mut ops);
-
-    assert!(ops.signals().is_empty(), "S0 leader was signalled");
-    assert!(batch.gone.is_empty());
-    assert_eq!(batch.unresolved.len(), 1);
-    assert_eq!(batch.unresolved[0].0, 7);
-    assert_eq!(
-        batch.unresolved[0].1.error.kind(),
-        io::ErrorKind::PermissionDenied
-    );
-    assert_eq!(store.checkpoints, 0);
+    assert!(batch.unresolved.is_empty());
+    assert_eq!(batch.gone.len(), 1);
+    assert_eq!(ops.signals(), [(100, RecoverySignal::Terminate)]);
+    assert!(batch.gone[0].1.report().unreadable_environments > 0);
+    assert!(store.checkpoints > 0);
     assert_eq!(store.rows[0].1.inventory(), inventory);
 }
 
 #[test]
-fn recovery_known_saved_target_with_unreadable_environment_is_skipped_but_not_forgotten() {
+fn recovery_checkpointed_unreadable_target_is_cleaned_after_parent_exit() {
     let mut store = records(false);
     store.rows[0].1 = record(false)
         .with_inventory(saved_parent_and_child())
         .unwrap();
     let mut ops = Processes::new(vec![process(201, 1, MarkEvidence::Unreadable)]);
+    ops.checkpoint_checks = Some(Rc::clone(&store.committed));
     let batch = run_store(&mut store, &mut ops);
-    assert!(batch.gone.is_empty());
-    assert!(ops.signals().is_empty());
-    assert_eq!(batch.unresolved[0].1.report.passes, 3); // S0 passes themselves succeed
-    assert_eq!(batch.unresolved[0].1.report.unreadable_environments, 3);
-    assert_eq!(
-        batch.unresolved[0].1.error.kind(),
-        io::ErrorKind::WouldBlock
-    );
+    assert!(batch.unresolved.is_empty());
+    assert_eq!(batch.gone.len(), 1);
+    assert_eq!(ops.signals(), [(201, RecoverySignal::Kill)]);
+    assert!(ops.live.is_empty());
+    assert_eq!(batch.gone[0].1.report().unreadable_environments, 1);
     assert_eq!(store.rows[0].1.inventory().len(), 2);
+}
+
+#[test]
+fn recovery_job_capture_enforces_its_own_cap_and_late_optional_proof() {
+    use super::capture::{capture_targets, CaptureScope, ValidatedSnapshot};
+    let record = record(true);
+    for late in [false, true] {
+        let mut ops = Processes::new(vec![process(100, 1, MarkEvidence::Absent)]);
+        if late {
+            ops.live.push(unreadable_job_member(200, 100, 100));
+            ops.job_error = true;
+            ops.job_late = true;
+        } else {
+            ops.live
+                .extend((200..457).map(|pid| unreadable_job_member(pid, 100, 100)));
+        }
+        let deadline = ops.deadline();
+        let snapshot = ValidatedSnapshot::capture(&mut ops, deadline).unwrap();
+        let context = ops.context.clone();
+        let mut report = RecoveryReport::default();
+        let error = capture_targets(
+            CaptureScope {
+                mark: MARK,
+                excluded: None,
+                saved: &[],
+                leader: record.leader(),
+            },
+            &snapshot,
+            &context,
+            &mut ops,
+            deadline,
+            &mut report,
+        )
+        .err()
+        .expect("capture itself must refuse before any journal or signal");
+        assert_eq!(
+            error.kind(),
+            if late {
+                io::ErrorKind::TimedOut
+            } else {
+                io::ErrorKind::InvalidInput
+            }
+        );
+        if !late {
+            assert!(error.to_string().contains("256 identities"));
+        }
+        assert!(ops.signals().is_empty());
+    }
+}
+
+#[test]
+fn recovery_one_pass_uses_fresh_recorded_job_proof_and_checkpoints_all_members() {
+    let mut store = records(true);
+    let record = store.rows[0].1.clone();
+    let committed = store.committed.clone();
+    let mut inventory = checkpoint::Journal::new(&mut store, &7, &record);
+    let mut ops = Processes::new(vec![marked(100), unreadable_job_member(200, 100, 100)]);
+    ops.checkpoint_checks = Some(committed);
+    let request = test_support::issue(MARK, None, ops.deadline(), &mut inventory);
+    let result = scan_one_pass(request, &mut ops).unwrap();
+    assert_eq!(result.found_live(), 2);
+    assert_eq!(
+        ops.signals(),
+        [(100, RecoverySignal::Kill), (200, RecoverySignal::Kill)]
+    );
+    assert!(ops.live.is_empty());
+}
+
+#[test]
+fn recovery_job_s0_checkpoint_survives_a_failed_kill_and_reload_after_escape() {
+    let mut store = records(true);
+    let child = unreadable_job_member(200, 100, 100);
+    let mut ops = Processes::new(vec![marked(100), child.clone()]);
+    ops.term_exits = true;
+    ops.expected_at_term.push(child.identity.clone().unwrap());
+    ops.signal_failure = Some(200);
+    let failed = run_store(&mut store, &mut ops);
+    assert_eq!(failed.unresolved.len(), 1);
+    assert_eq!(store.rows[0].1.inventory().len(), 2);
+    assert!(ops.live.iter().any(|p| p.pid == 200));
+    let mut escaped = child;
+    escaped.group = 200;
+    escaped.session = 200;
+    let mut retry = Processes::new(vec![escaped]);
+    let done = run_store(&mut store, &mut retry);
+    assert_eq!(done.gone.len(), 1);
+    assert!(done.unresolved.is_empty());
+    assert_eq!(retry.signals(), [(200, RecoverySignal::Kill)]);
+    assert!(retry.live.is_empty());
+    assert_eq!(store.rows[0].1.inventory().len(), 2);
+}
+
+fn unreadable_job_member(pid: u32, group: u32, session: u32) -> ProcessObservation {
+    let mut p = process(pid, 1, MarkEvidence::Unreadable);
+    p.group = group;
+    p.session = session;
+    p
+}
+
+#[test]
+fn recovery_live_recorded_job_is_saved_before_term_and_survives_anchor_exit() {
+    for (group, session) in [(100, 200), (200, 100), (100, 100)] {
+        let mut store = records(true);
+        let mut ops = Processes::new(vec![
+            marked(100),
+            unreadable_job_member(200, group, session),
+        ]);
+        ops.term_exits = true;
+        ops.expected_at_term
+            .push(ops.live[1].identity.clone().unwrap());
+        let batch = run_store(&mut store, &mut ops);
+        assert!(batch.unresolved.is_empty());
+        assert_eq!(batch.gone.len(), 1);
+        assert_eq!(
+            ops.signals(),
+            [
+                (100, RecoverySignal::Terminate),
+                (200, RecoverySignal::Kill)
+            ]
+        );
+        assert!(ops.live.is_empty());
+        assert_eq!(store.rows[0].1.inventory().len(), 2);
+        assert!(ops.signal_evidence.iter().any(
+            |(pid, evidence)| *pid == 200 && matches!(evidence, TargetEvidence::Checkpoint(_))
+        ));
+        assert!(batch.gone[0].1.report().unreadable_environments > 0);
+    }
+}
+
+#[test]
+fn recovery_s0_job_proof_failure_never_saves_or_signals_the_child() {
+    for variant in 0..16 {
+        let mut leader = marked(100);
+        let mut child = unreadable_job_member(200, 100, 100);
+        let mut store = records(true);
+        let mut ops = Processes::new(vec![]);
+        match variant {
+            0 => leader.identity.as_mut().unwrap().started = "start-101".into(),
+            1 => child.identity.as_mut().unwrap().started = "start-99".into(),
+            2 => child.identity.as_mut().unwrap().boot = "other-boot".into(),
+            3 => child.uid = 0,
+            4 => child.uid = 502,
+            5 => child.credentials_safe = false,
+            6 => child.zombie = true,
+            7 => ops.context.pid = 200,
+            8 => store.rows[0].1.leader.as_mut().unwrap().pgid = 101,
+            9 => ops.job_error = true,
+            10 => ops.job_reuse = true,
+            11 => {
+                child.group = 200;
+                child.session = 200;
+            }
+            12 => leader.group = 101,
+            13 => child.mark = MarkEvidence::Absent,
+            14 => child.mark = MarkEvidence::Present("other-mark".into()),
+            15 => child.identity = None,
+            _ => unreachable!(),
+        }
+        ops.live = vec![leader, child];
+        ops.term_exits = true;
+        let batch = run_store(&mut store, &mut ops);
+        assert!(
+            !ops.signals().iter().any(|(pid, _)| *pid == 200),
+            "variant {variant}"
+        );
+        assert!(
+            !store.rows[0]
+                .1
+                .inventory()
+                .iter()
+                .any(|t| t.identity.pid == 200),
+            "variant {variant}"
+        );
+        assert!(ops.live.iter().any(|p| p.pid == 200), "variant {variant}");
+        if variant == 10 {
+            assert!(ops
+                .live
+                .iter()
+                .any(|p| p.pid == 100 && p.identity.as_ref().unwrap().started == "start-101"));
+        }
+        assert!(batch.gone.len() + batch.unresolved.len() == 1);
+    }
+    // The same numeric job identifiers never authorize when its recorded leader is absent.
+    let mut ops = Processes::new(vec![unreadable_job_member(200, 100, 100)]);
+    let batch = run(true, &mut ops);
+    assert_eq!(batch.gone.len(), 1);
+    assert!(batch.gone[0].1.report().unreadable_environments > 0);
+    assert!(ops.signals().is_empty());
+}
+
+#[test]
+fn recovery_saved_s0_retains_all_identity_and_credential_refusals() {
+    for variant in 0..9 {
+        let mut store = records(false);
+        store.rows[0].1 = record(false)
+            .with_inventory(saved_parent_and_child())
+            .unwrap();
+        let mut child = process(201, 1, MarkEvidence::Unreadable);
+        let mut ops = Processes::new(vec![]);
+        match variant {
+            0 => child.identity.as_mut().unwrap().started = "reused".into(),
+            1 => child.identity.as_mut().unwrap().boot = "other-boot".into(),
+            2 => child.uid = 0,
+            3 => child.uid = 502,
+            4 => child.credentials_safe = false,
+            5 => child.zombie = true,
+            6 => ops.context.pid = 201,
+            7 => child.identity = None,
+            8 => ops.context.uid = 0,
+            _ => unreachable!(),
+        }
+        ops.live = vec![child];
+        if variant == 8 {
+            let deadline = ops.deadline();
+            assert_eq!(
+                recover_startup(&mut store, &mut ops, deadline)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidInput
+            );
+        } else {
+            let _batch = run_store(&mut store, &mut ops);
+        }
+        assert!(ops.signals().is_empty(), "variant {variant}");
+        assert_eq!(ops.live.len(), 1);
+        assert_eq!(store.rows[0].1.inventory().len(), 2);
+    }
+}
+
+#[test]
+fn recovery_s0_checkpoint_failure_deadline_or_cap_prevents_every_signal() {
+    for variant in 0..3 {
+        let mut store = records(true);
+        let mut ops = Processes::new(vec![marked(100), unreadable_job_member(200, 100, 100)]);
+        match variant {
+            0 => store.checkpoint_failure = true,
+            1 => ops.job_late = true,
+            2 => ops
+                .live
+                .extend((201..456).map(|pid| unreadable_job_member(pid, 100, 100))),
+            _ => unreachable!(),
+        }
+        let batch = run_store(&mut store, &mut ops);
+        assert_eq!(batch.unresolved.len(), 1, "variant {variant}");
+        assert!(batch.gone.is_empty());
+        assert!(ops.signals().is_empty());
+        assert!(store.rows[0].1.inventory().is_empty());
+        assert!(store.committed.borrow().is_empty());
+    }
 }
 
 #[test]

@@ -6,9 +6,9 @@ use super::checkpoint::{Journal, TargetCheckpoint};
 use super::fixed_point;
 use super::RecoveryCheckpoint;
 use super::{
-    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity, RecoveryContext,
-    RecoveryProcesses, RecoveryRecord, RecoveryReport, RecoverySignal, ScanFailure, ScanPort,
-    TargetEvidence, VerifiedTarget,
+    check_deadline, checked_context, ProcessIdentity, RecoveryContext, RecoveryProcesses,
+    RecoveryRecord, RecoveryReport, RecoverySignal, ScanFailure, ScanPort, TargetEvidence,
+    VerifiedTarget,
 };
 
 /// Sealed policy completion, bound to one persisted mark. The consumer must still
@@ -69,6 +69,7 @@ fn checkpoint_capture(
             mark,
             excluded: None,
             saved: inventory.saved(),
+            leader: inventory.leader(),
         },
         snapshot,
         context,
@@ -117,20 +118,17 @@ fn stop_recorded(
     if identity != &expected {
         return Ok(());
     }
-    let evidence = if safe_identity(observed, context).is_none()
-        || observed.mark == MarkEvidence::Unreadable
-    {
-        None
-    } else if matches!(&observed.mark, MarkEvidence::Present(mark) if mark == record.mark()) {
-        Some(TargetEvidence::RecordedLeader)
-    } else {
-        inventory
-            .saved()
-            .iter()
-            .find(|saved| saved.identity == expected)
-            .map(|saved| TargetEvidence::Checkpoint(saved.ancestry.clone()))
-    };
-    let Some(evidence) = evidence else {
+    // Preserve every target while the recorded leader can still prove its job.
+    let targets = checkpoint_capture(
+        record.mark(),
+        &snapshot,
+        context,
+        ops,
+        deadline,
+        report,
+        inventory,
+    )?;
+    let Some(target) = targets.iter().find(|target| target.identity == expected) else {
         report.refused += 1;
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -140,19 +138,11 @@ fn stop_recorded(
     let leader = VerifiedTarget {
         identity: expected.clone(),
         mark: record.mark().into(),
-        evidence,
+        evidence: match &target.evidence {
+            TargetEvidence::Marked => TargetEvidence::RecordedLeader,
+            other => other.clone(),
+        },
     };
-    // TERM can end detached marked tool parents too. Preserve every captured root and
-    // descendant before that signal, then rediscover survivors with a fresh full scan.
-    checkpoint_capture(
-        record.mark(),
-        &snapshot,
-        context,
-        ops,
-        deadline,
-        report,
-        inventory,
-    )?;
     check_deadline(ops, deadline)?;
     report.signals += 1;
     ops.signal_checked(&leader, RecoverySignal::Terminate, deadline)?;

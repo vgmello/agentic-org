@@ -8,10 +8,12 @@ use super::{
     validate_inventory, CheckpointTarget, RecoveryCheckpoint, RecoveryRecord, TargetEvidence,
     VerifiedTarget,
 };
+use crate::ChildIdentity;
 
 pub trait TargetCheckpoint {
     fn mark(&self) -> &str;
     fn saved(&self) -> &[CheckpointTarget];
+    fn leader(&self) -> Option<&ChildIdentity>;
     fn save(&mut self, targets: &[VerifiedTarget], deadline: Instant) -> io::Result<()>;
 }
 
@@ -20,6 +22,7 @@ pub(super) struct Journal<'a, R: RecoveryCheckpoint> {
     key: &'a R::Key,
     mark: String,
     inventory: Vec<CheckpointTarget>,
+    leader: Option<ChildIdentity>,
     blocked: bool,
 }
 
@@ -30,6 +33,7 @@ impl<'a, R: RecoveryCheckpoint> Journal<'a, R> {
             key,
             mark: record.mark.clone(),
             inventory: record.inventory.clone(),
+            leader: record.leader.clone(),
             blocked: false,
         }
     }
@@ -44,6 +48,9 @@ impl<R: RecoveryCheckpoint> TargetCheckpoint for Journal<'_, R> {
     }
     fn saved(&self) -> &[CheckpointTarget] {
         &self.inventory
+    }
+    fn leader(&self) -> Option<&ChildIdentity> {
+        self.leader.as_ref()
     }
     fn save(&mut self, targets: &[VerifiedTarget], deadline: Instant) -> io::Result<()> {
         if self.blocked {
