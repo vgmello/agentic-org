@@ -179,7 +179,7 @@
     }
   ],
   "bootstrap": {
-    "comment": "X-02 §6.3: bootstrap's fingerprint is login and hq_operation_id, never the password or the pair. A replay checks the sign-in first (not_authorized), then the fingerprint (operation_reused), then the pair by TlsPair::fingerprint, the same fingerprint as tls.set's: another pair is tls_mismatch, a pair the PEM reader refuses has none and is tls_invalid, unstored, and the same DER with other line ends replays.",
+    "comment": "X-02 §6.3: bootstrap's fingerprint is login and hq_operation_id, never the password or the pair. A replay checks the sign-in first (not_authorized), then the fingerprint (operation_reused), then the pair by TlsPair::fingerprint, the same fingerprint as tls.set's: another pair is tls_mismatch, a pair the PEM reader refuses has none and is tls_invalid, unstored, at that point in the order (bootstrap's fingerprint excludes the pair, so a refused pair never pre-empts the sign-in or the fingerprint), and the same DER with other line ends replays.",
     "stored": {
       "operation_id": "01M72N8MG00000000000000H05",
       "hq_operation_id": "01M72N8MG00000000000000H06",
@@ -262,6 +262,36 @@
         },
         "same_fingerprint": true,
         "expect": "tls_invalid"
+      },
+      {
+        "name": "a refused pair with another password: bootstrap's pair isn't fingerprinted, so the sign-in still decides first (not_authorized)",
+        "params": {
+          "operation_id": "01M72N8MG00000000000000H05",
+          "hq_operation_id": "01M72N8MG00000000000000H06",
+          "login": "admin",
+          "password": "second-password",
+          "tls": {
+            "cert": "-----BEGIN CERTIFICATE-----A",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+          }
+        },
+        "same_fingerprint": true,
+        "expect": "not_authorized"
+      },
+      {
+        "name": "a refused pair with another hq_operation_id: the fingerprint decides before the pair (operation_reused)",
+        "params": {
+          "operation_id": "01M72N8MG00000000000000H05",
+          "hq_operation_id": "01M72N8MG00000000000000H09",
+          "login": "admin",
+          "password": "first-password",
+          "tls": {
+            "cert": "-----BEGIN CERTIFICATE-----A",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+          }
+        },
+        "same_fingerprint": false,
+        "expect": "operation_reused"
       },
       {
         "name": "another password: the same fingerprint, but the sign-in fails first",

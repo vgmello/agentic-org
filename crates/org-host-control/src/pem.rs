@@ -62,6 +62,7 @@ impl std::error::Error for InvalidPem {}
 /// line (RFC 7468), base64-decoded. A line ends with LF, CRLF or a lone CR. Text before the block
 /// and other blocks around it are ignored; only that block's body is decoded.
 pub fn first_block(text: &str, labels: &[&str]) -> Result<Der, InvalidPem> {
+    refuse_misplaced_begin(text)?;
     block_from(text, labels, 0)?
         .map(|(der, _)| der)
         .ok_or(InvalidPem)
@@ -72,6 +73,7 @@ pub fn first_block(text: &str, labels: &[&str]) -> Result<Der, InvalidPem> {
 /// first item is `first_block`'s. Text between the blocks is ignored. A wanted block that doesn't
 /// frame or decode fails the whole text, and so does a text with none.
 pub fn all_blocks(text: &str, labels: &[&str]) -> Result<Vec<Der>, InvalidPem> {
+    refuse_misplaced_begin(text)?;
     let mut blocks = Vec::new();
     let mut from = 0;
     while let Some((der, next)) = block_from(text, labels, from)? {
@@ -121,6 +123,19 @@ fn block_from(
     }
     let der = decode_base64(&text[body_at..end_at])?;
     Ok(Some((der, after)))
+}
+
+/// Refuse rather than skip: any `-----BEGIN ` that doesn't start a line (an indented block, or text
+/// before it on its line) fails the whole text, so a chain is never silently cut short.
+fn refuse_misplaced_begin(text: &str) -> Result<(), InvalidPem> {
+    let misplaced = text
+        .match_indices("-----BEGIN ")
+        .any(|(at, _)| at != 0 && !matches!(text.as_bytes()[at - 1], b'\n' | b'\r'));
+    if misplaced {
+        Err(InvalidPem)
+    } else {
+        Ok(())
+    }
 }
 
 /// The first `marker` in `text` at or after `from` that starts a line: the text's start, or
@@ -262,6 +277,7 @@ mod tests {
             "-----BEGIN PRIVATE KEY-----\nTWFu-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----TWFu\n-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----garbage\n",
+            "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----\n  -----BEGIN PRIVATE KEY-----\n!!!\n-----END PRIVATE KEY-----\n",
         ] {
             assert!(first_block(bad, PRIVATE_KEY).is_err(), "{bad:?}");
         }

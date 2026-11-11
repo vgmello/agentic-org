@@ -745,7 +745,12 @@ impl StoredListenConfig {
             }
             Some(Stored::Value(text)) => text,
         };
-        let origin = ListenOrigin::parse(origin).map_err(InvalidListenConfig::Origin)?;
+        let raw = origin;
+        let origin = ListenOrigin::parse(raw).map_err(InvalidListenConfig::Origin)?;
+        // The stored value is the serialization itself, never a form `parse` would rewrite.
+        if origin.as_str() != raw.as_str() {
+            return Err(InvalidListenConfig::Origin(OriginError::Path));
+        }
         origin
             .check(scheme, address, port)
             .map_err(InvalidListenConfig::Origin)?;

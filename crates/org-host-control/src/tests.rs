@@ -368,6 +368,7 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
         String::from_utf8(stored.clone()).unwrap(),
         vectors["fingerprint_input"].as_str().unwrap()
     );
+    let mut refused_pair_outcomes = Vec::new();
     let mut seen = Vec::new();
     for retry in vectors["retries"].as_array().unwrap() {
         let name = retry["name"].as_str().unwrap();
@@ -387,6 +388,7 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
         let pair = params
             .get("tls")
             .map(|pair| tls_pair(&pair["cert"], &pair["key"]).fingerprint());
+        let refused_pair = matches!(pair, Some(Err(_)));
         let outcome = if !signs_in {
             "not_authorized".to_owned()
         } else if !same {
@@ -404,7 +406,14 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
             }
         };
         assert_eq!(outcome, retry["expect"], "{name}");
+        if refused_pair {
+            refused_pair_outcomes.push(outcome.clone());
+        }
         seen.push((retry["same_fingerprint"].as_bool().unwrap(), outcome));
+    }
+    // A refused pair is reached only after the sign-in and the fingerprint (X-02 §6.3).
+    for want in ["not_authorized", "operation_reused", "tls_invalid"] {
+        assert!(refused_pair_outcomes.iter().any(|o| o == want), "{want}");
     }
     let seen: Vec<(bool, &str)> = seen.iter().map(|(same, o)| (*same, o.as_str())).collect();
     // Both sides of the fingerprint, and every outcome of the order.
