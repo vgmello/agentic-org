@@ -102,3 +102,62 @@ fn maximum_credit_and_code_bounds_are_inclusive_and_unknown_codes_are_preserved(
         assert!(!work_rejection_code_valid(code));
     }
 }
+
+#[test]
+fn ack_proof_binds_each_field_and_empty_rejected_list() {
+    let original = ack();
+    let digest = work_ack_proof_digest_v1(&original).unwrap();
+    for case in 0..7 {
+        let mut changed = original.clone();
+        match case {
+            0 => changed.origin_office_id = OfficeId::new("OFF2").unwrap(),
+            1 => changed.incarnation = OriginIncarnation::new("INC2").unwrap(),
+            2 => changed.from_exclusive = 1,
+            3 => changed.through_seq = 4,
+            4 => changed.rejected[0].seq = 3,
+            5 => changed.rejected[0].code = "other".into(),
+            _ => changed.rejected.clear(),
+        }
+        assert_ne!(work_ack_proof_digest_v1(&changed).unwrap(), digest);
+    }
+    for (base, through, seq, valid) in [
+        (1, 3, 1, false),
+        (1, 3, 2, true),
+        (1, 3, 3, true),
+        (1, 3, 4, false),
+        (3, 3, 3, false),
+        (4, 3, 3, false),
+        (0, u64::MAX, u64::MAX, true),
+    ] {
+        let mut a = original.clone();
+        a.from_exclusive = base;
+        a.through_seq = through;
+        a.rejected[0].seq = seq;
+        assert_eq!(a.validate().is_ok(), valid, "{base}/{through}/{seq}");
+    }
+    let mut a = original;
+    a.rejected = vec![
+        WorkRejection {
+            seq: 1,
+            code: "az09_".into(),
+        },
+        WorkRejection {
+            seq: 3,
+            code: "x".repeat(64),
+        },
+    ];
+    assert!(a.validate().is_ok());
+    assert!(work_rejection_code_valid("az09_"));
+}
+
+#[test]
+fn empty_rejection_receipts_still_require_a_strictly_increasing_range() {
+    for (base, through, valid) in [(0, 1, true), (1, 1, false), (2, 1, false)] {
+        let mut a = ack();
+        a.rejected.clear();
+        a.from_exclusive = base;
+        a.through_seq = through;
+        assert_eq!(a.validate().is_ok(), valid);
+        assert_eq!(work_ack_proof_digest_v1(&a).is_ok(), valid);
+    }
+}

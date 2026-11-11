@@ -1,4 +1,4 @@
-//! Current-HQ local stream operations; native storage owns the transaction and retention.
+//! Current-HQ receipt ledger; native storage owns the transaction and retention.
 use super::*;
 use crate::organization::{PeerIdentity, PeerRole, VerifiedPeer};
 use org_sync_proto::{
@@ -38,8 +38,6 @@ pub struct AckProof {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalStreamOutput {
-    /// Logical credit window; native framing still honors the encoded frame byte limit.
-    Forward(Vec<Change>),
     Duplicate,
     /// from is the previous floor, exclusive; to is the committed inclusive floor.
     Advanced {
@@ -84,7 +82,7 @@ fn authorize(
     if peer.org_id != c.org_id
         || peer.office_id != a.hq
         || peer.role != PeerRole::Hq
-        || peer.authority < a.highest_epoch
+        || peer.authority != a.highest_epoch
         || a.connection_generation != Some(generation)
     {
         return Err(Refusal::NotAuthorized.into());
@@ -99,45 +97,6 @@ fn ready(c: &LocalContext) -> Result<(), Refusal> {
         return Err(Refusal::RestorePending);
     }
     Ok(())
-}
-fn read_batch<T: LocalWorkTxn + ?Sized>(
-    tx: &mut T,
-    c: &LocalContext,
-) -> Result<Vec<Change>, SyncError> {
-    ready(c)?;
-    let queue = tx.local_outbox()?;
-    validate_queue(c, &queue)?;
-    let batch: Vec<_> = queue
-        .pending()
-        .iter()
-        .take(WORK_CREDIT_WINDOW)
-        .cloned()
-        .collect();
-    for change in &batch {
-        if !versions::codec_supported(c.protocol_level, &change.codec)
-            || !tx.supports_codec(&change.codec)?
-        {
-            return Err(Refusal::UnsupportedVersion.into());
-        }
-    }
-    Ok(batch)
-}
-#[cfg(test)]
-pub(super) fn read_head(tx: &mut dyn LocalWorkTxn) -> Result<Option<Change>, SyncError> {
-    let c = tx.context()?;
-    Ok(read_batch(tx, &c)?.into_iter().next())
-}
-
-pub fn forward_local(
-    store: &dyn LocalStreamStore,
-    peer: &dyn WorkStreamPeer,
-) -> Result<LocalStreamOutput, SyncError> {
-    let identity = peer.identity();
-    let generation = peer.connection_generation();
-    store.transact(Arc::new(move |tx| {
-        let (c, _) = authorize(tx, &identity, generation)?;
-        Ok(LocalStreamOutput::Forward(read_batch(tx, &c)?))
-    }))
 }
 fn retained_match(
     tx: &mut dyn LocalStreamTxn,
@@ -207,21 +166,21 @@ pub fn acknowledge_local(
         if ack.origin_office_id != c.origin.office || ack.incarnation != c.origin.incarnation {
             return Err(Refusal::WrongStream.into());
         }
-        ack.validate().map_err(|_| Refusal::Malformed)?;
         ready(&c)?;
+        ack.validate().map_err(|_| Refusal::Malformed)?;
         let mut queue = tx.local_outbox()?;
         validate_queue(&c, &queue)?;
         let floor = queue.acknowledged_seq;
         if a.pruned_through > floor {
             return Err(Refusal::InvariantFailure.into());
         }
-        if ack.from_exclusive > floor {
-            return Err(Refusal::Gap.into());
-        }
         // Deliberately weaker than "actually sent": the bound is highest committed
         // for this incarnation. There is no send-intent or extra persisted counter.
         if ack.through_seq > queue.last_seq {
             return Err(Refusal::AheadOfForwarded.into());
+        }
+        if ack.from_exclusive > floor {
+            return Err(Refusal::Gap.into());
         }
         retained_match(
             tx,
@@ -267,13 +226,5 @@ pub fn acknowledge_local(
         })
     }))
 }
-/// Native transport must close on these protocol faults, surfacing a conflicting proof.
-pub fn ack_closes_connection(error: &SyncError) -> bool {
-    matches!(
-        error,
-        SyncError::Refused(Refusal::AheadOfForwarded | Refusal::ConflictingProof)
-    )
-}
-
 #[cfg(test)]
 mod tests;
