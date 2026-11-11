@@ -1772,6 +1772,19 @@ fn agent_current_task_clear_publishes_live_status_and_person_refusal_publishes_n
     .unwrap();
     let agent = Client::connect(socket(&world)).unwrap();
     agent.bind_member("current-agent").unwrap();
+    // A nonempty id must reach the real Office, rather than silently becoming a clear.
+    let missing = agent
+        .call::<WorkSetCurrent>(&WorkSetCurrentParams {
+            item: Some(command_id(203)),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        missing,
+        org_client::ClientError::Api(org_proto::ApiError {
+            code: org_proto::ErrorCode::NotFound,
+            ..
+        })
+    ));
     let sub = app.subscribe().unwrap();
     agent
         .call::<StatusSet>(&StatusSetParams {
