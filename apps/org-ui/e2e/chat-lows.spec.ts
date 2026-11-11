@@ -305,3 +305,60 @@ test('CHAT-32 CHAT-33 BUG-62: Back and reload resolve the same empty-organizatio
 	await expect(page).toHaveTitle(fullTitle('Needs you'));
 	await shot(page, 'chat-history-explicit-empty-needs-you');
 });
+
+for (const action of ['Reply', 'Reject'] as const) {
+	test(`CHAT-27: a refresh keeps the thread ask ${action} form and focus`, async ({ page }) => {
+		await open(page);
+		await mainNav(page).getByRole('link', { name: 'Agents', exact: true }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.evaluate(async () => {
+			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const { chatApi } = await import(path);
+			const subscribe = chatApi.subscribe.bind(chatApi);
+			const snapshot = chatApi.snapshot.bind(chatApi);
+			let refresh: (() => void) | undefined;
+			let nextSnapshot: (() => void) | undefined;
+			chatApi.subscribe = (id: string, listener: () => void) => {
+				refresh = listener;
+				return subscribe(id, listener);
+			};
+			chatApi.snapshot = async (id: string) => {
+				const value = await snapshot(id);
+				nextSnapshot?.();
+				nextSnapshot = undefined;
+				return value;
+			};
+			(window as Window & { refreshTestChat?: () => Promise<void> }).refreshTestChat = async () => {
+				if (!refresh) throw new Error('Chat subscription is not active.');
+				const loaded = new Promise<void>((resolve) => { nextSnapshot = resolve; });
+				refresh();
+				await loaded;
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			};
+		});
+		await mainNav(page).getByRole('link', { name: 'Chat', exact: true }).click();
+		await channel(page, 'c-project-atlas', '#atlas');
+		const body = action === 'Reply' ? 'Block bug reports' : 'Publish the 0.2 release notes';
+		const message = page.getByTestId('message-list').getByTestId('message').filter({ hasText: body });
+		await message.hover();
+		await message.getByRole('button', { name: 'Reply in thread', exact: true }).click();
+		const card = thread(page).getByTestId('ask-card');
+		await card.getByRole('button', { name: `${action}…`, exact: true }).click();
+		const field = card.getByRole('textbox');
+		const text = `Still editing this ${action.toLowerCase()}`;
+		await field.fill(text);
+		await field.evaluate((element: HTMLTextAreaElement) => {
+			element.setAttribute('data-refresh-focus-sentinel', 'original-editor');
+			element.setSelectionRange(3, 9);
+		});
+		await page.evaluate(() => (window as Window & { refreshTestChat?: () => Promise<void> }).refreshTestChat?.());
+		await expect(field).toHaveValue(text);
+		await expect(field).toBeFocused();
+		await expect(field).toHaveAttribute('data-refresh-focus-sentinel', 'original-editor');
+		expect(await field.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd])).toEqual([3, 9]);
+		await shot(page, `chat-refreshed-ask-${action.toLowerCase()}-retains-focus`);
+		await card.getByRole('button', { name: action === 'Reply' ? 'Send reply' : 'Reject', exact: true }).click();
+		await expect(card.getByTestId('answered')).toBeVisible();
+		await expect(field).toHaveCount(0);
+	});
+}

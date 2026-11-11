@@ -65,7 +65,8 @@
 	const mark = $derived(KIND_MARK[message.kind]);
 	const card = $derived(message.kind === 'request' || message.kind === 'handoff');
 	const messageId = $derived(message.id);
-	const askDraft = $derived(message.kind === 'request' ? askDraftFor?.(messageId) : undefined);
+	const isRequest = $derived(message.kind === 'request');
+	const askDraft = $derived(isRequest ? askDraftFor?.(messageId) : undefined);
 	const bridgeName = $derived({ slack: 'Slack', teams: 'Teams', discord: 'Discord' }[message.bridge ?? 'slack']);
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
 </script>
