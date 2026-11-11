@@ -136,6 +136,38 @@ impl Store {
         opening: Opening,
         schema: &Schema,
     ) -> Result<Self, OfficeError> {
+        Self::open_bound(db_path, key, opening, schema, None)
+    }
+
+    pub(crate) fn check_instance(
+        db_path: &Path,
+        key: &Key,
+        instance: &str,
+        office: &str,
+    ) -> Result<(), OfficeError> {
+        check_existing_file(db_path)?;
+        let db = connect(db_path, key, false, false)?;
+        let stored: Option<String> = db
+            .query_row("SELECT value FROM meta WHERE key='office_id'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(OfficeError::storage)?;
+        if stored.as_deref() != Some(office) {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
+        }
+        bind_instance(&db, instance, false)
+    }
+
+    pub(crate) fn open_bound(
+        db_path: &Path,
+        key: &Key,
+        opening: Opening,
+        schema: &Schema,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
@@ -143,12 +175,7 @@ impl Store {
             // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
             Opening::New => drop(private_file(db_path).map_err(OfficeError::storage)?),
             Opening::Existing => {
-                // SQLite deletes a WAL beside an empty main file on the first read, which
-                // would destroy whatever that log still holds: don't let it look.
-                let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
-                if !metadata.is_file() || metadata.len() == 0 {
-                    return Err(failure("the database file is missing or empty"));
-                }
+                check_existing_file(db_path)?;
                 tighten_file_if_present(db_path).map_err(OfficeError::storage)?
             }
         }
@@ -178,7 +205,7 @@ impl Store {
                 "SQLite refused WAL mode (stayed in {journal_mode})"
             )));
         }
-        migrate(&mut writer, schema)?;
+        migrate_bound(&mut writer, schema, instance)?;
 
         let (jobs, queue) = mpsc::channel::<WriteJob>();
         let thread = std::thread::Builder::new()
@@ -594,6 +621,16 @@ fn wipe(text: &mut String) {
     std::hint::black_box(&*text);
 }
 
+fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
+    // SQLite deletes a WAL beside an empty main file on the first read, which would
+    // destroy whatever that log still holds: neither open nor inspection may look.
+    let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(failure("the database file is missing or empty"));
+    }
+    Ok(())
+}
+
 /// Opens a connection to the encrypted database and proves the key works. Only with
 /// `create` may SQLite make the file if it is missing. Until the key is proved, closing the
 /// connection must not checkpoint (that would write the log into a file this key can't
@@ -663,7 +700,11 @@ fn connect(
 }
 
 /// Brings the database to `schema.version`: a new one gets its tables, a newer one is refused.
-fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
+fn migrate_bound(
+    db: &mut Connection,
+    schema: &Schema,
+    instance: Option<&str>,
+) -> Result<(), OfficeError> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(OfficeError::storage)?;
@@ -676,8 +717,16 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
             schema.version
         )));
     }
+    if version >= 1 {
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
+    }
     if version < 1 {
         (schema.create)(&tx).map_err(OfficeError::storage)?;
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
         tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
     } else if version < schema.version {
@@ -686,6 +735,28 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
             .map_err(OfficeError::storage)?;
     }
     tx.commit().map_err(OfficeError::storage)
+}
+
+fn bind_instance(db: &Connection, instance: &str, adopt: bool) -> Result<(), OfficeError> {
+    let stored: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(OfficeError::storage)?;
+    match stored {
+        Some(stored) if stored != instance => {
+            Err(OfficeError::Invalid("office belongs to another instance"))
+        }
+        None if adopt => db
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('instance_id',?1)",
+                [instance],
+            )
+            .map(|_| ())
+            .map_err(OfficeError::storage),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
