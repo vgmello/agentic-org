@@ -1421,3 +1421,6 @@ fn a_log_left_beside_an_empty_database_is_never_looked_into_or_deleted() {
         }
     }
 }
+
+#[path = "tests/instance.rs"]
+mod instance;

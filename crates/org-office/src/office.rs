@@ -186,6 +186,17 @@ impl Office {
         Self::create_waiting(folder, new, key, LOCK_WAIT)
     }
 
+    /// Creates a v3 office bound to the selected instance (X-02 §5.4).
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2"))]
+    pub(crate) fn create_for_instance(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        instance: &str,
+    ) -> Result<Self, OfficeError> {
+        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance))
+    }
+
     /// [`Office::create`] with a chosen lock wait.
     pub fn create_waiting(
         folder: impl Into<PathBuf>,
@@ -193,6 +204,17 @@ impl Office {
         key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
+        Self::create_with(folder, new, key, lock_wait, None)
+    }
+
+    fn create_with(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        lock_wait: Duration,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
+        validate_instance(instance)?;
         let info = OfficeInfo {
             office_id: new.office_id.clone(),
             office_name: new.office_name.trim().to_owned(),
@@ -224,7 +246,7 @@ impl Office {
             }
         }
 
-        match build(&folder, &key, &info) {
+        match build(&folder, &key, &info, instance) {
             Ok((org, local)) => Ok(Self {
                 folder,
                 info,
@@ -252,12 +274,32 @@ impl Office {
         Self::open_waiting(folder, key, LOCK_WAIT)
     }
 
+    /// Opens a v3 office, adopting its instance only for a pre-v3 office (X-02 §5.4).
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2"))]
+    pub(crate) fn open_for_instance(
+        folder: impl Into<PathBuf>,
+        key: Key,
+        instance: &str,
+    ) -> Result<Self, OfficeError> {
+        Self::open_with(folder, key, LOCK_WAIT, Some(instance))
+    }
+
     /// [`Office::open`] with a chosen lock wait.
     pub fn open_waiting(
         folder: impl Into<PathBuf>,
         key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
+        Self::open_with(folder, key, lock_wait, None)
+    }
+
+    fn open_with(
+        folder: impl Into<PathBuf>,
+        key: Key,
+        lock_wait: Duration,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
+        validate_instance(instance)?;
         let folder = plain_folder(folder.into())?;
         check_not_a_link(&folder)?;
         match fs::metadata(&folder) {
@@ -273,17 +315,31 @@ impl Office {
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
 
+        // Refuse before either database migrates or changes journal mode. The office lock
+        // keeps this read and the later transactional adoption under one owner.
+        if let Some(instance) = instance {
+            Store::check_instance(&folder.join(OFFICE_DB), &key, instance, &info.office_id)?;
+        }
         let org = Store::open(
             &folder.join(ORG_DB),
             &key,
             Opening::Existing,
             &org_db::SCHEMA,
         )?;
-        let local = Store::open(
+        if instance.is_some()
+            && (meta(&org, "office_id")? != Some(info.office_id.clone())
+                || meta(&org, "organization_id")? != Some(info.org_id.clone()))
+        {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
+        }
+        let local = Store::open_bound(
             &folder.join(OFFICE_DB),
             &key,
             Opening::Existing,
             &OFFICE_SCHEMA,
+            instance,
         )?;
         let same = meta(&org, "office_id")? == Some(info.office_id.clone())
             && meta(&org, "organization_id")? == Some(info.org_id.clone())
@@ -633,9 +689,20 @@ impl Office {
 /// organization's own commit last before `office.json`: from that commit on, `discard` refuses
 /// the folder, so the window in which a crash leaves something it refuses is as small as it can
 /// be.
-fn build(folder: &Path, key: &Key, info: &OfficeInfo) -> Result<(Store, Store), OfficeError> {
+fn build(
+    folder: &Path,
+    key: &Key,
+    info: &OfficeInfo,
+    instance: Option<&str>,
+) -> Result<(Store, Store), OfficeError> {
     let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &org_db::SCHEMA)?;
-    let local = Store::open(&folder.join(OFFICE_DB), key, Opening::New, &OFFICE_SCHEMA)?;
+    let local = Store::open_bound(
+        &folder.join(OFFICE_DB),
+        key,
+        Opening::New,
+        &OFFICE_SCHEMA,
+        instance,
+    )?;
     failpoint(folder, "databases")?;
     put_meta(&org, &[("office_id", &info.office_id)])?;
     put_meta(&local, &[("office_id", &info.office_id)])?;
@@ -911,6 +978,13 @@ fn failpoint(folder: &Path, step: &'static str) -> Result<(), OfficeError> {
 
 #[cfg(not(test))]
 fn failpoint(_folder: &Path, _step: &'static str) -> Result<(), OfficeError> {
+    Ok(())
+}
+
+fn validate_instance(instance: Option<&str>) -> Result<(), OfficeError> {
+    if instance.is_some_and(|id| org_proto::ulid_time_ms(id).is_none()) {
+        return Err(OfficeError::Invalid("instance id must be a canonical ULID"));
+    }
     Ok(())
 }
 

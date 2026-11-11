@@ -106,6 +106,37 @@ impl Store {
         opening: Opening,
         schema: &Schema,
     ) -> Result<Self, OfficeError> {
+        Self::open_bound(db_path, key, opening, schema, None)
+    }
+
+    pub(crate) fn check_instance(
+        db_path: &Path,
+        key: &Key,
+        instance: &str,
+        office: &str,
+    ) -> Result<(), OfficeError> {
+        let db = connect(db_path, key, false, false)?;
+        let stored: Option<String> = db
+            .query_row("SELECT value FROM meta WHERE key='office_id'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(OfficeError::storage)?;
+        if stored.as_deref() != Some(office) {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
+        }
+        bind_instance(&db, instance, false)
+    }
+
+    pub(crate) fn open_bound(
+        db_path: &Path,
+        key: &Key,
+        opening: Opening,
+        schema: &Schema,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
@@ -148,7 +179,7 @@ impl Store {
                 "SQLite refused WAL mode (stayed in {journal_mode})"
             )));
         }
-        migrate(&mut writer, schema)?;
+        migrate_bound(&mut writer, schema, instance)?;
 
         let (jobs, queue) = mpsc::channel::<WriteJob>();
         let thread = std::thread::Builder::new()
@@ -607,7 +638,11 @@ fn connect(
 }
 
 /// Brings the database to `schema.version`: a new one gets its tables, a newer one is refused.
-fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
+fn migrate_bound(
+    db: &mut Connection,
+    schema: &Schema,
+    instance: Option<&str>,
+) -> Result<(), OfficeError> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(OfficeError::storage)?;
@@ -620,8 +655,16 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
             schema.version
         )));
     }
+    if version >= 1 {
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
+    }
     if version < 1 {
         (schema.create)(&tx).map_err(OfficeError::storage)?;
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
         tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
     } else if version < schema.version {
@@ -630,6 +673,28 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
             .map_err(OfficeError::storage)?;
     }
     tx.commit().map_err(OfficeError::storage)
+}
+
+fn bind_instance(db: &Connection, instance: &str, adopt: bool) -> Result<(), OfficeError> {
+    let stored: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(OfficeError::storage)?;
+    match stored {
+        Some(stored) if stored != instance => {
+            Err(OfficeError::Invalid("office belongs to another instance"))
+        }
+        None if adopt => db
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('instance_id',?1)",
+                [instance],
+            )
+            .map(|_| ())
+            .map_err(OfficeError::storage),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
