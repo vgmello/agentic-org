@@ -125,6 +125,7 @@ struct GrantRef<'a> {
 
 /// A grant as read: the MAC decodes straight into its secret type.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawGrant {
     account: String,
     member: String,
@@ -182,6 +183,7 @@ pub struct Principal {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawPrincipal {
     grant: Grant,
 }

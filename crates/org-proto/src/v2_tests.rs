@@ -715,3 +715,14 @@ fn operation_get_has_its_wire_shapes() {
     let response = Response::ok::<OperationGet>(3, &outcome).unwrap();
     assert!(response.into_result::<OperationGet>().is_ok());
 }
+
+/// X-02 §3: `hello`'s params are a JSON object; a positional array is malformed even when its
+/// elements would fill the fields in order. Unknown fields stay ignorable (D1).
+#[test]
+fn hello_params_are_an_object_only() {
+    assert!(serde_json::from_value::<HelloParams>(json!([{"min": 1, "max": 2}])).is_err());
+    assert!(serde_json::from_value::<HelloParams>(json!([])).is_err());
+    let newer: HelloParams =
+        serde_json::from_value(json!({"api": {"min": 1, "max": 2}, "later": true})).unwrap();
+    assert_eq!(newer.api_range(), ApiRange { min: 1, max: 2 });
+}

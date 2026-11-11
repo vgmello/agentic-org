@@ -339,6 +339,38 @@
             "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
           }
         ]
+      },
+      {
+        "name": "grant with an extra key (unauthenticated: the MAC doesn't cover it)",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5",
+            "scope": "admin"
+          }
+        }
+      },
+      {
+        "name": "principal with an extra key beside grant",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          },
+          "act_as": "01M72N8MG00000000000000M02"
+        }
       }
     ]
   }

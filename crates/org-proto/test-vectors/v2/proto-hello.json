@@ -339,6 +339,27 @@
       ]
     },
     {
+      "name": "params as a positional array is malformed",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": [
+              {
+                "min": 1,
+                "max": 2
+              }
+            ]
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
       "name": "api with max above 2^32-1 is malformed",
       "connection": "office_socket_move2",
       "steps": [

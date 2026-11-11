@@ -84,7 +84,7 @@ impl ApiRange {
 ///
 /// `#[non_exhaustive]`: fields may be added. Build one with [`HelloParams::default`] (a v1
 /// `hello`, `{}` on the wire) or [`HelloParams::offering`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct HelloParams {
     /// The versions the client speaks. Absent or `null` means [`ApiRange::V1`] (X-02 §3).
@@ -99,6 +99,24 @@ pub struct HelloParams {
         skip_serializing_if = "Option::is_none"
     )]
     pub client: Option<String>,
+}
+
+/// `hello`'s params as read: a JSON object only, never a positional array. Unknown fields are
+/// ignored, as v1 readers always did (X-02 D1), so a newer client's extra field still decodes.
+#[derive(Deserialize)]
+struct RawHelloParams {
+    #[serde(default)]
+    api: Option<ApiRange>,
+    #[serde(default, deserialize_with = "present")]
+    client: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for HelloParams {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let RawHelloParams { api, client } =
+            d.deserialize_any(crate::principal::ObjectOnly::new("a hello params object"))?;
+        Ok(HelloParams { api, client })
+    }
 }
 
 /// A field that is present must be a `T`: unlike a plain `Option`, `null` is refused (X-02 §3's

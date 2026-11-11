@@ -783,3 +783,41 @@ fn gateway_lines_refuse_unknown_fields() {
     extra["landlock"]["grant_key"] = serde_json::json!("secret");
     assert!(serde_json::from_value::<GatewayReadyForSecrets>(extra).is_err());
 }
+
+/// X-02 §6.2: the chain is hashed in order, so the same blocks in another order are another
+/// chain (another fingerprint), while the key's hash is unchanged.
+#[test]
+fn a_reordered_chain_fingerprints_differently() {
+    let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let case = &doc["tls_set"]["cases"][7]["params"];
+    let cert = case["cert"].as_str().unwrap();
+    let end = "-----END CERTIFICATE-----\n";
+    let split = cert.find(end).unwrap() + end.len();
+    let (leaf, rest) = cert.split_at(split);
+    assert_eq!(rest.matches("-----BEGIN CERTIFICATE-----").count(), 1);
+    let swapped = format!("{rest}{leaf}");
+    let original = tls_pair(&case["cert"], &case["key"]).fingerprint().unwrap();
+    let reordered = tls_pair(&json!(swapped), &case["key"])
+        .fingerprint()
+        .unwrap();
+    assert_ne!(original.cert_chain_sha256(), reordered.cert_chain_sha256());
+    assert_eq!(original.key_der_sha256(), reordered.key_der_sha256());
+}
+
+/// The gateway's Landlock report: each enforcement value has exactly one wire spelling, and
+/// round-trips.
+#[test]
+fn landlock_enforcement_round_trips_every_spelling() {
+    for (value, wire) in [
+        (LandlockEnforcement::FullyEnforced, "fully_enforced"),
+        (LandlockEnforcement::PartiallyEnforced, "partially_enforced"),
+        (LandlockEnforcement::NotEnforced, "not_enforced"),
+    ] {
+        assert_eq!(serde_json::to_value(value).unwrap(), json!(wire));
+        assert_eq!(
+            serde_json::from_value::<LandlockEnforcement>(json!(wire)).unwrap(),
+            value
+        );
+    }
+    assert!(serde_json::from_value::<LandlockEnforcement>(json!("FullyEnforced")).is_err());
+}

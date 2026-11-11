@@ -147,6 +147,8 @@ fn hello_returns_the_servers_answer_and_ids_start_at_one() {
     let server = fake(|mut peer| {
         let request = peer.next_request().unwrap();
         assert_eq!((request.id, request.method.as_str()), (1, "hello"));
+        // A v1 client offers nothing: its hello's params are exactly `{}`.
+        assert_eq!(request.params, serde_json::json!({}));
         peer.reply::<Hello>(request.id, &hello_result(API_VERSION));
         let second = peer.next_request().unwrap();
         assert_eq!(second.id, 2);

@@ -388,7 +388,8 @@ mod tests {
             ("whitespace after BEGIN", "-----BEGIN CERTIFICATE----- \nTWFu\n-----END CERTIFICATE-----\n"),
             ("a tab after BEGIN", "-----BEGIN CERTIFICATE-----\t\nTWFu\n-----END CERTIFICATE-----\n"),
             ("BEGIN without its dashes", "-----BEGIN CERTIFICATE\nTWFu\n-----END CERTIFICATE-----\n"),
-            ("an empty label", "-----BEGIN -----\nTWFu\n-----END -----\n"),
+            // After a valid CERTIFICATE block, so only the label rule can refuse it.
+            ("an empty label", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----BEGIN -----\nTQ==\n-----END -----\n"),
             ("a label with a double space", "-----BEGIN A  B-----\nTWFu\n-----END A  B-----\n"),
             ("a label with dashes", "-----BEGIN A-----B-----\nTWFu\n-----END A-----B-----\n"),
             // Outside: a stray END.
@@ -396,6 +397,8 @@ mod tests {
             ("a stray END after a block", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----END CERTIFICATE-----\n"),
             // Outside: a marker that doesn't start its line.
             ("an indented BEGIN", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n  -----BEGIN CERTIFICATE-----\nTQ==\n-----END CERTIFICATE-----\n"),
+            // A prefixed BEGIN with no END: only the BEGIN-at-line-start rule refuses it.
+            ("a prefixed BEGIN with no END after a valid block", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n  -----BEGIN CERTIFICATE-----\nTQ==\n"),
             ("text before BEGIN", "x-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
             ("text before a stray END", "x -----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
             // Inside: END with another label, including a mistyped one on either marker.
