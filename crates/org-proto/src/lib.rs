@@ -65,9 +65,22 @@
 //!   response never gains a field named `event`.
 //! - Readers ignore unknown fields, ignore unknown events, decode unknown error codes as
 //!   [`ErrorCode::Unknown`], and answer unknown methods with [`ErrorCode::UnknownMethod`].
+//!
+//! ## Version 2 (X-02), additive so far
+//! The shapes of version 2 are here alongside version 1, and [`API_VERSION`] stays 1 until the
+//! migration's move 3:
+//! - `hello` takes [`HelloParams`] (`api`, an [`ApiRange`]) and negotiates within
+//!   [`SUPPORTED_API`]; v2 results carry `instance_id` ([`HelloResult::instance_id`]).
+//! - On host-made channels, a request acts under a [`Principal`] ([`Request::principal`]): a
+//!   grant the host MAC'd over [`grant_mac_input`].
+//! - [`retired`] sentinels for the retired inputs, and [`AgentProfileInput`], the profile
+//!   `member.add_agent` takes; move 2a puts both on the params.
+//! - [`ManagedHome`] on `who`'s cards, [`Actor`] on `org.changed` and `work.changed`, the
+//!   [`OperationGet`] lookup, and the codes `unsupported_version` and `operation_reused`.
+//!
+//! Its vectors are in `test-vectors/v2/proto-*.json`.
 
-// No unsafe code, except the one function that zeroes an `AppToken`'s or a `DbKey`'s bytes (see
-// `token`).
+// No unsafe code, except the one function that zeroes a secret's bytes (see `token`).
 #![deny(unsafe_code)]
 
 pub mod directory;
@@ -76,38 +89,54 @@ pub mod gateway;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod retired;
 pub mod work;
 
 mod calls;
 mod error;
 mod events;
 mod name;
+mod operation;
+mod principal;
+mod recovery;
 mod token;
 mod types;
 mod ulid;
 mod wire;
 
 pub use calls::{
-    capability, Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult,
-    OfficeAppToken, OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList,
-    OfficeRestart, OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
-    OrganizationList, Subscribe, SubscribeParams,
+    capability, ApiRange, Call, Empty, Hello, HelloParams, HelloResult, ListOfficesResult,
+    ListOrganizationsResult, OfficeAppToken, OfficeAppTokenParams, OfficeAppTokenResult,
+    OfficeHello, OfficeList, OfficeRestart, OfficeRestartParams, OrganizationCreate,
+    OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
 };
+pub use directory::ManagedHome;
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
+pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOutcome};
 pub use org::{
     has_reserved_branch_prefix, is_shaped_like_an_address, is_valid_id, is_valid_member_id,
-    AgentProfile, AgentRuntime, AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo,
-    Member, MemberKind, Membership, OrgChange, OrgChanged, OrgChangedData, OrgRejected,
-    OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project, ProjectCreateTeam,
-    ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team,
-    AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
+    AgentProfile, AgentProfileInput, AgentRuntime, AgentStatus, Area, CommandAccepted,
+    CommandStatus, GithubRepo, Member, MemberKind, Membership, OrgChange, OrgChanged,
+    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project,
+    ProjectCreateTeam, ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode,
+    Schedule, Team, AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
     AGENT_TIME_ZONE_MAX_CHARS, AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE,
     OWNER_HANDLE, PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_BRANCH_PREFIXES,
     RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
 };
-pub use token::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
+pub use principal::{
+    grant_mac_input, Actor, ActorKind, Grant, GrantClaims, MalformedPrincipal, Principal,
+    GRANT_MAC_DOMAIN,
+};
+pub use recovery::RecoveryCode;
+pub use retired::Retired;
+pub use token::zero as zero_bytes;
+pub use token::{
+    AppToken, DbKey, GrantKey, GrantMac, APP_TOKEN_BYTES, DB_KEY_BYTES, GRANT_KEY_BYTES,
+    GRANT_MAC_BYTES,
+};
 pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,
     ORGANIZATION_NAME_MAX_CHARS,
@@ -135,8 +164,15 @@ pub use work::{
 /// The protocol version a server reports in `hello`. Bumped only for a breaking change.
 pub const API_VERSION: u32 = 1;
 
+/// The `org-proto` versions this build speaks, for `hello`'s negotiation (X-02 §3): version 1
+/// and the additive version 2. Move 3 of the migration narrows it to `{2, 2}`, together with
+/// [`API_VERSION`] becoming 2.
+pub const SUPPORTED_API: ApiRange = ApiRange { min: 1, max: 2 };
+
 /// The largest frame (one JSON line, without its `\n`) either side may send or accept.
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v2_tests;

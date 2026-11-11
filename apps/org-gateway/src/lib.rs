@@ -16,5 +16,4 @@ mod static_ui;
 pub mod tls;
 pub mod transport;
 
-pub use origin::ConfiguredOrigin;
 pub use static_ui::{Hsts, StaticUi};

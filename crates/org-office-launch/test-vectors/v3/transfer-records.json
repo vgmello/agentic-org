@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 \u00a75.2 transfer-socket records: a JSON header of at most 1024 bytes (the record's compact JSON, exactly as `wire` here) plus fd_count descriptors. Over the cap, an unknown record or channel kind, or another descriptor count is fatal for the receiver.",
+  "header_max_bytes": 1024,
+  "records": [
+    {
+      "name": "gateway channel",
+      "wire": "{\"type\":\"channel\",\"kind\":\"gateway\",\"office_id\":\"01M72N8MG00000000000000F01\",\"channel_id\":\"01M72N8MG00000000000000C01\"}",
+      "fd_count": 1
+    },
+    {
+      "name": "local channel",
+      "wire": "{\"type\":\"channel\",\"kind\":\"local\",\"office_id\":\"01M72N8MG00000000000000F01\",\"channel_id\":\"01M72N8MG00000000000000C02\"}",
+      "fd_count": 1
+    },
+    {
+      "name": "revoked",
+      "wire": "{\"type\":\"revoked\",\"session_ids\":[\"01M72N8MG00000000000000S01\",\"01M72N8MG00000000000000S02\"]}",
+      "fd_count": 0
+    },
+    {
+      "name": "revoked at the cap",
+      "wire": "{\"type\":\"revoked\",\"session_ids\":[\"01M72N8MG00000000000000000\",\"01M72N8MG00000000000000001\",\"01M72N8MG00000000000000002\",\"01M72N8MG00000000000000003\",\"01M72N8MG00000000000000004\",\"01M72N8MG00000000000000005\",\"01M72N8MG00000000000000006\",\"01M72N8MG00000000000000007\",\"01M72N8MG00000000000000008\",\"01M72N8MG00000000000000009\",\"01M72N8MG00000000000000010\",\"01M72N8MG00000000000000011\",\"01M72N8MG00000000000000012\",\"01M72N8MG00000000000000013\",\"01M72N8MG00000000000000014\",\"01M72N8MG00000000000000015\",\"01M72N8MG00000000000000016\",\"01M72N8MG00000000000000017\",\"01M72N8MG00000000000000018\",\"01M72N8MG00000000000000019\",\"01M72N8MG00000000000000020\",\"01M72N8MG00000000000000021\",\"01M72N8MG00000000000000022\",\"01M72N8MG00000000000000023\",\"01M72N8MG00000000000000024\",\"01M72N8MG00000000000000025\",\"01M72N8MG00000000000000026\",\"01M72N8MG00000000000000027\",\"01M72N8MG00000000000000028\",\"01M72N8MG00000000000000029\",\"01M72N8MG00000000000000030\",\"01M72N8MG00000000000000031\",\"01M72N8MG00000000000000032\",\"01M72N8MG00000000000000033XXXX\"]}",
+      "fd_count": 0,
+      "bytes": 1024
+    }
+  ],
+  "refused": [
+    {
+      "name": "one byte over the cap",
+      "wire": "{\"type\":\"revoked\",\"session_ids\":[\"01M72N8MG00000000000000000\",\"01M72N8MG00000000000000001\",\"01M72N8MG00000000000000002\",\"01M72N8MG00000000000000003\",\"01M72N8MG00000000000000004\",\"01M72N8MG00000000000000005\",\"01M72N8MG00000000000000006\",\"01M72N8MG00000000000000007\",\"01M72N8MG00000000000000008\",\"01M72N8MG00000000000000009\",\"01M72N8MG00000000000000010\",\"01M72N8MG00000000000000011\",\"01M72N8MG00000000000000012\",\"01M72N8MG00000000000000013\",\"01M72N8MG00000000000000014\",\"01M72N8MG00000000000000015\",\"01M72N8MG00000000000000016\",\"01M72N8MG00000000000000017\",\"01M72N8MG00000000000000018\",\"01M72N8MG00000000000000019\",\"01M72N8MG00000000000000020\",\"01M72N8MG00000000000000021\",\"01M72N8MG00000000000000022\",\"01M72N8MG00000000000000023\",\"01M72N8MG00000000000000024\",\"01M72N8MG00000000000000025\",\"01M72N8MG00000000000000026\",\"01M72N8MG00000000000000027\",\"01M72N8MG00000000000000028\",\"01M72N8MG00000000000000029\",\"01M72N8MG00000000000000030\",\"01M72N8MG00000000000000031\",\"01M72N8MG00000000000000032\",\"01M72N8MG00000000000000033XXXXX\"]}",
+      "bytes": 1025,
+      "reason": "too_large"
+    },
+    {
+      "name": "unknown record type",
+      "wire": "{\"type\":\"future_record\"}",
+      "reason": "invalid"
+    },
+    {
+      "name": "unknown channel kind",
+      "wire": "{\"type\":\"channel\",\"kind\":\"browser\",\"office_id\":\"o\",\"channel_id\":\"c\"}",
+      "reason": "invalid"
+    },
+    {
+      "name": "channel without channel_id",
+      "wire": "{\"type\":\"channel\",\"kind\":\"local\",\"office_id\":\"o\"}",
+      "reason": "invalid"
+    },
+    {
+      "name": "no type",
+      "wire": "{\"session_ids\":[]}",
+      "reason": "invalid"
+    }
+  ]
+}

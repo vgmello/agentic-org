@@ -8,7 +8,8 @@ use std::process::ExitCode;
 use org_gateway::assets::BuildFiles;
 use org_gateway::service::{run_gateway, ApiLimits, GatewayConfig, UnavailableApi};
 use org_gateway::transport::{HttpLimits, ListenMode};
-use org_gateway::{ConfiguredOrigin, Hsts};
+use org_gateway::Hsts;
+use org_host_control::listen::ListenOrigin;
 
 fn main() -> ExitCode {
     match run() {
@@ -29,7 +30,7 @@ fn run() -> io::Result<()> {
         )
     })?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
-    let origin = ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr()?))
+    let origin = ListenOrigin::parse(&format!("http://{}", listener.local_addr()?))
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     run_gateway(
         listener,

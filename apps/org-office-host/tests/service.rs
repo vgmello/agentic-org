@@ -12,9 +12,10 @@ use std::os::unix::fs::PermissionsExt;
 
 use org_office_host::Host;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeInfo, OfficeList, OfficeStatus, OfficeStatusChanged,
-    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
-    ServerMessage, Subscribe, SubscribeParams, API_VERSION, UNREADABLE_REQUEST_ID,
+    Empty, ErrorCode, Hello, HelloParams, HelloResult, OfficeInfo, OfficeList, OfficeStatus,
+    OfficeStatusChanged, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
+    OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
+    UNREADABLE_REQUEST_ID,
 };
 use support::{Client, TestHome};
 
@@ -30,7 +31,7 @@ fn hello_names_the_host_and_no_office() {
     let home = TestHome::new();
     let host = Host::start(home.config()).unwrap();
     let hello = Client::connect(host.socket_path())
-        .call::<Hello>(&Empty {})
+        .call::<Hello>(&HelloParams::default())
         .unwrap();
     assert_eq!(hello.api_version, API_VERSION);
     assert_eq!(hello.server_version, env!("CARGO_PKG_VERSION"));
@@ -46,6 +47,62 @@ fn hello_names_the_host_and_no_office() {
         ]
     );
     assert!(hello.supports(org_proto::capability::OFFICE_STATUS_CHANGED));
+    host.shutdown();
+}
+
+/// X-02 §3: the host decodes `hello`'s params strictly. A malformed `api` or a non-string `client`
+/// is `invalid_request`, never answered as v1, and the connection goes on; `{}`, a missing
+/// `params` and `"api": null` are still a v1 `hello`.
+#[test]
+fn a_malformed_hello_is_invalid_request_and_an_empty_one_is_v1() {
+    let home = TestHome::new();
+    let host = Host::start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+
+    for (id, params) in [
+        (2, r#"{"api":"2"}"#),
+        (3, r#"{"api":2}"#),
+        (4, r#"{"api":{"min":1}}"#),
+        (5, r#"{"api":{"min":"1","max":2}}"#),
+        (6, r#"{"api":{"min":2,"max":1}}"#),
+        (7, r#"{"api":{"min":0,"max":1}}"#),
+        (8, r#"{"client":7}"#),
+        (9, r#"{"api":{"min":1,"max":2},"client":["org-agent"]}"#),
+        (13, r#"{"api":[1,2]}"#),
+        (14, r#"{"api":{"min":1,"max":2,"x":0}}"#),
+        (16, r#"{"client":null}"#),
+        (17, r#"{"api":{"min":-1,"max":2}}"#),
+        (18, r#"{"api":{"min":1,"max":4294967296}}"#),
+    ] {
+        let reply = client.raw(&format!(
+            r#"{{"id":{id},"method":"hello","params":{params}}}"#
+        ));
+        assert_eq!(reply.id, id, "{params}");
+        assert_eq!(
+            error_code(&reply.outcome),
+            Some(ErrorCode::InvalidRequest),
+            "{params}"
+        );
+    }
+
+    for (id, line) in [
+        (10, r#"{"id":10,"method":"hello","params":{}}"#),
+        (11, r#"{"id":11,"method":"hello"}"#),
+        (
+            12,
+            r#"{"id":12,"method":"hello","params":{"client":"org-agent 0.1.0"}}"#,
+        ),
+        (15, r#"{"id":15,"method":"hello","params":{"api":null}}"#),
+    ] {
+        let reply = client.raw(line);
+        assert_eq!(reply.id, id, "{line}");
+        let Outcome::Result(result) = reply.outcome else {
+            panic!("{line}: {:?}", reply.outcome);
+        };
+        let hello: HelloResult = serde_json::from_value(result).unwrap();
+        assert_eq!(hello.api_version, API_VERSION, "{line}");
+        assert_eq!(hello.host, "This Mac", "{line}");
+    }
     host.shutdown();
 }
 
@@ -106,7 +163,7 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
     drop(std::os::unix::net::UnixListener::bind(stale.path().join("host.sock")).unwrap());
     let host = Host::start(stale.config()).unwrap();
     Client::connect(host.socket_path())
-        .call::<Hello>(&Empty {})
+        .call::<Hello>(&HelloParams::default())
         .unwrap();
     host.shutdown();
 

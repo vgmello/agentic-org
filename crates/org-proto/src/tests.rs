@@ -79,11 +79,12 @@ fn request_wire_shape_and_typed_params() {
 #[test]
 fn missing_or_null_params_read_as_empty() {
     let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello"}"#).unwrap();
-    assert_eq!(req.params::<Hello>().unwrap(), Empty {});
+    assert_eq!(req.params::<Hello>().unwrap(), HelloParams::default());
     let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello","params":null}"#).unwrap();
-    assert_eq!(req.params::<Hello>().unwrap(), Empty {});
+    assert_eq!(req.params::<Hello>().unwrap(), HelloParams::default());
     assert_eq!(
-        serde_json::to_value(Request::new::<Hello>(1, &Empty {}).unwrap()).unwrap()["params"],
+        serde_json::to_value(Request::new::<Hello>(1, &HelloParams::default()).unwrap()).unwrap()
+            ["params"],
         json!({})
     );
 }
@@ -230,7 +231,11 @@ fn frames_round_trip_and_newlines_in_strings_are_escaped() {
         &Request::new::<OrganizationCreate>(1, &params).unwrap(),
     )
     .unwrap();
-    write_message(&mut buf, &Request::new::<Hello>(2, &Empty {}).unwrap()).unwrap();
+    write_message(
+        &mut buf,
+        &Request::new::<Hello>(2, &HelloParams::default()).unwrap(),
+    )
+    .unwrap();
     assert_eq!(buf.iter().filter(|b| **b == b'\n').count(), 2);
 
     let mut r = Cursor::new(buf);
@@ -450,6 +455,7 @@ fn hello_constructors_fill_every_field() {
             host: "This Mac".into(),
             office: None,
             capabilities: vec![],
+            instance_id: None,
         }
     );
     assert_eq!(
@@ -461,6 +467,7 @@ fn hello_constructors_fill_every_field() {
             host: "This Mac".into(),
             office: Some(identity),
             capabilities: vec!["x.y".into()],
+            instance_id: None,
         }
     );
 }
@@ -862,6 +869,7 @@ fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
             changes: vec![OrgChange::TeamDeleted {
                 team_id: "t9".into(),
             }],
+            actor: None,
         },
     )
     .unwrap();
@@ -1439,6 +1447,7 @@ fn the_three_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_sha
                 },
             },
         ],
+        actor: None,
     };
     assert_eq!(
         serde_json::to_value(&changed).unwrap(),
@@ -2938,6 +2947,7 @@ fn work_changed_carries_its_position_and_parts_and_tolerates_unknown_changes() {
                 number: 13,
             },
         ],
+        actor: None,
     };
     let ev = Event::new::<WorkChanged>(5, &data).unwrap();
     let v = serde_json::to_value(&ev).unwrap();
@@ -3717,6 +3727,7 @@ fn project_and_area_changes_reach_the_client_in_org_changed() {
                 },
             },
         ],
+        actor: None,
     };
     let ev = Event::new::<OrgChanged>(6, &data).unwrap();
     let v = serde_json::to_value(&ev).unwrap();

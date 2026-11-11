@@ -177,6 +177,7 @@ fn shared_work_cases_use_the_canonical_service() {
                 id: n as u64 + 1,
                 method,
                 params,
+                principal: None,
             })
             .unwrap()
             .unwrap();

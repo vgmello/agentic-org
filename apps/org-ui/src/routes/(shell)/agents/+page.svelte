@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
 	import AgentStatusIcon from '$lib/components/AgentStatusIcon.svelte';
+	import StatusPill from '$lib/components/StatusPill.svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
@@ -107,10 +108,9 @@
 								<td class="px-4 py-2">{runtimeLabel(row.member.agent?.runtime)}</td>
 								<td class="px-4 py-2">{runModeLabel(row.member.agent?.run_mode)}</td>
 								<td class="px-4 py-2">
-									<span class="inline-flex items-center gap-x-1.5 {row.live.id === 'paused' ? 'text-amber-200' : ''}" data-testid="agent-status">
-										<AgentStatusIcon status={row.live.id} />
-										{row.live.word}{row.live.detail ? ` · ${row.live.detail}` : ''}
-									</span>
+									<StatusPill label={row.live.word + (row.live.detail ? ` · ${row.live.detail}` : '')} class={row.live.id === 'paused' ? 'bg-amber-400/10 text-amber-200 ring-amber-400/30' : ''} data-testid="agent-status">
+										{#snippet icon()}<AgentStatusIcon status={row.live.id} />{/snippet}
+									</StatusPill>
 								</td>
 								<!-- What it is doing now comes with the Activity feed; until then there is nothing to say. -->
 								<td class="px-4 py-2 text-gray-400" data-testid="agent-now" aria-label="Nothing reported">—</td>

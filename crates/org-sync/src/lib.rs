@@ -7,6 +7,7 @@ pub mod messages;
 mod ordering;
 pub mod organization;
 pub mod versions;
+pub mod work;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;

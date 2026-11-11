@@ -299,7 +299,10 @@ fn errors_say_whether_the_pipe_is_still_in_step() {
             pid: 2
         })
     );
-    let err = LaunchError::UnsupportedVersion(2);
+    let err = LaunchError::UnsupportedVersion {
+        found: 2,
+        supported: &[LAUNCH_VERSION],
+    };
     assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
     let err = LaunchError::UnsupportedOfficeFileVersion(2);
     assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
@@ -308,7 +311,11 @@ fn errors_say_whether_the_pipe_is_still_in_step() {
         "office.json version 2 isn't supported (this build reads 1)"
     );
     assert_eq!(
-        LaunchError::UnsupportedVersion(1).to_string(),
+        LaunchError::UnsupportedVersion {
+            found: 1,
+            supported: &[LAUNCH_VERSION]
+        }
+        .to_string(),
         "launch version 1 isn't supported (this build speaks 2)"
     );
     assert!(!err.closes_stream());
@@ -321,13 +328,13 @@ fn another_version_is_refused_before_its_shape_is_read() {
 "#;
     assert!(matches!(
         read_host_message(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion(3))
+        Err(LaunchError::UnsupportedVersion { found: 3, .. })
     ));
     let line = br#"{"v":0,"event":"ready","socket":"/s","pid":1}
 "#;
     assert!(matches!(
         read_server_event(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion(0))
+        Err(LaunchError::UnsupportedVersion { found: 0, .. })
     ));
     let line = br#"{"op":"create"}
 "#;
@@ -999,7 +1006,11 @@ fn a_host_that_dies_mid_line_is_gone_not_a_failure() {
     assert!(err.is_host_gone());
     let bad = read_host_message(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
     assert!(!bad.is_host_gone());
-    assert!(!LaunchError::UnsupportedVersion(2).is_host_gone());
+    assert!(!LaunchError::UnsupportedVersion {
+        found: 2,
+        supported: &[LAUNCH_VERSION]
+    }
+    .is_host_gone());
 }
 
 #[test]
@@ -1158,7 +1169,10 @@ fn a_version_1_line_is_refused() {
         "{\"v\":1,\"op\":\"discard\",\"db_key\":null}\n".to_string(),
     ] {
         let err = read_first_host_message(&mut Cursor::new(line), FirstLine::Start).unwrap_err();
-        assert!(matches!(err, LaunchError::UnsupportedVersion(1)), "{err}");
+        assert!(
+            matches!(err, LaunchError::UnsupportedVersion { found: 1, .. }),
+            "{err}"
+        );
         assert!(err.to_string().contains("launch version 1 isn't supported"));
         assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
     }
@@ -1166,13 +1180,13 @@ fn a_version_1_line_is_refused() {
     v1_create["v"] = 1.into();
     assert!(matches!(
         read_host_message(&mut Cursor::new(v1_create.to_string() + "\n")),
-        Err(LaunchError::UnsupportedVersion(1))
+        Err(LaunchError::UnsupportedVersion { found: 1, .. })
     ));
     // A v1 server event is refused too: host and server ship together.
     let line = b"{\"v\":1,\"event\":\"discarded\"}\n";
     assert!(matches!(
         read_server_event(&mut Cursor::new(&line[..])),
-        Err(LaunchError::UnsupportedVersion(1))
+        Err(LaunchError::UnsupportedVersion { found: 1, .. })
     ));
 }
 

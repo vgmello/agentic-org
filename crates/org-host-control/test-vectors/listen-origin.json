@@ -1,0 +1,718 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 §2: ListenOrigin's two checks. 'form' is ListenOrigin::parse: 'result' is 'accepted' (then 'origin' is the canonical serialization, which Display and serde give back) or the refusal's OriginError::code(). The canonical form is the WHATWG URL origin serialization, refused and never rewritten when the input isn't already in it. 'whatwg' is what a WHATWG parser gives for the input (null when it throws), recorded from Node 26 with: node -e 'console.log(new URL(process.argv[1]).origin)' '<input>'. Every accepted row agrees with it. A refused row whose 'whatwg' equals its input (less a trailing /) is one where ListenOrigin is stricter than browsers, by decision; it says why in 'stricter_than_browsers'. 'fit' is ListenOrigin::check(scheme, address, port): 'result' is 'accepted' or the OriginError::code() of the first failed check, in the order scheme, port, loopback bind address, bound literal. Either step's refusal makes a stored configuration origin_invalid.",
+  "form": [
+    {
+      "input": "https://mac.local:8443",
+      "result": "accepted",
+      "origin": "https://mac.local:8443",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local",
+      "result": "accepted",
+      "origin": "https://mac.local",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "http://mac.local",
+      "result": "accepted",
+      "origin": "http://mac.local",
+      "whatwg": "http://mac.local"
+    },
+    {
+      "input": "http://127.0.0.1:8080",
+      "result": "accepted",
+      "origin": "http://127.0.0.1:8080",
+      "whatwg": "http://127.0.0.1:8080"
+    },
+    {
+      "input": "http://127.0.0.1",
+      "result": "accepted",
+      "origin": "http://127.0.0.1",
+      "whatwg": "http://127.0.0.1"
+    },
+    {
+      "input": "http://0.0.0.0:8080",
+      "result": "accepted",
+      "origin": "http://0.0.0.0:8080",
+      "whatwg": "http://0.0.0.0:8080"
+    },
+    {
+      "input": "https://192.168.1.10:8443",
+      "result": "accepted",
+      "origin": "https://192.168.1.10:8443",
+      "whatwg": "https://192.168.1.10:8443"
+    },
+    {
+      "input": "http://[::1]:8080",
+      "result": "accepted",
+      "origin": "http://[::1]:8080",
+      "whatwg": "http://[::1]:8080"
+    },
+    {
+      "input": "http://[::1]",
+      "result": "accepted",
+      "origin": "http://[::1]",
+      "whatwg": "http://[::1]"
+    },
+    {
+      "input": "https://[::ffff:7f00:1]:8443",
+      "result": "accepted",
+      "origin": "https://[::ffff:7f00:1]:8443",
+      "whatwg": "https://[::ffff:7f00:1]:8443"
+    },
+    {
+      "input": "https://[2001:db8::1:0:0:1]:8443",
+      "result": "accepted",
+      "origin": "https://[2001:db8::1:0:0:1]:8443",
+      "whatwg": "https://[2001:db8::1:0:0:1]:8443"
+    },
+    {
+      "input": "https://[2001:db8::1]:8443",
+      "result": "accepted",
+      "origin": "https://[2001:db8::1]:8443",
+      "whatwg": "https://[2001:db8::1]:8443"
+    },
+    {
+      "input": "https://[1::]:8443",
+      "result": "accepted",
+      "origin": "https://[1::]:8443",
+      "whatwg": "https://[1::]:8443"
+    },
+    {
+      "input": "https://[::]:8443",
+      "result": "accepted",
+      "origin": "https://[::]:8443",
+      "whatwg": "https://[::]:8443"
+    },
+    {
+      "input": "https://[1:0:1:0:1:0:1:0]:8443",
+      "result": "accepted",
+      "origin": "https://[1:0:1:0:1:0:1:0]:8443",
+      "whatwg": "https://[1:0:1:0:1:0:1:0]:8443"
+    },
+    {
+      "input": "https://[1:2:3:4:5:6:7:8]:8443",
+      "result": "accepted",
+      "origin": "https://[1:2:3:4:5:6:7:8]:8443",
+      "whatwg": "https://[1:2:3:4:5:6:7:8]:8443"
+    },
+    {
+      "input": "https://a_b.example:8443",
+      "result": "accepted",
+      "origin": "https://a_b.example:8443",
+      "whatwg": "https://a_b.example:8443"
+    },
+    {
+      "input": "https://xn--bcher-kva.example:8443",
+      "result": "accepted",
+      "origin": "https://xn--bcher-kva.example:8443",
+      "whatwg": "https://xn--bcher-kva.example:8443"
+    },
+    {
+      "input": "http://localhost:8080",
+      "result": "accepted",
+      "origin": "http://localhost:8080",
+      "whatwg": "http://localhost:8080"
+    },
+    {
+      "input": "https://mac.local:8443/",
+      "result": "accepted",
+      "origin": "https://mac.local:8443",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local/",
+      "result": "accepted",
+      "origin": "https://mac.local",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "https://mac.local:65535",
+      "result": "accepted",
+      "origin": "https://mac.local:65535",
+      "whatwg": "https://mac.local:65535"
+    },
+    {
+      "input": "https://mac.local:1",
+      "result": "accepted",
+      "origin": "https://mac.local:1",
+      "whatwg": "https://mac.local:1"
+    },
+    {
+      "input": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "result": "accepted",
+      "origin": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "whatwg": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    {
+      "input": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "result": "accepted",
+      "origin": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "whatwg": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "input": "",
+      "result": "empty",
+      "whatwg": null
+    },
+    {
+      "input": "https://bücher.example:8443",
+      "result": "non_ascii",
+      "whatwg": "https://xn--bcher-kva.example:8443"
+    },
+    {
+      "input": "https://mac.local:8443 ",
+      "result": "non_ascii",
+      "whatwg": null
+    },
+    {
+      "input": "mac.local:8443",
+      "result": "not_an_origin",
+      "whatwg": "null"
+    },
+    {
+      "input": "https:mac.local",
+      "result": "not_an_origin",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "ftp://mac.local",
+      "result": "scheme",
+      "whatwg": "ftp://mac.local",
+      "stricter_than_browsers": "a URL parser gives ftp: and ws: origins too; the gateway serves only http and https"
+    },
+    {
+      "input": "ws://mac.local",
+      "result": "scheme",
+      "whatwg": "ws://mac.local",
+      "stricter_than_browsers": "as above"
+    },
+    {
+      "input": " https://mac.local",
+      "result": "scheme",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "HTTPS://mac.local:8443",
+      "result": "uppercase",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "Https://mac.local:8443",
+      "result": "uppercase",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://MAC.local:8443",
+      "result": "uppercase",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://u@mac.local:8443",
+      "result": "userinfo",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://u:p@mac.local:8443",
+      "result": "userinfo",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:8443/x",
+      "result": "path",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:8443//",
+      "result": "path",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:8443?q",
+      "result": "path",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:8443#f",
+      "result": "path",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:8443/?q",
+      "result": "path",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local.:8443",
+      "result": "trailing_dot",
+      "whatwg": "https://mac.local.:8443",
+      "stricter_than_browsers": "WHATWG keeps a trailing dot; X-02 refuses it, since mac.local. and mac.local are different strings and different HSTS hosts"
+    },
+    {
+      "input": "https://mac.local.",
+      "result": "trailing_dot",
+      "whatwg": "https://mac.local.",
+      "stricter_than_browsers": "as above"
+    },
+    {
+      "input": "https://127.0.0.1.:8443",
+      "result": "trailing_dot",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://:8080",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://mac..local:8443",
+      "result": "invalid_host",
+      "whatwg": "https://mac..local:8443",
+      "stricter_than_browsers": "browsers accept an empty label; X-02 refuses it"
+    },
+    {
+      "input": "https://.mac.local:8443",
+      "result": "invalid_host",
+      "whatwg": "https://.mac.local:8443",
+      "stricter_than_browsers": "browsers accept an empty label; X-02 refuses it"
+    },
+    {
+      "input": "https://foo.123:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://foo.0xg:8443",
+      "result": "invalid_host",
+      "whatwg": "https://foo.0xg:8443",
+      "stricter_than_browsers": "browsers take foo.0xg as a domain; X-02 treats any last label starting with 0x as an IPv4 attempt"
+    },
+    {
+      "input": "https://mac local:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://mac%2elocal:8443",
+      "result": "invalid_host",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://a!b.example:8443",
+      "result": "invalid_host",
+      "whatwg": "https://a!b.example:8443",
+      "stricter_than_browsers": "browsers allow ! in a domain; X-02 allows only a-z, 0-9, - and _"
+    },
+    {
+      "input": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "result": "invalid_host",
+      "whatwg": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "stricter_than_browsers": "browsers don't enforce DNS lengths; X-02 caps a label at 63 bytes"
+    },
+    {
+      "input": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cc",
+      "result": "invalid_host",
+      "whatwg": "https://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cc",
+      "stricter_than_browsers": "browsers don't enforce DNS lengths; X-02 caps a name at 253 bytes"
+    },
+    {
+      "input": "https://[fe80::1%25en0]:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://[fe80::1%25en0]",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://[::1:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://[::1]x:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "https://[127.0.0.1]:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://127.1:8080",
+      "result": "non_canonical_ipv4",
+      "whatwg": "http://127.0.0.1:8080"
+    },
+    {
+      "input": "https://127.1:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://2130706433:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://0x7f.0.0.1:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://0x7f.1:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://0X7f.0.0.1:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://0177.0.0.1:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://127.000.000.001:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": "https://127.0.0.1:8443"
+    },
+    {
+      "input": "https://127.0.0.256:8443",
+      "result": "non_canonical_ipv4",
+      "whatwg": null
+    },
+    {
+      "input": "http://[0:0:0:0:0:0:0:1]:8080",
+      "result": "non_canonical_ipv6",
+      "whatwg": "http://[::1]:8080"
+    },
+    {
+      "input": "https://[2001:DB8::1]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[2001:db8::1]:8443"
+    },
+    {
+      "input": "https://[2001:db8:0:0:1:0:0:1]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[2001:db8::1:0:0:1]:8443"
+    },
+    {
+      "input": "https://[2001:db8::0001]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[2001:db8::1]:8443"
+    },
+    {
+      "input": "https://[::FFFF:127.0.0.1]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[::ffff:7f00:1]:8443"
+    },
+    {
+      "input": "https://[::ffff:127.0.0.1]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[::ffff:7f00:1]:8443"
+    },
+    {
+      "input": "https://[1:0:0:2:0:0:0:3]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[1:0:0:2::3]:8443"
+    },
+    {
+      "input": "https://[1::2:0:0:0:3]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[1:0:0:2::3]:8443"
+    },
+    {
+      "input": "https://[1:0:2:3:4:5:6:7]:8443",
+      "result": "accepted",
+      "origin": "https://[1:0:2:3:4:5:6:7]:8443",
+      "whatwg": "https://[1:0:2:3:4:5:6:7]:8443"
+    },
+    {
+      "input": "https://[1::2:3:4:5:6:7]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[1:0:2:3:4:5:6:7]:8443"
+    },
+    {
+      "input": "https://[2001:db8:0:0:1::1]:8443",
+      "result": "non_canonical_ipv6",
+      "whatwg": "https://[2001:db8::1:0:0:1]:8443"
+    },
+    {
+      "input": "https://mac.local:443",
+      "result": "default_port",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "http://127.0.0.1:80",
+      "result": "default_port",
+      "whatwg": "http://127.0.0.1"
+    },
+    {
+      "input": "http://[::1]:80",
+      "result": "default_port",
+      "whatwg": "http://[::1]"
+    },
+    {
+      "input": "https://mac.local:08443",
+      "result": "non_canonical_port",
+      "whatwg": "https://mac.local:8443"
+    },
+    {
+      "input": "https://mac.local:",
+      "result": "non_canonical_port",
+      "whatwg": "https://mac.local"
+    },
+    {
+      "input": "https://mac.local:0",
+      "result": "non_canonical_port",
+      "whatwg": "https://mac.local:0",
+      "stricter_than_browsers": "browsers accept port 0; X-02 takes 1 to 65535"
+    },
+    {
+      "input": "https://mac.local:65536",
+      "result": "non_canonical_port",
+      "whatwg": null
+    },
+    {
+      "input": "https://mac.local:+8443",
+      "result": "non_canonical_port",
+      "whatwg": null
+    },
+    {
+      "input": "https://mac.local:8443:1",
+      "result": "non_canonical_port",
+      "whatwg": null
+    }
+  ],
+  "fit": [
+    {
+      "origin": "http://127.0.0.1:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "accepted"
+    },
+    {
+      "origin": "http://[::1]:8080",
+      "scheme": "http_loopback",
+      "address": "::1",
+      "port": 8080,
+      "result": "accepted"
+    },
+    {
+      "origin": "http://127.0.0.1",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 80,
+      "result": "accepted",
+      "why": "port 80, omitted: setup's derived origin for 127.0.0.1:80"
+    },
+    {
+      "origin": "http://[::1]",
+      "scheme": "http_loopback",
+      "address": "::1",
+      "port": 80,
+      "result": "accepted"
+    },
+    {
+      "origin": "http://localhost:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "not_bound_literal",
+      "why": "a name, never the bound literal (plan A-10)"
+    },
+    {
+      "origin": "http://x.localhost:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "not_bound_literal"
+    },
+    {
+      "origin": "http://localhost:8080",
+      "scheme": "http_loopback",
+      "address": "::1",
+      "port": 8080,
+      "result": "not_bound_literal"
+    },
+    {
+      "origin": "http://[::1]:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "not_bound_literal",
+      "why": "the other loopback literal"
+    },
+    {
+      "origin": "http://127.0.0.1:8080",
+      "scheme": "http_loopback",
+      "address": "::1",
+      "port": 8080,
+      "result": "not_bound_literal",
+      "why": "the other loopback literal"
+    },
+    {
+      "origin": "http://[::ffff:7f00:1]:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "not_bound_literal",
+      "why": "an IPv4-mapped IPv6 address is not the IPv4 literal"
+    },
+    {
+      "origin": "http://127.0.0.2:8080",
+      "scheme": "http_loopback",
+      "address": "127.0.0.2",
+      "port": 8080,
+      "result": "loopback_address",
+      "why": "another loopback address, even with a matching origin"
+    },
+    {
+      "origin": "http://0.0.0.0:8080",
+      "scheme": "http_loopback",
+      "address": "0.0.0.0",
+      "port": 8080,
+      "result": "loopback_address",
+      "why": "the unspecified address, even with a matching origin"
+    },
+    {
+      "origin": "http://[::]:8080",
+      "scheme": "http_loopback",
+      "address": "::",
+      "port": 8080,
+      "result": "loopback_address"
+    },
+    {
+      "origin": "http://[::ffff:7f00:1]:8080",
+      "scheme": "http_loopback",
+      "address": "::ffff:127.0.0.1",
+      "port": 8080,
+      "result": "loopback_address",
+      "why": "the IPv4-mapped form of 127.0.0.1 isn't ::1"
+    },
+    {
+      "origin": "http://192.168.1.10:8080",
+      "scheme": "http_loopback",
+      "address": "192.168.1.10",
+      "port": 8080,
+      "result": "loopback_address"
+    },
+    {
+      "origin": "http://127.0.0.1:8081",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "port_mismatch"
+    },
+    {
+      "origin": "http://127.0.0.1",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "result": "port_mismatch",
+      "why": "the omitted port is 80"
+    },
+    {
+      "origin": "https://mac.local:8443",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8443,
+      "result": "scheme_mismatch"
+    },
+    {
+      "origin": "https://127.0.0.1:8443",
+      "scheme": "http_loopback",
+      "address": "127.0.0.1",
+      "port": 8443,
+      "result": "scheme_mismatch"
+    },
+    {
+      "origin": "https://mac.local:8443",
+      "scheme": "https",
+      "address": "0.0.0.0",
+      "port": 8443,
+      "result": "accepted"
+    },
+    {
+      "origin": "https://mac.local:8443",
+      "scheme": "https",
+      "address": "192.168.1.10",
+      "port": 8443,
+      "result": "accepted",
+      "why": "in https any address and any canonical host"
+    },
+    {
+      "origin": "https://[::ffff:7f00:1]:8443",
+      "scheme": "https",
+      "address": "::",
+      "port": 8443,
+      "result": "accepted"
+    },
+    {
+      "origin": "https://192.168.1.10:8443",
+      "scheme": "https",
+      "address": "192.168.1.10",
+      "port": 8443,
+      "result": "accepted"
+    },
+    {
+      "origin": "https://localhost:8443",
+      "scheme": "https",
+      "address": "127.0.0.1",
+      "port": 8443,
+      "result": "accepted",
+      "why": "the loopback rules are http_loopback's"
+    },
+    {
+      "origin": "https://mac.local",
+      "scheme": "https",
+      "address": "0.0.0.0",
+      "port": 443,
+      "result": "accepted"
+    },
+    {
+      "origin": "https://mac.local:8443",
+      "scheme": "https",
+      "address": "0.0.0.0",
+      "port": 443,
+      "result": "port_mismatch"
+    },
+    {
+      "origin": "https://mac.local",
+      "scheme": "https",
+      "address": "0.0.0.0",
+      "port": 8443,
+      "result": "port_mismatch",
+      "why": "the omitted port is 443"
+    },
+    {
+      "origin": "http://mac.local:8443",
+      "scheme": "https",
+      "address": "0.0.0.0",
+      "port": 8443,
+      "result": "scheme_mismatch"
+    }
+  ]
+}

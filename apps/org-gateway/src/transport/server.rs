@@ -13,6 +13,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use org_host_control::listen::{self, ListenOrigin};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -20,13 +21,23 @@ use tokio::time;
 use tokio_rustls::TlsAcceptor;
 
 use super::write_stall::WriteStall;
+use crate::origin::check_listener;
 use crate::tls::TlsCertificates;
-use crate::ConfiguredOrigin;
 
 #[derive(Clone)]
 pub enum ListenMode {
     HttpLoopback,
     Https(Arc<TlsCertificates>),
+}
+
+impl ListenMode {
+    /// The listen mode `ListenOrigin::check` fits the origin to.
+    fn origin_mode(&self) -> listen::ListenMode {
+        match self {
+            ListenMode::HttpLoopback => listen::ListenMode::HttpLoopback,
+            ListenMode::Https(_) => listen::ListenMode::Https,
+        }
+    }
 }
 
 /// Runtime limits are checked before constructing a runtime or accepting peers.
@@ -86,7 +97,7 @@ impl HttpLimits {
 pub fn run_http<H, F, S>(
     listener: TcpListener,
     mode: ListenMode,
-    origin: ConfiguredOrigin,
+    origin: ListenOrigin,
     limits: HttpLimits,
     initialize: impl FnOnce() -> (H, S),
 ) -> io::Result<()>
@@ -101,7 +112,7 @@ where
 pub(crate) fn try_run_http<H, F, S>(
     listener: TcpListener,
     mode: ListenMode,
-    origin: ConfiguredOrigin,
+    origin: ListenOrigin,
     limits: HttpLimits,
     initialize: impl FnOnce() -> io::Result<(H, S)>,
 ) -> io::Result<()>
@@ -112,15 +123,7 @@ where
 {
     limits.validate()?;
     let address = listener.local_addr()?;
-    if matches!(mode, ListenMode::HttpLoopback) {
-        origin
-            .validate_http_loopback(address)
-            .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
-    } else {
-        origin
-            .validate_https(address)
-            .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    }
+    check_listener(&origin, mode.origin_mode(), address)?;
     listener.set_nonblocking(true)?;
     // X-02: no runtime/thread pool may exist before the host's step-7 handoff.
     let runtime = tokio::runtime::Builder::new_multi_thread()

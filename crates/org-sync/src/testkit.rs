@@ -730,6 +730,7 @@ mod tests {
 
 pub mod conformance;
 pub mod message_conformance;
+pub mod work_conformance;
 
 #[cfg(test)]
 mod protocol_tests {

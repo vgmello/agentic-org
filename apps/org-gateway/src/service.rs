@@ -11,6 +11,7 @@ use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming};
 use hyper::http::request::Parts;
 use hyper::{Method, Request, Response, StatusCode};
+use org_host_control::listen::ListenOrigin;
 use org_proto::gateway::{
     GatewayError, GatewayErrorCode, MutationOutcome, OperationId, ReadResponse,
 };
@@ -24,7 +25,7 @@ use crate::body::{
 use crate::path::RequestPath;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
-use crate::{ConfiguredOrigin, Hsts, StaticUi};
+use crate::{Hsts, StaticUi};
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
 /// returning a business route. Credential routes use
@@ -195,7 +196,7 @@ impl ApiLimits {
 
 pub struct GatewayConfig {
     pub mode: ListenMode,
-    pub origin: ConfiguredOrigin,
+    pub origin: ListenOrigin,
     pub hsts: Hsts,
     pub http: HttpLimits,
     pub api: ApiLimits,
