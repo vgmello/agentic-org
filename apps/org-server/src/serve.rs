@@ -126,10 +126,11 @@ struct Control {
     /// Moves on whenever the connection's binding changes or the reader ends, which stops the
     /// events of the binding before it.
     generation: AtomicU64,
-    /// Set by the watcher when it has ended this connection's held calls and subscription
-    /// because its member can no longer be bound: the connection thread then treats the
-    /// connection as unbound before its next call, so its own state (`subscribed`, the binding)
-    /// matches.
+    /// Set by the watcher, and by the look at registration (through [`Control::revoke`]), when
+    /// it has ended this connection's held calls and subscription because its member can no
+    /// longer be bound: the connection thread then treats the connection as unbound before its
+    /// next call, so its own state (`subscribed`, the binding) matches. Cleared when the
+    /// connection thread acts on it, and by [`Registration::rebind`] when a new bind begins.
     revoked: std::sync::atomic::AtomicBool,
 }
 
@@ -4145,6 +4146,50 @@ mod tests {
                 org_proto::Outcome::Result(_)
             ),
             "the new binding was answered as unbound"
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_rebind_drops_the_old_registration_before_it_looks_the_member_up() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut ada = Client::bound_as(&path, "ada");
+
+        // A second bind as ada has its answer from the directory and is parked there...
+        flaky.park_connection.store(true, Ordering::SeqCst);
+        let rebind = ada.call_later::<MsgBind>(&MsgBindParams {
+            member: Some("ada".to_owned()),
+            app_token: None,
+        });
+        gate.wait_parked();
+        // ...while the watcher finds her gone: the binding it decides about is over, so no
+        // decision of it may be applied to the one that follows.
+        let ada_member = member(memory, ADA_ID);
+        memory.remove(ADA_ID, POSITION);
+        feed.push(101);
+        feed.watcher_settled();
+        memory.upsert(ada_member, POSITION);
+        gate.release();
+
+        let answer = ada.answer();
+        assert_eq!(answer.id, rebind);
+        assert!(matches!(answer.outcome, org_proto::Outcome::Result(_)));
+        assert!(
+            matches!(
+                ada.call::<MsgInbox>(&inbox_params()),
+                org_proto::Outcome::Result(_)
+            ),
+            "the new binding was ended by a decision about the old one"
         );
         drop(ada);
         server.stop();
