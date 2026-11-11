@@ -10,6 +10,7 @@ use super::*;
 
 const MARK: &str = "recovery-fake-session";
 
+mod capture_followups;
 mod failure;
 
 #[test]
@@ -209,6 +210,7 @@ struct Processes {
     snapshot_deadline: bool,
     hidden_from_snapshot: Option<u32>,
     reused_on_signal: Option<u32>,
+    job_verifications: Vec<ProcessIdentity>,
     job_reuse: bool,
     job_error: bool,
     job_late: bool,
@@ -238,6 +240,7 @@ impl Processes {
             snapshot_deadline: false,
             hidden_from_snapshot: None,
             reused_on_signal: None,
+            job_verifications: vec![],
             job_reuse: false,
             job_error: false,
             job_late: false,
@@ -299,6 +302,7 @@ impl RecoveryProcesses for Processes {
         leader: &ChildIdentity,
         deadline: Instant,
     ) -> io::Result<bool> {
+        self.job_verifications.push(target.clone());
         if self.job_error {
             if self.job_late {
                 self.now = deadline;
