@@ -8,6 +8,7 @@ const other = "default-src 'none'; script-src 'self'; connect-src 'self'; frame-
 const hash = (text: string) => `'sha256-${createHash('sha256').update(text).digest('base64')}'`;
 let server: Server;
 let origin: string;
+let callbackWasAsync: boolean | undefined;
 const chunks = ['<script>\r\n\tπ\rlone\r', '\n </script><script src="/x.js"></script><script>\n second \n</script>'];
 const body = chunks.join('');
 const callbacks: string[] = [];
@@ -18,6 +19,12 @@ beforeAll(async () => {
 		return middleware(req, res, () => {
 		if (req.url === '/missing') { res.writeHead = originalHead; res.end = originalEnd; res.setHeader('Content-Type', 'text/html'); res.end('bypassed wrapper'); return; }
 		if (req.url === '/message') { res.writeHead(201, 'Fixture', { 'Content-Type': 'text/html' }); res.end('<p>custom status</p>'); return; }
+		if (req.url === '/callback-timing') {
+			res.setHeader('Content-Type', 'text/html');
+			let returned = false;
+			res.write('<p>', () => { callbackWasAsync = returned; res.end('callback</p>'); });
+			returned = true; return;
+		}
 		if (req.url === '/record') { res.writeHead(200, { 'Content-Type': 'text/html', 'Set-Cookie': 'first=one', 'set-cookie': 'second=two' }); res.end('<p>record headers</p>'); return; }
 		if (req.url === '/array') { res.setHeader('Set-Cookie', 'old=replaced'); res.writeHead(200, ['Content-Type', 'text/html', 'Set-Cookie', 'first=one', 'set-cookie', 'second=two']); res.end('<p>raw headers</p>'); return; }
 		if (req.url === '/encoded') {
@@ -73,6 +80,11 @@ describe('B1-05 serve-only CSP middleware', () => {
 		const empty = await fetch(`${origin}/empty`);
 		expect(await empty.text()).toBe('');
 		expect(empty.headers.get('Content-Security-Policy')).toContain("style-src 'self' 'unsafe-inline'");
+	});
+	it('invokes buffered write callbacks asynchronously so they can finish the response', async () => {
+		const response = await fetch(`${origin}/callback-timing`);
+		expect(await response.text()).toBe('<p>callback</p>');
+		expect(callbackWasAsync).toBe(true);
 	});
 	it('strips both conditional headers before the handler sees them', async () => {
 		const response = await fetch(`${origin}/conditional`, { headers: { 'If-None-Match': '*', 'If-Modified-Since': 'yesterday' } });

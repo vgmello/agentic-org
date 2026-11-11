@@ -55,7 +55,7 @@ export function cspMiddleware() {
 		res.write = ((chunk: Uint8Array | string, encoding?: BufferEncoding | (() => void), callback?: () => void) => {
 			if (!htmlResponse(res)) return write(chunk, encoding as BufferEncoding, callback);
 			chunks.push(buffer(chunk, encoding));
-			if (typeof encoding === 'function') encoding(); else callback?.();
+			process.nextTick(() => { if (typeof encoding === 'function') encoding(); else callback?.(); });
 			return true; // SvelteKit waits for drain on any falsy return.
 		}) as typeof res.write;
 		res.end = ((chunk?: Uint8Array | string | (() => void), encoding?: BufferEncoding | (() => void), callback?: () => void) => {

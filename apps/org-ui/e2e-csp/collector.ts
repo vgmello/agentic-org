@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 
 export type Snapshot = { reports: { documentURI: string; directive: string; blockedURI: string; sample: string }[]; errors: string[]; missingHeaders: number };
-export const origin = `http://localhost:${process.env.CSP_PW_PORT ?? '4373'}`;
+export const origin = `http://localhost:${Number(process.env.CSP_PW_PORT ?? '4373')}`;
 export async function snapshot(): Promise<Snapshot> {
 	const response = await fetch(`${origin}/__csp-status`);
 	expect(response.status).toBe(200);
