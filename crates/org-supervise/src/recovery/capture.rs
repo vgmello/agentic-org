@@ -119,6 +119,7 @@ pub(super) struct CaptureScope<'a> {
     pub mark: &'a str,
     pub excluded: Option<&'a ProcessIdentity>,
     pub saved: &'a [CheckpointTarget],
+    pub leader: Option<&'a crate::ChildIdentity>,
 }
 
 pub(super) fn capture_targets(
@@ -208,14 +209,10 @@ pub(super) fn capture_targets(
         if scope.excluded == Some(&saved.identity) {
             continue;
         }
-        if current.mark == MarkEvidence::Unreadable {
+        if current.mark == MarkEvidence::Unreadable && safe_identity(current, context).is_none() {
             // S0: skip without failing this pass. A previously known live target
             // still prevents the coordinator from declaring a final empty pass.
             pending_unreadable += 1;
-            if let Some(id) = safe_identity(current, context) {
-                ancestry_nodes.insert(saved.identity.pid, (None, id));
-                queue.push_back((saved.identity.pid, true));
-            }
             continue;
         }
         let id = safe_identity(current, context).ok_or_else(|| {
@@ -241,6 +238,37 @@ pub(super) fn capture_targets(
         // links. Descendants discovered now start a new chain at the live anchor.
         ancestry_nodes.insert(saved.identity.pid, (None, id));
         queue.push_back((saved.identity.pid, true));
+    }
+    if let Some(leader) = scope.leader {
+        for (pid, current) in &eligible {
+            if current.mark != MarkEvidence::Unreadable
+                || targets.contains_key(pid)
+                || (current.group != leader.pid && current.session != leader.pid)
+            {
+                continue;
+            }
+            let Some(identity) = safe_identity(current, context) else {
+                continue;
+            };
+            let verified = ops
+                .verify_recorded_job(identity, leader, deadline)
+                .unwrap_or(false);
+            check_deadline(ops, deadline)?;
+            if !verified {
+                continue;
+            }
+            validate_target_count(targets.len() + 1)?;
+            targets.insert(
+                *pid,
+                VerifiedTarget {
+                    identity: identity.clone(),
+                    mark: scope.mark.into(),
+                    evidence: TargetEvidence::Checkpoint(vec![]),
+                },
+            );
+            ancestry_nodes.insert(*pid, (None, identity));
+            queue.push_back((*pid, true));
+        }
     }
     let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
     for (&child, &parent) in &snapshot.parents {

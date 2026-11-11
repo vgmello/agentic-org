@@ -80,17 +80,17 @@
 {#snippet row(r: ConversationRow)}
 	{@const active = view.type === 'conversation' && view.id === r.conversation.id}
 	<li>
-		<button type="button" class="{item} {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
+		<button type="button" class="{item} flex-wrap {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
 			{#if r.conversation.kind === 'channel'}
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">#</span>
-				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
+				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
 			{:else if r.other}
-				<span class="flex" aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
-				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
-				{#if r.presence}<span class="shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
+				<span class="flex shrink-0" aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
+				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
+				{#if r.presence}<span class="ml-auto max-w-full shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">👥</span>
-				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
+				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
 			{/if}
 			{#if r.mentions > 0}
 				<span class="shrink-0 rounded-full bg-indigo-500 px-1.5 text-xs/5 font-semibold text-white" aria-label="{r.mentions} mentions" data-testid="mention-count">{r.mentions}</span>
@@ -169,7 +169,7 @@
 			onCloseAutoFocus={(event) => { event.preventDefault(); onCloseFocus(); }}
 		>
 			<SheetHeader class="shrink-0 border-b border-white/10 p-4 pr-12">
-				<SheetTitle>Conversations</SheetTitle>
+				<SheetTitle class="min-w-0 whitespace-normal [overflow-wrap:anywhere]">Conversations</SheetTitle>
 				<SheetDescription class="sr-only">Choose a conversation or start a new one.</SheetDescription>
 			</SheetHeader>
 			<div class="min-h-0 flex-1">{@render navigation()}</div>

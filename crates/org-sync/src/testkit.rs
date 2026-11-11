@@ -17,6 +17,7 @@ pub enum Fault {
     CommitUnavailable,
     DomainRefusal,
     OrgApplyFatal(Refusal),
+    MessagePort(&'static str, usize),
 }
 #[derive(Clone, Debug)]
 struct Data {
@@ -27,6 +28,11 @@ struct Data {
     staging: BTreeMap<String, Vec<Arc<[u8]>>>,
     supported_max: u32,
     supported_codec_max: u32,
+    message_queue: crate::messages::Queue,
+    outgoing_messages: BTreeMap<String, crate::messages::Receipt>,
+    received_messages: BTreeMap<(OfficeId, String), crate::messages::Receipt>,
+    delivered_messages: Vec<Arc<[u8]>>,
+    expired_messages: BTreeMap<(OfficeId, String), crate::messages::Message>,
 }
 
 /// A committed copy and its independently local office state. Every attempt mutates a clone;
@@ -44,6 +50,7 @@ impl MemoryOffice {
         ca: Digest,
         epoch: Epoch,
     ) -> Self {
+        let message_queue = crate::messages::Queue::new(org_id.clone(), local_office.clone());
         Self {
             data: RefCell::new(Data {
                 checkpoint: OrgCheckpoint {
@@ -64,6 +71,11 @@ impl MemoryOffice {
                 staging: BTreeMap::new(),
                 supported_max: 1,
                 supported_codec_max: 1,
+                message_queue,
+                outgoing_messages: BTreeMap::new(),
+                received_messages: BTreeMap::new(),
+                delivered_messages: Vec::new(),
+                expired_messages: BTreeMap::new(),
             }),
             faults: RefCell::default(),
             attempts: RefCell::new(0),
@@ -116,6 +128,10 @@ impl MemoryOffice {
             let output = match attempt(&mut Tx {
                 data: &mut candidate,
                 domain_refusal: matches!(fault, Some(Fault::DomainRefusal)),
+                message_failure: match fault {
+                    Some(Fault::MessagePort(name, skip)) => Some((name, skip)),
+                    _ => None,
+                },
                 org_apply_failure: match fault {
                     Some(Fault::OrgApplyFatal(reason)) => Some(reason),
                     _ => None,
@@ -152,6 +168,7 @@ struct Tx<'a> {
     data: &'a mut Data,
     domain_refusal: bool,
     org_apply_failure: Option<Refusal>,
+    message_failure: Option<(&'static str, usize)>,
 }
 impl OrgTxn for Tx<'_> {
     fn checkpoint(&mut self) -> Result<OrgCheckpoint, StoreError> {
@@ -712,6 +729,7 @@ mod tests {
 }
 
 pub mod conformance;
+pub mod message_conformance;
 
 #[cfg(test)]
 mod protocol_tests {
@@ -1169,3 +1187,5 @@ mod authority_signature_and_bootstrap_tests {
         }
     }
 }
+
+mod message_adapter;
