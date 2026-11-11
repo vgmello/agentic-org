@@ -1138,6 +1138,38 @@ fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused
 }
 
 #[test]
+fn org_operation_get_uses_the_read_clock_without_advancing_the_mark() {
+    let (_dir, _key, office) = made();
+    let id = cmd(1, 0);
+    office
+        .submit_org(team_create(&id, "T1", "Engineering"))
+        .unwrap()
+        .unwrap();
+    let before = office.org_snapshot().unwrap();
+    office.org.run_sql_for_test(
+        "UPDATE commands SET expires_at='1970-01-01T00:00:00.001Z';
+         UPDATE meta SET value='0' WHERE key='clock_high_ms'",
+    );
+    assert_eq!(
+        office.org_operation_get(&id).unwrap().unwrap_err().code,
+        org_proto::ErrorCode::Expired
+    );
+    let high: String = office
+        .org
+        .read(|db| {
+            db.query_row(
+                "SELECT value FROM meta WHERE key='clock_high_ms'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(OfficeError::storage)
+        })
+        .unwrap();
+    assert_eq!(high, "0");
+    assert_eq!(office.org_snapshot().unwrap(), before);
+}
+
+#[test]
 fn commands_are_logged_one_after_another_without_gaps() {
     let (_dir, _key, office) = made();
     for (n, name) in ["A", "B", "C"].into_iter().enumerate() {

@@ -383,6 +383,11 @@ fn clock_corruption_and_missing_answers_fail_without_echoing_stored_content() {
             "a stored command answer is not readable"
         ))
     ));
+    store.run_sql_for_test("DROP TABLE meta");
+    assert!(matches!(
+        store.read(|db| lookup(db, CLOCK, &id, None)),
+        Err(OfficeError::Storage(_))
+    ));
     store.run_sql_for_test("DROP TABLE commands");
     assert!(matches!(
         store.read(|db| lookup(db, CLOCK, &id, None)),

@@ -1736,6 +1736,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn operation_get_returns_stored_outcomes_for_each_legacy_binding() {
+        use serde_json::json;
+        for outcome in [
+            org_proto::OperationOutcome::Committed {
+                result: json!({"status":"committed","position":{"epoch":1,"seq":2}}),
+            },
+            org_proto::OperationOutcome::Rejected {
+                refusal: ApiError::new(ErrorCode::InvalidName, "stored \"refusal\""),
+            },
+            org_proto::OperationOutcome::Unknown,
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+            let stored = outcome.clone();
+            ports.operation_get = Box::new(move |_| Ok(Ok(stored.clone())));
+            let shared = Shared::new(&test_info(), &dir.path().join("s.sock"), ports, token());
+            let request = Request::new::<org_proto::OperationGet>(
+                1,
+                &org_proto::OperationGetParams {
+                    kind: org_proto::OperationKind::Org,
+                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                },
+            )
+            .unwrap();
+            for mut binding in [
+                Binding::Anonymous,
+                Binding::App,
+                Binding::Member {
+                    id: "agent".into(),
+                    with_app_token: false,
+                },
+                Binding::Member {
+                    id: "owner".into(),
+                    with_app_token: true,
+                },
+            ] {
+                let response = answer(&request, &shared, &mut binding);
+                if matches!(outcome, org_proto::OperationOutcome::Unknown) {
+                    assert_eq!(code_of(response.outcome), ErrorCode::StorageError);
+                } else {
+                    assert_eq!(
+                        response.into_result::<org_proto::OperationGet>().unwrap(),
+                        outcome
+                    );
+                }
+            }
+        }
+    }
+
     /// A mailbox and its directory over the testkit's in-memory store and the fixture members
     /// (ada and remy are agents, pat a person, plus the owner), at the fixture's time.
     fn messaging() -> (Arc<Mailbox>, Arc<org_mailbox::testkit::InMemoryDirectory>) {
