@@ -18,7 +18,8 @@ beforeAll(async () => {
 		return middleware(req, res, () => {
 		if (req.url === '/missing') { res.writeHead = originalHead; res.end = originalEnd; res.setHeader('Content-Type', 'text/html'); res.end('bypassed wrapper'); return; }
 		if (req.url === '/message') { res.writeHead(201, 'Fixture', { 'Content-Type': 'text/html' }); res.end('<p>custom status</p>'); return; }
-		if (req.url === '/array') { res.writeHead(200, ['Content-Type', 'text/html']); res.end('<p>raw headers</p>'); return; }
+		if (req.url === '/record') { res.writeHead(200, { 'Content-Type': 'text/html', 'Set-Cookie': 'first=one', 'set-cookie': 'second=two' }); res.end('<p>record headers</p>'); return; }
+		if (req.url === '/array') { res.setHeader('Set-Cookie', 'old=replaced'); res.writeHead(200, ['Content-Type', 'text/html', 'Set-Cookie', 'first=one', 'set-cookie', 'second=two']); res.end('<p>raw headers</p>'); return; }
 		if (req.url === '/encoded') {
 			res.setHeader('Content-Type', 'text/html');
 			res.write(Buffer.from(chunks[0]).toString('hex'), 'hex', () => { callbacks.push(req.url!); });
@@ -59,6 +60,9 @@ describe('B1-05 serve-only CSP middleware', () => {
 		expect(message.headers.get('Content-Security-Policy')).toContain("style-src 'self' 'unsafe-inline'");
 		const raw = await fetch(`${origin}/array`);
 		expect(raw.headers.get('Content-Type')).toBe('text/html');
+		expect(raw.headers.getSetCookie()).toEqual(['first=one', 'second=two']);
+		const record = await fetch(`${origin}/record`);
+		expect(record.headers.getSetCookie()).toEqual(['second=two']);
 		expect(raw.headers.get('Content-Security-Policy')).toContain("style-src 'self' 'unsafe-inline'");
 		for (const path of ['/encoded', '/encoded-end', '/end-callback']) {
 			const response = await fetch(`${origin}${path}`);

@@ -43,7 +43,12 @@ export function cspMiddleware() {
 			const entries = Array.isArray(values)
 				? Array.from({ length: values.length / 2 }, (_, index) => [values[index * 2], values[index * 2 + 1]])
 				: Object.entries(values ?? {});
-			for (const [name, value] of entries) res.setHeader(name, value as string);
+			const seen = new Set<string>();
+			for (const [name, value] of entries) {
+				if (Array.isArray(values) && seen.has(name.toLowerCase())) res.appendHeader(name, value as string);
+				else res.setHeader(name, value as string);
+				seen.add(name.toLowerCase());
+			}
 			if (!htmlResponse(res)) { policy(); writeHead(code); }
 			return res;
 		}) as typeof res.writeHead;

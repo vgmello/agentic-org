@@ -13,7 +13,7 @@ it.each([
 	vi.stubEnv('ORG_UI_CSP', flag);
 	const loaded = await loadConfigFromFile({ command, mode, isPreview }, 'vite.config.ts');
 	expect(loaded).not.toBeNull();
-	const plugins = (loaded!.config.plugins ?? []).flat(Infinity);
+	const plugins = ((loaded!.config.plugins ?? []) as unknown[]).flat(Infinity);
 	const policyIndex = plugins.findIndex((plugin) => plugin && typeof plugin === 'object' && 'name' in plugin && plugin.name === 'org-test-csp-policy');
 	expect(policyIndex >= 0).toBe(enabled);
 	if (enabled) expect(policyIndex).toBe(0);
