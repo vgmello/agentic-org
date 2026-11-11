@@ -16,7 +16,8 @@
 //!   `MSG_TRUNC` or another count is fatal.
 //! - **Worker events** (`created`, `ready`, `discarded`, `failed`: [`crate::ServerEvent`]) also
 //!   travel over the rendezvous connection, as v3 lines ([`write_server_event`],
-//!   [`read_server_event`]); the host treats stdout as untrusted.
+//!   [`read_server_event`]); [`RendezvousEvent`] adds authenticated descriptor receipts.
+//!   The host treats stdout as untrusted.
 //! - **The transfer socket** (an `AF_UNIX SOCK_DGRAM` socket pair, host → server only) carries
 //!   [`TransferRecord`]s: a JSON header of at most [`TRANSFER_HEADER_MAX_BYTES`] plus zero or one
 //!   descriptor. This is the one definition, for the worker's transfer socket and the gateway's.
@@ -361,10 +362,43 @@ pub fn write_server_event(w: &mut impl Write, event: &ServerEvent) -> Result<(),
     frame::write_message(w, &body).map_err(LaunchError::Frame)
 }
 
+/// Events authenticated by the v3 rendezvous, including descriptor receipts (X-02 rev15 §5.2).
+/// The v2 stdout [`ServerEvent`] and its reader deliberately have no receipt variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RendezvousEvent {
+    /// Sent after taking ownership of a handoff's or channel's descriptors. `of` is its
+    /// correlation value (`handoff` or a channel ID); the host checks its pending records.
+    FdsReceived { of: String },
+    /// An ordinary worker event, carried on the authenticated connection in v3.
+    #[serde(untagged)]
+    Server(ServerEvent),
+}
+
+/// Write a v3 rendezvous event, including a descriptor receipt, and flush.
+/// Ordinary events retain [`write_server_event`]'s validation.
+pub fn write_rendezvous_event(
+    w: &mut impl Write,
+    event: &RendezvousEvent,
+) -> Result<(), LaunchError> {
+    match event {
+        RendezvousEvent::Server(event) => write_server_event(w, event),
+        RendezvousEvent::FdsReceived { .. } => frame::write_message(
+            w,
+            &Line {
+                v: LAUNCH_VERSION,
+                body: event,
+            },
+        )
+        .map_err(LaunchError::Frame),
+    }
+}
+
 /// Read one v3 worker event from the rendezvous connection. `Ok(None)` means it closed. Another
 /// `v` is [`LaunchError::UnsupportedVersion`]; an event this build doesn't know is
-/// [`ServerEvent::Unknown`], which the host ignores.
-pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, LaunchError> {
+/// [`RendezvousEvent::Server`] containing [`ServerEvent::Unknown`], which the host ignores.
+pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<RendezvousEvent>, LaunchError> {
     let Some(line) = frame::read_line(r).map_err(LaunchError::Frame)? else {
         return Ok(None);
     };
@@ -372,7 +406,7 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, La
     let event = serde_json::from_slice::<RawServerEvent>(&line)
         .map_err(LaunchError::Json)?
         .into_event();
-    if let ServerEvent::Created { office } = &event {
+    if let RendezvousEvent::Server(ServerEvent::Created { office }) = &event {
         office.to_vec()?;
     }
     Ok(Some(event))
@@ -386,6 +420,11 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, La
 #[derive(Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
 enum RawServerEvent {
+    FdsReceived {
+        #[serde(rename = "v")]
+        _version: u32,
+        of: String,
+    },
     Created {
         #[allow(dead_code)]
         v: u32,
@@ -412,14 +451,16 @@ enum RawServerEvent {
 }
 
 impl RawServerEvent {
-    fn into_event(self) -> ServerEvent {
-        match self {
+    fn into_event(self) -> RendezvousEvent {
+        let event = match self {
+            Self::FdsReceived { of, .. } => return RendezvousEvent::FdsReceived { of },
             Self::Created { office, .. } => ServerEvent::Created { office },
             Self::Ready { socket, pid, .. } => ServerEvent::Ready { socket, pid },
             Self::Discarded { .. } => ServerEvent::Discarded,
             Self::Failed { code, message, .. } => ServerEvent::Failed { code, message },
             Self::Unknown => ServerEvent::Unknown,
-        }
+        };
+        RendezvousEvent::Server(event)
     }
 }
 
