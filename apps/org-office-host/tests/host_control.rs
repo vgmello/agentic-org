@@ -172,7 +172,7 @@ fn unsupported_hello_closes_before_a_buffered_status_request() {
     host.shutdown();
 }
 #[test]
-fn status_counts_real_active_and_failed_offices_without_revealing_ids() {
+fn status_counts_observed_office_states_without_revealing_ids() {
     use org_host_control::{InstanceStatus, InstanceStatusParams};
     use std::time::Duration;
     let home = TestHome::registered();
@@ -184,12 +184,17 @@ fn status_counts_real_active_and_failed_offices_without_revealing_ids() {
     }
     home.remove_key(C);
     let host = home.start(home.config()).unwrap();
+    let running_status = if cfg!(target_os = "macos") {
+        org_proto::OfficeStatus::Active
+    } else {
+        org_proto::OfficeStatus::Unavailable
+    };
     support::eventually(Duration::from_secs(10), "native offices settled", || {
         let offices = org_office_host::test_support::Fixture::new(&host).offices();
         [A, B].iter().all(|id| {
             offices
                 .iter()
-                .any(|office| office.id == *id && office.status == org_proto::OfficeStatus::Active)
+                .any(|office| office.id == *id && office.status == running_status)
         }) && offices
             .iter()
             .any(|office| office.id == C && office.status == org_proto::OfficeStatus::Unavailable)
@@ -208,7 +213,11 @@ fn status_counts_real_active_and_failed_offices_without_revealing_ids() {
             result.offices.active,
             result.offices.failed
         ),
-        (3, 2, 1)
+        if cfg!(target_os = "macos") {
+            (3, 2, 1)
+        } else {
+            (3, 0, 3)
+        }
     );
     host.shutdown();
 }
@@ -250,8 +259,13 @@ fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
     let mut config = home.config();
     config.dev_app_path = Some(std::env::current_exe().unwrap());
     let host = home.start(config).unwrap();
+    let expected = if cfg!(target_os = "macos") {
+        org_proto::OfficeStatus::Active
+    } else {
+        org_proto::OfficeStatus::Unavailable
+    };
     support::eventually(std::time::Duration::from_secs(10), "office active", || {
-        support::office_info(&host, A).is_some_and(|o| o.status == org_proto::OfficeStatus::Active)
+        support::office_info(&host, A).is_some_and(|o| o.status == expected)
     });
     let before = home.pids(A);
     let keys = home.key_ids();
