@@ -292,43 +292,64 @@ fn tls_exchange(address: SocketAddr, expected: u8, request: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn https_static_html_sends_the_upgrade_policy_and_hsts_only_for_its_authority() {
+fn https_static_html_sends_the_full_policy_and_hsts_only_for_its_authority() {
     use crate::{assets::BuildFiles, Hsts, StaticUi};
+    use std::collections::BTreeMap;
 
+    const CSP: &str = "default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k='; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests";
     let html = b"<!doctype html><script>0</script>";
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let authority = format!("gateway.test:{}", listener.local_addr().unwrap().port());
-    let origin = ConfiguredOrigin::parse(&format!("https://{authority}")).unwrap();
-    let files = BuildFiles::from_files([("index.html".into(), html.to_vec())]).unwrap();
-    let ui = StaticUi::new(files, origin.clone(), Hsts::On);
-    let server = Running::start_serving(
-        listener,
-        ListenMode::Https(Arc::new(
-            TlsCertificates::new(cert(b'a'), key(b'a')).unwrap(),
-        )),
-        origin,
-        HttpLimits::default(),
-        move |request| ui.serve(&request),
-    );
-
-    for (host, hsts) in [(authority.as_str(), true), ("gateway.test", false)] {
-        let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
-        let response = tls_exchange(server.address, b'a', request.as_bytes());
-        assert!(response.starts_with(b"HTTP/1.1 200"));
-        assert_eq!(body(&response), html);
-        let (head, _) = std::str::from_utf8(&response)
-            .unwrap()
-            .split_once("\r\n\r\n")
-            .unwrap();
-        assert!(head.lines().any(|line| {
-            line.starts_with("content-security-policy: default-src 'none'; script-src 'self' 'sha256-X+zrZv/IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V+k=';")
-                && line.ends_with("; upgrade-insecure-requests")
-        }));
-        assert_eq!(
-            head.lines()
-                .find(|line| line.starts_with("strict-transport-security:")),
-            hsts.then_some("strict-transport-security: max-age=31536000"),
+    let length = html.len().to_string();
+    let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+    for (hsts, expected) in [
+        (Hsts::Off, None),
+        (Hsts::On, Some("max-age=31536000")),
+        (Hsts::Clear, Some("max-age=0")),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let authority = format!("gateway.test:{}", listener.local_addr().unwrap().port());
+        let origin = ConfiguredOrigin::parse(&format!("https://{authority}")).unwrap();
+        let files = BuildFiles::from_files([("index.html".into(), html.to_vec())]).unwrap();
+        let ui = StaticUi::new(files, origin.clone(), hsts);
+        let server = Running::start_serving(
+            listener,
+            ListenMode::Https(Arc::clone(&certificates)),
+            origin,
+            HttpLimits::default(),
+            move |request| ui.serve(&request),
         );
+
+        for (host, expected) in [(authority.as_str(), expected), ("gateway.test", None)] {
+            let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+            let response = tls_exchange(server.address, b'a', request.as_bytes());
+            assert_eq!(body(&response), html);
+            let (head, _) = std::str::from_utf8(&response)
+                .unwrap()
+                .split_once("\r\n\r\n")
+                .unwrap();
+            let mut lines = head.split("\r\n");
+            assert_eq!(lines.next(), Some("HTTP/1.1 200 OK"));
+            let mut headers = BTreeMap::new();
+            for line in lines {
+                let (name, value) = line.split_once(':').unwrap();
+                assert!(headers
+                    .insert(name.to_ascii_lowercase(), value.trim())
+                    .is_none());
+            }
+            for (name, value) in [
+                ("content-security-policy", CSP), ("cache-control", "no-cache"),
+                ("content-type", "text/html; charset=utf-8"), ("content-length", length.as_str()),
+                ("x-content-type-options", "nosniff"), ("referrer-policy", "same-origin"),
+                ("x-frame-options", "DENY"), ("cross-origin-opener-policy", "same-origin"),
+                ("cross-origin-resource-policy", "same-origin"),
+                ("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=()"),
+            ] {
+                assert_eq!(headers.remove(name), Some(value), "{name}");
+            }
+            assert_eq!(headers.remove("strict-transport-security"), expected);
+            assert_eq!(headers.remove("connection"), Some("close"));
+            headers.remove("date");
+            assert!(headers.is_empty(), "unexpected headers: {headers:?}");
+        }
     }
 }
 
