@@ -391,6 +391,9 @@ pub enum SignalOutcome {
 /// impl RecoveryProcesses for Forged {
 ///     fn context(&mut self) -> io::Result<RecoveryContext> { unimplemented!() }
 ///     fn snapshot(&mut self, _: Instant) -> io::Result<Vec<ProcessObservation>> { unimplemented!() }
+///     fn verify_recorded_job(
+///         &mut self, _: &ProcessIdentity, _: &org_supervise::ChildIdentity, _: Instant,
+///     ) -> io::Result<bool> { unimplemented!() }
 ///     fn signal_checked(&mut self, _: &VerifiedTarget, _: RecoverySignal, _: Instant)
 ///         -> io::Result<SignalOutcome> { unimplemented!() }
 ///     fn wait_exited(&mut self, _: &ProcessIdentity, _: Instant) -> io::Result<bool> { unimplemented!() }
