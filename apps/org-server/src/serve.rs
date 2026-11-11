@@ -51,6 +51,11 @@ pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, SnapshotFailure> + Sen
 pub type SubmitFn =
     Box<dyn Fn(OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync>;
 
+/// Reads a retained org operation for today's implicit owner connection.
+pub type OperationFn = Box<
+    dyn Fn(&str) -> Result<Result<org_proto::OperationOutcome, ApiError>, String> + Send + Sync,
+>;
+
 /// Answers `who` (the office's `who`): the cards, the caller's mistake, or why it could not
 /// answer at all (storage).
 pub type WhoFn =
@@ -68,6 +73,7 @@ pub type StatusFn = Box<
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub submit: SubmitFn,
+    pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,
     /// The log, for `subscribe`.
@@ -787,6 +793,37 @@ fn hello_response(request: &Request, shared: &Shared) -> Response {
 }
 
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
+    if request.is::<org_proto::OperationGet>() {
+        let params = match request.params::<org_proto::OperationGet>() {
+            Ok(params) if org_proto::ulid_time_ms(&params.id).is_some() => params,
+            _ => {
+                return Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "invalid operation lookup parameters",
+                    ),
+                )
+            }
+        };
+        if params.kind != org_proto::OperationKind::Org {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "this operation kind is not available yet",
+                ),
+            );
+        }
+        // Before 2a.5 every supported connection acts as the owner (X-02 §4.2).
+        // Unverified request.principal must never become a stored-principal key.
+        return match (shared.ports.operation_get)(&params.id) {
+            Ok(Ok(outcome)) => Response::ok::<org_proto::OperationGet>(request.id, &outcome)
+                .unwrap_or_else(|_| internal(request.id)),
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(_) => internal(request.id),
+        };
+    }
     if request.is::<OrgSnapshotCall>() {
         // The whole organization: for a bound connection (the app; agents bind with messaging),
         // like `who` and `subscribe`.
@@ -1583,6 +1620,87 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn org_operation_get_for_an_absent_row_is_not_found_on_a_legacy_connection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = shared(&dir.path().join("office.sock"));
+        let request = Request::new::<org_proto::OperationGet>(
+            1,
+            &org_proto::OperationGetParams {
+                kind: org_proto::OperationKind::Org,
+                id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            },
+        )
+        .unwrap();
+        let response = answer(&request, &shared, &mut Binding::Anonymous);
+        assert_eq!(code_of(response.outcome), ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn operation_get_decodes_kind_and_id_before_dispatch_and_sanitizes_storage_errors() {
+        use serde_json::json;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        ports.operation_get = Box::new(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Err("SECRET SQL /private/organization".into())
+        });
+        let shared = Shared::new(&test_info(), &dir.path().join("s.sock"), ports, token());
+        for params in [
+            json!({"kind":"unknown","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"kind":"org","id":"bad"}),
+            json!({"kind":"work","id":"bad"}),
+            json!({"kind":"org"}),
+            json!({"kind":"org","id":7}),
+        ] {
+            let mut request = Request::new::<org_proto::OperationGet>(
+                1,
+                &org_proto::OperationGetParams {
+                    kind: org_proto::OperationKind::Org,
+                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                },
+            )
+            .unwrap();
+            request.params = params;
+            assert_eq!(
+                code_of(answer(&request, &shared, &mut Binding::Anonymous).outcome),
+                ErrorCode::InvalidRequest
+            );
+        }
+        for kind in [
+            org_proto::OperationKind::Work,
+            org_proto::OperationKind::Msg,
+        ] {
+            let request = Request::new::<org_proto::OperationGet>(
+                1,
+                &org_proto::OperationGetParams {
+                    kind,
+                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                code_of(answer(&request, &shared, &mut Binding::Anonymous).outcome),
+                ErrorCode::Unavailable
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let request = Request::new::<org_proto::OperationGet>(
+            1,
+            &org_proto::OperationGetParams {
+                kind: org_proto::OperationKind::Org,
+                id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            },
+        )
+        .unwrap();
+        let response = answer(&request, &shared, &mut Binding::Anonymous);
+        assert_eq!(code_of(response.outcome.clone()), ErrorCode::StorageError);
+        assert!(!serde_json::to_string(&response).unwrap().contains("SECRET"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     fn token() -> AppToken {
         AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
     }
@@ -1601,6 +1719,12 @@ mod tests {
     fn ports(snapshot: SnapshotFn) -> OfficePorts {
         let (mailbox, directory) = messaging();
         OfficePorts {
+            operation_get: Box::new(|_| {
+                Ok(Err(ApiError::new(
+                    ErrorCode::NotFound,
+                    "operation not found",
+                )))
+            }),
             snapshot,
             submit: Box::new(|_| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
@@ -1972,6 +2096,12 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
+                operation_get: Box::new(|_| {
+                    Ok(Err(ApiError::new(
+                        ErrorCode::NotFound,
+                        "operation not found",
+                    )))
+                }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 submit: Box::new(move |_| {
                     counter.fetch_add(1, Ordering::SeqCst);
@@ -2435,6 +2565,12 @@ mod tests {
                 &test_info(),
                 path,
                 OfficePorts {
+                    operation_get: Box::new(|_| {
+                        Ok(Err(ApiError::new(
+                            ErrorCode::NotFound,
+                            "operation not found",
+                        )))
+                    }),
                     snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
@@ -2889,6 +3025,12 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
+                operation_get: Box::new(|_| {
+                    Ok(Err(ApiError::new(
+                        ErrorCode::NotFound,
+                        "operation not found",
+                    )))
+                }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 submit: Box::new(|_| Err("none".to_owned())),
                 who: Box::new(move |params| {

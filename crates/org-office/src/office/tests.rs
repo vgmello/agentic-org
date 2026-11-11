@@ -1123,16 +1123,16 @@ fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused
         .unwrap();
     assert_eq!(
         code(&office, team_create(&c1, "T9", "Other")),
-        org_proto::ErrorCode::InvalidRequest
+        org_proto::ErrorCode::OperationReused
     );
-    // A refused one, too: the blank name is `invalid_name`; other params are `invalid_request`.
+    // A refused one, too: the blank name is `invalid_name`; other params reuse the operation.
     assert_eq!(
         code(&office, team_create(&c2, "T3", "  ")),
         org_proto::ErrorCode::InvalidName
     );
     assert_eq!(
         code(&office, team_create(&c2, "T3", "Fine")),
-        org_proto::ErrorCode::InvalidRequest
+        org_proto::ErrorCode::OperationReused
     );
     assert_eq!(office.org_snapshot().unwrap().position, at(2));
 }

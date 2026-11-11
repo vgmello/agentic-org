@@ -370,7 +370,7 @@ fn legacy_native_write_replay_conflict_and_rollback_keep_null_principals() {
     assert_eq!(team(&store, &id, "Engineering").unwrap(), accepted);
     assert_eq!(
         team(&store, &id, "Different").unwrap_err().code,
-        ErrorCode::InvalidRequest
+        ErrorCode::OperationReused
     );
     assert_eq!(legacy_rows(&store), before);
 
