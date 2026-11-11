@@ -97,7 +97,7 @@ impl NativeRecovery {
     ) -> io::Result<Option<super::job::JobObservation>> {
         self.job_observation_with(identity, deadline, bsd_info, |pid| {
             // SAFETY: positive PID validated by the proof helper; checked again after this call.
-            u32::try_from(unsafe { libc::getsid(pid as libc::pid_t) }).unwrap_or(0)
+            unsafe { libc::getsid(pid as libc::pid_t) }
         })
     }
 
@@ -106,7 +106,7 @@ impl NativeRecovery {
         identity: &ProcessIdentity,
         deadline: Instant,
         mut observe: impl FnMut(u32) -> io::Result<Option<libc::proc_bsdinfo>>,
-        mut session: impl FnMut(u32) -> u32,
+        mut session: impl FnMut(u32) -> libc::pid_t,
     ) -> io::Result<Option<super::job::JobObservation>> {
         if self.captured.get(&identity.pid) != Some(&identity.started) {
             return Ok(None);
@@ -114,7 +114,8 @@ impl NativeRecovery {
         let Some(before) = observe(identity.pid)? else {
             return Ok(None);
         };
-        let session = session(identity.pid);
+        let session =
+            u32::try_from(session(identity.pid)).map_err(|_| io::Error::last_os_error())?;
         let Some(after) = observe(identity.pid)? else {
             return Ok(None);
         };
@@ -879,6 +880,22 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        let error = native
+            .job_observation_with(
+                &identity,
+                Instant::now() + Duration::from_secs(1),
+                |_| Ok(Some(info)),
+                |_| {
+                    // SAFETY: __error returns this thread's writable errno slot.
+                    unsafe {
+                        *libc::__error() = libc::EPERM;
+                    }
+                    -1
+                },
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         native.captured.clear();
         assert!(native
             .job_observation_with(
