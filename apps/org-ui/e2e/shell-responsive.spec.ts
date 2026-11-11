@@ -97,6 +97,7 @@ for (const width of [639, 600, 320]) {
 		await shot(page, `shell-mobile-destination-${width}`);
 		await page.goBack();
 		await expect(page).toHaveURL(/\/offices$/);
+		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
 		await page.goBack();
 		await expect(page).toHaveURL(/\/agents$/);
 	});
@@ -147,38 +148,60 @@ test('BUG-59: browser Back dismisses Menu before leaving the page', async ({ pag
 	await menu.click();
 	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 	await expect(dialog).toBeVisible();
-	await page.goBack();
+	await page.evaluate(() => window.history.back());
 	await expect(dialog).not.toBeVisible();
 	await expect(page).toHaveURL(/\/offices$/);
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
 	await expect(menu).toBeFocused();
 	await shot(page, 'shell-menu-back-stays-on-page');
 	await page.goBack();
 	await expect(page).toHaveURL(/\/agents$/);
 });
 
-test('BUG-59: Back dismisses Menu before traversing same-page fragment history', async ({ page }) => {
+test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ page }) => {
 	await openOffices(page);
+	await page.goBack();
+	await expect(page).toHaveURL(/\/agents$/);
 	await page.setViewportSize({ width: 600, height: 900 });
-	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
-	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
 	const menu = page.getByRole('button', { name: 'Menu', exact: true });
 	await menu.click();
 	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 	await expect(dialog).toBeVisible();
-	await page.goBack();
-	await expect(dialog).not.toBeVisible();
-	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
-	await expect(menu).toBeFocused();
-	await shot(page, 'shell-menu-back-fragment');
-	await menu.click();
-	await expect(dialog).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(dialog).not.toBeVisible();
 	await expect(menu).toBeFocused();
-	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
-	await page.goBack();
+	await page.goForward();
 	await expect(page).toHaveURL(/\/offices$/);
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+	await shot(page, 'shell-menu-keeps-forward-history');
 });
+
+for (const legacy of [false, true]) {
+	test(`BUG-59: Back dismisses Menu before fragment history${legacy ? ' without the Navigation API' : ''}`, async ({ page }) => {
+		if (legacy) await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
+		await openOffices(page);
+		await page.setViewportSize({ width: 600, height: 900 });
+		await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+		await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+		const menu = page.getByRole('button', { name: 'Menu', exact: true });
+		await menu.click();
+		const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+		await expect(dialog).toBeVisible();
+		await page.evaluate(() => window.history.back());
+		await expect(dialog).not.toBeVisible();
+		await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+		await expect(menu).toBeFocused();
+		await shot(page, legacy ? 'shell-menu-back-fragment-legacy' : 'shell-menu-back-fragment');
+		await menu.click();
+		await expect(dialog).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(dialog).not.toBeVisible();
+		await expect(menu).toBeFocused();
+		await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+		await page.goBack();
+		await expect(page).toHaveURL(/\/offices$/);
+	});
+}
 
 test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
 	await page.setViewportSize({ width: 720, height: 450 });

@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { goto, pushState } from '$app/navigation';
-	import { page } from '$app/state';
-	import { tick } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
+	import { onMount, tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
 	import MenuIcon from '@lucide/svelte/icons/menu';
 	import type { Connection } from '$lib/proto';
@@ -10,49 +9,76 @@
 
 	let { connection, onWiden }: { connection: Connection; onWiden: () => void } = $props();
 	const menuId = $props.id();
-	type MenuHistoryState = App.PageState & { shellMenu?: true };
-
-	let openedHere = $state(false);
+	let open = $state(false);
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
-	let dismissing = false;
-	let closeReason: 'dismiss' | 'current-page' | 'navigation' = 'dismiss';
-	const hasMenuEntry = $derived((page.state as MenuHistoryState).shellMenu === true);
-	const open = $derived(openedHere && hasMenuEntry);
+	let closingForNavigation = false;
+	let openedUrl = '';
+	let traversalDelta: number | undefined;
+	let restoreFocusAt: string | undefined;
 
+	// A viewport change must release the modal before the desktop navigation takes over.
 	$effect(() => {
-		if (!hasMenuEntry) {
-			openedHere = false;
-			dismissing = false;
-		} else if ((innerWidth.current ?? 0) >= 640 && open) {
-			setMenuOpen(false);
-		}
+		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
 	});
 
-	function setMenuOpen(value: boolean) {
-		if (value) {
-			if (open || dismissing) return;
-			closeReason = 'dismiss';
-			// A same-URL entry lets Back dismiss the drawer while preserving the page and fragment.
-			if (!hasMenuEntry || window.history.state === null) {
-				pushState(window.location.href, { ...page.state, shellMenu: true });
-			}
-			openedHere = true;
-		} else if (open && !dismissing) {
-			dismissing = true;
-			window.history.back();
+	beforeNavigate((navigation) => {
+		if (!open || navigation.type !== 'popstate' || (navigation.delta ?? 0) >= 0) return;
+		restoreFocusAt = openedUrl;
+		navigation.cancel();
+		open = false;
+	});
+
+	onMount(() => {
+		const navigation = window.navigation;
+		if (!navigation) return;
+		function rememberTraversal(event: NavigateEvent) {
+			if (!open) return;
+			const from = navigation.currentEntry?.index ?? -1;
+			const to = event.destination.index;
+			traversalDelta = event.navigationType === 'traverse' && from >= 0 && to >= 0 ? to - from : undefined;
 		}
+		navigation.addEventListener('navigate', rememberTraversal);
+		return () => navigation.removeEventListener('navigate', rememberTraversal);
+	});
+
+	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
+		if (!open || oldURL !== openedUrl) return;
+		const delta = traversalDelta ?? (window.navigation ? 0 : -1);
+		if (delta >= 0) return;
+		const from = new URL(oldURL);
+		const to = new URL(newURL);
+		if (from.pathname !== to.pathname || from.search !== to.search) return;
+		// Shallow fragment traversal can bypass the SvelteKit hook.
+		restoreFocusAt = openedUrl;
+		window.history.go(-delta);
+		open = false;
 	}
 
-	function handlePopState(event: PopStateEvent) {
-		// Native fragment entries can have no state, so SvelteKit leaves page.state alone.
-		if (event.state === null && open) {
-			openedHere = false;
-			dismissing = false;
-		}
+	function handleHistoryReturn() {
+		const url = restoreFocusAt;
+		restoreFocusAt = undefined;
+		if (url !== window.location.href) return;
+		// The browser can restore document focus as it returns to the original entry.
+		requestAnimationFrame(() => {
+			if (!open && trigger?.isConnected) focusNavigationControl();
+		});
 	}
 
-	function focusDestinationHeading() {
+	function menuOpenChanged(value: boolean) {
+		if (!value) return;
+		closingForNavigation = false;
+		openedUrl = window.location.href;
+		traversalDelta = undefined;
+		restoreFocusAt = undefined;
+	}
+
+	function closeForNavigation() {
+		closingForNavigation = true;
+		open = false;
+	}
+	async function focusDestinationHeading() {
+		await tick();
 		const heading = document.querySelector<HTMLElement>('main h1');
 		if (heading) {
 			heading.tabIndex = -1;
@@ -70,42 +96,29 @@
 	}
 	async function restoreFocus(event: Event) {
 		event.preventDefault();
-		if (closeReason === 'navigation') return;
+		if (closingForNavigation) return;
 		await tick();
-		if (open) return;
-		if (closeReason === 'current-page') focusDestinationHeading();
-		else focusNavigationControl();
+		if (!open) focusNavigationControl();
 	}
 	async function select(event: MouseEvent, href: string) {
 		if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		event.preventDefault();
-		if (!open || dismissing || closeReason === 'navigation') return;
+		if (!open) return;
 		const from = window.location.href;
-		if (new URL(href, from).href === from) {
-			closeReason = 'current-page';
-			setMenuOpen(false);
-			return;
-		}
-
-		closeReason = 'navigation';
+		closeForNavigation();
 		try {
-			await goto(href, { replaceState: true });
-			await tick();
-			focusDestinationHeading();
+			if (new URL(href, from).href !== from) await goto(href);
+			await focusDestinationHeading();
 		} catch {
 			// SvelteKit owns route errors. Restore the trigger only if this page stayed put.
-			closeReason = 'dismiss';
-			if (window.location.href === from && trigger?.isConnected) {
-				if (open) setMenuOpen(false);
-				else focusNavigationControl();
-			}
+			if (window.location.href === from && trigger?.isConnected && !open) focusNavigationControl();
 		}
 	}
 </script>
 
-<svelte:window onpopstate={handlePopState} />
+<svelte:window onhashchange={handleFragmentChange} onpopstate={handleHistoryReturn} />
 
-<Sheet.Root bind:open={() => open, setMenuOpen}>
+<Sheet.Root bind:open onOpenChange={menuOpenChanged}>
 	<Sheet.Trigger bind:ref={trigger} aria-controls={menuId} class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[640px]:hidden">
 		<MenuIcon class="size-6" aria-hidden="true" strokeWidth={1.5} /><span class="sr-only">Menu</span>
 	</Sheet.Trigger>
