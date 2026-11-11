@@ -1,0 +1,13 @@
+[package]
+name = "org-sync"
+description = "Storage-independent organization replication policy."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+testkit = []
+
+[dependencies]
+org-sync-proto = { path = "../org-sync-proto" }

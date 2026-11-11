@@ -339,6 +339,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-sync"
+version = "0.0.0"
+dependencies = [
+ "org-sync-proto",
+]
+
+[[package]]
+name = "org-sync-proto"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "org-work"
 version = "0.0.0"
 dependencies = [
