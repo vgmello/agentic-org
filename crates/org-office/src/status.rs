@@ -230,7 +230,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let folder = dir.path().join("offices").join("OFFICE1");
         drop(office(&dir));
-        // Put office.db back as version 2 made it: no member_status.
+        // Put office.db back as version 2 made it: no status or work tables.
         let key = Key::from_bytes([5; 32]);
         {
             let store = Store::open(
@@ -242,8 +242,11 @@ mod tests {
             .unwrap();
             store
                 .write(|db| {
-                    db.execute_batch("DROP TABLE member_status; PRAGMA user_version = 2;")
-                        .map_err(crate::error::OfficeError::storage)?;
+                    db.execute_batch(
+                        "DROP TABLE work_origin_log; DROP TABLE work_origin_counter;
+                         DROP TABLE work_feed; DROP TABLE member_status; PRAGMA user_version = 2;",
+                    )
+                    .map_err(crate::error::OfficeError::storage)?;
                     Ok(((), None))
                 })
                 .unwrap();
