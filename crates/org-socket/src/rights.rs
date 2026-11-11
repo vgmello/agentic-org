@@ -268,14 +268,33 @@ fn system_receive(fd: RawFd, message: &mut libc::msghdr, flags: i32) -> io::Resu
     }
 }
 
+// One guard definition for production syscalls and the test-only failure seam.
+macro_rules! cloexec_result {
+    ($get:expr, $set:expr) => {{
+        let flags = $get;
+        if flags < 0 || ($set)(flags | libc::FD_CLOEXEC) < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }};
+}
+
 fn close_on_exec(fd: RawFd) -> io::Result<()> {
     // SAFETY: the receiver owns fd; these commands only inspect/change its descriptor flags.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    cloexec_result!(
+        unsafe { libc::fcntl(fd, libc::F_GETFD) },
+        |flags: i32| unsafe { libc::fcntl(fd, libc::F_SETFD, flags) }
+    )
+}
+
+#[cfg(test)]
+fn close_on_exec_with(fd: RawFd, mut call: impl FnMut(RawFd, i32, i32) -> i32) -> io::Result<()> {
+    cloexec_result!(call(fd, libc::F_GETFD, 0), |flags| call(
+        fd,
+        libc::F_SETFD,
+        flags
+    ))
 }
 
 unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {

@@ -1,5 +1,6 @@
 use super::*;
 use std::io::{Read, Write};
+use std::os::fd::IntoRawFd;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -59,6 +60,71 @@ fn assert_closed(mut peer: UnixStream) {
 fn impossible_control_capacity_returns_an_error_instead_of_panicking() {
     assert!(control_buffer(usize::MAX).is_err());
     assert!(close_on_exec(-1).is_err());
+}
+
+#[test]
+fn control_capacity_checks_the_last_representable_layout_and_integer_wrap() {
+    // Fixed ABI boundaries, checked without allocating a multi-gigabyte buffer.
+    let (last_count, last_space) = match (
+        mem::size_of::<libc::cmsghdr>(),
+        mem::align_of::<libc::cmsghdr>(),
+    ) {
+        (12, 4) => (1_073_741_820usize, 4_294_967_292usize),
+        (16, 8) => (1_073_741_818usize, 4_294_967_288usize),
+        layout => panic!("unverified cmsghdr layout: {layout:?}"),
+    };
+    assert_eq!(control_space(last_count), Some(last_space));
+    assert_eq!(control_space(last_count + 1), None);
+    assert_eq!(
+        control_space(usize::MAX / mem::size_of::<RawFd>() + 1),
+        None
+    );
+    assert_eq!(control_space(usize::MAX / mem::size_of::<RawFd>()), None);
+    let overhead = unsafe { libc::CMSG_SPACE(0) } as usize;
+    assert_eq!(
+        control_space(usize::MAX / mem::size_of::<RawFd>() - overhead / mem::size_of::<RawFd>()),
+        None
+    );
+    assert!(control_space(0).is_some());
+}
+
+#[test]
+fn ancillary_classification_requires_both_socket_level_and_rights_type() {
+    for (level, kind, expected) in [
+        (libc::SOL_SOCKET, libc::SCM_RIGHTS, 1),
+        (libc::SOL_SOCKET + 1, libc::SCM_RIGHTS, 0),
+        (libc::SOL_SOCKET, libc::SCM_RIGHTS + 1, 0),
+        (libc::SOL_SOCKET + 1, libc::SCM_RIGHTS + 1, 0),
+    ] {
+        let (source, peer) = UnixStream::pair().unwrap();
+        // Transfer one exclusive descriptor to the well-formed ancillary model;
+        // reclaim it ourselves only when the metadata wasn't classified as fd data.
+        let raw = OwnedFd::from(source).into_raw_fd();
+        let space = control_space(1).unwrap();
+        let mut control = vec![0usize; space.div_ceil(mem::size_of::<usize>())];
+        // SAFETY: live aligned storage, bounded header/data and a unique valid fd
+        // model successful recvmsg output. Only returned fds transfer ownership.
+        let parsed = unsafe {
+            let mut message: libc::msghdr = mem::zeroed();
+            message.msg_control = control.as_mut_ptr().cast();
+            message.msg_controllen = space as _;
+            let header = libc::CMSG_FIRSTHDR(&message);
+            (*header).cmsg_level = level;
+            (*header).cmsg_type = kind;
+            (*header).cmsg_len = libc::CMSG_LEN(mem::size_of::<RawFd>() as u32) as _;
+            libc::CMSG_DATA(header).cast::<RawFd>().write_unaligned(raw);
+            take_rights(&message)
+        };
+        let actual = parsed.len();
+        if actual == 0 {
+            // SAFETY: the parser returned no owner; our exclusive fd remains live.
+            assert!(unsafe { libc::fcntl(raw, libc::F_GETFD) } >= 0);
+            drop(unsafe { OwnedFd::from_raw_fd(raw) });
+        }
+        drop(parsed);
+        assert_closed(peer);
+        assert_eq!(actual, expected, "level={level}, kind={kind}");
+    }
 }
 
 #[test]
@@ -267,8 +333,16 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
     for case in cases {
         run_fatal_child(case);
     }
+    #[cfg(target_os = "linux")]
+    run_fatal_child("reported-extra");
     #[cfg(not(target_os = "linux"))]
-    for case in ["fcntl", "poisoned-fence", "reported-fcntl"] {
+    for case in [
+        "fcntl",
+        "poisoned-fence",
+        "reported-fcntl",
+        "fcntl-get",
+        "fcntl-set",
+    ] {
         run_fatal_child(case);
     }
 }
@@ -451,7 +525,8 @@ fn fatal_child() {
             );
             assert!(matches!(result, Err(ReceiveError::Fatal(_))));
         }
-        "reported-short" | "reported-control" | "reported-payload" | "reported-fcntl" => {
+        "reported-short" | "reported-extra" | "reported-control" | "reported-payload"
+        | "reported-fcntl" | "fcntl-get" | "fcntl-set" => {
             reported_cleanup(&case);
             println!("fatal returned; caller terminates");
             return;
@@ -471,7 +546,11 @@ fn fatal_child() {
 fn reported_cleanup(case: &str) {
     let (sender, socket) = UnixDatagram::pair().unwrap();
     let (source, peer) = UnixStream::pair().unwrap();
-    let expected = if case == "reported-short" { 3 } else { 2 };
+    let expected = match case {
+        "reported-short" => 3,
+        "reported-extra" => 1, // Linux CMSG padding can report two instead of one.
+        _ => 2,
+    };
     let mut descriptors = vec![source.as_raw_fd(); 2];
     if case == "reported-control" {
         descriptors.push(sender.as_raw_fd()); // unreported macOS fd is distinct
@@ -480,6 +559,7 @@ fn reported_cleanup(case: &str) {
     let mut receiver = Receiver(Some(socket.into()));
     let mut reported = Vec::new();
     let mut set_calls = 0;
+    let mut commands = Vec::new();
     let mut payload = [0; 2];
     let length = if case == "reported-payload" { 1 } else { 2 };
     let result = receiver.receive_with(
@@ -511,7 +591,22 @@ fn reported_cleanup(case: &str) {
         },
         |fd| {
             set_calls += 1;
-            if case == "reported-fcntl" && set_calls == 2 {
+            if case == "fcntl-get" || case == "fcntl-set" {
+                let fail = if case == "fcntl-get" {
+                    libc::F_GETFD
+                } else {
+                    libc::F_SETFD
+                };
+                close_on_exec_with(fd, |fd, command, flags| {
+                    commands.push(command);
+                    if case == "fcntl-get" && command == libc::F_SETFD {
+                        return 0; // Other disjunct passes if short-circuiting is broken.
+                    }
+                    // SAFETY: use a real EBADF syscall for the selected failure.
+                    // The other call operates on the received descriptor normally.
+                    unsafe { libc::fcntl(if command == fail { -1 } else { fd }, command, flags) }
+                })
+            } else if case == "reported-fcntl" && set_calls == 2 {
                 Err(io::Error::from_raw_os_error(libc::EIO))
             } else {
                 close_on_exec(fd)
@@ -520,6 +615,11 @@ fn reported_cleanup(case: &str) {
         control_buffer,
     );
     assert!(matches!(result, Err(ReceiveError::Fatal(_))));
+    if case == "fcntl-get" {
+        assert_eq!(commands, [libc::F_GETFD], "GET failure must skip SET");
+    } else if case == "fcntl-set" {
+        assert_eq!(commands, [libc::F_GETFD, libc::F_SETFD]);
+    }
     assert_eq!(reported.len(), 2);
     for descriptor in reported {
         // SAFETY: inspect the reported number only; never wrap or close it twice.
