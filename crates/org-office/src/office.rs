@@ -24,7 +24,7 @@ use crate::store::org as org_db;
 use crate::store::org::{
     OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode,
 };
-use crate::store::{messages, origin, status};
+use crate::store::{messages, origin, status, work};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
@@ -57,15 +57,17 @@ const OFFICE_ENTRIES: [&str; 11] = [
 ];
 
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
-/// members' status lines. Version 4 adds the work feed and origin ledger. An older file
-/// gets the tables it lacks when it is opened.
+/// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
+/// gets the tables it lacks when it is opened. Unreleased v4 remains open for B1-11
+/// work tables until its final slice merges; subsequent changes require v5 or later.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     version: 4,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
         status::create_table(tx)?;
-        origin::create_tables(tx)
+        origin::create_tables(tx)?;
+        work::create_tables(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -76,6 +78,7 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 4 {
             origin::create_tables(tx)?;
+            work::create_tables(tx)?;
         }
         Ok(())
     },

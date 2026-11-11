@@ -999,6 +999,9 @@ pub struct WorkChangedData {
     pub part: u32,
     pub parts: u32,
     pub changes: Vec<WorkChange>,
+    /// Who made the call (X-02 §4.2). Absent for a cascade, and from servers that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<crate::principal::Actor>,
 }
 
 /// `work.changed`: sent to subscribers for every committed work call.

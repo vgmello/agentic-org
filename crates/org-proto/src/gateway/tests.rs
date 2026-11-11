@@ -502,6 +502,25 @@ fn credential_diagnostics_never_echo_mistyped_secrets() {
     }
 }
 
+/// X-02 §6.4, §6.5: the recovery code, one type for `org-host-control` and `org-office-launch`.
+#[test]
+fn the_recovery_code_is_a_secret() {
+    let code = crate::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+    assert_eq!(code.expose(), "ABCD-EFGH-IJKL");
+    assert_eq!(format!("{code:?}"), "RecoveryCode(<redacted>)");
+    assert_eq!(
+        serde_json::to_value(&code).unwrap(),
+        json!("ABCD-EFGH-IJKL")
+    );
+    let back: crate::RecoveryCode = serde_json::from_value(json!("WXYZ-SECRET")).unwrap();
+    assert_eq!(back.expose(), "WXYZ-SECRET");
+    assert!(crate::RecoveryCode::new(String::new()).is_err());
+    for bad in [json!(""), json!(3141592653589793_u64), json!(null)] {
+        let error = serde_json::from_value::<crate::RecoveryCode>(bad).unwrap_err();
+        assert!(!error.to_string().contains("314159"), "{error}");
+    }
+}
+
 #[test]
 fn diagnostics_elide_business_payloads_in_requests_outcomes_and_events() {
     let envelopes: Value =

@@ -18,6 +18,15 @@ fn fail_initialize() -> (TestHandler, std::future::Ready<()>) {
     panic!("invalid service must not initialize")
 }
 
+/// The start error's kind and the code of the `ListenOrigin` refusal it carries.
+fn origin_refusal(result: io::Result<()>) -> Option<(io::ErrorKind, &'static str)> {
+    let error = result.err()?;
+    let reason = error
+        .get_ref()?
+        .downcast_ref::<org_host_control::listen::OriginError>()?;
+    Some((error.kind(), reason.code()))
+}
+
 struct Running {
     address: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
@@ -38,7 +47,7 @@ impl Running {
         } else {
             "http"
         };
-        let origin = ConfiguredOrigin::parse(&format!("{scheme}://{address}")).unwrap();
+        let origin = ListenOrigin::parse(&format!("{scheme}://{address}")).unwrap();
         Self::start_serving(listener, mode, origin, limits, |_| {
             Response::builder()
                 .header("Content-Type", "application/json")
@@ -50,7 +59,7 @@ impl Running {
     fn start_serving(
         listener: TcpListener,
         mode: ListenMode,
-        origin: ConfiguredOrigin,
+        origin: ListenOrigin,
         limits: HttpLimits,
         serve: impl Fn(Request<Incoming>) -> Response<Full<Bytes>> + Send + Sync + 'static,
     ) -> Self {
@@ -152,7 +161,7 @@ fn body(response: &[u8]) -> &[u8] {
 fn factory_runs_inside_the_runtime_and_an_existing_listener_serves_http1() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin =
-        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        ListenOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let (observed, initialized) = mpsc::channel();
     run_http(
         listener,
@@ -395,7 +404,7 @@ fn real_listener_releases_stalled_writer(encrypted: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let scheme = if encrypted { "https" } else { "http" };
     let origin =
-        ConfiguredOrigin::parse(&format!("{scheme}://{}", listener.local_addr().unwrap())).unwrap();
+        ListenOrigin::parse(&format!("{scheme}://{}", listener.local_addr().unwrap())).unwrap();
     let mode = if encrypted {
         ListenMode::Https(Arc::new(
             TlsCertificates::new(cert(b'a'), key(b'a')).unwrap(),
@@ -540,7 +549,7 @@ fn https_static_html_sends_the_full_policy_and_hsts_only_for_its_authority() {
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let authority = format!("gateway.test:{}", listener.local_addr().unwrap().port());
-        let origin = ConfiguredOrigin::parse(&format!("https://{authority}")).unwrap();
+        let origin = ListenOrigin::parse(&format!("https://{authority}")).unwrap();
         let files = BuildFiles::from_files([("index.html".into(), html.to_vec())]).unwrap();
         let ui = StaticUi::new(files, origin.clone(), hsts);
         let server = Running::start_serving(
@@ -618,7 +627,7 @@ fn non_tls_clients_on_https_are_bounded_without_reaching_application_code() {
 fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin =
-        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        ListenOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let limits = HttpLimits {
         connections: 0,
         ..HttpLimits::default()
@@ -628,9 +637,16 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
     );
     let listener = TcpListener::bind("0.0.0.0:0").unwrap();
     let origin =
-        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
-    assert!(
-        matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
+        ListenOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    assert_eq!(
+        origin_refusal(run_http(
+            listener,
+            ListenMode::HttpLoopback,
+            origin,
+            HttpLimits::default(),
+            fail_initialize
+        )),
+        Some((io::ErrorKind::PermissionDenied, "loopback_address"))
     );
 }
 
@@ -638,51 +654,77 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
 fn loopback_origin_aliases_or_a_different_port_are_refused_before_initialization() {
     for host in ["localhost", "x.localhost", "[::1]", "127.0.0.2"] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let origin = ConfiguredOrigin::parse(&format!(
+        let origin = ListenOrigin::parse(&format!(
             "http://{host}:{}",
             listener.local_addr().unwrap().port()
         ))
         .unwrap();
-        assert!(
-            matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied),
+        assert_eq!(
+            origin_refusal(run_http(
+                listener,
+                ListenMode::HttpLoopback,
+                origin,
+                HttpLimits::default(),
+                fail_initialize
+            )),
+            Some((io::ErrorKind::PermissionDenied, "not_bound_literal")),
             "{host}"
         );
     }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let different = if port == 65535 { port - 1 } else { port + 1 };
-    let origin = ConfiguredOrigin::parse(&format!("http://127.0.0.1:{different}")).unwrap();
-    assert!(
-        matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
+    let origin = ListenOrigin::parse(&format!("http://127.0.0.1:{different}")).unwrap();
+    assert_eq!(
+        origin_refusal(run_http(
+            listener,
+            ListenMode::HttpLoopback,
+            origin,
+            HttpLimits::default(),
+            fail_initialize
+        )),
+        Some((io::ErrorKind::PermissionDenied, "port_mismatch"))
     );
 }
 
 #[test]
 fn https_origin_on_a_different_port_is_refused_before_initialization() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let origin = ConfiguredOrigin::parse("https://gateway.test").unwrap();
+    let origin = ListenOrigin::parse("https://gateway.test").unwrap();
     assert_ne!(listener.local_addr().unwrap().port(), 443);
     let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
-    assert!(
-        matches!(run_http(listener, ListenMode::Https(certificates), origin,
-        HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
+    assert_eq!(
+        origin_refusal(run_http(
+            listener,
+            ListenMode::Https(certificates),
+            origin,
+            HttpLimits::default(),
+            fail_initialize
+        )),
+        Some((io::ErrorKind::InvalidInput, "port_mismatch"))
     );
 }
 
 #[test]
 fn http_origin_on_an_https_listener_is_refused_before_initialization() {
-    // B1-05 headers spec, "Other headers", interim origin fit rules:
+    // B1-05 headers spec, "Other headers", origin fit rules (now `ListenOrigin::check`):
     // "the scheme equals the mode". Refuse before application initialization.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let origin = ConfiguredOrigin::parse(&format!(
+    let origin = ListenOrigin::parse(&format!(
         "http://gateway.test:{}",
         listener.local_addr().unwrap().port()
     ))
     .unwrap();
     let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
-    assert!(
-        matches!(run_http(listener, ListenMode::Https(certificates), origin,
-        HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
+    assert_eq!(
+        origin_refusal(run_http(
+            listener,
+            ListenMode::Https(certificates),
+            origin,
+            HttpLimits::default(),
+            fail_initialize
+        )),
+        Some((io::ErrorKind::InvalidInput, "scheme_mismatch"))
     );
 }
 

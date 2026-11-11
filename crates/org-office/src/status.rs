@@ -243,10 +243,21 @@ mod tests {
             store
                 .write(|db| {
                     db.execute_batch(
-                        "DROP TABLE work_origin_log; DROP TABLE work_origin_counter;
+                        "DROP TABLE work_events; DROP TABLE work_ids; DROP TABLE work_items;
+                         DROP TABLE work_origin_log; DROP TABLE work_origin_counter;
                          DROP TABLE work_feed; DROP TABLE member_status; PRAGMA user_version = 2;",
                     )
                     .map_err(crate::error::OfficeError::storage)?;
+                    assert_eq!(
+                        db.query_row(
+                            "SELECT count(*) FROM sqlite_master WHERE type='table'
+                             AND (name='member_status' OR name LIKE 'work_%')",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .unwrap(),
+                        0
+                    );
                     Ok(((), None))
                 })
                 .unwrap();

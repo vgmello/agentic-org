@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
 	import FolderOpen from '@lucide/svelte/icons/folder-open';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import Callout from '$lib/components/Callout.svelte';
+	import DividedRow from '$lib/components/DividedRow.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import ProjectTeams from '$lib/components/ProjectTeams.svelte';
@@ -33,7 +36,10 @@
 	</div>
 
 	{#if unassigned > 0}
-		<p class="text-sm/6 text-amber-200" data-testid="unassigned-note">{unassigned} {unassigned === 1 ? 'project has' : 'projects have'} no team yet.</p>
+		<Callout data-testid="unassigned-note">
+			{#snippet icon()}<TriangleAlert class="size-4 text-amber-300" aria-hidden="true" />{/snippet}
+			{unassigned} {unassigned === 1 ? 'project has' : 'projects have'} no team yet.
+		</Callout>
 	{/if}
 
 	{#if rows.length === 0}
@@ -43,15 +49,15 @@
 			<p class="mt-1 max-w-sm text-sm/6 text-gray-400">Projects are what teams work on. Creating one comes in a later release.</p>
 		</div>
 	{:else}
-		<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Projects">
+		<ul class="border-y border-white/5" aria-label="Projects">
 			{#each rows as row (row.project.id)}
-				<li class="space-y-2 px-4 py-3" data-testid="project-row" data-project={row.project.id}>
+				<DividedRow class="space-y-2" data-testid="project-row" data-project={row.project.id}>
 					<div class="flex flex-wrap items-baseline justify-between gap-x-4">
 						<a href="/projects/{row.project.id}" class="text-sm/6 font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]">{row.project.name}</a>
 						<span class="text-xs/5 text-gray-400" data-testid="leads-line">{leadsLine(row)}</span>
 					</div>
 					<ProjectTeams {row} {snapshot} {session} onchanged={reload} />
-				</li>
+				</DividedRow>
 			{/each}
 		</ul>
 	{/if}

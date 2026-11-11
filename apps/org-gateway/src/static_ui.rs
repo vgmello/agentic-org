@@ -10,11 +10,12 @@ use hyper::header::{
 };
 use hyper::http::uri::Authority;
 use hyper::{Method, Request, Response, StatusCode};
+use org_host_control::listen::ListenOrigin;
 
 use crate::assets::{is_html, is_json, BuildFiles};
 use crate::csp;
+use crate::origin::{authority, is_https};
 use crate::path::RequestPath;
-use crate::ConfiguredOrigin;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Hsts {
@@ -26,13 +27,13 @@ pub enum Hsts {
 
 pub struct StaticUi {
     files: BuildFiles,
-    origin: ConfiguredOrigin,
+    origin: ListenOrigin,
     hsts: Option<HeaderValue>,
 }
 
 impl StaticUi {
-    pub fn new(files: BuildFiles, origin: ConfiguredOrigin, hsts: Hsts) -> Self {
-        let hsts = if hsts_eligible(origin.is_https(), origin.authority()) {
+    pub fn new(files: BuildFiles, origin: ListenOrigin, hsts: Hsts) -> Self {
+        let hsts = if hsts_eligible(is_https(&origin), authority(&origin)) {
             match hsts {
                 Hsts::Off => None,
                 Hsts::On => Some(HeaderValue::from_static("max-age=31536000")),
@@ -113,7 +114,7 @@ impl StaticUi {
         headers.insert(
             "content-security-policy",
             self.files
-                .content_security_policy(key, self.origin.is_https())
+                .content_security_policy(key, is_https(&self.origin))
                 .expect("asset already came from the startup snapshot"),
         );
         if let Some(tag) = tag {
@@ -145,7 +146,7 @@ impl StaticUi {
         if let Some(hsts) = &self.hsts {
             if hosts
                 .next()
-                .is_some_and(|host| host.as_bytes() == self.origin.authority().as_bytes())
+                .is_some_and(|host| host.as_bytes() == authority(&self.origin).as_bytes())
                 && hosts.next().is_none()
             {
                 headers.insert(STRICT_TRANSPORT_SECURITY, hsts.clone());
@@ -337,7 +338,7 @@ mod tests {
             ("_app/version.json".into(), b"{}".to_vec()),
         ])
         .unwrap();
-        StaticUi::new(files, ConfiguredOrigin::parse(origin).unwrap(), hsts)
+        StaticUi::new(files, ListenOrigin::parse(origin).unwrap(), hsts)
     }
 
     fn request(method: Method, path: &str, headers: &[(&str, &str)]) -> Request<()> {
@@ -566,7 +567,7 @@ mod tests {
             let response = ui.serve(&request(
                 Method::GET,
                 "/api/missing",
-                &[("host", ui.origin.authority())],
+                &[("host", authority(&ui.origin))],
             ));
             assert!(
                 !response.headers().contains_key(STRICT_TRANSPORT_SECURITY),

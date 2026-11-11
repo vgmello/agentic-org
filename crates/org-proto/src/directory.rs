@@ -84,6 +84,20 @@ pub struct OfficeRef {
     pub name: String,
 }
 
+/// Where an agent's files are, as its owning office reports it (X-02 §8): read-only status, not
+/// part of the agent's profile. The office manages the folder; clients show the path and never
+/// open or interpret it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedHome {
+    /// The launcher's effective `<instance root>/agents/<office id>/<member id>/`, an absolute
+    /// path on the owning office's machine.
+    pub path: String,
+    /// The office that manages it: the one the agent is placed in.
+    pub office_id: String,
+    /// When the office observed the path: RFC 3339 UTC with milliseconds.
+    pub observed_at: String,
+}
+
 /// One member's directory card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryCard {
@@ -132,6 +146,11 @@ pub struct DirectoryCard {
     pub status_expires_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_task_id: Option<String>,
+    /// Agents only: the home its owning office manages (X-02 §8). Sent only to a human
+    /// principal on a host-made channel, and only for agents placed in the answering office;
+    /// absent otherwise, and from servers that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_home: Option<ManagedHome>,
 }
 
 /// `who`: directory cards for everyone in the organization, or those matching the filters.
@@ -288,6 +307,7 @@ mod tests {
             status: Some("Drafting ADR-0003".into()),
             status_expires_at: Some("2026-11-08T13:08:00.000Z".into()),
             current_task_id: None,
+            managed_home: None,
         }
     }
 
@@ -344,6 +364,7 @@ mod tests {
             status: None,
             status_expires_at: None,
             current_task_id: Some("T-1".into()),
+            managed_home: None,
         };
         check(
             &owner,

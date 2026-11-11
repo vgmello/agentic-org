@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use crate::calls::Call;
 use crate::error::{ApiError, CallError};
 use crate::events::EventKind;
+use crate::principal::{MalformedPrincipal, Principal};
 
 /// The `id` of an error response to a line the server couldn't read as a [`Request`] and
 /// couldn't recover an id from (see [`salvage_id`]). Clients number their requests from 1
@@ -29,25 +30,63 @@ pub fn salvage_id(line: &[u8]) -> Option<u64> {
 /// unknown method with `unknown_method` instead of failing to parse the line.
 /// Clients number requests from 1 (see [`UNREADABLE_REQUEST_ID`]).
 ///
-/// Its `params` can carry a secret in raw JSON, so don't log a request or keep it longer than
-/// handling it takes. Its `Debug` shows only the id and method and elides the params
-/// (`<elided N bytes>`); `Clone` copies the secret along with it.
+/// Its `params` and `principal` can carry a secret in raw JSON, so don't log a request or keep it
+/// longer than handling it takes. Its `Debug` shows only the id and method and elides the params
+/// and the principal (`<elided N bytes>`); `Clone` copies the secret along with it.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub id: u64,
     pub method: String,
+    /// The grant a request on a host-made channel acts under (X-02 §4.1), as raw JSON: read it
+    /// with [`Request::principal`]. `None` when the key is absent; a present key is `Some`, even
+    /// when its value is `null`, so a server can refuse it rather than mistake it for no
+    /// principal. It stays raw so that a malformed principal never fails the envelope: the
+    /// server answers it with `not_authorized` (on an office socket, any principal is
+    /// `not_authorized`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub principal: Option<Value>,
     #[serde(default)]
     pub params: Value,
 }
 
+/// Decodes a present field as `Some`, even when its value is `null`.
+fn present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
+}
+
 impl Request {
-    /// Build a request for call `C`.
+    /// Build a request for call `C`, with no principal.
     pub fn new<C: Call>(id: u64, params: &C::Params) -> Result<Self, serde_json::Error> {
         Ok(Self {
             id,
             method: C::METHOD.to_owned(),
+            principal: None,
             params: serde_json::to_value(params)?,
         })
+    }
+
+    /// The same request, acting under `principal`. The grant's MAC is copied into the request's
+    /// raw JSON, like any secret in params: see the type's docs.
+    pub fn with_principal(mut self, principal: &Principal) -> Result<Self, serde_json::Error> {
+        self.principal = Some(serde_json::to_value(principal)?);
+        Ok(self)
+    }
+
+    /// Read the principal: `Ok(None)` when the request has none, [`MalformedPrincipal`] when it
+    /// is present but isn't a [`Principal`] (`null`, a MAC that isn't 64 lowercase hex digits, a
+    /// missing field, an array). A server answers that with `not_authorized`. The error carries
+    /// nothing from the request.
+    pub fn principal(&self) -> Result<Option<Principal>, MalformedPrincipal> {
+        match &self.principal {
+            None => Ok(None),
+            Some(value) => Principal::deserialize(value)
+                .map(Some)
+                .map_err(|_| MalformedPrincipal),
+        }
     }
 
     /// Whether this request is for call `C`.
@@ -249,11 +288,12 @@ impl fmt::Debug for Elided<'_> {
 
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Request")
-            .field("id", &self.id)
-            .field("method", &self.method)
-            .field("params", &Elided(&self.params))
-            .finish()
+        let mut s = f.debug_struct("Request");
+        s.field("id", &self.id).field("method", &self.method);
+        if let Some(principal) = &self.principal {
+            s.field("principal", &Elided(principal));
+        }
+        s.field("params", &Elided(&self.params)).finish()
     }
 }
 
