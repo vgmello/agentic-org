@@ -306,6 +306,10 @@ fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
     let world = World::new();
     let mut run = create(&world);
     let cases = [
+        serde_json::json!([]),
+        serde_json::json!(true),
+        serde_json::json!(7),
+        serde_json::json!("not an object"),
         serde_json::json!({"api": []}),
         serde_json::json!({"api": "2"}),
         serde_json::json!({"api": {"min": 0, "max": 1}}),
@@ -367,6 +371,8 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
             serde_json::json!({"api": {"min": 1, "max": 2}, "client": "test"}),
         ),
         (3, serde_json::json!({})),
+        // Request::params treats a missing/null params object as {}.
+        (4, serde_json::Value::Null),
     ] {
         frame::write_message(
             reader.get_mut(),
@@ -381,10 +387,10 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
     }
     frame::write_message(
         reader.get_mut(),
-        &serde_json::json!({"id": 4, "method": "hello", "params": {"api": {"min": 2, "max": 2}}}),
+        &serde_json::json!({"id": 5, "method": "hello", "params": {"api": {"min": 2, "max": 2}}}),
     )
     .unwrap();
-    assert_unsupported_version_and_closed(&mut reader, 4);
+    assert_unsupported_version_and_closed(&mut reader, 5);
     assert!(run.host_goes_away().success());
 }
 
