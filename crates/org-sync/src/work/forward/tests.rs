@@ -315,9 +315,20 @@ fn refusal_precedence_matches_frozen_contract() {
     store.refused(&store.peer(), ack, Refusal::WrongStream);
     let mut store = Memory::new("A", 2);
     store.data.lock().unwrap().context.restore_pending = true;
+    let mut wrong = store.ack(0, 1, &[]);
+    wrong.incarnation = OriginIncarnation::new("OLD").unwrap();
+    store.refused(&store.peer(), wrong.clone(), Refusal::WrongStream);
     store.refused(&store.peer(), store.ack(5, 4, &[]), Refusal::RestorePending);
     store.data.lock().unwrap().context.restore_pending = false;
     store.data.lock().unwrap().context.protocol_level = u32::MAX;
+    store.refused(&store.peer(), wrong, Refusal::WrongStream);
+    store.data.lock().unwrap().context.restore_pending = true;
+    store.refused(
+        &store.peer(),
+        store.ack(0, 1, &[]),
+        Refusal::UnsupportedVersion,
+    );
+    store.data.lock().unwrap().context.restore_pending = false;
     store.refused(
         &store.peer(),
         store.ack(5, 4, &[]),
@@ -332,6 +343,12 @@ fn refusal_precedence_matches_frozen_contract() {
     );
     store.refused(&store.peer(), store.ack(1, 2, &[]), Refusal::Gap);
     store.authority.pruned_through = 1;
+    store.refused(&store.peer(), store.ack(0, 0, &[]), Refusal::Malformed);
+    store.refused(
+        &store.peer(),
+        store.ack(3, 4, &[]),
+        Refusal::InvariantFailure,
+    );
     store.refused(
         &store.peer(),
         store.ack(0, 1, &[]),
@@ -387,10 +404,15 @@ fn lower_equal_higher_base_floor_and_committed_bounds() {
         store.apply(store.ack(2, 3, &[])).unwrap(),
         LocalStreamOutput::Advanced { from: 2, to: 3 }
     );
+    let overlap = store.ack(2, 5, &[]);
     assert_eq!(
-        store.apply(store.ack(2, 5, &[])).unwrap(),
+        store.apply(overlap.clone()).unwrap(),
         LocalStreamOutput::Advanced { from: 3, to: 5 }
     );
+    let proof = store.snapshot().proof.unwrap();
+    assert_eq!(proof.from_exclusive, 2);
+    assert_eq!(proof.through_seq, 5);
+    assert_eq!(proof.digest, work_ack_proof_digest_v1(&overlap).unwrap());
     assert!(store.snapshot().queue.pending().is_empty());
 }
 #[test]
