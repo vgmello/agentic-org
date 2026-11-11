@@ -30,6 +30,11 @@ required-features = ["test-support"]
 test = false
 doc = false
 
+[[test]]
+name = "shutdown_signals"
+# Exercise block-before-threads in a real single-threaded process, before libtest starts.
+harness = false
+
 [dependencies]
 org-host-control = { path = "../../crates/org-host-control" }
 org-socket = { path = "../../crates/org-socket" }
