@@ -354,3 +354,44 @@ for (const context of ['closed', 'another Thread'] as const) {
 		await shot(page, `chat-also-send-${context.replaceAll(' ', '-')}-delivery`);
 	});
 }
+
+for (const mode of ['muted', 'digest'] as const) {
+	test(`CHAT-8/11 BUG-71: an incoming Also-send copy in expanded ${mode} messages is offered only by Thread`, async ({ page }) => {
+		await page.clock.install();
+		await open(page);
+		const main = page.getByTestId('message-list');
+		const opener = main.getByTestId('replies-link').first();
+		const rootId = await opener.evaluate((element) => element.closest('[data-id]')!.getAttribute('data-id'));
+		expect(rootId).toBeTruthy();
+		await opener.click();
+		const pane = page.getByTestId('thread-panel');
+		await expect(pane).toBeVisible();
+		const kai = main.getByTestId('message').filter({ has: page.getByTestId('handoff-card') });
+		await kai.hover();
+		await kai.getByTestId('message-menu').click();
+		await page.getByRole('menuitem', { name: mode === 'muted' ? 'Mute Kai Lindqvist here' : 'Daily digest from Kai Lindqvist', exact: true }).click();
+		const group = main.getByTestId(mode === 'muted' ? 'muted-row' : 'digest-row');
+		await expect(group).toBeVisible();
+		await group.getByRole('button', { name: mode === 'muted' ? /muted.*Show/ : /^Daily digest · Kai Lindqvist/ }).click();
+		await expect(group.getByTestId('message')).not.toHaveCount(0);
+		await take(page); // Ignore the existing history expanded during fixture setup.
+		const body = `Incoming ${mode} Also-send reply`;
+		await page.evaluate(async ({ rootId, mode, body }) => {
+			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const { chatApi } = await import(path);
+			const snapshot = chatApi.snapshot.bind(chatApi);
+			chatApi.snapshot = async (id: string) => {
+				const result = await snapshot(id);
+				const incoming = { id: `incoming-${mode}`, conversation_id: 'c-release-v1', thread_root_id: rootId, also_in_channel: true, from: 'kai', kind: 'reply', body, created_at: new Date().toISOString() };
+				return { ...result, state: { ...result.state, seq: result.state.seq + 1, messages: [...result.state.messages, incoming] } };
+			};
+		}, { rootId, mode, body });
+		await page.clock.runFor(31_000); // The next office refresh delivers the agent's reply.
+		const channelCopy = group.getByRole('article').filter({ hasText: body });
+		await expect(channelCopy).toHaveAttribute('data-id', `incoming-${mode}`);
+		await expect(pane.getByTestId('message').filter({ hasText: body })).toHaveAttribute('data-id', `incoming-${mode}`);
+		expect(await take(page)).toEqual([{ log: 'Thread messages', text: expect.stringContaining(body) }]);
+		await channelCopy.scrollIntoViewIfNeeded();
+		await shot(page, `chat-also-send-expanded-${mode}`);
+	});
+}
