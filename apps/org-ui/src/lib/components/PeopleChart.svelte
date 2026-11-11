@@ -3,6 +3,7 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import { SvelteSet } from 'svelte/reactivity';
 	import MemberTile from './MemberTile.svelte';
+	import { chartMeasurement } from './chart-measurement';
 	import { otherTeamsOf, subTeamCount, type TeamNode } from '$lib/org/model';
 	import { peopleCard } from '$lib/org/reporting';
 	import type { OrgSnapshot } from '$lib/proto';
@@ -28,6 +29,7 @@
 
 	let chart = $state<HTMLElement>();
 	let viewport = $state<HTMLDivElement>();
+	let contentMeasure = $state<ReturnType<typeof chartMeasurement>>();
 	let available = $state(0);
 	let natural = $state({ w: 0, h: 0, font: 12 });
 	const scale = $derived(fit && natural.w > 0 && available > 0 ? Math.min(1, Math.max(0.45, 12 / natural.font, available / natural.w)) : 1);
@@ -36,33 +38,42 @@
 		if (!chart || !viewport) return;
 		// Apply the new size on the next frame, not inside the observer callback: changing layout there
 		// is what makes browsers log "ResizeObserver loop completed with undelivered notifications".
-		let frame = 0;
 		let size = { w: 0, h: 0 };
 		let lastBlocked: boolean | undefined;
+		const measure = chartMeasurement(() => {
+			if (!chart?.isConnected || !viewport?.isConnected) return;
+			const fonts = [...chart.querySelectorAll<HTMLElement>('[data-fit-text]')].map((element) => parseFloat(getComputedStyle(element).fontSize));
+			const font = Math.min(...fonts);
+			natural = { ...size, font: Number.isFinite(font) ? font : 12 };
+			available = viewport.clientWidth;
+			const blocked = 12 / natural.font >= 1 && natural.w > available;
+			if (blocked !== lastBlocked) {
+				lastBlocked = blocked;
+				onfitblockedchange?.(blocked);
+			}
+		});
 		const watch = new ResizeObserver((entries) => {
 			const entry = entries.find((entry) => entry.target === chart);
 			if (entry) size = { w: entry.contentRect.width, h: entry.contentRect.height };
-			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() => {
-				// Read CSS sizes before the transform, alongside the chart measurements.
-				// Every readable line, including the lead badge, establishes the text floor.
-				const fonts = [...chart!.querySelectorAll<HTMLElement>('[data-fit-text]')].map((element) => parseFloat(getComputedStyle(element).fontSize));
-				const font = Math.min(...fonts);
-				natural = { ...size, font: Number.isFinite(font) ? font : 12 };
-				available = viewport!.clientWidth;
-				const blocked = 12 / natural.font >= 1 && natural.w > available;
-				if (blocked !== lastBlocked) {
-					lastBlocked = blocked;
-					onfitblockedchange?.(blocked);
-				}
-			});
+			measure.schedule();
 		});
 		watch.observe(chart);
 		watch.observe(viewport);
+		contentMeasure = measure;
 		return () => {
-			cancelAnimationFrame(frame);
+			contentMeasure = undefined;
+			measure.cancel();
 			watch.disconnect();
 		};
+	});
+
+	$effect(() => {
+		// Content can change the smallest semantic font without resizing either observed element.
+		void snapshot.members; void snapshot.memberships; void snapshot.teams;
+		void tree; void [...collapsed]; void fit;
+		const measure = contentMeasure;
+		measure?.schedule();
+		return () => measure?.cancel();
 	});
 
 	function toggle(id: string) {

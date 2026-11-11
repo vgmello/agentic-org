@@ -1,3 +1,4 @@
+import type { OrgSnapshot } from '../src/lib/proto';
 import { viewAction, expectViewAction } from './org-chart-menu';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
@@ -456,5 +457,108 @@ for (const text of [1, 2]) {
 		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
 		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
 		await shot(page, `oc1-collapse-control-readable-${text}`);
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: membership refresh remeasures Fit when chart dimensions stay unchanged at ${text * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 640 });
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		const fixture = await page.evaluate(async () => {
+			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+			const id = connections[connections.length - 1].organization.id;
+			const modulePath = '/e2e/fakes/org-api.ts';
+			const { orgApi } = await import(modulePath);
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const people = snapshot.members.filter((member) => member.kind === 'person' && !member.owner);
+			localStorage.setItem('agentic-org.mock.org.' + id, JSON.stringify({ snapshot: { ...snapshot,
+				teams: [{ id: 'small', name: 'Small', version: 1 }, { id: 'large', name: 'Large', version: 1 }],
+				memberships: [
+					{ id: 'small-first', team_id: 'small', member_id: people[0].id, version: 1 },
+					{ id: 'large-first', team_id: 'large', member_id: people[1].id, version: 1 },
+					{ id: 'large-second', team_id: 'large', member_id: people[2].id, version: 1 }
+				]
+			}, answers: {}, order: [] }));
+			return { organizationId: id, memberId: people[1].id };
+		});
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(2);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBeCloseTo(Math.max(.45, 12 / (14 * text)), 5);
+		const before = await chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }));
+		await expect(chart.getByText('+1 team', { exact: true })).toHaveCount(0);
+		await page.evaluate(async ({ organizationId, memberId }) => {
+			await (window as unknown as { __mockOrgChange: (organizationId: string, command: object) => Promise<unknown> }).__mockOrgChange(organizationId, { method: 'team.add_member', params: { membership_id: 'same-size-shared', team_id: 'small', member_id: memberId } });
+		}, fixture);
+		const badges = chart.getByText('+1 team', { exact: true });
+		await expect(badges).toHaveCount(2);
+		await expect.poll(() => chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }))).toEqual(before);
+		console.log('Same-dimension membership refresh', text, before, await badges.first().evaluate((e) => ({ font: getComputedStyle(e).fontSize, scale: new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a })));
+		await shot(page, `oc1-same-size-membership-${text}`, { context: chart.getByTestId('people-card').filter({ has: page.getByRole('heading', { name: 'Small', exact: true }) }) });
+		await expect.poll(() => badges.evaluateAll((elements) => Math.min(...elements.map((e) => parseFloat(getComputedStyle(e).fontSize) * new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a)))).toBeGreaterThanOrEqual(12);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
+		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: collapse and expand remeasure content at unchanged dimensions with ${text * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 640 });
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.evaluate(async () => {
+			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+			const id = connections[connections.length - 1].organization.id;
+			const modulePath = '/e2e/fakes/org-api.ts';
+			const { orgApi } = await import(modulePath);
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const person = snapshot.members.find((member) => member.kind === 'person' && !member.owner);
+			const assignment = ['anchor', 'anchor', 'anchor-child', 'anchor-child', 'changing', 'changing-child'];
+			localStorage.setItem('agentic-org.mock.org.' + id, JSON.stringify({ snapshot: { ...snapshot,
+				teams: [
+					{ id: 'anchor', name: 'Anchor', version: 1 },
+					{ id: 'anchor-child', name: 'Anchor child', owner_team_id: 'anchor', version: 1 },
+					{ id: 'changing', name: 'Changing', version: 1 },
+					{ id: 'changing-child', name: 'Changing child', owner_team_id: 'changing', version: 1 }
+				],
+				members: [...snapshot.members.filter((member) => member.owner), ...assignment.map((_, index) => ({ ...person, id: 'collapse-person-' + index, name: 'Person ' + index }))],
+				memberships: assignment.map((team_id, index) => ({ id: 'collapse-membership-' + index, team_id, member_id: 'collapse-person-' + index, version: 1 }))
+			}, answers: {}, order: [] }));
+		});
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(4);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		// Hold the expanded width so child-list padding cannot turn this into a resize test.
+		await chart.evaluate((e) => { e.style.minWidth = `${e.offsetWidth}px`; });
+		await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+		const before = await chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }));
+		await chart.evaluate((element) => {
+			const query = element.querySelectorAll.bind(element);
+			element.dataset.measurements = '0';
+			element.querySelectorAll = ((selector: string) => {
+				if (selector === '[data-fit-text]') element.dataset.measurements = String(Number(element.dataset.measurements) + 1);
+				return query(selector);
+			}) as typeof element.querySelectorAll;
+		});
+		const changing = chart.getByTestId('people-card').filter({ has: page.getByRole('heading', { name: 'Changing', exact: true }) });
+		for (const action of ['collapse', 'expand']) {
+			await chart.evaluate((e) => { e.dataset.measurements = '0'; });
+			await changing.getByRole('button', { name: `1 team: ${action} the teams under Changing`, exact: true }).click();
+			await expect(chart.getByTestId('people-card')).toHaveCount(action === 'collapse' ? 3 : 4);
+			await expect.poll(() => chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }))).toEqual(before);
+			await expect.poll(() => chart.evaluate((e) => Number(e.dataset.measurements))).toBeGreaterThan(0);
+			await shot(page, `oc1-same-size-${action}-${text}`, { context: changing });
+		}
 	});
 }
