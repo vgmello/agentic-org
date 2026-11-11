@@ -63,12 +63,12 @@ counters are unchanged; Work streams own their separate per-origin ordering.
 A message queue is bound to the pinned organization and local office. The same validator
 checks its shape and binding on load and save. Native delivery and its dedup receipt
 share one writer attempt; an output becomes visible only after durable commit. An ACK
-lost after that commit is replayed from the retained receipt without enqueuing or applying
-again. A failed attempt leaves queue, clock, native delivery and receipts unchanged.
+lost after that commit is replayed before expiry from the retained receipt without enqueuing
+or applying again. A failed attempt leaves queue, clock, native delivery and receipts unchanged.
 
-Native adapters authorize recipients, fingerprints, peer roles and routes. The core checks
-the pinned organization, endpoint and highest authenticated session epoch before reading
-restore state or receipts. Restore and unsupported organization protocol levels fence every
+Native adapters authorize recipients and fingerprints. The core checks the pinned organization,
+endpoint, HQ identity, peer role, delivery/ACK route and highest authenticated session epoch
+before reading restore state or receipts. Restore and unsupported organization protocol levels fence every
 message operation. Payload limits derive from the encoded frame limit with base64 reserve;
 pending message count and bytes are bounded. Debug prints payload length rather than bytes.
 
@@ -81,5 +81,20 @@ Real message-storage and framing adapters are separate slices.
 Initial expiry also retains immutable identity. Sender-side expiry uses a local
 undelivered notice; receiver-side expiry has a separate rejected-identity record,
 sharing the native origin/ID uniqueness and dedup horizon with delivered records.
-A matching receiver retry remains Expired without an ACK, and a conflicting intent
-is divergence. The identity and clock commit together, including on the first refusal.
+A matching receiver retry remains Expired without an ACK. A conflicting live intent is
+divergence. The identity and clock commit together, including on the first refusal; expiry
+writes preserve the first immutable identity and never downgrade a delivered receipt.
+
+`MAX_MESSAGE_TTL_MS` is 30 days, matching X-05's outdated-office cutoff. Enqueue and receive
+refuse a deadline more than that interval beyond `max(now_ms, clock_high_ms)`. `deadline_ms`
+is the effective transport deadline with any native skew grace already folded in. Expiry
+is checked before receipt or rejected-identity lookup: delivery or replay at or after that
+deadline returns `Refused(Expired)`, even after native proof pruning. A later authenticated
+ACK for an earlier committed delivery can still correct the sender's expiry notice.
+
+Native adapters retain received and rejected identity through the effective deadline,
+including across body pruning, snapshot installation and restart. Run
+`testkit::message_conformance::assert_message_retention` against native pruning/reopen paths;
+the contract test rejects pruning either identity type before its deadline. These are
+minimum identity retention rules; compact native conversation headers may live longer.
+`Ok(Refused(Expired))` commits identity/clock state; `Err(SyncError::Refused(_))` rolls back.
