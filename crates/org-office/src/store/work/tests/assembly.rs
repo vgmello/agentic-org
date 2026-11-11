@@ -569,13 +569,119 @@ fn failed_allocations_and_result_writes_are_terminal_and_storage_cause_is_preser
 use org_work::{Caller, WorkCall as Command, WorkService};
 use serde_json::{json, Value};
 
+/// Record each backend's own attempt view, independently of its persisted feed/origin.
+struct PositionAudit<S> {
+    inner: S,
+    positions: Arc<Mutex<std::collections::BTreeMap<u64, Position>>>,
+}
+
+impl<S> PositionAudit<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            positions: Arc::default(),
+        }
+    }
+}
+
+impl<S: WorkStore> WorkStore for PositionAudit<S> {
+    fn transact(&self, f: Arc<TxnFn>) -> Result<TxnOutput, StoreError> {
+        let positions = self.positions.clone();
+        self.inner.transact(Arc::new(move |view, txn| {
+            let expected = view.applied_position()?;
+            let mut audit = PositionTxn {
+                inner: txn,
+                expected,
+                positions: &positions,
+            };
+            let output = f(view, &mut audit)?;
+            if let TxnOutput::Committed { changed, .. } = &output {
+                for part in changed {
+                    for change in &part.changes {
+                        if let org_proto::work::WorkChange::EventAdded { event } = change {
+                            assert_eq!(
+                                event.org_position, expected,
+                                "answer event uses its own view"
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(output)
+        }))
+    }
+}
+
+struct PositionTxn<'a> {
+    inner: &'a mut dyn WorkTxn,
+    expected: Position,
+    positions: &'a Mutex<std::collections::BTreeMap<u64, Position>>,
+}
+
+impl WorkTxn for PositionTxn<'_> {
+    fn get(&mut self, id: &str) -> Result<Option<StoredItem>, StoreError> {
+        self.inner.get(id)
+    }
+    fn item_of_step(&mut self, id: &str) -> Result<Option<StoredItem>, StoreError> {
+        self.inner.item_of_step(id)
+    }
+    fn item_of_link(&mut self, id: &str) -> Result<Option<StoredItem>, StoreError> {
+        self.inner.item_of_link(id)
+    }
+    fn id_in_use(&mut self, id: &str) -> Result<bool, StoreError> {
+        self.inner.id_in_use(id)
+    }
+    fn linked_to(&mut self, id: &str, kind: LinkKind) -> Result<Vec<StoredItem>, StoreError> {
+        self.inner.linked_to(id, kind)
+    }
+    fn open_bugs(&mut self, project: Option<&str>) -> Result<Vec<StoredItem>, StoreError> {
+        self.inner.open_bugs(project)
+    }
+    fn events_since(&mut self, id: &str, after: u64) -> Result<Vec<WorkEvent>, StoreError> {
+        self.inner.events_since(id, after)
+    }
+    fn change_result(&mut self, id: &str) -> Result<Option<StoredResult>, StoreError> {
+        self.inner.change_result(id)
+    }
+    fn allocate_number(&mut self, scope: &NumberScope) -> Result<u64, StoreError> {
+        self.inner.allocate_number(scope)
+    }
+    fn put_item(&mut self, item: &StoredItem, events: &[WorkEvent]) -> Result<(), StoreError> {
+        assert!(!events.is_empty());
+        for event in events {
+            assert_eq!(
+                event.org_position, self.expected,
+                "put event uses its own view"
+            );
+        }
+        self.inner.put_item(item, events)
+    }
+    fn put_change_result(&mut self, id: &str, result: &StoredResult) -> Result<(), StoreError> {
+        self.inner.put_change_result(id, result)
+    }
+    fn record_change(
+        &mut self,
+        position: Position,
+        refs: &[EventRef],
+        id: Option<&str>,
+    ) -> Result<WorkPosition, StoreError> {
+        assert_eq!(position, self.expected, "record uses its own attempt view");
+        let written = self.inner.record_change(position, refs, id)?;
+        self.positions
+            .lock()
+            .unwrap()
+            .insert(written.seq, self.expected);
+        Ok(written)
+    }
+}
+
 struct Oracle {
     db: Arc<Store>,
     mem: Arc<MemStore>,
     org: Arc<Mutex<MemOrg>>,
     org_db: Arc<Store>,
-    native: WorkService<Arc<OfficeWorkStore>>,
-    reference: WorkService<Arc<MemStore>>,
+    native: WorkService<PositionAudit<Arc<OfficeWorkStore>>>,
+    reference: WorkService<PositionAudit<Arc<MemStore>>>,
     next: u128,
     _root: tempfile::TempDir,
 }
@@ -598,6 +704,11 @@ fn normalize_output(mut output: TxnOutput) -> TxnOutput {
             normalize_answer(accepted);
             for part in changed {
                 part.position.incarnation = 1;
+                for change in &mut part.changes {
+                    if let org_proto::work::WorkChange::EventAdded { event } = change {
+                        event.org_position = Position::default();
+                    }
+                }
             }
         }
         TxnOutput::Replayed(Ok(answer)) => normalize_answer(answer),
@@ -633,8 +744,8 @@ impl Oracle {
             org,
             org_db,
             mem: mem.clone(),
-            native: WorkService::new(native, clock, "OFFICE1"),
-            reference: WorkService::new(mem, TestClock::at(T0), "OFFICE1"),
+            native: WorkService::new(PositionAudit::new(native), clock, "OFFICE1"),
+            reference: WorkService::new(PositionAudit::new(mem), TestClock::at(T0), "OFFICE1"),
             next: 400_000,
         }
     }
@@ -694,14 +805,36 @@ impl Oracle {
     }
     fn compare(&self) {
         let expected = self.mem.snapshot();
+        let native_positions = self.native.store().positions.lock().unwrap().clone();
+        let memory_positions = self.reference.store().positions.lock().unwrap().clone();
+        assert_eq!(native_positions.len(), expected.feed.len());
+        assert_eq!(memory_positions.len(), expected.feed.len());
+        let memory_event_positions: std::collections::BTreeMap<_, _> = expected
+            .feed
+            .iter()
+            .flat_map(|feed| {
+                let position = memory_positions[&feed.position.seq];
+                feed.refs
+                    .iter()
+                    .map(move |r| ((r.target_id.clone(), r.version), position))
+            })
+            .collect();
         self.db.read(|db| {
             let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
             let ids: Vec<String> = tx.prepare("SELECT id FROM work_items ORDER BY id").unwrap().query_map([], |r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
             assert_eq!(ids, expected.items.keys().cloned().collect::<Vec<_>>());
             for id in &ids {
                 assert_eq!(super::super::get(&tx, id)?, Some(expected.items[id].clone()));
-                let events: Vec<_> = super::super::event_records(&tx, id, 0)?.into_iter().map(|(_,e)|e).collect();
-                assert_eq!(events, expected.events[id]);
+                let records = super::super::event_records(&tx, id, 0)?;
+                let events: Vec<_> = records.into_iter().map(|(seq,mut event)| {
+                    assert_eq!(event.org_position,native_positions[&seq],"native persisted event uses its view");
+                    event.org_position=Position::default(); event
+                }).collect();
+                let want_events: Vec<_> = expected.events[id].iter().cloned().map(|mut event| {
+                    assert_eq!(event.org_position,memory_event_positions[&(event.target_id.clone(),event.version)],"memory persisted event uses its view");
+                    event.org_position=Position::default(); event
+                }).collect();
+                assert_eq!(events, want_events);
             }
             let results: Vec<String> = tx.prepare("SELECT change_id FROM work_change_results ORDER BY change_id").unwrap().query_map([], |r|r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
             assert_eq!(results, expected.results.keys().cloned().collect::<Vec<_>>());
@@ -719,6 +852,8 @@ impl Oracle {
             for ((seq, change, targets), want) in feeds.into_iter().zip(&expected.feed) {
                 assert_eq!(seq, want.position.seq);
                 assert_eq!(change, want.change_id);
+                assert_eq!(want.org_position,memory_positions[&want.position.seq]);
+                let native_position = native_positions[&seq];
                 // Feed targets are unique item ids; origin rows retain every event ref.
                 let target_ids: Vec<String> = serde_json::from_str(&targets).unwrap();
                 let mut seen = std::collections::BTreeSet::new();
@@ -727,7 +862,7 @@ impl Oracle {
                 let origin: Vec<(String,u64,u64,u64,u64,u64)> = tx.prepare("SELECT target_id,generation,version,org_epoch,org_seq,committed_at_ms FROM work_origin_log WHERE feed_seq=?1 ORDER BY origin_seq").unwrap().query_map([seq as i64], |r| Ok((r.get(0)?,r.get::<_,i64>(1)? as u64,r.get::<_,i64>(2)? as u64,r.get::<_,i64>(3)? as u64,r.get::<_,i64>(4)? as u64,r.get::<_,i64>(5)? as u64))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
                 assert_eq!(origin.len(), want.refs.len());
                 for (actual, reference) in origin.iter().zip(&want.refs) {
-                    assert_eq!(actual, &(reference.target_id.clone(), expected.items[&reference.target_id].generation, reference.version, want.org_position.epoch, want.org_position.seq, T0));
+                    assert_eq!(actual, &(reference.target_id.clone(), expected.items[&reference.target_id].generation, reference.version, native_position.epoch, native_position.seq, T0));
                 }
             }
             Ok(())
@@ -1221,13 +1356,20 @@ fn request_fixture_create_update_delete_and_global_numbering_match_native_ports(
             };
             events = vec![event];
         }
-        for backend in [w.native.store().as_ref() as &dyn WorkStore, w.mem.as_ref()] {
+        for backend in [
+            w.native.store() as &dyn WorkStore,
+            w.reference.store() as &dyn WorkStore,
+        ] {
             let item = item.clone();
             let events = events.clone();
             backend
                 .transact(Arc::new(move |view, txn| {
                     if version == 1 {
                         assert_eq!(txn.allocate_number(&NumberScope::Requests)?, 1);
+                    }
+                    let mut events = events.clone();
+                    for event in &mut events {
+                        event.org_position = view.applied_position()?;
                     }
                     txn.put_item(&item, &events)?;
                     txn.record_change(view.applied_position()?, &refs(&events), None)?;
@@ -1451,4 +1593,45 @@ fn sql_known_link_kind_constant_tracks_every_declared_serde_variant() {
         assert_ne!(kind, LinkKind::Unknown);
         assert_eq!(serde_json::to_value(kind).unwrap(), wire);
     }
+}
+
+#[test]
+fn oracle_keeps_independent_positions_when_only_native_org_advances() {
+    let mut w = Oracle::new(true);
+    let before = w.mem.org.lock().unwrap().position;
+    crate::store::org::work_view::tests::command(
+        &w.org_db,
+        "member.add_person",
+        json!({
+            "member_id":"01ARZ3NDEKTSV4RRFFQ69G5FAZ", "name":"Native later member"
+        }),
+    );
+    let native_position = w
+        .org_db
+        .read(crate::store::org::last_position)
+        .unwrap()
+        .unwrap();
+    assert_eq!(native_position.seq, before.seq + 1);
+    let first = w.task("project1");
+    w.task("project2");
+    crate::store::org::work_view::tests::command(
+        &w.org_db,
+        "member.add_person",
+        json!({
+            "member_id":"01ARZ3NDEKTSV4RRFFQ69G5FB0","name":"Native newest member"
+        }),
+    );
+    let newest = w
+        .org_db
+        .read(crate::store::org::last_position)
+        .unwrap()
+        .unwrap();
+    w.ok("task.update",json!({"item_id":first,"expected_version":w.version(&first),"title":"after next org commit"}));
+    assert_eq!(w.native.store().positions.lock().unwrap()[&3], newest);
+    assert_eq!(
+        w.native.store().positions.lock().unwrap()[&1],
+        native_position
+    );
+    assert_eq!(w.reference.store().positions.lock().unwrap()[&1], before);
+    assert_eq!(w.mem.snapshot().feed[0].org_position, before);
 }
