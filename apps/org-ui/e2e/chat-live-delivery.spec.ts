@@ -265,3 +265,133 @@ test('CHAT-1/13/33 BUG-66: channel, Search and history changes do not offer old 
 	expect(await take(page)).toEqual([]);
 	await shot(page, 'chat-live-history-search-silent');
 });
+
+for (const width of [1440, 960]) {
+	test(`CHAT-8 BUG-71: only the open Thread offers its Also-send delivery at ${width}px`, async ({ page }) => {
+		await open(page);
+		await page.setViewportSize({ width, height: 900 });
+		const main = page.getByTestId('message-list');
+		await main.getByTestId('replies-link').first().click();
+		const pane = page.getByTestId('thread-panel');
+		await expect(pane).toBeVisible();
+		await expect.poll(() => page.getByRole('region', { name: 'Conversation', exact: true, includeHidden: true }).evaluate((element) => (element as HTMLElement).inert)).toBe(width < 1280);
+		expect(await take(page)).toEqual([]);
+		await holdSend(page);
+		await pane.getByRole('checkbox', { name: 'Also send to #release-v1', exact: true }).check();
+		const body = `Also-send offer at ${width}px`;
+		await pane.getByTestId('composer').fill(body);
+		await pane.getByTestId('composer').press('Control+Enter');
+		await expect(pane.getByTestId('sending')).toBeVisible();
+		await expect(main.getByTestId('sending')).toHaveCount(1);
+		expect(await take(page)).toEqual([]);
+		await page.evaluate(() => window.releaseChatSend());
+		await expect(pane.getByTestId('sending')).toHaveCount(0);
+		await expect(main.getByTestId('sending')).toHaveCount(0);
+		const threadCopy = pane.getByTestId('message').filter({ hasText: body });
+		const channelCopy = main.getByTestId('message').filter({ hasText: body });
+		await expect(threadCopy).toHaveCount(1);
+		await expect(channelCopy).toHaveCount(1);
+		const id = await threadCopy.getAttribute('data-id');
+		expect(id).toBeTruthy();
+		expect(id!).not.toMatch(/^pending-/);
+		await expect(channelCopy).toHaveAttribute('data-id', id!);
+		const offers = await take(page);
+		expect.soft(offers).toHaveLength(1);
+		expect.soft(offers).toEqual([{ log: 'Thread messages', text: expect.stringContaining(body) }]);
+		if (width >= 1280) {
+			// live=off must keep the visual channel copy available for manual AT navigation.
+			await expect(main.getByRole('article').filter({ hasText: body })).toHaveCount(1);
+			await channelCopy.scrollIntoViewIfNeeded();
+			await shot(page, 'chat-also-send-both-visible-copies');
+			// A filter for all channel rows while any Thread is open would hide this offer.
+			const normal = 'A normal channel post with a Thread open';
+			const composer = page.getByRole('region', { name: 'Conversation', exact: true }).getByTestId('composer');
+			await composer.fill(normal);
+			await composer.press('Control+Enter');
+			await expect(main.getByTestId('sending')).toBeVisible();
+			expect(await take(page)).toEqual([]);
+			await page.evaluate(() => window.releaseChatSend());
+			await expect(main.getByTestId('sending')).toHaveCount(0);
+			await expect(main.getByTestId('message-body').filter({ hasText: normal })).toBeVisible();
+			expect(await take(page)).toEqual([{ log: 'Messages', text: expect.stringContaining(normal) }]);
+		}
+		await pane.getByRole('button', { name: 'Close thread', exact: true }).click();
+		await expect(pane).toHaveCount(0);
+		await expect(main.getByRole('article').filter({ hasText: body })).toHaveCount(1);
+		expect(await take(page)).toEqual([]);
+		await shot(page, `chat-also-send-${width}-closed`);
+	});
+}
+
+for (const context of ['closed', 'another Thread'] as const) {
+	test(`CHAT-8 BUG-71: a held Also-send reply reaches the channel with its Thread ${context}`, async ({ page }) => {
+		await open(page);
+		const main = page.getByTestId('message-list');
+		await main.getByTestId('replies-link').first().click();
+		const pane = page.getByTestId('thread-panel');
+		await expect(pane).toBeVisible();
+		await holdSend(page);
+		await pane.getByRole('checkbox', { name: 'Also send to #release-v1', exact: true }).check();
+		const body = `Deliver after context changed: ${context}`;
+		await pane.getByTestId('composer').fill(body);
+		await pane.getByTestId('composer').press('Control+Enter');
+		await expect(pane.getByTestId('sending')).toBeVisible();
+		expect(await take(page)).toEqual([]);
+		if (context === 'closed') {
+			await pane.getByRole('button', { name: 'Close thread', exact: true }).click();
+			await expect(pane).toHaveCount(0);
+		} else {
+			await main.getByTestId('handoff-card').getByRole('button', { name: 'Reply…', exact: true }).click();
+			await expect(pane).toContainText('Please review the store traits');
+			await expect(pane.getByTestId('sending')).toHaveCount(0);
+		}
+		expect(await take(page)).toEqual([]);
+		await page.evaluate(() => window.releaseChatSend());
+		await expect(main.getByTestId('sending')).toHaveCount(0);
+		await expect(main.getByRole('article').filter({ hasText: body })).toHaveCount(1);
+		expect(await take(page)).toEqual([{ log: 'Messages', text: expect.stringContaining(body) }]);
+		if (context !== 'closed') await expect(pane.getByTestId('message-body').filter({ hasText: body })).toHaveCount(0);
+		await shot(page, `chat-also-send-${context.replaceAll(' ', '-')}-delivery`);
+	});
+}
+
+for (const mode of ['muted', 'digest'] as const) {
+	test(`CHAT-8/11 BUG-71: an incoming Also-send copy in expanded ${mode} messages is offered only by Thread`, async ({ page }) => {
+		await page.clock.install();
+		await open(page);
+		const main = page.getByTestId('message-list');
+		const opener = main.getByTestId('replies-link').first();
+		const rootId = await opener.evaluate((element) => element.closest('[data-id]')!.getAttribute('data-id'));
+		expect(rootId).toBeTruthy();
+		await opener.click();
+		const pane = page.getByTestId('thread-panel');
+		await expect(pane).toBeVisible();
+		const kai = main.getByTestId('message').filter({ has: page.getByTestId('handoff-card') });
+		await kai.hover();
+		await kai.getByTestId('message-menu').click();
+		await page.getByRole('menuitem', { name: mode === 'muted' ? 'Mute Kai Lindqvist here' : 'Daily digest from Kai Lindqvist', exact: true }).click();
+		const group = main.getByTestId(mode === 'muted' ? 'muted-row' : 'digest-row');
+		await expect(group).toBeVisible();
+		await group.getByRole('button', { name: mode === 'muted' ? /muted.*Show/ : /^Daily digest · Kai Lindqvist/ }).click();
+		await expect(group.getByTestId('message')).not.toHaveCount(0);
+		await take(page); // Ignore the existing history expanded during fixture setup.
+		const body = `Incoming ${mode} Also-send reply`;
+		await page.evaluate(async ({ rootId, mode, body }) => {
+			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const { chatApi } = await import(path);
+			const snapshot = chatApi.snapshot.bind(chatApi);
+			chatApi.snapshot = async (id: string) => {
+				const result = await snapshot(id);
+				const incoming = { id: `incoming-${mode}`, conversation_id: 'c-release-v1', thread_root_id: rootId, also_in_channel: true, from: 'kai', kind: 'reply', body, created_at: new Date().toISOString() };
+				return { ...result, state: { ...result.state, seq: result.state.seq + 1, messages: [...result.state.messages, incoming] } };
+			};
+		}, { rootId, mode, body });
+		await page.clock.runFor(31_000); // The next office refresh delivers the agent's reply.
+		const channelCopy = group.getByRole('article').filter({ hasText: body });
+		await expect(channelCopy).toHaveAttribute('data-id', `incoming-${mode}`);
+		await expect(pane.getByTestId('message').filter({ hasText: body })).toHaveAttribute('data-id', `incoming-${mode}`);
+		expect(await take(page)).toEqual([{ log: 'Thread messages', text: expect.stringContaining(body) }]);
+		await channelCopy.scrollIntoViewIfNeeded();
+		await shot(page, `chat-also-send-expanded-${mode}`);
+	});
+}
