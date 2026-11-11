@@ -22,6 +22,25 @@ pub struct ZeroedReader {
     cap: usize,
 }
 
+/// Fixed-size handoff storage, wiped even when decoding or reception fails.
+pub(crate) struct SecretBuffer(pub Box<[u8]>);
+
+impl Drop for SecretBuffer {
+    fn drop(&mut self) {
+        wipe_bytes(&mut self.0);
+    }
+}
+
+fn wipe_bytes(bytes: &mut [u8]) {
+    #[cfg(test)]
+    WIPES.with(|w| w.set(w.get() + 1));
+    for byte in bytes {
+        // SAFETY: `byte` is a valid, aligned, exclusive reference into the buffer.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
 impl ZeroedReader {
     pub fn new(inner: File) -> Self {
         Self {
@@ -41,13 +60,7 @@ impl ZeroedReader {
 
     /// Overwrites the buffer with zeros (volatile writes, so they are not optimized away).
     pub fn wipe(&mut self) {
-        #[cfg(test)]
-        WIPES.with(|w| w.set(w.get() + 1));
-        for byte in &mut self.buf {
-            // SAFETY: `byte` is a valid, aligned, exclusive reference into the array.
-            unsafe { std::ptr::write_volatile(byte, 0) };
-        }
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        wipe_bytes(&mut self.buf);
         self.pos = 0;
         self.cap = 0;
     }
@@ -96,6 +109,30 @@ impl Drop for ZeroedReader {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_shared_wipe_overwrites_every_byte() {
+        let mut secret = [0xb3; 4096];
+        wipe_bytes(&mut secret);
+        assert!(secret.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn secret_storage_is_wiped_on_success_error_and_unwind() {
+        for outcome in 0..3 {
+            let before = WIPES.with(std::cell::Cell::get);
+            let result = std::panic::catch_unwind(|| {
+                let _buffer = SecretBuffer(vec![0xb3; 4096].into_boxed_slice());
+                match outcome {
+                    0 => Ok(()),
+                    1 => Err(()),
+                    _ => panic!("synthetic failure"),
+                }
+            });
+            assert_eq!(WIPES.with(std::cell::Cell::get), before + 1);
+            assert_eq!(result.is_err(), outcome == 2);
+        }
+    }
 
     fn reader_after_one_line() -> ZeroedReader {
         let mut file = tempfile::tempfile().unwrap();
