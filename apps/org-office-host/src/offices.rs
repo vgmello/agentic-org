@@ -208,6 +208,10 @@ impl Offices {
     /// `not_ready` (the office is still being created, or still being discarded at startup
     /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
     /// caller's code signature is checked before this.
+    #[cfg_attr(
+        not(all(feature = "test-support", debug_assertions)),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn app_token<R>(
         &self,
         office_id: &str,
@@ -239,6 +243,10 @@ impl Offices {
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
+    #[cfg_attr(
+        not(any(test, all(feature = "test-support", debug_assertions))),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
         self.wait_for_startup(Instant::now() + self.create_wait)?;
         self.settled_office(office_id)?;
@@ -330,6 +338,10 @@ impl Offices {
     /// and moved aside (`move_refused`), keeping its key. The error never holds a path. On
     /// success, `respond` queues the answer, inside the critical section that adds the
     /// organization (see [`Offices::add_created`]).
+    #[cfg_attr(
+        not(any(test, all(feature = "test-support", debug_assertions))),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn create_organization(
         &self,
         raw_name: &str,

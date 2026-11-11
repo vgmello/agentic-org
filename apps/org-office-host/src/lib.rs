@@ -432,7 +432,6 @@ impl Host {
             let service = Arc::new(Service::new(
                 Arc::clone(&offices),
                 broadcast,
-                app,
                 instance.as_ref().map(|i| i.id().to_owned()),
             ));
             Listener::start(bound, config, service).map_err(io("starting the listener"))
