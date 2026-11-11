@@ -379,6 +379,98 @@ fn b105_positive_connection_budget_precedes_tls_handshakes_and_releases_capacity
         });
 }
 
+#[test]
+fn real_http_listener_releases_the_permit_of_a_stalled_writer() {
+    real_listener_releases_stalled_writer(false);
+}
+
+#[test]
+fn real_https_listener_releases_the_permit_of_a_stalled_writer() {
+    real_listener_releases_stalled_writer(true);
+}
+
+fn real_listener_releases_stalled_writer(encrypted: bool) {
+    // B1-05 transport contract: a non-reading peer must not retain a connection
+    // forever. Exercise run_http's real TCP wrapper, also below the TLS layer.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let scheme = if encrypted { "https" } else { "http" };
+    let origin =
+        ConfiguredOrigin::parse(&format!("{scheme}://{}", listener.local_addr().unwrap())).unwrap();
+    let mode = if encrypted {
+        ListenMode::Https(Arc::new(
+            TlsCertificates::new(cert(b'a'), key(b'a')).unwrap(),
+        ))
+    } else {
+        ListenMode::HttpLoopback
+    };
+    let (entered, waiting) = mpsc::channel();
+    let large = Bytes::from(vec![b'x'; 32 * 1024 * 1024]);
+    let server = Running::start_serving(
+        listener,
+        mode,
+        origin,
+        HttpLimits {
+            connections: 1,
+            write_stall: Duration::from_millis(200),
+            ..HttpLimits::default()
+        },
+        move |request| {
+            let body = if request.uri().path() == "/stalled" {
+                entered.send(()).unwrap();
+                large.clone()
+            } else {
+                Bytes::from_static(b"second client served")
+            };
+            Response::new(Full::new(body))
+        },
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            trait TestIo: AsyncRead + AsyncWrite + Unpin {}
+            impl<T: AsyncRead + AsyncWrite + Unpin> TestIo for T {}
+            let connector = resuming_client();
+            let connect = || async {
+                let tcp = tokio::net::TcpStream::connect(server.address)
+                    .await
+                    .unwrap();
+                if encrypted {
+                    let tls = connector
+                        .connect(ServerName::try_from("gateway.test").unwrap(), tcp)
+                        .await
+                        .unwrap();
+                    Box::new(tls) as Box<dyn TestIo>
+                } else {
+                    Box::new(tcp) as Box<dyn TestIo>
+                }
+            };
+            let mut first = time::timeout(GUARD, connect()).await.unwrap();
+            first
+                .write_all(b"GET /stalled HTTP/1.1\r\nHost: gateway.test\r\n\r\n")
+                .await
+                .unwrap();
+            waiting.recv_timeout(GUARD).unwrap();
+            // Keep A open and never read it. B's handshake/response needs the
+            // sole permit, and must finish before any unrelated 10s deadline.
+            let response = time::timeout(Duration::from_secs(3), async {
+                let mut second = connect().await;
+                second.write_all(REQUEST).await.unwrap();
+                let mut response = Vec::new();
+                second.read_to_end(&mut response).await.unwrap();
+                response
+            })
+            .await
+            .expect("a non-reading first peer retained the connection permit");
+            assert!(response.starts_with(b"HTTP/1.1 200"));
+            assert_eq!(body(&response), b"second client served");
+            assert_eq!(server.calls.load(Ordering::Acquire), 2);
+            drop(first);
+        });
+}
+
 fn tls_request(address: SocketAddr, expected: u8) {
     let response = tls_exchange(address, expected, REQUEST);
     assert!(response.starts_with(b"HTTP/1.1 200"));
@@ -570,6 +662,23 @@ fn https_origin_on_a_different_port_is_refused_before_initialization() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = ConfiguredOrigin::parse("https://gateway.test").unwrap();
     assert_ne!(listener.local_addr().unwrap().port(), 443);
+    let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+    assert!(
+        matches!(run_http(listener, ListenMode::Https(certificates), origin,
+        HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
+    );
+}
+
+#[test]
+fn http_origin_on_an_https_listener_is_refused_before_initialization() {
+    // B1-05 headers spec, "Other headers", interim origin fit rules:
+    // "the scheme equals the mode". Refuse before application initialization.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = ConfiguredOrigin::parse(&format!(
+        "http://gateway.test:{}",
+        listener.local_addr().unwrap().port()
+    ))
+    .unwrap();
     let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
     assert!(
         matches!(run_http(listener, ListenMode::Https(certificates), origin,
