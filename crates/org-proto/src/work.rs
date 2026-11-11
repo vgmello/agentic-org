@@ -1333,7 +1333,8 @@ write_call!(
 /// `work.set_current`: sets (or, with `item` absent, clears) the bound agent's current task.
 /// It isn't an item change: no `change_id`, and its result is [`Empty`]. Errors: `not_found`,
 /// `invalid_request` (not a task; the caller isn't an agent; the caller isn't the task's
-/// assignee).
+/// assignee). Until work reads arrive, `item` must be a canonical uppercase ULID; references
+/// and short ids are refused with `invalid_request`.
 pub struct WorkSetCurrent;
 
 /// Params of `work.set_current`.

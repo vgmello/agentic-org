@@ -199,7 +199,6 @@ fn c1_work_port_maps_success_refusal_and_storage_without_leaking_details() {
 fn c1_leaves_later_work_calls_unknown_and_org_dispatch_unchanged() {
     let (shared, seen) = harness(Err("must not be called".into()));
     for method in [
-        "work.set_current",
         "work.get",
         "work.list",
         "work.snapshot",
@@ -243,4 +242,148 @@ fn c1_app_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
     }
     let params: TaskCreateParams = request("task.create", true).params::<TaskCreate>().unwrap();
     assert_eq!(params.title, "Title");
+}
+
+#[test]
+fn current_task_checks_binding_params_and_item_form_before_the_port() {
+    let id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+    for binding in [
+        Binding::Anonymous,
+        Binding::App,
+        member(false),
+        member(true),
+    ] {
+        for params in [
+            Value::Null,
+            json!(true),
+            json!({"item":5}),
+            json!({"item":""}),
+            json!({"item":"short"}),
+            json!({"item":id.to_lowercase()}),
+            json!({"item":"81ARZ3NDEKTSV4RRFFQ69G5FAZ"}),
+            json!({"item":id}),
+            json!({}),
+        ] {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&seen);
+            let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+            ports.current = Box::new(move |member, agent, item| {
+                recorded
+                    .lock()
+                    .unwrap()
+                    .push((member.to_owned(), agent, item.map(str::to_owned)));
+                Ok(Ok(()))
+            });
+            let shared = Shared::new(&test_info(), Path::new("/unused-current"), ports, token());
+            let req = Request {
+                id: 73,
+                method: "work.set_current".into(),
+                params: params.clone(),
+                principal: None,
+            };
+            let response = answer(&req, &shared, &mut binding.clone());
+            let valid =
+                params == Value::Null || params == json!({"item":id}) || params == json!({});
+            match binding {
+                Binding::Anonymous | Binding::App => assert_error(
+                    response,
+                    ErrorCode::NotBound,
+                    Some("bind as a member to set a current task"),
+                ),
+                _ if !valid => assert_error(response, ErrorCode::InvalidRequest, None),
+                Binding::Member { with_app_token, .. } => {
+                    assert_eq!(response.outcome, Outcome::Result(json!({})));
+                    assert_eq!(
+                        *seen.lock().unwrap(),
+                        vec![(
+                            "member-id".into(),
+                            !with_app_token,
+                            params
+                                .get("item")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        )]
+                    );
+                    continue;
+                }
+            }
+            assert!(seen.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn current_task_port_refusal_and_storage_error_preserve_the_wire_contract() {
+    for storage in [false, true] {
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.current = Box::new(move |_, _, _| {
+            if storage {
+                Err("PRIVATE-SQL-PATH".into())
+            } else {
+                Ok(Err(ApiError::new(ErrorCode::NotFound, "specific refusal")))
+            }
+        });
+        let shared = Shared::new(&test_info(), Path::new("/unused-current"), ports, token());
+        let req = Request {
+            id: 73,
+            method: "work.set_current".into(),
+            params: json!({}),
+            principal: None,
+        };
+        let response = answer(&req, &shared, &mut member(false));
+        if storage {
+            assert!(!serde_json::to_string(&response)
+                .unwrap()
+                .contains("PRIVATE"));
+            assert_error(response, ErrorCode::StorageError, None);
+        } else {
+            assert_error(response, ErrorCode::NotFound, Some("specific refusal"));
+        }
+    }
+}
+
+#[test]
+fn an_agent_sets_and_clears_a_current_task_and_who_carries_it_over_the_socket() {
+    use org_proto::work::{WorkSetCurrent, WorkSetCurrentParams};
+    let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+    let path = dir.path().join("s.sock");
+    let item = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+    let stored = Arc::new(Mutex::new(None::<String>));
+    let current = Arc::clone(&stored);
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.current = Box::new(move |member, agent, item| {
+        assert_eq!(member, REMY_ID);
+        assert!(agent);
+        *current.lock().unwrap() = item.map(str::to_owned);
+        Ok(Ok(()))
+    });
+    ports.who = Box::new(move |_| {
+        Ok(Ok(serde_json::from_value(json!({"members":[{
+        "id":REMY_ID,"name":"Remy","kind":"agent","presence":"offline","current_task_id":stored.lock().unwrap().clone()
+    }]})).unwrap()))
+    });
+    let shared = Arc::new(Shared::new(&test_info(), &path, ports, token()));
+    let (stop, server) = start(&path, &shared);
+    let mut client = Client::bound_as(&path, "remy");
+    assert!(matches!(
+        client.call::<WorkSetCurrent>(&WorkSetCurrentParams {
+            item: Some(item.into())
+        }),
+        Outcome::Result(_)
+    ));
+    let Outcome::Result(value) = who_ask(&mut client, json!({})) else {
+        panic!("who refused")
+    };
+    assert_eq!(value["members"][0]["current_task_id"], item);
+    assert!(matches!(
+        client.call::<WorkSetCurrent>(&WorkSetCurrentParams { item: None }),
+        Outcome::Result(_)
+    ));
+    let Outcome::Result(value) = who_ask(&mut client, json!({})) else {
+        panic!("who refused")
+    };
+    assert!(value["members"][0].get("current_task_id").is_none());
+    drop(client);
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
 }

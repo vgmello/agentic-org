@@ -311,6 +311,10 @@ fn serve_office(
             return fail_with(&mut control, &e);
         }
     };
+    let turns = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        String,
+        Arc<std::sync::Mutex<()>>,
+    >::new()));
     let shared = Arc::new(serve::Shared::new(
         &info,
         &socket,
@@ -346,13 +350,7 @@ fn serve_office(
             status: {
                 let office = Arc::clone(&office);
                 let live = Arc::clone(&live);
-                // One status call at a time for a member, so the events go out in the order the
-                // lines were set (two calls of one agent could otherwise publish out of commit
-                // order). Other members' calls do not wait for each other.
-                let turns = std::sync::Mutex::new(std::collections::HashMap::<
-                    String,
-                    Arc<std::sync::Mutex<()>>,
-                >::new());
+                let turns = Arc::clone(&turns);
                 Box::new(move |member, params| {
                     let turn = Arc::clone(
                         turns
@@ -365,10 +363,33 @@ fn serve_office(
                     let answer = office
                         .set_status(member, params)
                         .map_err(|e| logged("status", &e))?;
-                    if let Ok(set) = &answer {
-                        live.publish_presence(org_office::presence_after_status(member, set));
+                    if let Ok((set, current)) = &answer {
+                        live.publish_presence(org_office::presence_after_status(
+                            member,
+                            set,
+                            current.clone(),
+                        ));
                     }
-                    Ok(answer)
+                    Ok(answer.map(|(set, _)| set))
+                })
+            },
+            current: {
+                let office = Arc::clone(&office);
+                let live = Arc::clone(&live);
+                let turns = Arc::clone(&turns);
+                Box::new(move |member, agent, item| {
+                    let turn = Arc::clone(
+                        turns
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .entry(member.to_owned())
+                            .or_default(),
+                    );
+                    let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
+                    let answer = office
+                        .set_current(member, agent, item)
+                        .map_err(|e| logged("work.set_current", &e))?;
+                    Ok(answer.map(|event| live.publish_presence(event)))
                 })
             },
             live: Arc::clone(&live),

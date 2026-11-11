@@ -164,10 +164,11 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 6. **`member_status` (agent self-reported status lines in `office.db`, owned by `org-office` runtime)**
    - Stores each local agent's short status line set via `org-agent status "<text>"` so it survives local `org-server` restarts without polluting `org.db`'s permanent event log:
      - `member_id TEXT PRIMARY KEY`
-     - `status_text TEXT NOT NULL` ($\le 140$ chars / $256$ UTF-8 bytes, no control characters)
+     - `status_text TEXT` (nullable; $\le 140$ chars / $256$ UTF-8 bytes, no control characters)
      - `current_task_id TEXT` (optional, populated when working on a task)
      - `updated_at TEXT NOT NULL`
-     - `expires_at TEXT NOT NULL` (defaults to `updated_at + 8 hours`)
+     - `expires_at TEXT` (nullable; defaults to `updated_at + 8 hours`)
+   - Schema v6 requires `CHECK((status_text IS NULL) = (expires_at IS NULL))` and `CHECK(status_text IS NOT NULL OR current_task_id IS NOT NULL)`. Clearing or lapsing a line preserves its task; clearing both removes the row.
 
 7. **Integration with the Per-Origin Work Stream (`crates/org-sync`, owned by `ac-software-engineer-river`)**
    - Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (lines 74–79, 210–213), each office numbers every work change it originates from one monotonic counter `origin_seq` in the **same transaction** as the change.
