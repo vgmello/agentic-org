@@ -37,7 +37,7 @@ use org_office_launch::{
 use org_proto::location::{
     check_socket_path, default_office_home, office_socket_in, OFFICE_RUNTIME_DIR_ENV,
 };
-use org_proto::{AppToken, OfficeRole};
+use org_proto::{ApiError, AppToken, OfficeRole};
 
 use fdswap::ControlPipe;
 
@@ -285,6 +285,13 @@ fn serve_office(
         &info,
         &socket,
         serve::OfficePorts {
+            work: {
+                let office = Arc::clone(&office);
+                Box::new(move |caller, call| {
+                    let method = call.method();
+                    work_answer(method, office.work_call(caller, call))
+                })
+            },
             operation_get: {
                 let office = Arc::clone(&office);
                 Box::new(move |id| {
@@ -418,9 +425,27 @@ fn logged(what: &str, error: &OfficeError) -> String {
     error.to_string()
 }
 
+/// Map committed or remembered work answers at the server composition boundary.
+fn work_answer(
+    method: &str,
+    result: Result<org_work::TxnOutput, org_work::StoreError>,
+) -> Result<Result<org_proto::work::WorkAccepted, ApiError>, String> {
+    match result {
+        // C2 publishes changed; the committed parts remain in work_feed.
+        Ok(org_work::TxnOutput::Committed { accepted, .. }) => Ok(Ok(accepted)),
+        Ok(org_work::TxnOutput::Refused(error)) => Ok(Err(error)),
+        Ok(org_work::TxnOutput::Replayed(answer)) => Ok(answer),
+        Err(error) => {
+            eprintln!("org-server: {method} failed: {error}");
+            log_causes(&error);
+            Err(error.to_string())
+        }
+    }
+}
+
 /// The causes behind a storage failure (a path, the OS error, SQLite's text) belong in the log
 /// and not on the pipe or the socket; they never hold the key or the token.
-fn log_causes(error: &OfficeError) {
+fn log_causes(error: &dyn std::error::Error) {
     let mut cause = std::error::Error::source(error);
     while let Some(inner) = cause {
         eprintln!("org-server:   caused by: {inner}");
@@ -537,6 +562,43 @@ fn fail_code(error: &OfficeError) -> FailCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c1_production_work_adapter_preserves_committed_refused_and_replayed_answers() {
+        use org_proto::ErrorCode;
+        use org_work::{StoreError, TxnOutput};
+        let accepted: org_proto::work::WorkAccepted = serde_json::from_value(serde_json::json!({
+            "status":"committed", "position":{"incarnation":2,"seq":5}, "items":[]
+        }))
+        .unwrap();
+        let refusal = ApiError::new(ErrorCode::Conflict, "changed since version 1");
+        for result in [
+            TxnOutput::Committed {
+                accepted: accepted.clone(),
+                changed: vec![],
+            },
+            TxnOutput::Replayed(Ok(accepted.clone())),
+        ] {
+            assert_eq!(
+                work_answer("task.create", Ok(result)),
+                Ok(Ok(accepted.clone()))
+            );
+        }
+        for result in [
+            TxnOutput::Refused(refusal.clone()),
+            TxnOutput::Replayed(Err(refusal.clone())),
+        ] {
+            assert_eq!(
+                work_answer("task.create", Ok(result)),
+                Ok(Err(refusal.clone()))
+            );
+        }
+        let error = StoreError::new(std::io::Error::other("private database path and SQL"));
+        assert_eq!(
+            work_answer("task.create", Err(error)),
+            Err("the office could not read or write its work storage".into())
+        );
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()

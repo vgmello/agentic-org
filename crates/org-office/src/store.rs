@@ -16,14 +16,20 @@ pub(crate) mod messages;
 pub(crate) mod org;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "work capabilities are wired to RPC by slice C")
+    expect(
+        dead_code,
+        reason = "C2 feed reads and B1-14b replication consume the remaining origin APIs"
+    )
 )]
 pub(crate) mod origin;
 pub(crate) mod status;
 mod sync;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "work capabilities are wired to RPC by slice C")
+    expect(
+        dead_code,
+        reason = "A2 reads, B paging and C2 publication consume the remaining work APIs"
+    )
 )]
 pub(crate) mod work;
 
@@ -97,7 +103,13 @@ pub(crate) struct Store {
 }
 
 /// An org.db reader pinned for one work attempt. Failed or unwinding readers are discarded.
-#[cfg_attr(not(test), expect(dead_code, reason = "wired by work RPC slice C"))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "C1 writes use snapshots; B/C2 complete the work storage consumers"
+    )
+)]
 pub(crate) struct ReaderSnapshot<'a> {
     store: &'a Store,
     db: Option<Connection>,
@@ -313,7 +325,13 @@ impl Store {
     }
 
     /// Checks out an org.db reader and pins a deferred WAL snapshot with a table read.
-    #[cfg_attr(not(test), expect(dead_code, reason = "wired by work RPC slice C"))]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C1 writes use snapshots; B/C2 complete the work storage consumers"
+        )
+    )]
     pub(crate) fn read_snapshot(&self) -> Result<ReaderSnapshot<'_>, OfficeError> {
         let idle = self.idle_readers().pop();
         let db = match idle {

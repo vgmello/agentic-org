@@ -18,7 +18,8 @@ use super::{
 use crate::store::{Store, WriteJob};
 use crate::OfficeError;
 
-// Serde wire spellings, checked against the declaring macro and each typed variant.
+// Update LINK_KINDS when the org-proto exhaustive LinkKind inventory adds a known variant.
+// Serde wire spellings are pinned by the proto literal and each typed variant.
 const LINK_KINDS: &str =
     r#"["fixes","part_of","from_request","reported_from","relates_to","pays_back"]"#;
 

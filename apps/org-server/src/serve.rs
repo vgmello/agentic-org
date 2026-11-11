@@ -1,7 +1,7 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
 //! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
 //! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
-//! send; every other method is `unknown_method`. A `msg.wait` is held on a thread of its own
+//! send, and the work writes made as a bound member; other methods are `unknown_method`. A `msg.wait` is held on a thread of its own
 //! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the
 //! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
@@ -30,11 +30,13 @@ use org_proto::msg::{
     OFFICE_SENDER,
 };
 use org_proto::org::{CommandAccepted, TeamCreate};
+use org_proto::work::{TaskCreate, WorkAccepted};
 use org_proto::{AgentStatus, MemberKind};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
     OfficeStatus, OrgSnapshot, OrgSnapshotCall, Request, Response,
 };
+use org_work::{Caller, WorkCall};
 
 /// Reads the organization's snapshot (the office's `org_snapshot`), or says why it cannot.
 /// Availability is distinct from storage failure at the organization read boundary.
@@ -69,10 +71,14 @@ pub type StatusFn = Box<
         + Sync,
 >;
 
+pub type WorkFn =
+    Box<dyn Fn(Caller, WorkCall) -> Result<Result<WorkAccepted, ApiError>, String> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub submit: SubmitFn,
+    pub work: WorkFn,
     pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,
@@ -861,6 +867,43 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if let Some(response) = msg_calls::answer(request, &shared.ports.mailbox, binding.member()) {
         return response;
     }
+    match WorkCall::parse(request) {
+        Ok(None) => {}
+        parsed => {
+            let Binding::Member { id, with_app_token } = binding else {
+                return bind_error(
+                    request.id,
+                    ErrorCode::NotBound,
+                    "bind as a member to change work",
+                );
+            };
+            if WorkCall::is_app_only(request) && !*with_app_token {
+                return Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::NotAuthorized,
+                        format!("`{}` is for the app", request.method),
+                    ),
+                );
+            }
+            let call = match parsed {
+                Err(refusal) => return Response::error(request.id, refusal),
+                Ok(Some(call)) => call,
+                Ok(None) => unreachable!("unknown work method fell through"),
+            };
+            let caller = if *with_app_token {
+                Caller::app(id.as_str())
+            } else {
+                Caller::agent(id.as_str())
+            };
+            return match (shared.ports.work)(caller, call) {
+                Ok(Ok(accepted)) => Response::ok::<TaskCreate>(request.id, &accepted)
+                    .unwrap_or_else(|_| internal(request.id)),
+                Ok(Err(refusal)) => Response::error(request.id, refusal),
+                Err(_) => internal(request.id),
+            };
+        }
+    }
     // An organization command: read to tell it from an unknown method, but the caller is checked
     // BEFORE anything else is said about it (a bad param is not told to an anonymous client).
     match OrgCommand::parse(request) {
@@ -1139,6 +1182,7 @@ fn internal(id: u64) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod work;
     use std::io::BufReader;
     use std::sync::atomic::AtomicBool;
 
@@ -1719,6 +1763,7 @@ mod tests {
     fn ports(snapshot: SnapshotFn) -> OfficePorts {
         let (mailbox, directory) = messaging();
         OfficePorts {
+            work: Box::new(|_, _| Err("none".into())),
             operation_get: Box::new(|_| {
                 Ok(Err(ApiError::new(
                     ErrorCode::NotFound,
@@ -2146,6 +2191,7 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
+                work: Box::new(|_, _| Err("none".into())),
                 operation_get: Box::new(|_| {
                     Ok(Err(ApiError::new(
                         ErrorCode::NotFound,
@@ -2615,6 +2661,7 @@ mod tests {
                 &test_info(),
                 path,
                 OfficePorts {
+                    work: Box::new(|_, _| Err("none".into())),
                     operation_get: Box::new(|_| {
                         Ok(Err(ApiError::new(
                             ErrorCode::NotFound,
@@ -3075,6 +3122,7 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
+                work: Box::new(|_, _| Err("none".into())),
                 operation_get: Box::new(|_| {
                     Ok(Err(ApiError::new(
                         ErrorCode::NotFound,

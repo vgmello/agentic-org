@@ -12,13 +12,17 @@ fn v3_create_persists_instance_and_v2_open_leaves_it_untouched() {
     let office =
         Office::create_for_instance(&folder, &new_office(ID), key.clone(), INSTANCE).unwrap();
     assert_eq!(
-        meta(&office.local, "instance_id").unwrap().as_deref(),
+        meta(&office.stores.local, "instance_id")
+            .unwrap()
+            .as_deref(),
         Some(INSTANCE)
     );
     drop(office);
     let office = Office::open(&folder, key.clone()).unwrap();
     assert_eq!(
-        meta(&office.local, "instance_id").unwrap().as_deref(),
+        meta(&office.stores.local, "instance_id")
+            .unwrap()
+            .as_deref(),
         Some(INSTANCE)
     );
     drop(office);
@@ -79,27 +83,34 @@ fn v3_start_adopts_released_v1_through_v5_once_and_reopens() {
         let (_dir, key, folder) = legacy_instance_office(version, None);
         // A v2 open can migrate the schema but must never create the instance key.
         let office = Office::open(&folder, key.clone()).unwrap();
-        assert!(meta(&office.local, "instance_id").unwrap().is_none());
+        assert!(meta(&office.stores.local, "instance_id").unwrap().is_none());
         drop(office);
         // Use another genuine legacy fixture: v3 must adopt in the migration transaction,
         // rather than testing only a file already upgraded by the preceding v2 control.
         let (_legacy_dir, key, folder) = legacy_instance_office(version, None);
         let office = Office::open_for_instance(&folder, key.clone(), INSTANCE).unwrap();
         assert_eq!(
-            meta(&office.local, "instance_id").unwrap().as_deref(),
+            meta(&office.stores.local, "instance_id")
+                .unwrap()
+                .as_deref(),
             Some(INSTANCE)
         );
         assert_eq!(
-            meta(&office.local, "incarnation").unwrap().as_deref(),
+            meta(&office.stores.local, "incarnation")
+                .unwrap()
+                .as_deref(),
             Some("17")
         );
         drop(office);
         let office = Office::open_for_instance(&folder, key, INSTANCE).unwrap();
         assert_eq!(
-            meta(&office.local, "instance_id").unwrap().as_deref(),
+            meta(&office.stores.local, "instance_id")
+                .unwrap()
+                .as_deref(),
             Some(INSTANCE)
         );
         office
+            .stores
             .local
             .read(|db| {
                 assert_eq!(
@@ -189,7 +200,9 @@ fn v3_adoption_rolls_back_with_failed_upgrade_and_retry_can_adopt_another_instan
     drop(store);
     let office = Office::open_for_instance(&folder, key, OTHER_INSTANCE).unwrap();
     assert_eq!(
-        meta(&office.local, "instance_id").unwrap().as_deref(),
+        meta(&office.stores.local, "instance_id")
+            .unwrap()
+            .as_deref(),
         Some(OTHER_INSTANCE)
     );
 }
@@ -274,7 +287,9 @@ fn v2_open_preserves_an_unrecognized_instance_value_and_wrong_key_cannot_adopt()
     let (_dir, key, folder) = legacy_instance_office(5, Some("legacy-unrecognized-value"));
     let office = Office::open(&folder, key.clone()).unwrap();
     assert_eq!(
-        meta(&office.local, "instance_id").unwrap().as_deref(),
+        meta(&office.stores.local, "instance_id")
+            .unwrap()
+            .as_deref(),
         Some("legacy-unrecognized-value")
     );
     drop(office);
@@ -287,7 +302,9 @@ fn v2_open_preserves_an_unrecognized_instance_value_and_wrong_key_cannot_adopt()
     assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), before);
     let office = Office::open_for_instance(&folder, key, INSTANCE).unwrap();
     assert_eq!(
-        meta(&office.local, "instance_id").unwrap().as_deref(),
+        meta(&office.stores.local, "instance_id")
+            .unwrap()
+            .as_deref(),
         Some(INSTANCE)
     );
 }
@@ -366,7 +383,9 @@ fn v3_failed_create_removes_instance_binding_and_allows_a_different_retry() {
             Office::create_for_instance(&folder, &new_office(ID), test_key(), OTHER_INSTANCE)
                 .unwrap();
         assert_eq!(
-            meta(&office.local, "instance_id").unwrap().as_deref(),
+            meta(&office.stores.local, "instance_id")
+                .unwrap()
+                .as_deref(),
             Some(OTHER_INSTANCE)
         );
     }
