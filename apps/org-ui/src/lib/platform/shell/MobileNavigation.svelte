@@ -13,8 +13,7 @@
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let closingForNavigation = false;
-	let openedUrl = '';
-	let traversalDelta: number | undefined;
+	let traversal: { from: string; delta: number } | undefined;
 	let restoreFocusAt: string | undefined;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
@@ -24,7 +23,7 @@
 
 	beforeNavigate((navigation) => {
 		if (!open || navigation.type !== 'popstate' || (navigation.delta ?? 0) >= 0) return;
-		restoreFocusAt = openedUrl;
+		restoreFocusAt = traversal?.from ?? navigation.from?.url.href;
 		navigation.cancel();
 		open = false;
 	});
@@ -36,40 +35,54 @@
 			if (!open) return;
 			const from = navigation.currentEntry?.index ?? -1;
 			const to = event.destination.index;
-			traversalDelta = event.navigationType === 'traverse' && from >= 0 && to >= 0 ? to - from : undefined;
+			traversal = event.navigationType === 'traverse' && from >= 0 && to >= 0
+				? { from: window.location.href, delta: to - from }
+				: undefined;
 		}
 		navigation.addEventListener('navigate', rememberTraversal);
 		return () => navigation.removeEventListener('navigate', rememberTraversal);
 	});
 
-	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
-		if (!open || oldURL !== openedUrl) return;
-		const delta = traversalDelta ?? (window.navigation ? 0 : -1);
-		if (delta >= 0) return;
-		const from = new URL(oldURL);
-		const to = new URL(newURL);
-		if (from.pathname !== to.pathname || from.search !== to.search) return;
-		// Shallow fragment traversal can bypass the SvelteKit hook.
-		restoreFocusAt = openedUrl;
+	function returnFromBack(from: string, delta: number) {
+		restoreFocusAt = from;
 		window.history.go(-delta);
 		open = false;
 	}
 
-	function handleHistoryReturn() {
-		const url = restoreFocusAt;
-		restoreFocusAt = undefined;
-		if (url !== window.location.href) return;
-		// The browser can restore document focus as it returns to the original entry.
-		requestAnimationFrame(() => {
-			if (!open && trigger?.isConnected) focusNavigationControl();
-		});
+	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
+		if (!open) return;
+		const from = new URL(oldURL);
+		const to = new URL(newURL);
+		if (from.pathname !== to.pathname || from.search !== to.search) return;
+
+		// SvelteKit can update fragment history without invoking beforeNavigate.
+		if (traversal?.from === oldURL && traversal.delta < 0) {
+			returnFromBack(oldURL, traversal.delta);
+		} else if (!window.navigation && oldURL.includes('#') && !newURL.includes('#')) {
+			// A native hash addition always has a #. This handles Back to the unfragmented page.
+			returnFromBack(oldURL, -1);
+		}
+	}
+
+	function handlePopState(event: PopStateEvent) {
+		if (restoreFocusAt) {
+			const url = restoreFocusAt;
+			restoreFocusAt = undefined;
+			if (url !== window.location.href) return;
+			// The browser can restore document focus as it returns to the original entry.
+			requestAnimationFrame(() => {
+				if (!open && trigger?.isConnected) focusNavigationControl();
+			});
+		} else if (open && event.state === null && traversal && traversal.delta < 0) {
+			// A native fragment entry can lack SvelteKit state, even on a previous route.
+			returnFromBack(traversal.from, traversal.delta);
+		}
 	}
 
 	function menuOpenChanged(value: boolean) {
 		if (!value) return;
 		closingForNavigation = false;
-		openedUrl = window.location.href;
-		traversalDelta = undefined;
+		traversal = undefined;
 		restoreFocusAt = undefined;
 	}
 
@@ -116,7 +129,7 @@
 	}
 </script>
 
-<svelte:window onhashchange={handleFragmentChange} onpopstate={handleHistoryReturn} />
+<svelte:window onhashchange={handleFragmentChange} onpopstate={handlePopState} />
 
 <Sheet.Root bind:open onOpenChange={menuOpenChanged}>
 	<Sheet.Trigger bind:ref={trigger} aria-controls={menuId} class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[640px]:hidden">

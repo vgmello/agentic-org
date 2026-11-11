@@ -203,6 +203,68 @@ for (const legacy of [false, true]) {
 	});
 }
 
+test('BUG-59: Back keeps the fragment reached by Forward while Menu is open', async ({ page }) => {
+	await openOffices(page);
+	await page.setViewportSize({ width: 600, height: 900 });
+	for (const fragment of ['one', 'two']) {
+		await page.evaluate((value) => { window.location.hash = value; }, fragment);
+		await expect(page).toHaveURL(new RegExp(`#${fragment}$`));
+	}
+	await page.evaluate(() => window.history.back());
+	await expect(page).toHaveURL(/#one$/);
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	await expect(page).toHaveURL(/#two$/);
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect(dialog).not.toBeVisible();
+	await expect(page).toHaveURL(/#two$/);
+	await expect(menu).toBeFocused();
+	await shot(page, 'shell-menu-back-after-forward');
+});
+
+test('BUG-59: fragment Forward stays on the next entry without the Navigation API', async ({ page }) => {
+	await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
+	await openOffices(page);
+	await page.setViewportSize({ width: 600, height: 900 });
+	for (const fragment of ['one', 'two', 'three']) {
+		await page.evaluate((value) => { window.location.hash = value; }, fragment);
+		await expect(page).toHaveURL(new RegExp(`#${fragment}$`));
+	}
+	await page.evaluate(() => window.history.go(-2));
+	await expect(page).toHaveURL(/#one$/);
+	await page.getByRole('button', { name: 'Menu', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	await expect(page).toHaveURL(/#two$/);
+	await expect(dialog).toBeVisible();
+	await shot(page, 'shell-menu-fragment-forward');
+	await expect(page).toHaveURL(/#two$/);
+});
+
+test('BUG-59: Back dismisses Menu before a native fragment entry on a previous route', async ({ page }) => {
+	await createOrganization(page);
+	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+	await expect(page).toHaveURL(/\/agents#shell-page-title$/);
+	await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Offices', exact: true }).click();
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+	await page.setViewportSize({ width: 600, height: 900 });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect(dialog).not.toBeVisible();
+	await expect(page).toHaveURL(/\/offices$/);
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+	await expect(menu).toBeFocused();
+	await shot(page, 'shell-menu-back-to-previous-route-fragment');
+});
+
 test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
 	await page.setViewportSize({ width: 720, height: 450 });
 	await createOrganization(page);
