@@ -1674,8 +1674,9 @@ mod link_kind_inventory_test {
             LinkKind::PaysBack,
             LinkKind::Unknown,
         ];
-        let names: Vec<_> = kinds[..6]
+        let names: Vec<_> = kinds
             .iter()
+            .filter(|kind| **kind != LinkKind::Unknown)
             .map(|kind| serde_json::to_value(kind).unwrap())
             .collect();
         assert_eq!(
