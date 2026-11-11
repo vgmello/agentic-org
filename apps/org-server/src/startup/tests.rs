@@ -436,6 +436,22 @@ fn handoff_fault_child() {
         "early_fd" | "poison_fence"
     ));
     assert!(result.is_err(), "accepted malformed/faulted handoff");
+    assert_eq!(
+        control.failed_rights(),
+        matches!(
+            expected_case.as_str(),
+            "poison_fence"
+                | "early_fd"
+                | "ctrunc_header"
+                | "eof_header"
+                | "eof_marker"
+                | "zero_fds"
+                | "extra_fds"
+                | "ctrunc"
+                | "wrong_marker"
+        ),
+        "fatal receiver classification: {expected_case}"
+    );
     let error = result.err().unwrap();
     if expected_case == "bad_version" {
         assert!(matches!(
@@ -702,5 +718,133 @@ fn handoff_framing_uses_the_move_one_header_cap_vector() {
         }
         sender.join().unwrap();
         stdout_is_empty(output);
+    }
+}
+
+#[test]
+fn unparsed_drain_retries_interrupts_and_stops_at_eof_or_error() {
+    struct Script {
+        steps: std::collections::VecDeque<io::Result<usize>>,
+        reads: usize,
+    }
+    impl Read for Script {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.steps
+                .pop_front()
+                .expect("drain read after its terminal result")
+        }
+    }
+    for last in [Ok(0), Err(io::Error::from(io::ErrorKind::PermissionDenied))] {
+        let mut script = Script {
+            steps: std::collections::VecDeque::from([
+                Err(io::Error::from(io::ErrorKind::Interrupted)),
+                Ok(7),
+                last,
+            ]),
+            reads: 0,
+        };
+        drain(&mut script);
+        assert_eq!(script.reads, 3);
+        assert!(script.steps.is_empty());
+    }
+}
+
+#[test]
+fn lifetime_probe_child() {
+    let Ok(case) = std::env::var("KAI_LIFETIME_PROBE") else {
+        return;
+    };
+    let (mut stream, mut peer) = UnixStream::pair().unwrap();
+    let fence = Arc::new(Mutex::new(()));
+    let mut control = Control::new(
+        ControlPipe {
+            from_host: tempfile::tempfile().unwrap(),
+            to_host: tempfile::tempfile().unwrap(),
+        },
+        Arc::clone(&fence),
+    );
+    control.rendezvous = Some(stream.try_clone().unwrap());
+    control.receiver = Some(StreamReceiver::new(stream.try_clone().unwrap()));
+    let mut lifetime = control.lifetime().unwrap();
+    if case == "empty" {
+        peer.write_all(b"X").unwrap();
+        assert_eq!(lifetime.read(&mut []).unwrap(), 0);
+        drop(lifetime);
+        let mut byte = [0];
+        stream.read_exact(&mut byte).unwrap();
+        assert_eq!(byte, [b'X']);
+    } else if case == "poison" {
+        #[cfg(target_os = "macos")]
+        {
+            let original = Arc::clone(&fence);
+            assert!(std::thread::spawn(move || {
+                let _held = original.lock().unwrap();
+                panic!("poison original caller fence after handoff");
+            })
+            .join()
+            .is_err());
+            peer.shutdown(std::net::Shutdown::Write).unwrap();
+            let _ = lifetime.read(&mut [0]);
+            // A replacement fence would accept EOF and incorrectly reach exit0 below.
+        }
+        #[cfg(not(target_os = "macos"))]
+        panic!("poisoned receive/spawn fence is a macOS-only probe");
+    } else {
+        assert_eq!(case, "drop");
+        drop(control);
+        let _ = peer.write_all(b"X");
+        assert_eq!(lifetime.read(&mut [0]).unwrap(), 0);
+    }
+    std::process::exit(0);
+}
+
+#[test]
+fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(b"X").unwrap();
+    file.rewind().unwrap();
+    let mut pipe = Lifetime::Pipe(file);
+    assert_eq!(pipe.read(&mut []).unwrap(), 0);
+    let mut byte = [0];
+    assert_eq!(pipe.read(&mut byte).unwrap(), 1);
+    assert_eq!(byte, [b'X']);
+    for case in [
+        ("empty", 0),
+        ("drop", 0),
+        #[cfg(target_os = "macos")]
+        ("poison", 1),
+    ] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "startup::tests::lifetime_probe_child",
+                "--nocapture",
+            ])
+            .env("KAI_LIFETIME_PROBE", case.0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let start = std::time::Instant::now();
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if start.elapsed() > WAIT {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("lifetime probe hung: {}", case.0);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.code() == Some(case.1),
+            "{}: {:?} {}",
+            case.0,
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

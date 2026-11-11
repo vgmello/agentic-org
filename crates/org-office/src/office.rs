@@ -207,8 +207,7 @@ impl Office {
     }
 
     /// Creates a v3 office bound to the selected instance (X-02 §5.4).
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2"))]
-    pub(crate) fn create_for_instance(
+    pub fn create_for_instance(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
         key: Key,
@@ -294,8 +293,7 @@ impl Office {
     }
 
     /// Opens a v3 office, adopting its instance only for a pre-v3 office (X-02 §5.4).
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2"))]
-    pub(crate) fn open_for_instance(
+    pub fn open_for_instance(
         folder: impl Into<PathBuf>,
         key: Key,
         instance: &str,

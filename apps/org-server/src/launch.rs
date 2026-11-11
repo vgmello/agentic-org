@@ -7,7 +7,6 @@ use org_office_launch::{
 };
 use org_proto::{OfficeRole, RecoveryCode};
 
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 pub(super) struct Create {
     pub office: NewOffice,
     pub role: OfficeRole,
@@ -19,20 +18,17 @@ pub(super) struct Create {
     pub _recovery: CreationRecovery,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 pub(super) enum CreationRecovery {
     Legacy,
     V3 { _code: RecoveryCode },
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 pub(super) struct OfficeIdentity {
     pub office_id: String,
     pub instance_id: String,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 pub(super) enum Launch {
     Create(Create),
     Start {
@@ -46,7 +42,6 @@ pub(super) enum Launch {
     },
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 impl Launch {
     pub fn from_request(request: Request) -> Result<Self, LaunchError> {
         Ok(match request {

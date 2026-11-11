@@ -132,27 +132,6 @@ fn db_key() -> DbKey {
 /// The key as the line carries it, to look for in logs.
 const DB_KEY_HEX: &str = "b3b3b3b3";
 
-#[test]
-fn staged_v3_transport_has_not_activated_the_live_worker() {
-    // X-02 2a.3.2b.1 is transport-only. Activation is the separately reviewed b.2 cut.
-    let world = World::new();
-    let mut run = world.spawn(&["--create"]);
-    run.stdin
-        .as_mut()
-        .unwrap()
-        .write_all(b"{\"v\":3,\"op\":\"create\"}\n")
-        .unwrap();
-    assert!(matches!(
-        run.event(),
-        ServerEvent::Failed {
-            code: FailCode::UnsupportedVersion,
-            ..
-        }
-    ));
-    assert!(!run.wait().success());
-    assert!(!world.folder(OFFICE).exists());
-}
-
 fn create_message() -> HostMessage {
     HostMessage::Create(CreateOffice {
         org_id: ORG.into(),
@@ -1732,3 +1711,6 @@ fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
     drop(agent);
     assert!(again.host_goes_away().success());
 }
+
+#[path = "launch/v3_activation.rs"]
+mod v3_activation;
