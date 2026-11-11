@@ -257,6 +257,7 @@ mod tests {
             "https://EXAMPLE.TEST",
             "https://example.test.",
             "https://example..test",
+            "https://a!b.test",
             "https://bücher.example",
             "http://127.0.0.1:80/",
             "https://example.test:443",
@@ -267,6 +268,7 @@ mod tests {
             "http://0177.0.0.1:4321",
             "http://127.000.000.001:4321",
             "https://foo.123",
+            "https://foo.0x",
             "http://[0:0:0:0:0:0:0:1]:4321",
             "https://[2001:DB8::1]",
             "https://[::ffff:127.0.0.1]",
@@ -275,6 +277,20 @@ mod tests {
         ] {
             assert!(ConfiguredOrigin::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn dns_name_and_label_lengths_match_the_listen_origin_contract() {
+        let full_label = "a".repeat(63);
+        let origin = |last: usize| {
+            format!(
+                "https://{full_label}.{full_label}.{full_label}.{}",
+                "b".repeat(last)
+            )
+        };
+        assert!(ConfiguredOrigin::parse(&origin(61)).is_ok());
+        assert!(ConfiguredOrigin::parse(&origin(62)).is_err());
+        assert!(ConfiguredOrigin::parse(&format!("https://{}a.test", full_label)).is_err());
     }
 
     #[test]
@@ -288,7 +304,9 @@ mod tests {
             "https://example.test?x=1",
             "https://example.test/#x",
             "http://127.0.0.1:0",
+            "https://example.test:65536",
             "https://example.test:99999",
+            "https://",
             "https://example.test:+443",
             "https://example.test:-1",
             "https://example.test:abc",

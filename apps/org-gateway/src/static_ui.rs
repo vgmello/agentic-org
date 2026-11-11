@@ -545,10 +545,16 @@ mod tests {
             "localhost",
             "LOCALHOST",
             "localhost.",
+            "localhost:8443",
+            "x.localhost",
             "x.localhost:8443",
+            "127.0.0.1",
             "127.0.0.1:8443",
             "[::1]",
+            "[::1]:8443",
             "192.168.1.10",
+            "192.168.1.10:8443",
+            "[fd00::1]",
             "[fd00::1]:8443",
         ] {
             assert!(!hsts_eligible(true, authority), "{authority}");
