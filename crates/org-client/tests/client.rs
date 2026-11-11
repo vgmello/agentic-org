@@ -828,15 +828,27 @@ fn a_second_subscribe_is_refused_and_the_first_keeps_working() {
 
 #[test]
 fn when_the_reader_gives_up_the_socket_is_closed_so_the_server_is_told() {
-    let server = fake(|mut peer| {
+    let (disconnected, wait_for_disconnect) = mpsc::channel();
+    let server = fake(move |mut peer| {
         use std::io::{Read, Write};
+        // Register the call before rejecting its frame. A call started after `closed` is set
+        // may return before the shutdown owner finishes; a pending call is woken after it.
+        let request = peer.next_request().unwrap();
+        assert_eq!(request.method, "hello");
         peer.stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         // A "line" longer than the protocol allows, with no newline: the client can't stay
         // in step after it.
         let _ = peer.stream.write_all(&vec![b'a'; MAX_FRAME_BYTES + 10]);
-        // Drain what the client sent (its own request), then expect the end of the stream.
+        // BUG-77: the peer used to enter read while the reader thread was closing. On
+        // macOS that blocked read sometimes timed out even though an immediate nonblocking
+        // read returned EOF (10/2000 real socket probes). Observe the pending call's
+        // disconnect first, so this read starts after shutdown, without a larger timeout.
+        wait_for_disconnect
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        // Drain any remaining bytes, then expect the end of the stream.
         // A reset also counts as closed; only a read that times out means it stayed open.
         let mut sink = [0u8; 64];
         loop {
@@ -858,6 +870,7 @@ fn when_the_reader_gives_up_the_socket_is_closed_so_the_server_is_told() {
         matches!(result, Err(ClientError::Disconnected)),
         "{result:?}"
     );
+    disconnected.send(()).unwrap();
     server.finish();
     drop(client);
 }
