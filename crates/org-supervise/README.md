@@ -145,9 +145,11 @@ reading identity and rejects mount crossings when opening process records.
 It verifies that the environment read covers the entire procfs address range. It retains the pidfds
 through a scan, rechecks credentials and mark evidence before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd
-operations fail recovery. A zombie group leader with live worker threads
-remains unresolved if its mark is unreadable. The pidfd reports exit of the
-whole thread group and leaves status available to the owner.
+operations fail recovery. A recorded or checkpointed zombie group leader with
+live worker threads remains unresolved if its mark is unreadable. A mark-only
+record can complete with an S0 warning when no saved identity associates the
+workers with the record. The pidfd reports whole-thread-group exit and leaves
+status available to the owner.
 
 On macOS, the adapter enumerates same-real-UID processes through
 `KERN_PROC_RUID`, reads start identity and credentials through libproc, and

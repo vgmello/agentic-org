@@ -275,18 +275,23 @@ impl RecoveryProcesses for NativeRecovery {
             }
             Ok(())
         })();
-        if exited(&pin.fd, None)? {
+        check_time(deadline)?;
+        let gone = exited(&pin.fd, None);
+        check_time(deadline)?;
+        if gone? {
             return Ok(SignalOutcome::Gone);
         }
         verified?;
         check_time(deadline)?;
-        match send(
+        let result = send(
             &pin.fd,
             match signal {
                 RecoverySignal::Terminate => libc::SIGTERM,
                 RecoverySignal::Kill => libc::SIGKILL,
             },
-        ) {
+        );
+        check_time(deadline)?;
+        match result {
             Ok(()) => Ok(SignalOutcome::Signalled),
             Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(SignalOutcome::Gone),
             Err(err) => Err(err),
@@ -382,8 +387,10 @@ fn parse_stat(bytes: &[u8], pid: u32) -> io::Result<Stat> {
         return Err(invalid("invalid proc stat state"));
     }
     let parent = number(next()?)?;
-    let group = number(next()?)?;
-    let session = number(next()?)?;
+    // The kernel leaves these hints at -1 if signal state disappears during reaping.
+    let hint = |field: &[u8]| if field == b"-1" { Ok(0) } else { number(field) };
+    let group = hint(next()?)?;
+    let session = hint(next()?)?;
     let started = number(
         fields
             .nth(15)
@@ -894,14 +901,26 @@ mod tests {
         assert!(validate_mountinfo(bind, 42).is_err());
     }
 
-    #[test]
-    fn stat_uses_the_last_parenthesis_and_only_decodes_numeric_fields() {
-        let mut bytes =
-            b"42 (\xff) a process) S 13 41 44 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 789".to_vec();
+    fn stat_row(prefix: &[u8]) -> Vec<u8> {
+        let mut bytes = prefix.to_vec();
+        bytes.extend_from_slice(b" 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 789");
         for _ in 23..50 {
             bytes.extend_from_slice(b" 0");
         }
         bytes.extend_from_slice(b" 4096 4128 0\n");
+        bytes
+    }
+
+    #[test]
+    fn stat_accepts_missing_group_and_session_hints_during_reaping() {
+        let stat = parse_stat(&stat_row(b"42 (exiting) Z 0 -1 -1"), 42).unwrap();
+        assert_eq!((stat.group, stat.session), (0, 0));
+        assert!(stat.zombie);
+    }
+
+    #[test]
+    fn stat_uses_the_last_parenthesis_and_only_decodes_numeric_fields() {
+        let bytes = stat_row(b"42 (\xff) a process) S 13 41 44");
         assert_eq!(
             parse_stat(&bytes, 42).unwrap(),
             Stat {

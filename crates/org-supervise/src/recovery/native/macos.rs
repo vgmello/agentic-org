@@ -11,6 +11,7 @@ use super::{
 };
 
 // SDK sys/proc_info.h.
+const PROC_FLAG_TRACED: u32 = 2;
 const PROC_FLAG_LP64: u32 = 0x10;
 const PROC_FLAG_PSUGID: u32 = 0x2000;
 const MAX_LISTED_PIDS: usize = 131_072;
@@ -283,11 +284,9 @@ impl RecoveryProcesses for NativeRecovery {
                 && same_identity(&parent_before, &parent_after)
                 && safe_credentials(&parent_before, self.context.uid)
                 && safe_credentials(&parent_after, self.context.uid)
-                && same_identity(initial_child, &child)
-                && child.pbi_ppid == parent_pid
+                && observed_parent_pid(initial_child, &child) == Some(parent_pid)
                 && !is_zombie(&parent_before)
                 && !is_zombie(&parent_after)
-                && !is_zombie(&child)
             {
                 row.parent = Some(self.identity(&parent_after));
             }
@@ -321,7 +320,9 @@ impl RecoveryProcesses for NativeRecovery {
                 "signal target is not in the current native capture",
             ));
         }
-        let Some(before) = bsd_info(identity.pid)? else {
+        let before = bsd_info(identity.pid);
+        check_time(deadline)?;
+        let Some(before) = before? else {
             return Ok(SignalOutcome::Gone);
         };
         if !live_matches(&before, identity) {
@@ -331,7 +332,9 @@ impl RecoveryProcesses for NativeRecovery {
             return Err(unsafe_target());
         }
         let mark = self.mark(&before, deadline)?;
-        let Some(after) = bsd_info(identity.pid)? else {
+        let after = bsd_info(identity.pid);
+        check_time(deadline)?;
+        let Some(after) = after? else {
             return Ok(SignalOutcome::Gone);
         };
         if !live_matches(&after, identity) {
@@ -360,15 +363,18 @@ impl RecoveryProcesses for NativeRecovery {
         // SAFETY: this positive individual PID was just checked against the authorized
         // identity and credentials. For a non-child, reuse in this remaining interval
         // is a documented limit of macOS's numeric signal interface.
-        if unsafe { libc::kill(identity.pid as libc::pid_t, signal) } == 0 {
-            return Ok(SignalOutcome::Signalled);
-        }
-        let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            Ok(SignalOutcome::Gone)
+        let result = if unsafe { libc::kill(identity.pid as libc::pid_t, signal) } == 0 {
+            Ok(SignalOutcome::Signalled)
         } else {
-            Err(err)
-        }
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::ESRCH) {
+                Ok(SignalOutcome::Gone)
+            } else {
+                Err(err)
+            }
+        };
+        check_time(deadline)?;
+        result
     }
 
     fn wait_exited(&mut self, identity: &ProcessIdentity, deadline: Instant) -> io::Result<bool> {
@@ -529,6 +535,16 @@ fn same_identity(first: &libc::proc_bsdinfo, second: &libc::proc_bsdinfo) -> boo
         && first.pbi_start_tvusec == second.pbi_start_tvusec
 }
 
+fn observed_parent_pid(initial: &libc::proc_bsdinfo, current: &libc::proc_bsdinfo) -> Option<u32> {
+    // XNU temporarily reports an attaching debugger as the tracee's parent.
+    // Both observations must show ordinary process ancestry.
+    (same_identity(initial, current)
+        && !is_zombie(current)
+        && (initial.pbi_flags | current.pbi_flags) & PROC_FLAG_TRACED == 0
+        && initial.pbi_ppid == current.pbi_ppid)
+        .then_some(current.pbi_ppid)
+}
+
 fn is_zombie(info: &libc::proc_bsdinfo) -> bool {
     info.pbi_status == libc::SZOMB
 }
@@ -637,6 +653,20 @@ mod tests {
     use crate::recovery::MarkEvidence;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn debugger_parent_is_not_process_ancestry() {
+        // SAFETY: proc_bsdinfo is a plain C record containing integer fields and arrays.
+        let mut child: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        child.pbi_pid = 56;
+        child.pbi_ppid = 54;
+        child.pbi_start_tvsec = 12;
+        let mut traced = child;
+        traced.pbi_flags = super::PROC_FLAG_TRACED;
+        assert_eq!(super::observed_parent_pid(&child, &child), Some(54));
+        assert_eq!(super::observed_parent_pid(&child, &traced), None);
+        assert_eq!(super::observed_parent_pid(&traced, &child), None);
+    }
 
     #[test]
     fn process_list_rejects_partial_records_and_missing_supervisor() {
