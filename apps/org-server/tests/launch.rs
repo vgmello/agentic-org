@@ -3,7 +3,8 @@
 //! on the first line (key custody), so there is no key store here and no test can touch a
 //! Keychain: the server has no Keychain code.
 
-use std::io::BufReader;
+use std::io::{BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -15,7 +16,7 @@ use org_office_launch::{
     HostMessage, OfficeFile, ServerEvent, StartOffice,
 };
 use org_proto::location::office_socket_path;
-use org_proto::{AppToken, DbKey, OfficeRole};
+use org_proto::{frame, AppToken, DbKey, OfficeRole};
 use tempfile::TempDir;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
@@ -219,6 +220,165 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
     let status = run.host_goes_away();
     assert!(status.success(), "{status:?}");
     assert!(!socket(&world).exists(), "the socket file was left behind");
+}
+
+#[test]
+fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
+    let world = World::new();
+    let mut run = create(&world);
+    let mut peer = UnixStream::connect(socket(&world)).unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    peer.set_write_timeout(Some(WAIT)).unwrap();
+    // Use the wire format so an older worker cannot silently turn this into hello {}.
+    peer.write_all(
+        concat!(
+            "{\"id\":1,\"method\":\"hello\",\"params\":{\"api\":{\"min\":99,\"max\":99}}}\n",
+            "{\"id\":2,\"method\":\"hello\",\"params\":{}}\n",
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+
+    let mut reader = BufReader::new(peer);
+    assert_unsupported_version_and_closed(&mut reader, 1);
+
+    assert_eq!(hello(&world).office.id, OFFICE);
+    assert!(run.host_goes_away().success());
+}
+
+#[test]
+fn srv_32_legacy_first_call_locks_the_socket_to_version_one() {
+    let world = World::new();
+    let mut run = create(&world);
+    let mut peer = UnixStream::connect(socket(&world)).unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    peer.set_write_timeout(Some(WAIT)).unwrap();
+    peer.write_all(
+        concat!(
+            "{\"id\":1,\"method\":\"org.snapshot\",\"params\":{}}\n",
+            "{\"id\":2,\"method\":\"hello\",\"params\":{\"api\":{\"min\":1,\"max\":2}}}\n",
+            "{\"id\":3,\"method\":\"hello\",\"params\":{\"api\":{\"min\":2,\"max\":2}}}\n",
+            "{\"id\":4,\"method\":\"hello\",\"params\":{}}\n",
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+
+    let mut reader = BufReader::new(peer);
+    let first = frame::read_message::<serde_json::Value>(&mut reader)
+        .unwrap()
+        .expect("the legacy request must reach normal authorization");
+    assert_eq!(first["id"], 1);
+    assert_eq!(first["error"]["code"], "not_authorized");
+    let compatible = frame::read_message::<serde_json::Value>(&mut reader)
+        .unwrap()
+        .expect("the next hello still has a common version");
+    assert_eq!(compatible["id"], 2);
+    assert_eq!(compatible["result"]["api_version"], 1);
+    assert_unsupported_version_and_closed(&mut reader, 3);
+
+    assert_eq!(hello(&world).office.id, OFFICE);
+    assert!(run.host_goes_away().success());
+}
+
+fn assert_unsupported_version_and_closed(reader: &mut BufReader<UnixStream>, request_id: u64) {
+    let refusal = frame::read_message::<serde_json::Value>(reader)
+        .unwrap()
+        .expect("version refusal must precede closure");
+    assert_eq!(refusal["id"], request_id);
+    assert_eq!(refusal["error"]["code"], "unsupported_version");
+    assert!(refusal.get("result").is_none());
+    match frame::read_message::<serde_json::Value>(reader) {
+        Ok(None) => {}
+        Err(frame::FrameError::Io(error))
+            if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        other => panic!("expected closure after the refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
+    let world = World::new();
+    let mut run = create(&world);
+    let cases = [
+        serde_json::json!({"api": []}),
+        serde_json::json!({"api": "2"}),
+        serde_json::json!({"api": {"min": 0, "max": 1}}),
+        serde_json::json!({"api": {"min": 2, "max": 1}}),
+        serde_json::json!({"api": {"min": 1.5, "max": 2}}),
+        serde_json::json!({"api": {"min": -1, "max": 2}}),
+        serde_json::json!({"api": {"min": 1, "max": 4294967296_u64}}),
+        serde_json::json!({"api": {"min": 1}}),
+        serde_json::json!({"api": {"max": 1}}),
+        serde_json::json!({"api": {"min": 1, "max": 1, "extra": true}}),
+        serde_json::json!({"client": null}),
+        serde_json::json!({"client": 7}),
+    ];
+    for params in cases {
+        let mut peer = UnixStream::connect(socket(&world)).unwrap();
+        peer.set_read_timeout(Some(WAIT)).unwrap();
+        peer.set_write_timeout(Some(WAIT)).unwrap();
+        frame::write_message(
+            &mut peer,
+            &serde_json::json!({"id": 1, "method": "hello", "params": params}),
+        )
+        .unwrap();
+        let mut reader = BufReader::new(peer);
+        let refusal = frame::read_message::<serde_json::Value>(&mut reader)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refusal["id"], 1);
+        assert_eq!(refusal["error"]["code"], "invalid_request", "{params}");
+        assert!(refusal.get("result").is_none(), "{params}");
+        // A malformed offer doesn't poison the service or replace a valid legacy hello.
+        frame::write_message(
+            reader.get_mut(),
+            &serde_json::json!({"id": 2, "method": "hello", "params": {}}),
+        )
+        .unwrap();
+        let next = frame::read_message::<serde_json::Value>(&mut reader)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next["id"], 2);
+        assert_eq!(next["result"]["api_version"], 1);
+    }
+    assert!(run.host_goes_away().success());
+}
+
+#[test]
+fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
+    let world = World::new();
+    let mut run = create(&world);
+    let mut peer = UnixStream::connect(socket(&world)).unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    peer.set_write_timeout(Some(WAIT)).unwrap();
+    let mut reader = BufReader::new(peer);
+    for (id, params) in [
+        (1, serde_json::json!({"api": null, "future_hint": true})),
+        (
+            2,
+            serde_json::json!({"api": {"min": 1, "max": 2}, "client": "test"}),
+        ),
+        (3, serde_json::json!({})),
+    ] {
+        frame::write_message(
+            reader.get_mut(),
+            &serde_json::json!({"id": id, "method": "hello", "params": params}),
+        )
+        .unwrap();
+        let reply = frame::read_message::<serde_json::Value>(&mut reader)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply["id"], id);
+        assert_eq!(reply["result"]["api_version"], 1);
+    }
+    frame::write_message(
+        reader.get_mut(),
+        &serde_json::json!({"id": 4, "method": "hello", "params": {"api": {"min": 2, "max": 2}}}),
+    )
+    .unwrap();
+    assert_unsupported_version_and_closed(&mut reader, 4);
+    assert!(run.host_goes_away().success());
 }
 
 #[test]
