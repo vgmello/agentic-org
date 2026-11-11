@@ -254,3 +254,113 @@ test('BUG-70: primitives keep status words, caller roles and native list attribu
 	expect(await row.getAttribute('onclick')).toBeNull();
 	await shot(page, 'look-primitives-contracts', { context: fixture });
 });
+
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test('AGENT-3 BUG-70: flat roster keeps all states at ' + width + 'px and ' + scale * 100 + '% text', async ({ page }) => {
+		await open(page);
+		await page.setViewportSize({ width, height: 900 });
+		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
+		expect((await page.request.get('/e2e/fakes/org-api.ts')).status()).toBe(200);
+		const filters = page.getByRole('group', { name: 'Show agents', exact: true });
+		await filters.getByRole('button', { name: /^Former / }).press('Enter');
+		await expect(page.getByTestId('no-match')).toHaveText('No left agents.');
+		await expect(page.getByRole('table', { name: 'Agents', exact: true })).toHaveCount(0);
+
+		await shot(page, 'agents-flat-' + width + '-' + scale + '-no-match', { context: page.getByTestId('no-match') });
+		await page.setViewportSize({ width: 1440, height: 900 });
+
+		// Existing user flows provide real Paused/Former rows in the test-owned org.
+		await visit(page, '/org-chart');
+		await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
+		await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
+		await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
+		await page.locator('[data-testid=team-card][data-team=eng]').getByRole('button', { name: /^Sam Okafor/ }).click();
+		await page.getByTestId('selected-member').getByRole('button', { name: 'Offboard…' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+		await expect(page.getByText('Offboarded Sam Okafor.')).toBeVisible();
+		await visit(page, '/agents');
+		await page.setViewportSize({ width, height: 900 });
+		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
+		const table = page.getByRole('table', { name: 'Agents', exact: true });
+		const columns = ['Agent', 'Runs on', 'How it runs', 'Status', 'Now', 'Teams', 'Office', 'Reports to'];
+		await expect(filters.getByRole('button')).toHaveText(['All 7', 'Active 6', 'Paused 1', 'Former 1']);
+		for (const [name, count] of [['All', 7], ['Active', 6], ['Paused', 1], ['Former', 1]] as const) {
+			const filter = filters.getByRole('button', { name: new RegExp('^' + name + ' ') });
+			await filter.focus(); await filter.press('Enter');
+			await expect(filter).toBeFocused();
+			await expect(filter).toHaveAttribute('aria-pressed', 'true');
+			await expect(table.getByRole('columnheader')).toHaveText(columns);
+			await expect(table.getByTestId('agent-row')).toHaveCount(count);
+			const wrapper = table.locator('..');
+			expect.soft(await css(wrapper, 'background-color')).toBe('rgba(0, 0, 0, 0)');
+			expect.soft(await css(wrapper, 'border-radius')).toBe('0px');
+			expect.soft(await css(wrapper, 'border-top-width')).toBe('1px');
+			expect.soft(await css(wrapper, 'border-bottom-width')).toBe('1px');
+			expect.soft(await css(wrapper, 'overflow-x')).toBe('auto');
+			const cells = table.locator('tbody tr').first().locator('th, td');
+			await expect(cells).toHaveCount(8);
+			const padding = await cells.evaluateAll((cells) => cells.map((cell) => ({
+				top: parseFloat(getComputedStyle(cell).paddingTop), bottom: parseFloat(getComputedStyle(cell).paddingBottom)
+			})));
+			expect.soft(padding.map((p) => p.top)).toEqual(Array(8).fill(16 * scale));
+			expect.soft(padding.map((p) => p.bottom)).toEqual(Array(8).fill(16 * scale));
+			if (count > 1) expect.soft(await css(table.locator('tbody tr').first(), 'border-bottom-width')).toBe('1px');
+			// Badge transitions include padding; observe the settled size after changing root text size.
+			await expect.poll(async () => parseFloat(await css(table.getByTestId('agent-status').first(), 'padding-top'))).toBe(4 * scale);
+			if (name === 'All') await expect(table.locator('[data-agent=noor] td').nth(4)).toHaveText('Design, Web');
+			if (name === 'Former') await expect(cells.nth(5)).toHaveText('—');
+			if (name === 'Paused') await expect(table.getByTestId('agent-status')).toHaveText('Paused');
+			if (name === 'Former') await expect(table.getByTestId('agent-status')).toHaveText('Former');
+			await cells.first().scrollIntoViewIfNeeded();
+			await wrapper.evaluate((element) => { element.scrollLeft = 0; });
+			const readableFirst = await cells.first().evaluate((cell) => {
+				const box = cell.getBoundingClientRect();
+				const clip = cell.closest('table')!.parentElement!.getBoundingClientRect();
+				const text = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+				const glyphs: DOMRect[] = [];
+				while (text.nextNode()) {
+					if (!text.currentNode.textContent?.trim()) continue;
+					const range = document.createRange(); range.selectNodeContents(text.currentNode);
+					glyphs.push(...range.getClientRects());
+				}
+				return { count: glyphs.length, fits: glyphs.every((r) => r.left >= Math.max(0, box.left, clip.left) - 1 && r.right <= Math.min(innerWidth, box.right, clip.right) + 1) };
+			});
+			expect.soft(readableFirst.count).toBeGreaterThan(0);
+			expect.soft(readableFirst.fits).toBe(true);
+			expect.soft(await css(cells.first(), 'position')).not.toBe('sticky');
+			expect.soft(await css(wrapper, 'outline-style')).toBe('none');
+			// Exercise the conditional focusable case without adding a production tab stop.
+			const previousTabindex = await wrapper.getAttribute('tabindex');
+			await wrapper.evaluate((element) => element.setAttribute('tabindex', '0'));
+			await wrapper.evaluate((element) => (element as HTMLElement).focus({ preventScroll: true }));
+			await expect(wrapper).toBeFocused();
+			expect.soft(await css(wrapper, 'outline-style')).toBe('solid');
+			expect.soft(parseFloat(await css(wrapper, 'outline-width'))).toBeGreaterThanOrEqual(2);
+			expect.soft(await css(wrapper, 'outline-color')).toBe(await tokenColor(page, '--color-indigo-400'));
+			expect.soft(parseFloat(await css(wrapper, 'outline-offset'))).toBeLessThanOrEqual(0);
+			await shot(page, 'agents-flat-' + width + '-' + scale + '-' + name + '-left');
+			await filter.evaluate((element) => (element as HTMLElement).focus({ preventScroll: true }));
+			await wrapper.evaluate((element, previous) => {
+				if (previous === null) element.removeAttribute('tabindex'); else element.setAttribute('tabindex', previous);
+			}, previousTabindex);
+			await wrapper.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+			await shot(page, 'agents-flat-' + width + '-' + scale + '-' + name + '-right');
+			expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+		}
+		await filters.getByRole('button', { name: /^All / }).press('Enter');
+		const noor = table.locator('[data-agent=noor]');
+		const link = noor.getByRole('link', { name: 'Noor Haddad', exact: true });
+		await expect(link).toHaveAttribute('href', '/org-chart?member=noor');
+		await link.focus(); await link.press('Enter');
+		await expect(page).toHaveURL(/\/org-chart\?member=noor$/);
+		await expect(page.getByTestId('selected-member')).toContainText('Noor Haddad');
+		await page.goBack();
+		await expect(table.getByTestId('agent-row')).toHaveCount(7);
+		await visit(page, '/agents?org=empty');
+		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
+		await expect(page.getByTestId('no-agents')).toContainText('No agents yet');
+		await expect(table).toHaveCount(0);
+		await shot(page, 'agents-flat-' + width + '-' + scale + '-empty', { context: page.getByTestId('no-agents') });
+	});
+}
