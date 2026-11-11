@@ -436,6 +436,65 @@ fn native_work_events_are_immutable_even_through_raw_sql() {
     assert_eq!(read(&store, &item.id), Some(item));
 }
 
+#[test]
+fn native_work_replace_cannot_change_committed_events_or_feed() {
+    for recursive in [false, true] {
+        let (root, store) = fixture();
+        initialize_origin(&store);
+        let (item, events) = task_fixture(1, false);
+        let event = events[0].clone();
+        write(&store, item.clone(), events).unwrap();
+        let (other, other_events) = task_fixture(2, false);
+        assert_eq!(write(&store, other.clone(), other_events).unwrap(), 2);
+        store
+            .write(move |db| {
+                // Exercise SQLite's default as well as its recursive-delete trigger mode.
+                db.pragma_update(None, "recursive_triggers", recursive)
+                    .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        for mode in ["payload", "feed", "both", "identical"] {
+            let before = snapshot(&store);
+            let mut replacement = event.clone();
+            if mode == "payload" || mode == "both" {
+                replacement.at = "2026-11-12T01:02:03.004Z".into();
+                assert_ne!(replacement, event);
+            }
+            let seq = if mode == "feed" || mode == "both" {
+                2
+            } else {
+                1
+            };
+            let error = store.write(move |db| {
+                db.execute("INSERT OR REPLACE INTO work_events(target_id,version,feed_seq,data) VALUES (?1,?2,?3,?4)",
+                    params![replacement.target_id,replacement.version as i64,seq,serde_json::to_string(&replacement).unwrap()])
+                    .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            }).unwrap_err();
+            let OfficeError::Storage(cause) = error else {
+                panic!("expected immutable SQL constraint")
+            };
+            assert!(
+                matches!(cause.downcast_ref::<rusqlite::Error>(),Some(rusqlite::Error::SqliteFailure(code,_)) if code.extended_code==rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER)
+            );
+            assert_eq!(
+                snapshot(&store),
+                before,
+                "recursive={recursive}, mode={mode}"
+            );
+        }
+        let before = snapshot(&store);
+        drop(store);
+        let store = reopen(&root);
+        assert_eq!(snapshot(&store), before);
+        assert_eq!(read(&store, &item.id), Some(item.clone()));
+        assert_eq!(read(&store, &other.id), Some(other));
+        let (next, event) = advance(&item, &event);
+        assert_eq!(write(&store, next, vec![event]).unwrap(), 3);
+    }
+}
+
 fn seed_history(store: &Store) -> (StoredItem, WorkEvent) {
     let h = history();
     for (item, events) in &h.states[..4] {
@@ -1249,6 +1308,9 @@ fn native_work_schema_checks_keys_bounds_and_references_independently() {
                         "event-target-key" => event.target_id = org_work::ulid_from_parts(T0, 999),
                         "event-ver-key" => event.version = 3,
                         "event-duplicate" => {
+                            // Prove the primary key independently of the REPLACE guard.
+                            db.execute_batch("DROP TRIGGER work_events_no_replace")
+                                .map_err(OfficeError::storage)?;
                             version = 1;
                             event.version = 1;
                             seq = feed(db, std::slice::from_ref(&event))? as i64;

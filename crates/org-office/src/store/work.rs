@@ -33,6 +33,10 @@ pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<
                  AND json_extract(data, '$.version') IS version),
              PRIMARY KEY (target_id, version)
          ) STRICT, WITHOUT ROWID;
+         CREATE TRIGGER work_events_no_replace BEFORE INSERT ON work_events
+             WHEN EXISTS (SELECT 1 FROM work_events
+                 WHERE target_id = NEW.target_id AND version = NEW.version)
+             BEGIN SELECT RAISE(ABORT, 'work events are immutable'); END;
          CREATE TRIGGER work_events_no_update BEFORE UPDATE ON work_events
              BEGIN SELECT RAISE(ABORT, 'work events are immutable'); END;
          CREATE TRIGGER work_events_no_delete BEFORE DELETE ON work_events
