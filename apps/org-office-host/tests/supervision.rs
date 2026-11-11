@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use org_office_host::{Host, HostError};
 use org_office_launch::OfficeFile;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
+    Empty, ErrorCode, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
     OrganizationCreateParams, OrganizationList,
 };
 use serde_json::json;
@@ -471,7 +471,7 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for
     let started = Instant::now();
     let host = Host::start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
-    client.call::<Hello>(&Empty {}).unwrap();
+    client.call::<Hello>(&HelloParams::default()).unwrap();
     let offices = client.call::<OfficeList>(&Empty {}).unwrap().offices;
     assert_eq!(offices.len(), 1);
     assert!(

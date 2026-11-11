@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use org_office_host::{Config, Host, HostError};
 use org_proto::{
-    ApiError, Empty, ErrorCode, OfficeRestart, OfficeRestartParams, OfficeStatus,
-    OfficeStatusReason, OrganizationCreate, OrganizationCreateParams,
+    ApiError, ErrorCode, OfficeRestart, OfficeRestartParams, OfficeStatus, OfficeStatusReason,
+    OrganizationCreate, OrganizationCreateParams,
 };
 use serde_json::json;
 use support::{alive, eventually, hq, office_info, restart_host, Client, TestHome};
@@ -43,7 +43,9 @@ fn create(socket: &Path, name: &str) -> Result<org_proto::Organization, ApiError
 
 fn restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
     let mut client = Client::connect(socket);
-    client.call::<org_proto::Hello>(&Empty {}).unwrap();
+    client
+        .call::<org_proto::Hello>(&org_proto::HelloParams::default())
+        .unwrap();
     client
         .call::<OfficeRestart>(&OfficeRestartParams {
             office_id: office_id.into(),
