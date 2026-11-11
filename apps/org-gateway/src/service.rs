@@ -22,10 +22,14 @@ use crate::blocking::BlockingPool;
 use crate::body::{
     read_business_body, BodyError, BusinessBody, BODY_READ_TIMEOUT, MAX_BUSINESS_BODY_BYTES,
 };
+use crate::ingress::RequestAdmission;
 use crate::path::RequestPath;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
 use crate::{Hsts, StaticUi};
+
+#[cfg(test)]
+mod admission_tests;
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
 /// returning a business route. Credential routes use
@@ -204,16 +208,23 @@ pub struct GatewayConfig {
 
 struct Gateway<B> {
     ui: StaticUi,
+    admission: RequestAdmission,
     backend: Arc<B>,
     workers: BlockingPool,
     limits: ApiLimits,
 }
 
 impl<B: ApiBackend> Gateway<B> {
-    fn new(ui: StaticUi, backend: B, limits: ApiLimits) -> io::Result<Self> {
+    fn new(
+        ui: StaticUi,
+        backend: B,
+        limits: ApiLimits,
+        admission: RequestAdmission,
+    ) -> io::Result<Self> {
         limits.validate()?;
         Ok(Self {
             ui,
+            admission,
             backend: Arc::new(backend),
             workers: BlockingPool::new(limits.workers, limits.waiting_jobs, limits.waiting_bytes)?,
             limits,
@@ -228,7 +239,14 @@ impl<B: ApiBackend> Gateway<B> {
         let (parts, body) = request.into_parts();
         let head = parts.method == Method::HEAD;
         let unsupported_version = parts.version != hyper::Version::HTTP_11;
-        let mut response = if unsupported_version {
+        let mut response = if !self.admission.accepts_target_and_host(&parts) {
+            ApiReply::error(
+                StatusCode::BAD_REQUEST,
+                GatewayErrorCode::InvalidRequest,
+                "Invalid request authority or target.",
+            )
+            .into_http(head)
+        } else if unsupported_version {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
                 GatewayErrorCode::InvalidRequest,
@@ -243,6 +261,14 @@ impl<B: ApiBackend> Gateway<B> {
                     "Invalid request path.",
                 )
                 .into_http(head),
+                Ok(path) if path.is_api() && !self.admission.accepts_api_origin(&parts) => {
+                    ApiReply::error(
+                        StatusCode::FORBIDDEN,
+                        GatewayErrorCode::NotAuthorized,
+                        "Request origin is not authorized.",
+                    )
+                    .into_http(head)
+                }
                 Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
                     self.api_response(&parts, path, body).await.into_http(head)
                 }
@@ -364,8 +390,9 @@ where
         config.http,
         move || {
             let (backend, shutdown) = initialize()?;
+            let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
-            let service = Arc::new(Gateway::new(ui, backend, config.api)?);
+            let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);
                 async move { Ok::<_, Infallible>(service.respond(request).await) }
