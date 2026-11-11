@@ -17,7 +17,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use org_proto::frame::{self, FrameError};
-use org_proto::{salvage_id, ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
+use org_proto::{ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
 use serde_json::Value;
 
 use crate::cloexec::SPAWN_LOCK;
@@ -41,10 +41,9 @@ pub(crate) trait Handler: Send + Sync + 'static {
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received);
 
     /// Whether `request` is handled on the connection's reader thread, before anything more is
-    /// read from the connection (the app-only calls: their check needs to know that nothing
-    /// arrived after the request).
-    fn inline(&self, request: &Request) -> bool {
-        let _ = request;
+    /// read from the connection, including handshake decisions before later pipelined calls.
+    fn inline(&self, request: &Request, connection: &Connection) -> bool {
+        let _ = (request, connection);
         false
     }
 }
@@ -324,11 +323,11 @@ fn serve_with_poll(
         let Ok(Some(line)) = frame::read_line(&mut reader) else {
             break;
         };
-        let request = match serde_json::from_slice::<Request>(&line) {
+        let request = match super::request::decode(&line) {
             Ok(request) => request,
             Err(_) => {
                 connection.send_response(Response::error(
-                    salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
+                    super::request::salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
                     ApiError::new(ErrorCode::InvalidRequest, "the request couldn't be read"),
                 ));
                 continue;
@@ -339,7 +338,7 @@ fn serve_with_poll(
             buffered_after: reader.inner.buffer().len(),
         };
         in_flight.acquire();
-        if handler.inline(&request) {
+        if handler.inline(&request, &connection) {
             // Nothing more is read from the connection until it's answered.
             handler.handle(request, &connection, received);
             in_flight.release();
@@ -434,7 +433,7 @@ enum Outbound {
     Close,
 }
 
-/// An encoded response line holding a secret (`office.app_token`). It never passes through a
+/// An encoded verified-session response line holding a secret. It never passes through a
 /// `serde_json::Value` or the writer's buffer, and is zeroed when dropped (best effort: the
 /// socket's kernel buffers still hold it until the client reads it).
 pub(crate) struct SecretLine(Vec<u8>);
@@ -460,6 +459,7 @@ pub(crate) struct Connection {
     accepted: Accepted,
     /// Ends the ticked reader even if shutdown misses a platform wakeup.
     closed: Arc<AtomicBool>,
+    hello_completed: AtomicBool,
 }
 
 impl Connection {
@@ -470,8 +470,23 @@ impl Connection {
             stream,
             accepted,
             closed: Arc::new(AtomicBool::new(false)),
+            hello_completed: AtomicBool::new(false),
         };
         (Arc::new(connection), queue)
+    }
+
+    pub(crate) fn hello_completed(&self) -> bool {
+        self.hello_completed.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn complete_hello(&self) {
+        self.hello_completed.store(true, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_test() -> Arc<Self> {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        Self::new(stream.try_clone().unwrap(), Accepted::sample(&stream)).0
     }
 
     /// Drain the refusal before closing, but stop even already-buffered requests.
@@ -631,7 +646,7 @@ mod tests {
         use std::sync::atomic::AtomicUsize;
         struct Closing(Arc<AtomicUsize>);
         impl Handler for Closing {
-            fn inline(&self, _: &Request) -> bool {
+            fn inline(&self, _: &Request, _: &Connection) -> bool {
                 true
             }
             fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
@@ -897,7 +912,7 @@ mod tests {
     }
 
     impl Handler for Probe {
-        fn inline(&self, request: &Request) -> bool {
+        fn inline(&self, request: &Request, _: &Connection) -> bool {
             self.inline_app && request.method == "app"
         }
 

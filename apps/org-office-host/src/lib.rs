@@ -4,9 +4,9 @@
 //! "Processes on one Mac", and the host/server boundary design). It:
 //! - supervises one `org-server` per office folder on this Mac, restarting a crashed
 //!   one with backoff (`supervisor`),
-//! - creates organizations (an HQ office made by `org-server --create`), and
-//! - tells the app and `org-agent` which offices run here and how to reach them, over
-//!   `org-proto` on `<home>/host.sock` (`service`).
+//! - maintains the native office catalog and lifecycle, and
+//! - serves registered-instance hello and count-only status over `org-host-control` on
+//!   `<home>/host.sock` (`service`). Retired session-less operations are refused.
 //!
 //! It holds no organization data: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
@@ -121,12 +121,11 @@ pub struct Config {
     pub log_max_bytes: u64,
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
-    /// The team id that signs the desktop app. Required for the app-only calls: with none,
-    /// every caller is refused (`not_authorized`).
+    /// Signing policy reserved for CLI sessions in 2b.3; it enables no retired host calls.
     app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
-    /// (this exact executable, `Contents/MacOS/<exe>`, run by this user) that the app-only calls
-    /// accept without a code signature. The binary sets it from the build-time constant
+    /// (this exact executable, `Contents/MacOS/<exe>`, run by this user), reserved for CLI sessions.
+    /// It enables no retired host calls. The binary sets it from the build-time constant
     /// `ORG_DEV_APP_PATH`, never from run-time input; tests set it directly. If the path doesn't
     /// exist when the host starts (the app isn't built yet) or isn't an executable file, that's
     /// logged and the fallback stays off. Every use is logged.
@@ -307,8 +306,9 @@ pub struct Host {
 impl Host {
     /// Starts the host: chooses its key store, checks the socket paths fit, makes the office
     /// home owner-only, takes `host.lock`, binds `host.sock`, starts a server for every office in
-    /// the catalog, has the unfinished office folders discarded in the background, and serves
-    /// `host.sock` at once (only `organization.create` waits for the discards).
+    /// the catalog and discards unfinished folders in the background. This legacy entry has no
+    /// registered instance and refuses every valid `host.sock` request; run setup. Registered
+    /// entry points serve only hello and count-only status, with hello required first.
     pub fn start(config: Config) -> Result<Self, HostError> {
         Self::start_inner(config, None)
     }

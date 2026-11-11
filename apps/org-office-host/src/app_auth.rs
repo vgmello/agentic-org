@@ -1,5 +1,5 @@
-//! Who may use the app-only calls on `host.sock` (`office.app_token`, `office.restart`): the
-//! desktop app, recognised by its code signature (ADR-0003 §2.1).
+//! Peer checks reserved for verified CLI sessions in 2b.3. Current host.sock operations
+//! never authorize the retired `office.app_token` or `office.restart` methods.
 //!
 //! The threat is the exec swap: a process connects, keeps a copy of the socket in a child, sends
 //! an app-only call, then `exec`s the signed app, so the host checks the app while the child
@@ -204,21 +204,23 @@ impl AppPolicy {
     /// What the host logs about this policy at startup.
     pub(crate) fn describe(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        lines
+            .push("host.sock refuses retired office.app_token and office.restart calls".to_owned());
         match &self.requirement {
             Some(requirement) => lines.push(format!(
-                "office.app_token and office.restart accept the app satisfying: {requirement}"
+                "configured CLI peer requirement (inactive until sessions): {requirement}"
             )),
             None => lines.push(
                 "WARNING: no app team id (a release build takes it from ORG_APP_TEAM_ID when it's \
-                 built): office.app_token and office.restart accept no signed app"
+                 built): no signed CLI peer is configured; session operations are inactive"
                     .to_owned(),
             ),
         }
         #[cfg(debug_assertions)]
         if let Some(dev_app) = &self.dev_app {
             lines.push(format!(
-                "DEVELOPMENT FALLBACK (debug build only): office.app_token and office.restart \
-                 also accept {} run by this user, WITHOUT checking its code signature",
+                "DEVELOPMENT FALLBACK (debug build only, inactive until sessions): \
+                 configured peer {} run by this user, WITHOUT checking its code signature",
                 dev_app.display()
             ));
         }
