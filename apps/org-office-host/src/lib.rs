@@ -36,6 +36,10 @@ compile_error!(
      development app, the trust-changing arguments). Build it without debug assertions."
 );
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "CLI peer checks activate in 2b.3")
+)]
 mod app_auth;
 mod broadcast;
 mod catalog;
@@ -53,6 +57,10 @@ mod instance;
 mod keys;
 mod logs;
 mod offices;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "CLI peer checks activate in 2b.3")
+)]
 mod peer;
 mod secrets;
 mod server_check;
@@ -432,7 +440,6 @@ impl Host {
             let service = Arc::new(Service::new(
                 Arc::clone(&offices),
                 broadcast,
-                app,
                 instance.as_ref().map(|i| i.id().to_owned()),
             ));
             Listener::start(bound, config, service).map_err(io("starting the listener"))
