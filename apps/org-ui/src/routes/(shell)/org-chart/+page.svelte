@@ -3,13 +3,13 @@
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { setContext } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { MediaQuery, SvelteSet } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
-	import Plus from '@lucide/svelte/icons/plus';
-	import LayoutList from '@lucide/svelte/icons/layout-list';
-	import Network from '@lucide/svelte/icons/network';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '$lib/components/ui/dropdown-menu';
+	import Callout from '$lib/components/Callout.svelte';
+	import ChartFitMenuItem from '$lib/components/ChartFitMenuItem.svelte';
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
@@ -76,8 +76,13 @@
 		{ id: 'reporting', label: 'Reporting lines' }
 	] as const;
 	let tab = $state<(typeof TABS)[number]['id']>('teams');
-	let asList = $state(false);
+	const narrow = new MediaQuery('(width < 640px)');
+	let chosen = $state<'list' | 'chart' | null>(null);
+	// Responsive defaults follow the viewport; an explicit choice lasts for this page visit.
+	const asList = $derived((chosen ?? (narrow.current ? 'list' : 'chart')) === 'list');
 	let fit = $state(true);
+	let fitBlocked = $state(false);
+	const onPeopleFitBlocked = (blocked: boolean) => (fitBlocked = blocked);
 	const collapsed = new SvelteSet<string>();
 	const collapsedReports = new SvelteSet<string>();
 	const reporting = $derived(reportingTree(snapshot));
@@ -115,6 +120,12 @@
 	 * Arrow keys move between the member tiles in the chart you're in (TEAM-10), in reading order; Home and End go
 	 * to the first and last. Tab still visits every control (menus, toggles) as before.
 	 */
+	function onChartFrameKey(e: KeyboardEvent & { currentTarget: EventTarget & HTMLDivElement }) {
+		if (e.target !== e.currentTarget || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+		e.preventDefault();
+		e.currentTarget.scrollBy({ left: e.key === 'ArrowRight' ? 40 : -40, behavior: 'auto' });
+	}
+
 	function onTileKey(e: KeyboardEvent) {
 		const here = (e.target as HTMLElement).closest('[data-member-tile]');
 		if (!here || !['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
@@ -352,9 +363,32 @@
 
 {#snippet teamMenu(team: Team)}<TeamMenu {team} onaction={teamAction} />{/snippet}
 
+{#snippet plus()}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>{/snippet}
+
+{#snippet viewMenu()}
+	<DropdownMenu>
+		<DropdownMenuTrigger>
+			{#snippet child({ props })}
+				<Button {...props} variant="outline" size="sm">View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg></Button>
+			{/snippet}
+		</DropdownMenuTrigger>
+		<DropdownMenuContent align="end" class="w-48 max-w-[calc(100vw-2rem)]">
+			{#if tab === 'teams'}
+				<DropdownMenuItem onSelect={() => (chosen = asList ? 'chart' : 'list')}>{asList ? 'Chart' : 'List'}</DropdownMenuItem>
+			{/if}
+			{#if tab !== 'teams' || !asList}
+				{#if tab === 'teams'}<DropdownMenuSeparator />{/if}
+				<ChartFitMenuItem {fit} unavailable={tab === 'people' && fitBlocked} ontoggle={() => (fit = !fit)} />
+				<DropdownMenuItem onSelect={() => tab === 'reporting' ? collapsedReports.clear() : collapsed.clear()}>Expand all</DropdownMenuItem>
+				<DropdownMenuItem onSelect={() => tab === 'reporting' ? reportParents(reporting!).forEach((id) => collapsedReports.add(id)) : parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</DropdownMenuItem>
+			{/if}
+		</DropdownMenuContent>
+	</DropdownMenu>
+{/snippet}
+
 <AgentsTabs current="org-chart" />
 
-<div class="space-y-5 px-8 py-6">
+<div class="space-y-2 px-4 py-4 sm:space-y-5 sm:px-6 sm:py-6 lg:px-8">
 	<OwnerBar owner={owner(snapshot)} organization={organizationName} sample={data.sample} />
 
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -419,17 +453,10 @@
 					</select>
 				</label>
 				<div class="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
-					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
-					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
-					<Button variant="outline" size="sm" onclick={() => (addAgentOpen = true)}><Plus aria-hidden="true" /> Add agent</Button>
-					<Button variant="outline" size="sm" onclick={() => (asList = !asList)}>
-						{#if asList}<Network aria-hidden="true" /> Chart{:else}<LayoutList aria-hidden="true" /> List{/if}
-					</Button>
-					{#if !asList}
-						<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
-						<Button variant="outline" size="sm" onclick={() => collapsed.clear()}>Expand all</Button>
-						<Button variant="outline" size="sm" onclick={() => parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</Button>
-					{/if}
+					<Button size="sm" onclick={() => newTeam()}>{@render plus()} New team</Button>
+					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}>{@render plus()} Add person</Button>
+					<Button variant="outline" size="sm" onclick={() => (addAgentOpen = true)}>{@render plus()} Add agent</Button>
+					{@render viewMenu()}
 				</div>
 			</div>
 
@@ -446,9 +473,9 @@
 			{/if}
 
 			{#if unassigned.length > 0}
-				<p class="text-sm/6 text-amber-200" data-testid="unassigned-note">
+				<Callout data-testid="unassigned-note" class="text-sm/6">
 					{unassigned.length} {unassigned.length === 1 ? 'project has' : 'projects have'} no team yet.
-				</p>
+				</Callout>
 			{/if}
 
 			{#if tree.length === 0}
@@ -462,7 +489,8 @@
 			{:else if asList}
 				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} actions={teamMenu} />
 			{:else}
-				<div class="overflow-x-auto pb-4">
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users need to enter this scrollable chart frame.) -->
+				<div role="region" aria-label="Teams chart" tabindex="0" onkeydown={onChartFrameKey} class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} {justAdded} actions={teamMenu} onremoveproject={takeProjectOff} onselect={select} />
 				</div>
 			{/if}
@@ -508,7 +536,7 @@
 				Agents can only reach the people listed in your organization.
 			</p>
 			<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
-				<Button size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
+				<Button size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}>{@render plus()} Add person</Button>
 			</div>
 			{#if tree.length === 0}
 				<div class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10">
@@ -516,12 +544,11 @@
 				</div>
 			{:else}
 				<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
-					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
-					<Button variant="outline" size="sm" onclick={() => collapsed.clear()}>Expand all</Button>
-					<Button variant="outline" size="sm" onclick={() => parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</Button>
+					{@render viewMenu()}
 				</div>
-				<div class="overflow-x-auto pb-4">
-					<PeopleChart {snapshot} {tree} {collapsed} {selected} {fit} onselect={select} />
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users need to enter this scrollable chart frame.) -->
+				<div role="region" aria-label="People chart" tabindex="0" onkeydown={onChartFrameKey} class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<PeopleChart {snapshot} {tree} {collapsed} {selected} {fit} onselect={select} onfitblockedchange={onPeopleFitBlocked} />
 				</div>
 			{/if}
 			{#if lone.some((m) => m.kind === 'person')}
@@ -544,11 +571,10 @@
 			</p>
 			{#if reporting}
 				<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
-					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
-					<Button variant="outline" size="sm" onclick={() => collapsedReports.clear()}>Expand all</Button>
-					<Button variant="outline" size="sm" onclick={() => reportParents(reporting).forEach((id) => collapsedReports.add(id))}>Collapse all</Button>
+					{@render viewMenu()}
 				</div>
-				<div class="overflow-x-auto pb-4">
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users need to enter this scrollable chart frame.) -->
+				<div role="region" aria-label="Reporting chart" tabindex="0" onkeydown={onChartFrameKey} class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 					<ReportingChart {snapshot} root={reporting} collapsed={collapsedReports} {selected} {fit} onselect={select} />
 				</div>
 			{/if}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import './org-tree.css';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import Crown from '@lucide/svelte/icons/crown';
+	import { initialsOf } from '$lib/format';
 	import { SvelteSet } from 'svelte/reactivity';
 	import MemberTile from './MemberTile.svelte';
 	import { kindWord, teamsOfMember } from '$lib/org/model';
@@ -59,9 +59,7 @@
 	<div class="flex w-52 flex-col items-center" data-testid="report-node" data-member={member.id}>
 		<div class="flex w-full items-start gap-x-3 rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 outline-white/10 {selected === member.id ? 'ring-2 ring-white' : ''}">
 			{#if member.owner}
-				<span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-400/15 text-amber-200 outline-1 -outline-offset-1 outline-amber-300/30">
-					<Crown class="size-5" aria-hidden="true" />
-				</span>
+				<span aria-hidden="true" class="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-gray-800 text-sm font-semibold text-gray-300 outline-1 -outline-offset-1 outline-white/10">{initialsOf(member.name)}</span>
 			{:else}
 				<MemberTile {member} selected={selected === member.id} {onselect} />
 			{/if}
@@ -75,7 +73,7 @@
 						{teams.length ? teams.map((t) => t.name).join(', ') : 'Not in a team'}
 					</p>
 				{/if}
-				<p class="text-xs/5 text-gray-500">{reports} {reports === 1 ? 'report' : 'reports'}</p>
+				<p class="text-xs/5 text-gray-400">{reports} {reports === 1 ? 'report' : 'reports'}</p>
 			</div>
 		</div>
 		{#if node.children.length > 0}

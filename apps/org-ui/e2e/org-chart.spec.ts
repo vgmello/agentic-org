@@ -1,3 +1,4 @@
+import { viewAction, expectViewAction } from './org-chart-menu';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -17,7 +18,7 @@ test('OWNER-1: the owner is shown once, above the chart, and never on a team or 
 	await openChart(page);
 	const bar = page.getByRole('region', { name: 'Owner' });
 	await expect(page.getByRole('region', { name: 'Owner' })).toHaveCount(1);
-	await expect(bar).toContainText('Alex Kim (you) · Owner of Acme');
+	await expect(bar).toContainText('Alex Kim · Owner');
 	await expect(bar.getByTestId('owner-sample')).toContainText('Sample data');
 	await expect(bar).toContainText('Full access to every team, member and project');
 	await expect(bar).toContainText('Any agent can message, ask or assign you');
@@ -47,9 +48,9 @@ test('TEAM-1: collapsing a team hides the teams under it, and Expand all brings 
 	await page.getByRole('button', { name: /collapse the teams under Engineering/ }).click();
 	await expect(page.getByTestId('team-card')).toHaveCount(3);
 	await shot(page, 'org-teams-collapsed');
-	await page.getByRole('button', { name: 'Expand all' }).click();
+	await viewAction(page, 'Expand all');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
-	await page.getByRole('button', { name: 'Collapse all' }).click();
+	await viewAction(page, 'Collapse all');
 	await expect(page.getByTestId('team-card')).toHaveCount(3);
 });
 
@@ -131,15 +132,15 @@ test('TEAM-15: a project shows its lead per team, or "No lead"', async ({ page }
 	await expect(card(page, 'platform')).toContainText('Atlas · lead Kai Lindqvist');
 });
 
-test('TEAM-10: the same tree is available as a list, and the toggle is a real button', async ({ page }) => {
+test('TEAM-10: the same tree is available as a list through the View menu', async ({ page }) => {
 	await openChart(page);
-	await page.getByRole('button', { name: 'List' }).click();
+	await viewAction(page, 'List');
 	const items = page.getByTestId('team-list-item');
 	await expect(items).toHaveCount(5);
 	await expect(items.first()).toContainText('Design');
 	await expect(page.getByText('Sam Okafor (agent)').first()).toBeVisible();
 	await expect(page.getByTestId('team-card')).toHaveCount(0);
-	await page.getByRole('button', { name: 'Chart' }).click();
+	await viewAction(page, 'Chart');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
 });
 
@@ -169,8 +170,8 @@ test('TEAM-1: "Fit to width" shrinks the chart, but never below 75% so tiles sta
 	const chart = page.getByTestId('teams-chart');
 	await expect.poll(async () => (await chart.boundingBox())!.width).toBeGreaterThan(0);
 	const fitted = (await chart.boundingBox())!.width;
-	await page.getByRole('button', { name: 'Actual size' }).click();
-	await expect(page.getByRole('button', { name: 'Fit to width' })).toBeVisible();
+	await viewAction(page, 'Actual size');
+	await expectViewAction(page, 'Fit to width');
 	await expect.poll(async () => (await chart.boundingBox())!.width).toBeGreaterThan(fitted);
 	const actual = (await chart.boundingBox())!.width;
 	expect(fitted / actual).toBeGreaterThanOrEqual(0.74); // the 75% floor
@@ -218,7 +219,7 @@ test('TEAM-2: the "+N teams" badge says so, and selecting the member lists the o
 test('TEAM-4 and TEAM-10: the office filter marks members in the list view too', async ({ page }) => {
 	await openChart(page);
 	await page.getByRole('combobox', { name: 'Office filter' }).selectOption('unplaced');
-	await page.getByRole('button', { name: 'List' }).click();
+	await viewAction(page, 'List');
 	await expect(page.getByTestId('team-list-item').filter({ hasText: 'Inês Duarte (agent) — at Unplaced' })).toHaveCount(1);
 	await expect(page.getByText('— at Unplaced')).toHaveCount(1);
 	await expect(page.getByTestId('filter-announcement')).toContainText('Highlighting 1 agent');

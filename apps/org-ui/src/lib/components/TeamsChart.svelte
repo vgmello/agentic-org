@@ -119,13 +119,13 @@
 				<div class="flex items-center gap-x-2">
 					<dt class="w-14 shrink-0 text-gray-400">Agents <span class="text-gray-300">{agents.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500" aria-label="None">—</span>{/each}
+						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-400" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				<div class="flex items-center gap-x-2">
 					<dt class="w-14 shrink-0 text-gray-400">People <span class="text-gray-300">{people.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500" aria-label="None">—</span>{/each}
+						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-400" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				{#if others.length > 0}
@@ -146,7 +146,7 @@
 							<span class="font-medium break-words text-gray-200">{project.name}</span>
 							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
 							{#if onremoveproject}
-								<button type="button" aria-label="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto rounded px-1 text-gray-500 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400">×</button>
+								<button type="button" aria-label="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto rounded px-1 text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400">×</button>
 							{/if}
 							{#if others.length > 0}
 								<button

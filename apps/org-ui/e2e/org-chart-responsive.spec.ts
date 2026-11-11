@@ -1,3 +1,4 @@
+import { viewAction, expectViewAction } from './org-chart-menu';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -12,6 +13,8 @@ async function openChart(page: Page, width: number, scale = 1, query = '') {
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
 	await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
 	await page.evaluate(() => document.fonts.ready.then(() => undefined));
+	// These legacy chart regressions choose Chart explicitly; OC-9 tests the mobile default separately.
+	if (width < 640) await viewAction(page, 'Chart');
 }
 
 async function expectControlsFit(page: Page, group: Locator) {
@@ -45,7 +48,7 @@ for (const width of [320, 960, 1280]) {
 		await openChart(page, width);
 		const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
 		const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
-		await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all']);
+		await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'View']);
 		await shot(page, `bug2-teams-toolbar-${width}`, { context: actions });
 		await expectControlsFit(page, actions);
 	});
@@ -71,19 +74,19 @@ test('BUG-2: existing zoom, collapse, list and keyboard dialog actions remain fu
 	await openChart(page, 1280);
 	const chart = page.getByTestId('teams-chart');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
-	await page.getByRole('button', { name: 'Actual size', exact: true }).click();
-	await expect(page.getByRole('button', { name: 'Fit to width', exact: true })).toBeVisible();
+	await viewAction(page, 'Actual size');
+	await expectViewAction(page, 'Fit to width');
 	const canvas = chart.locator('xpath=ancestor::div[contains(@class, "overflow-x-auto")][1]');
 	expect(await canvas.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
 	await canvas.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
 	expect(await canvas.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-	await page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+	await viewAction(page, 'Collapse all');
 	await expect(page.getByTestId('team-card')).toHaveCount(3);
-	await page.getByRole('button', { name: 'Expand all', exact: true }).click();
+	await viewAction(page, 'Expand all');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
-	await page.getByRole('button', { name: 'List', exact: true }).click();
+	await viewAction(page, 'List');
 	await expect(chart).toHaveCount(0);
-	await page.getByRole('button', { name: 'Chart', exact: true }).click();
+	await viewAction(page, 'Chart');
 	await expect(chart).toBeVisible();
 	const create = page.getByRole('button', { name: 'New team', exact: true });
 	await create.press('Enter');
@@ -115,20 +118,20 @@ for (const width of [320, 640, 720, 960, 1280]) {
 				expect(box.x).toBeCloseTo(room.left, 0);
 				expect(box.x + box.width).toBeCloseTo(room.right, 0);
 			}
-			await teams.getByRole('button', { name: 'List', exact: true }).click();
+			await viewAction(page, 'List');
 			await expect(page.getByTestId('teams-chart')).toHaveCount(0);
 			await shot(page, `bug2-list-${width}-${scale * 100}`, { context: actions });
 			await expectControlsFit(page, actions);
-			await teams.getByRole('button', { name: 'Chart', exact: true }).click();
+			await viewAction(page, 'Chart');
 			await expect(page.getByTestId('teams-chart')).toBeVisible();
 			await tabs.getByRole('tab', { name: 'People', exact: true }).click();
 			const people = page.getByRole('tabpanel', { name: 'People', exact: true });
-			const peopleControls = people.getByRole('button', { name: /^(Actual size|Fit to width)$/ }).locator('..');
+			const peopleControls = people.getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-people-${width}-${scale * 100}`, { context: peopleControls });
 			await expectControlsFit(page, peopleControls);
 			await expectControlsFit(page, people.getByRole('button', { name: 'Add person', exact: true }).locator('..'));
 			await tabs.getByRole('tab', { name: 'Reporting lines', exact: true }).click();
-			const reportingControls = page.getByRole('tabpanel', { name: 'Reporting lines', exact: true }).getByRole('button', { name: /^(Actual size|Fit to width)$/ }).locator('..');
+			const reportingControls = page.getByRole('tabpanel', { name: 'Reporting lines', exact: true }).getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-reporting-${width}-${scale * 100}`, { context: reportingControls });
 			await expectControlsFit(page, reportingControls);
 		});
@@ -151,7 +154,7 @@ for (const width of [320, 960]) {
 				if (Math.abs(current.y - previous.y) < 1) expect(current.x).toBeGreaterThan(previous.x);
 				else expect(current.y).toBeGreaterThan(previous.y);
 			}
-			const sequence = [search, page.getByRole('tab', { name: 'Teams', exact: true }), page.getByLabel('Office filter', { exact: true }), ...['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all'].map((name) => actions.getByRole('button', { name, exact: true }))];
+			const sequence = [search, page.getByRole('tab', { name: 'Teams', exact: true }), page.getByLabel('Office filter', { exact: true }), ...['New team', 'Add person', 'Add agent', 'View'].map((name) => actions.getByRole('button', { name, exact: true }))];
 			// Start from a user-visible field; focus() alone does not wait for WebKit scrolling.
 			await search.click();
 			for (let index = 0; index < sequence.length; index++) {
@@ -200,7 +203,7 @@ test('BUG-2: a narrow no-match result clears with Escape and retains search focu
 for (const region of ['sample note', 'unassigned-project row', 'empty call-to-action', 'TeamsList header'] as const) {
 	test(`BUG-2: ${region} stays inside its parent at 320px and 200% text`, async ({ page }) => {
 		await openChart(page, 320, 2, region === 'empty call-to-action' ? '?org=empty' : '');
-		if (region === 'TeamsList header') await page.getByRole('button', { name: 'List', exact: true }).click();
+		if (region === 'TeamsList header') await viewAction(page, 'List');
 		const targets = region === 'sample note' ? page.getByTestId('sample-data-note')
 			: region === 'unassigned-project row' ? page.getByTestId('unassigned-projects').locator('li')
 			: region === 'empty call-to-action' ? page.getByRole('button', { name: 'Create your first team', exact: true })
@@ -298,9 +301,9 @@ test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar ke
 	await tabs.getByRole('tab', { name: 'Teams', exact: true }).click();
 	const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
 	const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
-	await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all']);
-	await panel.getByRole('button', { name: 'Actual size', exact: true }).click();
-	await expect(panel.getByRole('button', { name: 'Fit to width', exact: true })).toBeVisible();
+	await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'View']);
+	await viewAction(page, 'Actual size');
+	await expectViewAction(page, 'Fit to width');
 	await expect(nav.locator('[aria-current="page"]')).toHaveText('Org chart');
 	await expect(page).toHaveURL(/\/org-chart\?member=noor$/);
 	await shot(page, 'agents-views-inner-tabs-toolbar', { context: tabs });
