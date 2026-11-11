@@ -204,7 +204,7 @@ fn typed_result_decode_precedes_range_and_range_precedes_identity() {
         ApiRange { min: 2, max: 2 },
         INSTANCE,
         result(3, json!(7)),
-        |e| assert_protocol(e, "a result doesn't fit the contract"),
+        |e| assert_protocol(e, "the result of `hello` doesn't fit the contract"),
     );
     result_failure(
         ApiRange { min: 3, max: 4 },
