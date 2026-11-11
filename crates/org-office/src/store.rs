@@ -545,7 +545,21 @@ fn connect(
     let pragma = KeyPragma::new(key);
     let applied = db.execute_batch(pragma.as_str());
     drop(pragma);
-    applied.map_err(|_| failure("could not apply the database key"))?;
+    applied.map_err(|_error| {
+        #[cfg(test)]
+        if std::env::var_os("QUINN_BUG72_DIAGNOSTICS").is_some() {
+            let code = match &_error {
+                rusqlite::Error::SqliteFailure(code, _)
+                | rusqlite::Error::SqlInputError { error: code, .. } => Some(code.extended_code),
+                _ => None,
+            };
+            eprintln!(
+                "BUG72 key_setup create={create} sqlite_code={code:?} variant={:?}",
+                std::mem::discriminant(&_error)
+            );
+        }
+        failure("could not apply the database key")
+    })?;
     // Before the first read, so a busy database makes it wait instead of failing.
     db.pragma_update(None, "busy_timeout", 5_000)
         .map_err(OfficeError::storage)?;
