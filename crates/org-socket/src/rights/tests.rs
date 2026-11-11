@@ -3,6 +3,12 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+// X-02 rev15 §5.2: retain sender descriptors through receive, then drop them
+// before any received-fd use. Last-reference close in flight can flush UNIX
+// sockets on macOS, even with the passed peer open in a third process.
+// Probe (agents repo): projects/ac/agents/ac-software-engineer-kai/
+// knowledge/evidence/b1-07.2/fork-probe.rs
+// Logs: /private/tmp/kai-b1072-fork-probe-{mac,linux}.log
 const MARKER: u8 = 0x3a;
 
 fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) {
@@ -71,9 +77,9 @@ fn stream_counts_arrival_order_cloexec_and_one_byte_boundary() {
         }
         let raw: Vec<_> = originals.iter().map(AsRawFd::as_raw_fd).collect();
         send_rights(sender.as_raw_fd(), &[MARKER, b'X'], &raw);
-        drop(originals);
         let fence = Mutex::new(());
         let descriptors = receiver.receive_marker(count, MARKER, &fence).unwrap();
+        drop(originals);
         assert_eq!(descriptors.len(), count);
         for (tag, descriptor) in descriptors.into_iter().enumerate() {
             assert_cloexec(&descriptor);
@@ -103,10 +109,10 @@ fn datagram_preserves_payload_and_descriptor_order() {
         b"payload",
         &[first.as_raw_fd(), second.as_raw_fd()],
     );
-    drop((first, second));
     let mut receiver = DatagramReceiver::new(socket);
     let mut payload = [0; 16];
     let received = receiver.receive(&mut payload, 2, &Mutex::new(())).unwrap();
+    drop((first, second));
     assert_eq!(&payload[..received.bytes], b"payload");
     assert_eq!(received.descriptors.len(), 2);
     for (descriptor, expected) in received.descriptors.into_iter().zip(*b"AB") {
@@ -157,7 +163,6 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
     let (sender, socket) = UnixDatagram::pair().unwrap();
     let (canary, peer) = UnixStream::pair().unwrap();
     send_rights(sender.as_raw_fd(), b"!", &[canary.as_raw_fd()]);
-    drop(canary);
     let mut receiver = Receiver(Some(socket.into()));
     let mut calls = 0;
     let received = receiver
@@ -183,6 +188,7 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
             control_buffer,
         )
         .unwrap();
+    drop(canary);
     assert_eq!(calls, 2);
     assert_eq!(received.descriptors.len(), 1);
     assert_cloexec(&received.descriptors[0]);
@@ -202,7 +208,6 @@ fn mac_fence_covers_recvmsg_through_every_cloexec_operation() {
         b"!",
         &[canary.as_raw_fd(), canary.as_raw_fd()],
     );
-    drop(canary);
     let mut receiver = Receiver(Some(socket.into()));
     let mut set_calls = 0;
     let received = receiver
@@ -228,6 +233,7 @@ fn mac_fence_covers_recvmsg_through_every_cloexec_operation() {
             control_buffer,
         )
         .unwrap();
+    drop(canary);
     assert_eq!(set_calls, 2);
     assert!(fence.try_lock().is_ok());
     for descriptor in &received.descriptors {
@@ -254,12 +260,15 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
         "macro-overflow",
         "io",
         "allocation",
+        "reported-short",
+        "reported-control",
+        "reported-payload",
     ];
     for case in cases {
         run_fatal_child(case);
     }
     #[cfg(not(target_os = "linux"))]
-    for case in ["fcntl", "poisoned-fence"] {
+    for case in ["fcntl", "poisoned-fence", "reported-fcntl"] {
         run_fatal_child(case);
     }
 }
@@ -303,11 +312,11 @@ fn fatal_child() {
         "marker" => {
             send_rights(sender.as_raw_fd(), b"?", &[canary.as_raw_fd()]);
             send_rights(sender.as_raw_fd(), &[MARKER], &[]);
-            drop(canary);
             assert!(matches!(
                 receiver.receive_marker(1, MARKER, &fence),
                 Err(ReceiveError::Fatal(_))
             ));
+            drop(canary);
             assert_closed(peer);
         }
         "eof" => {
@@ -343,11 +352,11 @@ fn fatal_child() {
                 descriptors[count - 1] = sender.as_raw_fd();
             }
             send_rights(sender.as_raw_fd(), &[MARKER], &descriptors);
-            drop(canary);
             assert!(matches!(
                 receiver.receive_marker(expected, MARKER, &fence),
                 Err(ReceiveError::Fatal(_))
             ));
+            drop(canary);
             assert_closed(peer);
         }
         "discard" => {
@@ -361,12 +370,12 @@ fn fatal_child() {
         "payload-truncated" => {
             let (sender, socket) = UnixDatagram::pair().unwrap();
             send_rights(sender.as_raw_fd(), b"XX", &[canary.as_raw_fd()]);
-            drop(canary);
             let mut datagram = DatagramReceiver::new(socket);
             assert!(matches!(
                 datagram.receive(&mut [0], 1, &fence),
                 Err(ReceiveError::Fatal(_))
             ));
+            drop(canary);
             assert_closed(peer);
             assert!(datagram.fd().is_none());
             assert!(matches!(
@@ -394,7 +403,6 @@ fn fatal_child() {
                 &[MARKER],
                 &[canary.as_raw_fd(), canary.as_raw_fd()],
             );
-            drop(canary);
             let mut calls = 0;
             let result = receiver.0.receive_with(
                 &mut [0],
@@ -413,6 +421,7 @@ fn fatal_child() {
             );
             assert_eq!(calls, 2);
             assert!(matches!(result, Err(ReceiveError::Fatal(_))));
+            drop(canary);
             assert_closed(peer);
         }
         #[cfg(not(target_os = "linux"))]
@@ -442,6 +451,11 @@ fn fatal_child() {
             );
             assert!(matches!(result, Err(ReceiveError::Fatal(_))));
         }
+        "reported-short" | "reported-control" | "reported-payload" | "reported-fcntl" => {
+            reported_cleanup(&case);
+            println!("fatal returned; caller terminates");
+            return;
+        }
         _ => panic!("unknown fatal case"),
     }
     assert!(receiver.fd().is_none(), "fatal receiver remained usable");
@@ -450,4 +464,69 @@ fn fatal_child() {
         Err(ReceiveError::Fatal(_))
     ));
     println!("fatal returned; caller terminates");
+}
+
+// Only called in an isolated, single-test subprocess. Observe the actual
+// recvmsg output before the receiver owns it, without closing or duplicating it.
+fn reported_cleanup(case: &str) {
+    let (sender, socket) = UnixDatagram::pair().unwrap();
+    let (source, peer) = UnixStream::pair().unwrap();
+    let expected = if case == "reported-short" { 3 } else { 2 };
+    let mut descriptors = vec![source.as_raw_fd(); 2];
+    if case == "reported-control" {
+        descriptors.push(sender.as_raw_fd()); // unreported macOS fd is distinct
+    }
+    send_rights(sender.as_raw_fd(), b"XX", &descriptors);
+    let mut receiver = Receiver(Some(socket.into()));
+    let mut reported = Vec::new();
+    let mut set_calls = 0;
+    let mut payload = [0; 2];
+    let length = if case == "reported-payload" { 1 } else { 2 };
+    let result = receiver.receive_with(
+        &mut payload[..length],
+        expected,
+        &Mutex::new(()),
+        |fd, message, flags| {
+            let bytes = system_receive(fd, message, flags)?;
+            // SAFETY: this fixture sends one real SCM_RIGHTS header. Bound the
+            // observed prefix by actual storage, not macOS's untruncated length.
+            unsafe {
+                let header = libc::CMSG_FIRSTHDR(message);
+                assert!(!header.is_null());
+                assert_eq!((*header).cmsg_level, libc::SOL_SOCKET);
+                assert_eq!((*header).cmsg_type, libc::SCM_RIGHTS);
+                let length = ((*header).cmsg_len as usize).min(message.msg_controllen as usize);
+                let count = (length - libc::CMSG_LEN(0) as usize) / mem::size_of::<RawFd>();
+                assert_eq!(count, 2, "cleanup must cover both reported fds");
+                for index in 0..count {
+                    let descriptor = libc::CMSG_DATA(header)
+                        .cast::<RawFd>()
+                        .add(index)
+                        .read_unaligned();
+                    assert!(libc::fcntl(descriptor, libc::F_GETFD) >= 0);
+                    reported.push(descriptor);
+                }
+            }
+            Ok(bytes)
+        },
+        |fd| {
+            set_calls += 1;
+            if case == "reported-fcntl" && set_calls == 2 {
+                Err(io::Error::from_raw_os_error(libc::EIO))
+            } else {
+                close_on_exec(fd)
+            }
+        },
+        control_buffer,
+    );
+    assert!(matches!(result, Err(ReceiveError::Fatal(_))));
+    assert_eq!(reported.len(), 2);
+    for descriptor in reported {
+        // SAFETY: inspect the reported number only; never wrap or close it twice.
+        assert_eq!(unsafe { libc::fcntl(descriptor, libc::F_GETFD) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+    }
+    drop(source);
+    assert_closed(peer);
+    assert!(receiver.fd().is_none());
 }
