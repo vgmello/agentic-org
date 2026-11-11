@@ -1620,3 +1620,94 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
     // The events share the connection's numbering.
     assert_eq!(presence.seq, received.seq + 1);
 }
+
+#[test]
+fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
+    use org_proto::msg::{MsgBind, MsgBindParams};
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    };
+    use org_proto::work::{
+        TaskCreate, TaskCreateParams, WorkAccepted, WorkDelete, WorkDeleteParams,
+    };
+    use org_proto::{ApiError, ErrorCode};
+    fn refusal(result: Result<WorkAccepted, org_client::ClientError>) -> ApiError {
+        match result.unwrap_err() {
+            org_client::ClientError::Api(error) => error,
+            other => panic!("work call did not receive an API refusal: {other:?}"),
+        }
+    }
+    let world = World::new();
+    let mut first = create(&world);
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    let agent_id = command_id(100);
+    app.call::<MemberAddAgent>(&MemberAddAgentParams {
+        command_id: command_id(101),
+        member_id: agent_id,
+        name: "Work agent".into(),
+        office_id: OFFICE.into(),
+        profile: AgentProfile {
+            role: "engineer".into(),
+            title: "Engineer".into(),
+            focus: None,
+            runtime: AgentRuntime::ClaudeCode,
+            model: None,
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: "work-agent".into(),
+            status: AgentStatus::Active,
+            offboarded_at: None,
+        },
+    })
+    .unwrap();
+    let params: TaskCreateParams = serde_json::from_value(serde_json::json!({
+        "change_id":command_id(102), "item_id":command_id(103),
+        "project_id":command_id(104), "title":"Missing project"
+    }))
+    .unwrap();
+    let agent = Client::connect(socket(&world)).unwrap();
+    agent.bind_member("work-agent").unwrap();
+    let missing = refusal(agent.call::<TaskCreate>(&params));
+    assert_eq!(missing.code, ErrorCode::NotFound);
+    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
+    let mut different = params.clone();
+    different.title = "Different parameters".into();
+    assert_eq!(
+        refusal(agent.call::<TaskCreate>(&different)).code,
+        ErrorCode::InvalidRequest
+    );
+    let delete = WorkDeleteParams {
+        change_id: command_id(105),
+        item_id: params.item_id.clone(),
+        expected_version: 1,
+    };
+    assert_eq!(
+        refusal(agent.call::<WorkDelete>(&delete)).code,
+        ErrorCode::NotAuthorized
+    );
+    app.call::<MsgBind>(&MsgBindParams {
+        member: Some("owner".into()),
+        app_token: Some(token()),
+    })
+    .unwrap();
+    assert_eq!(
+        refusal(app.call::<WorkDelete>(&delete)).code,
+        ErrorCode::NotFound
+    );
+    drop((agent, app));
+    assert!(first.host_goes_away().success());
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let agent = Client::connect(socket(&world)).unwrap();
+    agent.bind_member("work-agent").unwrap();
+    assert_eq!(refusal(agent.call::<TaskCreate>(&params)), missing);
+    assert_eq!(
+        refusal(agent.call::<TaskCreate>(&different)).code,
+        ErrorCode::InvalidRequest
+    );
+    drop(agent);
+    assert!(again.host_goes_away().success());
+}

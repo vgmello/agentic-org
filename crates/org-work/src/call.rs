@@ -120,10 +120,17 @@ work_calls!(
     BugReopen(BugReopen, BugReopenParams),
 );
 
+const APP_ONLY: &[&str] = &[WorkDelete::METHOD];
+
 impl WorkCall {
+    /// Whether this request is app-only, even before its params can be parsed.
+    pub fn is_app_only(request: &Request) -> bool {
+        APP_ONLY.contains(&request.method.as_str())
+    }
+
     /// App-only calls (§2.2): refused on any other connection with `not_authorized`, before
     /// anything else. In phase 1: `work.delete`.
     pub fn app_only(&self) -> bool {
-        matches!(self, Self::Delete(_))
+        APP_ONLY.contains(&self.method())
     }
 }
