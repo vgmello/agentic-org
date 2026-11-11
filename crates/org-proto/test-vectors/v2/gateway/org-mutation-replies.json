@@ -708,6 +708,314 @@
         "classification": "needs_authorization_recheck",
         "http_status": null
       }
+    },
+    {
+      "name": "unsupported_version is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "unsupported_version",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "not_ready is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_ready",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "timeout is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "timeout",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "too_large is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "too_large",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "snapshot_required is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "snapshot_required",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "unknown_recipient is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "unknown_recipient",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "checklist_incomplete is not an organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "checklist_incomplete",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "invalid_request remains an allowed organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "invalid_request",
+          "message": "The worker refused this edit."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "invalid_request",
+            "message": "The worker refused this edit."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "invalid_name remains an allowed organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "invalid_name",
+          "message": "The worker refused this edit."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "invalid_name",
+            "message": "The worker refused this edit."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "storage_error remains an allowed organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "storage_error",
+          "message": "The worker refused this edit."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "storage_error",
+            "message": "The worker refused this edit."
+          }
+        },
+        "http_status": 503,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "not_a_member remains an allowed organization domain refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_a_member",
+          "message": "The worker refused this edit."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "not_a_member",
+            "message": "The worker refused this edit."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
     }
   ]
 }

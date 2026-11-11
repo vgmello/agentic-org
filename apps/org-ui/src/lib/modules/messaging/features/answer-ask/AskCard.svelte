@@ -107,15 +107,15 @@
 	</div>
 
 	{#if isAsk && !message.answer}
-		<p class="mt-2 text-xs/5 text-gray-400">
+		<p class="mt-2 text-xs/5 text-gray-400" aria-live="off">
 			<span data-testid="waiting">{waitingFor(message, now)}</span>{#if message.blocks}{' · blocks ' + message.blocks}{/if}
 		</p>
-		{#if deadline}<p class="mt-1 text-xs/5 text-amber-100" data-testid="deadline">{deadline.text}</p>{/if}
+		{#if deadline}<p class="mt-1 text-xs/5 text-amber-100" aria-live="off" data-testid="deadline">{deadline.text}</p>{/if}
 	{/if}
 
 	{#if done}
 		<p class="mt-3 text-sm/6 text-emerald-300" data-testid="answered">{isAsk ? answerWords(message, ctx) : acceptedWords(message, ctx)}</p>
-		{#if isAsk && message.answer?.by === 'default' && deadline}<p class="text-xs/5 text-gray-400" data-testid="deadline">{deadline.text}</p>{/if}
+		{#if isAsk && message.answer?.by === 'default' && deadline}<p class="text-xs/5 text-gray-400" aria-live="off" data-testid="deadline">{deadline.text}</p>{/if}
 	{:else if !officeRunning}
 		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300">The office isn't running. Restart it from Offices.</p>
 	{:else if blockedHere}
