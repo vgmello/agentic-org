@@ -287,6 +287,19 @@ fn applied_org_may_be_ahead_of_a_change_at_the_same_epoch() {
 }
 
 #[test]
+fn stale_required_org_epoch_is_refused_after_restore_with_state_unchanged() {
+    let mut office = Office::new("A");
+    office.durable.context.applied_org.epoch = Epoch::new(2).unwrap();
+    let mut change = office.change();
+    change.required_org = Position {
+        epoch: Epoch::new(1).unwrap(),
+        seq: 0,
+    };
+    seal(&mut change);
+    office.refused(change, Refusal::InvalidInput);
+}
+
+#[test]
 fn native_allocation_rolls_back_on_failure_and_retries_with_the_same_source_key() {
     let mut office = Office::new("A");
     let first = office.change();
