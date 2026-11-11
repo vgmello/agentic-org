@@ -104,11 +104,16 @@
 				<a
 					href="/welcome"
 					onclick={(event) => onNavigate?.(event, '/welcome')}
-					class="flex items-center gap-x-3 px-6 py-3 text-sm/6 hover:bg-white/5 {focusRing}"
+					class="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3 text-sm/6 hover:bg-white/5 {focusRing}"
 					aria-label={switchLabel}
 				>
-					<span class="min-w-0">
-						<span class="block truncate font-semibold text-white">{connection.office.host}</span>
+					<span aria-hidden="true" class="flex size-8 shrink-0 items-center justify-center rounded-full bg-gray-800 text-indigo-300 outline -outline-offset-1 outline-white/10">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" class="size-5">
+							<path d={icons.offices} stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</span>
+					<span class="min-w-0 flex-1 basis-32 wrap-break-word">
+						<span class="block font-semibold text-white">{connection.office.host}</span>
 						<span class="block text-xs/5 text-gray-400">{connection.office.name} office · Switch organization</span>
 					</span>
 				</a>
