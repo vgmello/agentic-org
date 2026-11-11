@@ -90,6 +90,50 @@ impl NativeRecovery {
         }
     }
 
+    fn job_observation(
+        &self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+    ) -> io::Result<Option<super::job::JobObservation>> {
+        self.job_observation_with(identity, deadline, bsd_info, |pid| {
+            // SAFETY: positive PID validated by the proof helper; checked again after this call.
+            unsafe { libc::getsid(pid as libc::pid_t) }
+        })
+    }
+
+    fn job_observation_with(
+        &self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+        mut observe: impl FnMut(u32) -> io::Result<Option<libc::proc_bsdinfo>>,
+        mut session: impl FnMut(u32) -> libc::pid_t,
+    ) -> io::Result<Option<super::job::JobObservation>> {
+        if self.captured.get(&identity.pid) != Some(&identity.started) {
+            return Ok(None);
+        }
+        let Some(before) = observe(identity.pid)? else {
+            return Ok(None);
+        };
+        let session =
+            u32::try_from(session(identity.pid)).map_err(|_| io::Error::last_os_error())?;
+        let Some(after) = observe(identity.pid)? else {
+            return Ok(None);
+        };
+        check_time(deadline)?;
+        let safe = same_identity(&before, &after)
+            && !is_zombie(&before)
+            && !is_zombie(&after)
+            && safe_credentials(&before, self.context.uid)
+            && safe_credentials(&after, self.context.uid);
+        Ok(Some(super::job::JobObservation {
+            identity: self.identity(&after),
+            order: (after.pbi_start_tvsec, after.pbi_start_tvusec),
+            group: after.pbi_pgid,
+            session,
+            safe,
+        }))
+    }
+
     fn mark(&self, info: &libc::proc_bsdinfo, deadline: Instant) -> io::Result<MarkEvidence> {
         check_time(deadline)?;
         let pid = info.pbi_pid as libc::pid_t;
@@ -202,6 +246,22 @@ impl sealed::Processes for NativeRecovery {}
 impl RecoveryProcesses for NativeRecovery {
     fn context(&mut self) -> io::Result<RecoveryContext> {
         Ok(self.context.clone())
+    }
+
+    fn verify_recorded_job(
+        &mut self,
+        target: &ProcessIdentity,
+        leader: &crate::ChildIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool> {
+        super::job::verify(
+            target,
+            leader,
+            &self.context,
+            deadline,
+            Instant::now,
+            |id| self.job_observation(id, deadline),
+        )
     }
 
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>> {
@@ -705,6 +765,147 @@ mod tests {
         info.pbi_rgid = 20;
         info.pbi_svgid = 20;
         info
+    }
+
+    #[test]
+    fn native_job_observation_rechecks_membership_identity_and_credentials() {
+        use crate::recovery::{ProcessIdentity, RecoveryContext};
+        let info = libc::proc_bsdinfo {
+            pbi_pgid: 40,
+            ..ordinary_info()
+        };
+        let identity = ProcessIdentity {
+            pid: info.pbi_pid,
+            started: super::start(&info),
+            boot: "boot".into(),
+        };
+        let mut native = super::NativeRecovery {
+            context: RecoveryContext {
+                uid: 501,
+                pid: 999,
+                boot: "boot".into(),
+            },
+            arg_max: 4096,
+            captured: [(identity.pid, identity.started.clone())].into(),
+        };
+        for variant in 0..20 {
+            let mut before = info;
+            let mut after = info;
+            match variant {
+                1 => after.pbi_start_tvsec += 1,
+                2 => after.pbi_start_tvusec += 1,
+                3 => after.pbi_pid += 1,
+                4 => before.pbi_status = libc::SZOMB,
+                5 => after.pbi_status = libc::SZOMB,
+                6 => before.pbi_uid = 0,
+                7 => after.pbi_uid = 0,
+                8 => before.pbi_ruid = 502,
+                9 => after.pbi_ruid = 502,
+                10 => before.pbi_svuid = 0,
+                11 => after.pbi_svuid = 0,
+                12 => before.pbi_gid = 0,
+                13 => after.pbi_gid = 0,
+                14 => before.pbi_rgid = 0,
+                15 => after.pbi_rgid = 0,
+                16 => before.pbi_svgid = 0,
+                17 => after.pbi_svgid = 0,
+                18 => after.pbi_flags = super::PROC_FLAG_PSUGID,
+                19 => before.pbi_flags = super::PROC_FLAG_PSUGID,
+                _ => {}
+            }
+            let calls = std::cell::RefCell::new(vec![]);
+            let mut count = 0;
+            let result = native
+                .job_observation_with(
+                    &identity,
+                    Instant::now() + Duration::from_secs(1),
+                    |_| {
+                        count += 1;
+                        calls.borrow_mut().push("identity");
+                        Ok(Some(if count == 1 { before } else { after }))
+                    },
+                    |_| {
+                        calls.borrow_mut().push("session");
+                        41
+                    },
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(*calls.borrow(), ["identity", "session", "identity"]);
+            assert_eq!(result.safe, variant == 0, "variant {variant}");
+            assert_eq!(result.group, 40);
+            assert_eq!(result.session, 41);
+            assert_eq!(
+                result.order,
+                (after.pbi_start_tvsec, after.pbi_start_tvusec)
+            );
+        }
+        for absent in [1, 2] {
+            let mut count = 0;
+            assert!(native
+                .job_observation_with(
+                    &identity,
+                    Instant::now() + Duration::from_secs(1),
+                    |_| {
+                        count += 1;
+                        Ok((count != absent).then_some(info))
+                    },
+                    |_| 41
+                )
+                .unwrap()
+                .is_none());
+        }
+        for fail_at in [1, 2] {
+            let mut count = 0;
+            let error = native
+                .job_observation_with(
+                    &identity,
+                    Instant::now() + Duration::from_secs(1),
+                    |_| {
+                        count += 1;
+                        if count == fail_at {
+                            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                        } else {
+                            Ok(Some(info))
+                        }
+                    },
+                    |_| 41,
+                )
+                .err()
+                .unwrap();
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        let error = native
+            .job_observation_with(&identity, Instant::now(), |_| Ok(Some(info)), |_| 41)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        let error = native
+            .job_observation_with(
+                &identity,
+                Instant::now() + Duration::from_secs(1),
+                |_| Ok(Some(info)),
+                |_| {
+                    // SAFETY: __error returns this thread's writable errno slot.
+                    unsafe {
+                        *libc::__error() = libc::EPERM;
+                    }
+                    -1
+                },
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        native.captured.clear();
+        assert!(native
+            .job_observation_with(
+                &identity,
+                Instant::now() + Duration::from_secs(1),
+                |_| panic!("no observation without captured identity"),
+                |_| panic!("no session without captured identity")
+            )
+            .unwrap()
+            .is_none());
     }
 
     #[test]

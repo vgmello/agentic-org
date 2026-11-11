@@ -287,7 +287,7 @@ fn serve_office(
         serve::OfficePorts {
             snapshot: {
                 let office = Arc::clone(&office);
-                Box::new(move || office.org_snapshot().map_err(|e| logged("snapshot", &e)))
+                Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
             },
             who: {
                 let office = Arc::clone(&office);
@@ -390,6 +390,15 @@ fn serve_office(
     drop(shared);
     drop(office);
     0
+}
+
+/// Preserve the organization's retryable availability failure across the read port.
+fn snapshot_failure(error: &OfficeError) -> serve::SnapshotFailure {
+    logged("snapshot", error);
+    match error {
+        OfficeError::SnapshotPending => serve::SnapshotFailure::Unavailable,
+        _ => serve::SnapshotFailure::Storage,
+    }
 }
 
 /// Logs why the office could not answer (to stderr, the host's log: `OfficeError`'s text has no

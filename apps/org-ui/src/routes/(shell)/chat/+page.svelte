@@ -161,6 +161,10 @@
 	const convView = $derived(conversation && chatState ? conversationView(chatState, ctx, conversation.id) : undefined);
 	const root = $derived(threadRoot && chatState ? chatState.messages.find((m) => m.id === threadRoot) : undefined);
 	const threadConversation = $derived(root && chatState ? chatState.conversations.find((c) => c.id === root.conversation_id) : undefined);
+	// The open Thread owns its replies' live offers; channel copies remain readable.
+	function channelRowLive(message: ChatMessage): 'off' | undefined {
+		return root && message.thread_root_id === root.id ? 'off' : undefined;
+	}
 	const panelKind = $derived(root && threadConversation ? 'thread' : showMembers && conversation ? 'members' : undefined);
 	$effect(() => {
 		const target = panel;
@@ -598,15 +602,15 @@
 					</div>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>
-				<div class="flex max-w-full flex-wrap items-center gap-2">
+				<div class="flex max-w-full flex-wrap items-center gap-2 max-[640px]:w-full">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
 						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={(event) => toggleMembers(event.currentTarget)}><Users aria-hidden="true" /> Members</Button>
 					{/if}
-					<div class="relative min-w-0 max-w-full">
+					<div class="relative min-w-0 max-w-full max-[640px]:w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
 						<label class="sr-only" for="chat-search">Search chat</label>
-						<input id="chat-search" type="search" value={query} oninput={(event) => changeQuery(event.currentTarget.value)} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
+						<input id="chat-search" type="search" value={query} oninput={(event) => changeQuery(event.currentTarget.value)} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:w-full" data-testid="chat-search" />
 					</div>
 				</div>
 			</div>
@@ -685,7 +689,7 @@
 								{#if m.id === newAt}
 									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" aria-live="off" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
 								{/if}
-								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
+								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''} aria-live={channelRowLive(m)}>{@render rowFor(m)}</div>
 							{:else}
 								{#if conversation.auto?.type === 'general'}
 									<div class="mx-auto my-8 max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-5 text-center" data-testid="welcome-card">
@@ -701,7 +705,7 @@
 								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="digest-row">
 									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={openDigest === g.member_id} onclick={() => (openDigest = openDigest === g.member_id ? undefined : g.member_id)}>Daily digest · {nameOf(ctx, g.member_id)} · {g.messages.length} {g.messages.length === 1 ? 'update' : 'updates'}</button>
 									{#if openDigest === g.member_id}
-										<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>
+										<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} {chatState} {now} readOnly /></div>{/each}</div>
 									{/if}
 								</div>
 							{/each}
@@ -709,7 +713,7 @@
 								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="muted-row">
 									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={showMuted} onclick={() => (showMuted = !showMuted)}>{convView.muted.length} muted {convView.muted.length === 1 ? 'message' : 'messages'} · {showMuted ? 'Hide' : 'Show'}</button>
 									<span class="text-xs/5 text-gray-400"> They still reach Activity.</span>
-									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
+									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} {chatState} {now} readOnly /></div>{/each}</div>{/if}
 								</div>
 							{/if}
 						</div>

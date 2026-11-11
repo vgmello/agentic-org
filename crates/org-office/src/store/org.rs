@@ -39,7 +39,9 @@ pub(crate) use replication::{
     ReplicationBootstrap,
 };
 mod snapshot;
-pub(crate) use snapshot::{export_replication_snapshot, stage_replication_snapshot};
+pub(crate) use snapshot::{
+    export_replication_snapshot, stage_replication_snapshot, sweep_snapshot_scratch,
+};
 pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
 
 /// The epoch of every entry until promotion exists (phase 4).

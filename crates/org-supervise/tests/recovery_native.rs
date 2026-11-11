@@ -134,6 +134,11 @@ fn hold_fixture() {
     if mode.starts_with("partial-environ:") {
         hold_partial_environment();
     }
+    #[cfg(target_os = "macos")]
+    if mode == "restricted-job" || mode == "restricted-escape" {
+        hold_restricted_job(mode == "restricted-escape");
+        return;
+    }
     let _nested = if mode == "delegate" {
         let mark = std::env::var("ORG_SESSION_MARK").unwrap();
         let root = std::env::current_dir().unwrap();
@@ -374,37 +379,66 @@ fn hold_partial_environment() -> ! {
 #[test]
 fn native_capture_quarantines_a_nul_terminated_partial_environment() {
     use org_supervise::recovery::MarkEvidence;
-    let root = tempfile::tempdir().unwrap();
-    let mark = unique_mark();
-    let mode = format!("partial-environ:{}", "x".repeat(4 * page_size()));
-    let (mut child, _) = fixture(root.path(), &mark, &mode);
-    let identity = child.identity().clone();
-    let proc = format!("/proc/{}", identity.pid);
-    let stat = std::fs::read_to_string(format!("{proc}/stat")).unwrap();
-    let (start, end) = environment_range(&stat);
-    let prefix = std::fs::read(format!("{proc}/environ")).unwrap();
-    assert!(prefix.starts_with(format!("ORG_SESSION_MARK={mark}\0").as_bytes()));
-    assert!(
-        prefix.len() < end - start,
-        "fixture must truncate the procfs read"
-    );
-    let mut native = NativeRecovery::new().unwrap();
-    let rows = native
-        .snapshot(Instant::now() + Duration::from_secs(5))
-        .unwrap();
-    let row = rows.iter().find(|row| row.pid == identity.pid).unwrap();
-    assert_eq!(row.mark, MarkEvidence::Unreadable);
+    for recorded_job in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let mark = unique_mark();
+        let mode = format!("partial-environ:{}", "x".repeat(4 * page_size()));
+        let (mut child, _) = fixture(root.path(), &mark, &mode);
+        let identity = child.identity().clone();
+        let proc = format!("/proc/{}", identity.pid);
+        let stat = std::fs::read_to_string(format!("{proc}/stat")).unwrap();
+        let (start, end) = environment_range(&stat);
+        let prefix = std::fs::read(format!("{proc}/environ")).unwrap();
+        assert!(prefix.starts_with(format!("ORG_SESSION_MARK={mark}\0").as_bytes()));
+        assert!(
+            prefix.len() < end - start,
+            "fixture must truncate the procfs read"
+        );
+        let mut native = NativeRecovery::new().unwrap();
+        let rows = native
+            .snapshot(Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        let row = rows.iter().find(|row| row.pid == identity.pid).unwrap();
+        assert_eq!(row.mark, MarkEvidence::Unreadable);
 
-    let mut row = Row(RecoveryRecord::new(mark, Some(identity), vec![]).unwrap());
-    let error = recover_record(
-        &mut row,
-        &(),
-        &mut native,
-        Instant::now() + Duration::from_secs(5),
-    )
-    .expect_err("a recorded process with partial environment evidence must remain unresolved");
-    assert_eq!(error.report.signals, 0);
-    assert!(child.try_exit().unwrap().is_none());
+        // An untrusted environment prefix and numeric PID give no authority.
+        let mut row = Row(RecoveryRecord::new(mark.clone(), None, vec![]).unwrap());
+        let gone = recover_record(
+            &mut row,
+            &(),
+            &mut native,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(gone.report().signals, 0);
+        assert!(gone.report().unreadable_environments > 0);
+        assert!(child.try_exit().unwrap().is_none());
+        // A trusted exact checkpoint can recover the same S0 process independently.
+        if recorded_job {
+            row.0 = RecoveryRecord::new(identity.mark.clone(), Some(identity), vec![]).unwrap();
+        } else {
+            row.0 = row
+                .0
+                .with_inventory(vec![CheckpointTarget {
+                    identity: ProcessIdentity {
+                        pid: identity.pid,
+                        started: identity.started,
+                        boot: identity.boot,
+                    },
+                    ancestry: vec![],
+                }])
+                .unwrap();
+        }
+        let gone = recover_record(
+            &mut row,
+            &(),
+            &mut native,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(gone.report().signals, 1);
+        assert!(child.try_exit().unwrap().is_some());
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -542,19 +576,18 @@ fn hold_mutated_argv_fixture() {
     std::thread::sleep(Duration::from_secs(20));
 }
 
-#[cfg(target_os = "macos")]
-fn mac_fixture_mark(
+fn native_spawn(
+    directory: &Path,
     program: &Path,
     arguments: &[&std::ffi::CStr],
     environment: &[&std::ffi::CStr],
-    wait_for_ready: bool,
-) -> org_supervise::recovery::MarkEvidence {
+    new_session: bool,
+) -> (libc::pid_t, io::PipeReader) {
     use std::ffi::CString;
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
 
-    let directory = tempfile::tempdir().unwrap();
-    let cwd = CString::new(directory.path().as_os_str().as_bytes()).unwrap();
+    let cwd = CString::new(directory.as_os_str().as_bytes()).unwrap();
     let program = CString::new(program.as_os_str().as_bytes()).unwrap();
     let strings = |items: &[&std::ffi::CStr]| {
         items
@@ -566,13 +599,38 @@ fn mac_fixture_mark(
     let mut argv = strings(arguments);
     let mut envp = strings(environment);
     let (stdout, writer) = io::pipe().unwrap();
-    let mut actions = std::ptr::null_mut();
+    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
     let mut pid = 0;
+    let mut attributes = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::zeroed();
+    // SAFETY: valid attribute storage, initialized before use.
+    assert_eq!(
+        unsafe { libc::posix_spawnattr_init(attributes.as_mut_ptr()) },
+        0
+    );
+    let mut attributes = unsafe { attributes.assume_init() };
+    #[cfg(target_os = "macos")]
+    if new_session {
+        // Darwin POSIX_SPAWN_SETSID, also used by PreparedSpawn.
+        assert_eq!(
+            unsafe { libc::posix_spawnattr_setflags(&mut attributes, 0x0400) },
+            0
+        );
+    }
+    #[cfg(target_os = "linux")]
+    if new_session {
+        assert_eq!(
+            unsafe {
+                libc::posix_spawnattr_setflags(&mut attributes, libc::POSIX_SPAWN_SETSID as _)
+            },
+            0
+        );
+    }
     // SAFETY: valid action pointer, open stdout fd and NUL-terminated path
     // and argument/environment arrays. The raw vectors preserve empty argv[0]
     // and duplicate environment entries for these fixtures.
     let spawn = unsafe {
-        assert_eq!(libc::posix_spawn_file_actions_init(&mut actions), 0);
+        assert_eq!(libc::posix_spawn_file_actions_init(actions.as_mut_ptr()), 0);
+        let mut actions = actions.assume_init();
         assert_eq!(
             libc::posix_spawn_file_actions_addchdir_np(&mut actions, cwd.as_ptr()),
             0
@@ -589,15 +647,27 @@ fn mac_fixture_mark(
             &mut pid,
             program.as_ptr(),
             &actions,
-            std::ptr::null(),
+            &attributes,
             argv.as_mut_ptr(),
             envp.as_mut_ptr(),
         );
         libc::posix_spawn_file_actions_destroy(&mut actions);
+        libc::posix_spawnattr_destroy(&mut attributes);
         result
     };
     assert_eq!(spawn, 0);
     drop(writer);
+    (pid, stdout)
+}
+
+fn native_fixture_mark(
+    program: &Path,
+    arguments: &[&std::ffi::CStr],
+    environment: &[&std::ffi::CStr],
+    wait_for_ready: bool,
+) -> org_supervise::recovery::MarkEvidence {
+    let directory = tempfile::tempdir().unwrap();
+    let (pid, stdout) = native_spawn(directory.path(), program, arguments, environment, false);
     let ready = if wait_for_ready {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
@@ -624,12 +694,12 @@ fn mac_fixture_mark(
         }
     };
     assert_eq!(reaped, pid);
-    assert!(ready, "macOS fixture did not report readiness");
+    assert!(ready, "native fixture did not report readiness");
     capture
         .unwrap()
         .into_iter()
         .find(|row| row.pid == pid as u32)
-        .expect("live macOS fixture")
+        .expect("live native fixture")
         .mark
 }
 
@@ -639,7 +709,7 @@ fn native_capture_documents_the_mutated_argv_trust_boundary() {
     use org_supervise::recovery::MarkEvidence;
     let mark = unique_mark();
     let argument = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
-    let observed = mac_fixture_mark(
+    let observed = native_fixture_mark(
         &std::env::current_exe().unwrap(),
         &[
             c"ABC",
@@ -665,7 +735,7 @@ fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
     let conflicting =
         std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
     assert_eq!(
-        mac_fixture_mark(
+        native_fixture_mark(
             &std::env::current_exe().unwrap(),
             &[c"", c"--exact", c"hold_fixture", c"--nocapture"],
             &[c"ORG_TEST_CASE=hold", &mark],
@@ -677,7 +747,7 @@ fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
     // entry when argv[0] is empty. Both forms must be quarantined.
     for argv_zero in [c"", c"sleep"] {
         assert_eq!(
-            mac_fixture_mark(
+            native_fixture_mark(
                 Path::new("/bin/sleep"),
                 &[argv_zero, c"20"],
                 &[&mark, &conflicting],
@@ -688,17 +758,150 @@ fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn native_capture_accepts_identical_duplicate_environment_marks() {
     use org_supervise::recovery::MarkEvidence;
     let mark = unique_mark();
     let entry = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
-    let observed = mac_fixture_mark(
+    let observed = native_fixture_mark(
         &std::env::current_exe().unwrap(),
         &[c"fixture", c"--exact", c"hold_fixture", c"--nocapture"],
         &[c"ORG_TEST_CASE=hold", &entry, &entry],
         true,
     );
     assert_eq!(observed, MarkEvidence::Present(mark));
+}
+
+#[cfg(target_os = "macos")]
+fn hold_restricted_job(escape: bool) {
+    let mark = std::ffi::CString::new(format!(
+        "ORG_SESSION_MARK={}",
+        std::env::var("ORG_SESSION_MARK").unwrap()
+    ))
+    .unwrap();
+    let (pid, stdout) = if escape {
+        native_spawn(
+            &std::env::current_dir().unwrap(),
+            Path::new("/bin/sleep"),
+            &[c"sleep", c"20"],
+            &[&mark],
+            true,
+        )
+    } else {
+        native_spawn(
+            &std::env::current_dir().unwrap(),
+            Path::new("/bin/zsh"),
+            &[
+                c"zsh",
+                c"-c",
+                c"nohup /bin/sleep 20 >/dev/null 2>&1 & print -r -- $!; wait",
+            ],
+            &[&mark, c"PATH=/usr/bin:/bin"],
+            false,
+        )
+    };
+    let target_pid = if escape {
+        pid as u32
+    } else {
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).unwrap();
+        line.trim().parse().unwrap()
+    };
+    let observation = NativeRecovery::new()
+        .unwrap()
+        .snapshot(Instant::now() + Duration::from_secs(5))
+        .unwrap()
+        .into_iter()
+        .find(|p| p.pid == target_pid)
+        .unwrap();
+    assert_eq!(
+        observation.mark,
+        org_supervise::recovery::MarkEvidence::Unreadable
+    );
+    let id = observation.identity.unwrap();
+    println!("RECOVERY_READY {} {} {}", id.pid, id.started, id.boot);
+    io::stdout().flush().unwrap();
+    std::thread::sleep(Duration::from_secs(20));
+    // SAFETY: this fixture owns this unreaped child and its PID until waitpid.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        libc::waitpid(pid, std::ptr::null_mut(), 0);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-job");
+    let child = child.unwrap();
+    let leader = owner.identity().clone();
+    let mut row =
+        Row(RecoveryRecord::new(leader.mark.clone(), Some(leader.clone()), vec![]).unwrap());
+    let mut native = NativeRecovery::new().unwrap();
+    let snapshot = native
+        .snapshot(Instant::now() + Duration::from_secs(5))
+        .unwrap();
+    let observed = snapshot
+        .iter()
+        .find(|p| p.identity.as_ref() == Some(&child))
+        .unwrap();
+    assert!(observed.group == leader.pid || observed.session == leader.pid);
+    assert_eq!(
+        observed.mark,
+        org_supervise::recovery::MarkEvidence::Unreadable
+    );
+    let gone = recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(10),
+    )
+    .unwrap();
+    assert!(gone.report().unreadable_environments > 0);
+    assert!(row.0.inventory().iter().any(|t| t.identity == child));
+    assert!(native
+        .wait_exited(&child, Instant::now() + Duration::from_secs(2))
+        .unwrap());
+    assert!(owner.try_exit().unwrap().is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_recovery_warns_and_skips_unknown_restricted_setsid_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-escape");
+    let child = child.unwrap();
+    let leader = owner.identity().clone();
+    let mut row = Row(RecoveryRecord::new(leader.mark.clone(), Some(leader), vec![]).unwrap());
+    let mut native = NativeRecovery::new().unwrap();
+    let gone = recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(10),
+    )
+    .unwrap();
+    assert!(gone.report().unreadable_environments > 0);
+    assert!(!row.0.inventory().iter().any(|t| t.identity == child));
+    assert!(!native.wait_exited(&child, Instant::now()).unwrap());
+    assert!(owner.try_exit().unwrap().is_some());
+    // Clean only the exact child created by this fixture, via trusted inventory.
+    row.0 = row
+        .0
+        .with_inventory(vec![CheckpointTarget {
+            identity: child.clone(),
+            ancestry: vec![],
+        }])
+        .unwrap();
+    recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap();
+    assert!(native
+        .wait_exited(&child, Instant::now() + Duration::from_secs(2))
+        .unwrap());
 }
