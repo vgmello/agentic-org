@@ -11,6 +11,7 @@
 	import { filterRoster, roster, runModeLabel, runtimeLabel, type RosterFilter } from '$lib/org/agents';
 	import { orgApi } from '$lib/org/api';
 	import { withoutFormer } from '$lib/org/model';
+	import { AgentsTabs } from '$lib/modules/employees';
 	import { sessionFor } from '$lib/org/session';
 
 	let { data } = $props();
@@ -43,6 +44,8 @@
 </script>
 
 <svelte:head><title>Agents · Agentic Org</title></svelte:head>
+
+<AgentsTabs current="agents" />
 
 <div class="space-y-5 px-8 py-6">
 	<div class="flex flex-wrap items-center justify-between gap-3">

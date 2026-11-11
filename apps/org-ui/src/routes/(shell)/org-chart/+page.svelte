@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { AgentsTabs } from '$lib/modules/employees';
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { setContext } from 'svelte';
@@ -350,6 +351,8 @@
 <svelte:head><title>Org chart · Agentic Org</title></svelte:head>
 
 {#snippet teamMenu(team: Team)}<TeamMenu {team} onaction={teamAction} />{/snippet}
+
+<AgentsTabs current="org-chart" />
 
 <div class="space-y-5 px-8 py-6">
 	<OwnerBar owner={owner(snapshot)} organization={organizationName} sample={data.sample} />
