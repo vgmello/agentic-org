@@ -158,6 +158,12 @@ pub(super) fn create_table(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              stage_id TEXT NOT NULL, epoch INTEGER NOT NULL CHECK (epoch > 0),
              seq INTEGER NOT NULL CHECK (seq >= 0),
              digest BLOB NOT NULL CHECK (length(digest) = 32), body BLOB NOT NULL
+         ) STRICT;
+         CREATE TABLE org_snapshot_install (
+             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+             stage_id TEXT NOT NULL, epoch INTEGER NOT NULL CHECK (epoch > 0),
+             seq INTEGER NOT NULL CHECK (seq >= 0),
+             digest BLOB NOT NULL CHECK (length(digest) = 32)
          ) STRICT;",
     )
 }
@@ -318,6 +324,8 @@ pub(crate) fn stage_replication_snapshot(
     {
         return Err(Refusal::NotAuthorized.into());
     }
+    let checkpoint = super::replication::staging_checkpoint(store)?;
+    check_stage(&checkpoint, &peer, mode, manifest.position, manifest.digest)?;
     if manifest.schema != SCHEMA.version || manifest.protocol_level != PROTOCOL {
         return Err(Refusal::UnsupportedVersion.into());
     }
@@ -327,8 +335,6 @@ pub(crate) fn stage_replication_snapshot(
     if *transport_key == store.key {
         return Err(Refusal::InvalidInput.into());
     }
-    let checkpoint = super::replication::staging_checkpoint(store)?;
-    check_stage(&checkpoint, &peer, mode, manifest.position, manifest.digest)?;
     let scratch = Scratch::new().map_err(storage_error)?;
     let path = scratch.database();
     let mut file = private_file(&path).map_err(storage_error)?;
@@ -405,6 +411,9 @@ pub(crate) fn stage_replication_snapshot(
         check_native_sequence(db, &current, &projection)?;
         let epoch = int(position.epoch.get())?;
         let seq = int(position.seq)?;
+        if let Some(committed) = installed_stage_id(db, position, digest)? {
+            return Ok(committed);
+        }
         let existing: Option<(String, i64, [u8; 32])> = db
             .query_row(
                 "SELECT stage_id, seq, digest FROM org_snapshot_stage WHERE epoch = ?1",
@@ -525,11 +534,7 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         })
         .filter(|member| member.owner);
     let owner = owners.next().ok_or(Refusal::IntegrityFailure)?;
-    if owners.next().is_some()
-        || owner.kind != org_proto::org::MemberKind::Person
-        || owner.agent.is_some()
-        || owner.reports_to_member_id.is_some()
-    {
+    if owners.next().is_some() || !super::valid_owner(&owner) {
         return Err(Refusal::IntegrityFailure);
     }
     let owner = Cell::Text(owner.id);
@@ -697,9 +702,12 @@ pub(super) fn install(
     db: &Connection,
     staged: &ValidatedSnapshot,
     next: &OrgCheckpoint,
-) -> Result<(), SyncError> {
+) -> Result<bool, SyncError> {
     if staged.codec.id() != CODEC || staged.codec.version() != 1 {
         return Err(Refusal::UnsupportedVersion.into());
+    }
+    if installed_stage_id(db, next.position, next.digest)?.as_deref() == Some(&staged.staging_id) {
+        return Ok(false);
     }
     let body: Vec<u8> = db
         .query_row(
@@ -727,6 +735,57 @@ pub(super) fn install(
 
     let current = OrganizationTxn(db).checkpoint()?;
     check_native_sequence(db, &current, &projection)?;
+    // An exact materialized checkpoint needs only a commit receipt. Keep its
+    // native replay history and its older federation base intact.
+    let replace = current.position != next.position
+        || current.digest != next.digest
+        || super::replication::awaiting_snapshot(db)?;
+    if replace {
+        replace_projection(db, next.protocol_level, projection)?;
+    }
+    db.execute(
+        "INSERT INTO org_snapshot_install VALUES (1, ?1, ?2, ?3, ?4)
+         ON CONFLICT(singleton) DO UPDATE SET stage_id = excluded.stage_id,
+             epoch = excluded.epoch, seq = excluded.seq, digest = excluded.digest",
+        params![
+            staged.staging_id,
+            int(next.position.epoch.get())?,
+            int(next.position.seq)?,
+            next.digest.as_bytes()
+        ],
+    )
+    .map_err(storage_error)?;
+    db.execute(
+        "DELETE FROM org_snapshot_stage WHERE stage_id = ?1",
+        [&staged.staging_id],
+    )
+    .map_err(storage_error)?;
+    Ok(replace)
+}
+
+fn installed_stage_id(
+    db: &Connection,
+    position: Position,
+    digest: Digest,
+) -> Result<Option<String>, StoreError> {
+    db.query_row(
+        "SELECT stage_id FROM org_snapshot_install WHERE (epoch, seq, digest) = (?1, ?2, ?3)",
+        (
+            int(position.epoch.get())?,
+            int(position.seq)?,
+            digest.as_bytes(),
+        ),
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(storage_error)
+}
+
+fn replace_projection(
+    db: &Connection,
+    protocol_level: u32,
+    projection: Projection,
+) -> Result<(), StoreError> {
     clear_projection(db)?;
     for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows) {
         let mut insert = db
@@ -747,12 +806,7 @@ pub(super) fn install(
     }
     db.execute(
         "UPDATE org_replica SET protocol_level = ?1, awaiting_snapshot = 0, native_seq = ?2",
-        (next.protocol_level, int(projection.native_seq)?),
-    )
-    .map_err(storage_error)?;
-    db.execute(
-        "DELETE FROM org_snapshot_stage WHERE stage_id = ?1",
-        [&staged.staging_id],
+        (protocol_level, int(projection.native_seq)?),
     )
     .map_err(storage_error)?;
     Ok(())

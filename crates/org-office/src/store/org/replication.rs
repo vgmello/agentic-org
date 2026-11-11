@@ -1,5 +1,7 @@
 //! The organization log, materialized state, and its federation cursor share a writer job.
 
+mod relationships;
+
 use std::sync::Arc;
 
 use org_proto::org::OrgChange;
@@ -509,9 +511,10 @@ impl OrgTxn for OrganizationTxn<'_> {
         staged: &ValidatedSnapshot,
         next: &OrgCheckpoint,
     ) -> Result<(), SyncError> {
-        snapshot::install(self.0, staged, next)?;
-        store_snapshot_base(self.0, next.position, next.digest)?;
-        self.set_authority(next)?;
+        if snapshot::install(self.0, staged, next)? {
+            store_snapshot_base(self.0, next.position, next.digest)?;
+            self.set_authority(next)?;
+        }
         Ok(())
     }
 
@@ -582,11 +585,13 @@ impl NativeEvent {
             None => return Err(Refusal::IntegrityFailure.into()),
         };
 
+        let previous_teams = relationships::before_apply(db, &self.changes, self.answer.is_none())?;
         apply_changes(db, &self.changes).map_err(|error| match error {
             OfficeError::Invalid(_) => SyncError::from(Refusal::IntegrityFailure),
             OfficeError::Storage(ref cause) if matches!(cause.downcast_ref(), Some(rusqlite::Error::SqliteFailure(failure, _)) if failure.code == rusqlite::ErrorCode::ConstraintViolation) => SyncError::from(Refusal::InvariantFailure),
             error => storage_error(error).into(),
         })?;
+        relationships::after_apply(db, &self.changes, previous_teams)?;
 
         // Federation keeps every outcome. The native feed advances only for changes,
         // so a copied refusal cannot introduce a gap in existing subscribers' positions.
@@ -776,6 +781,143 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_delta_cannot_remove_the_owner_or_create_invalid_team_relationships() {
+        use org_proto::org::{Membership, Team};
+
+        let (_dir, office) = replica();
+        let before = office.org_snapshot().unwrap();
+        let checkpoint = office.replication_checkpoint().unwrap();
+        let owner = before.members.iter().find(|member| member.owner).unwrap();
+        let team = |id: &str, parent: Option<&str>| Team {
+            id: id.into(),
+            owner_team_id: parent.map(str::to_owned),
+            lead_member_id: None,
+            name: id.into(),
+            version: 1,
+        };
+        let team_id = "team".to_owned();
+        let missing_membership = OrgChange::MembershipUpserted {
+            membership: Membership {
+                id: "membership".into(),
+                team_id: team_id.clone(),
+                member_id: "missing".into(),
+                title_in_team: None,
+                version: 1,
+            },
+        };
+        let delta = |seq, previous, command_id: &str, changes| {
+            OrgEvent::new(
+                checkpoint.org_id.clone(),
+                Position {
+                    epoch: checkpoint.position.epoch,
+                    seq,
+                },
+                previous,
+                Codec::new(CODEC, 1).unwrap(),
+                serde_json::to_vec(&NativeEvent {
+                    command_id: command_id.to_owned(),
+                    at: "2026-11-08T12:00:00.000Z".into(),
+                    changes,
+                    answer: Some(NativeAnswer {
+                        params_hash: "12".repeat(32),
+                        refusal: None,
+                    }),
+                })
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        for changes in [
+            vec![OrgChange::MemberRemoved {
+                member_id: owner.id.clone(),
+            }],
+            vec![
+                OrgChange::TeamUpserted {
+                    team: team(&team_id, None),
+                },
+                missing_membership,
+            ],
+            vec![
+                OrgChange::TeamUpserted {
+                    team: team("parent", Some("child")),
+                },
+                OrgChange::TeamUpserted {
+                    team: team("child", Some("parent")),
+                },
+            ],
+        ] {
+            let incoming = delta(2, checkpoint.digest, COMMAND, changes);
+            assert!(matches!(
+                organization::apply(&office, &Hq, incoming),
+                Err(SyncError::Refused(Refusal::IntegrityFailure))
+            ));
+            assert_eq!(office.org_snapshot().unwrap(), before);
+            assert_eq!(office.replication_checkpoint().unwrap(), checkpoint);
+        }
+        let mut member = owner.clone();
+        member.id = "person".into();
+        member.owner = false;
+        let mut led = team(&team_id, None);
+        led.lead_member_id = Some(member.id.clone());
+        let valid = delta(
+            2,
+            checkpoint.digest,
+            COMMAND,
+            vec![
+                OrgChange::MemberUpserted {
+                    member: member.clone(),
+                },
+                OrgChange::TeamUpserted { team: led },
+                OrgChange::MembershipUpserted {
+                    membership: Membership {
+                        id: "membership".into(),
+                        team_id: team_id.clone(),
+                        member_id: member.id,
+                        title_in_team: None,
+                        version: 1,
+                    },
+                },
+            ],
+        );
+        let prior = valid.digest;
+        organization::apply(&office, &Hq, valid).unwrap();
+        let remove = OrgChange::MembershipRemoved {
+            membership_id: "membership".into(),
+        };
+        assert!(matches!(
+            organization::apply(&office, &Hq, delta(3, prior, SECOND, vec![remove.clone()])),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        assert!(matches!(
+            organization::apply(
+                &office,
+                &Hq,
+                delta(
+                    3,
+                    prior,
+                    SECOND,
+                    vec![
+                        remove,
+                        OrgChange::TeamUpserted {
+                            team: Team {
+                                version: 2,
+                                ..team(&team_id, None)
+                            }
+                        },
+                    ]
+                )
+            ),
+            Ok(OrgOutput::Ack {
+                duplicate: false,
+                ..
+            })
+        ));
+        assert!(office.org_snapshot().unwrap().teams[0]
+            .lead_member_id
+            .is_none());
+    }
+
+    #[test]
     fn failed_log_insert_rolls_back_domain_and_outcome_before_acknowledgment() {
         let (_dir, office) = replica();
         office.org_store().run_sql_for_test(
@@ -841,7 +983,7 @@ mod tests {
         let (dir, office) = replica();
         let original = office.org_snapshot().unwrap();
         office.org_store().run_sql_for_test(
-            "DROP TABLE org_snapshot_stage; DROP TABLE org_replica_events;
+            "DROP TABLE org_snapshot_install; DROP TABLE org_snapshot_stage; DROP TABLE org_replica_events;
              DROP TABLE org_replica_base; DROP TABLE org_replica; PRAGMA user_version = 1;",
         );
         drop(office);
@@ -961,6 +1103,12 @@ mod tests {
         satellite
             .org_store()
             .run_sql_for_test("DROP TRIGGER fail_copy;");
+        assert_eq!(
+            organization::install_snapshot(&satellite, staged.clone()).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        drop(satellite);
+        let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
         assert_eq!(
             organization::install_snapshot(&satellite, staged).unwrap(),
             OrgOutput::SnapshotInstalled
@@ -1152,6 +1300,30 @@ mod tests {
             Err(SyncError::Refused(Refusal::RecoveryRequired))
         ));
         assert!(satellite.org_snapshot().is_err());
+        let stale = crate::OrganizationSnapshotManifest {
+            org_id: OrgId::new("ORG").unwrap(),
+            hq_office: OfficeId::new("HQ").unwrap(),
+            position: Position {
+                epoch: Epoch::new(1).unwrap(),
+                seq: 0,
+            },
+            digest: Digest::ZERO,
+            protocol_level: 99,
+            schema: 99,
+            ciphertext_bytes: 0,
+            ciphertext_digest: Digest::ZERO,
+        };
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &stale,
+                &key(),
+                &[][..],
+                0,
+                SnapshotStageMode::Normal,
+            ),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
         for seq in [2, 1] {
             let sample = event(seq, base, COMMAND, "incomplete");
             let incoming = OrgEvent::new(
@@ -1479,6 +1651,26 @@ mod tests {
             satellite.org_snapshot().unwrap(),
             hq.org_snapshot().unwrap()
         );
+        let prior = org_proto::Position { epoch: 1, seq: 2 };
+        let before = satellite.org_changes_after(prior, 8).unwrap();
+        let at_head = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        let same_head = satellite
+            .stage_replication_snapshot(
+                &Hq,
+                &at_head.manifest,
+                &transport_key,
+                at_head.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+            .unwrap();
+        assert_eq!(
+            organization::install_snapshot(&satellite, same_head).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(satellite.org_changes_after(prior, 8).unwrap(), before);
         assert!(hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).is_err());
         hq.bind_replication_hq(ca, MAX_BYTES).unwrap();
         assert_eq!(hq.org_head().unwrap().seq, 3);
