@@ -222,3 +222,173 @@ for (const region of ['sample note', 'unassigned-project row', 'empty call-to-ac
 		expect(await page.getByRole('main').evaluate((element) => element.scrollWidth <= element.clientWidth), `${region}: main does not scroll horizontally`).toBe(true);
 	});
 }
+
+
+for (const view of [
+	{ path: '/agents?q=Noor', current: 'Agents' },
+	{ path: '/org-chart?member=noor', current: 'Org chart' }
+]) {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: ${view.current} has a separate plain-link Agents views navigation`, async ({ page }) => {
+		await openChart(page, 1280);
+		await visit(page, view.path);
+		const nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
+		await expect(nav).toBeVisible();
+		await expect(nav.getByRole('link')).toHaveText(['Agents', 'Org chart']);
+		await expect(nav.getByRole('link', { name: 'Agents', exact: true })).toHaveAttribute('href', '/agents');
+		await expect(nav.getByRole('link', { name: 'Org chart', exact: true })).toHaveAttribute('href', '/org-chart');
+		await expect(nav.locator('[aria-current="page"]')).toHaveText(view.current);
+		await expect(nav.locator('[aria-current]')).toHaveCount(1);
+		await expect(nav.getByRole('tablist')).toHaveCount(0);
+		await expect(nav.getByRole('tab')).toHaveCount(0);
+		await expect(nav).not.toHaveAttribute('role', 'tablist');
+		await shot(page, 'agents-views-' + view.current.replace(' ', '-').toLowerCase(), { context: nav });
+	});
+}
+
+
+test('AGENT-3 TEAM-11 BUG-70 S2: keyboard links change routes, clear query state and preserve browser history', async ({ page, browserName }) => {
+	await openChart(page, 1280);
+	await visit(page, '/agents?q=Noor#saved');
+	let nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
+	await nav.getByRole('link', { name: 'Org chart', exact: true }).click();
+	await expect(page).toHaveURL(/\/org-chart$/);
+	await page.goBack();
+	await expect(page).toHaveURL(/\/agents\?q=Noor#saved$/);
+	await expect(nav.locator('[aria-current="page"]')).toHaveText('Agents');
+	await page.goForward();
+	await expect(page).toHaveURL(/\/org-chart$/);
+	await page.reload();
+	await expect(nav.locator('[aria-current="page"]')).toHaveText('Org chart');
+	await visit(page, '/org-chart?member=noor&q=discard#saved');
+	await expect(page.getByTestId('selected-member')).toContainText('Noor Haddad');
+	await nav.getByRole('link', { name: 'Agents', exact: true }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	const first = nav.getByRole('link', { name: 'Agents', exact: true });
+	await first.focus();
+	await expect(first).toBeFocused();
+	await page.keyboard.press(browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab');
+	const next = nav.getByRole('link', { name: 'Org chart', exact: true });
+	await expect(next).toBeFocused();
+	await expect(next).toHaveCSS('outline-width', '2px');
+	await expect(next).toHaveCSS('outline-style', 'solid');
+	await shot(page, 'agents-views-keyboard-focus', { context: nav });
+	await page.keyboard.press('Enter');
+	await expect(page).toHaveURL(/\/org-chart$/);
+	await expect(nav.locator('[aria-current="page"]')).toHaveText('Org chart');
+	await nav.getByRole('link', { name: 'Org chart', exact: true }).focus();
+	const tabKey = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+	await page.keyboard.press(tabKey);
+	await expect(page.getByRole('searchbox', { name: 'Search members', exact: true })).toBeFocused();
+	await page.keyboard.press(tabKey);
+	await expect(page.getByRole('tab', { name: 'Teams', exact: true })).toBeFocused();
+	await shot(page, 'agents-views-native-tab-order');
+});
+
+test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar keep their behavior', async ({ page }) => {
+	await openChart(page, 1280, 1, '?member=noor');
+	const nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
+	const tabs = page.getByRole('tablist', { name: 'Org chart views', exact: true });
+	await expect(tabs.getByRole('tab')).toHaveText(['Teams', 'People', 'Reporting lines']);
+	await expect(page.getByTestId('selected-member')).toContainText('Noor Haddad');
+	await tabs.getByRole('tab', { name: 'People', exact: true }).click();
+	await expect(page.getByRole('tabpanel', { name: 'People', exact: true })).toBeVisible();
+	await tabs.getByRole('tab', { name: 'People', exact: true }).press('ArrowRight');
+	await expect(tabs.getByRole('tab', { name: 'Reporting lines', exact: true })).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByTestId('selected-member')).toContainText('Noor Haddad');
+	await tabs.getByRole('tab', { name: 'Teams', exact: true }).click();
+	const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
+	const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
+	await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all']);
+	await panel.getByRole('button', { name: 'Actual size', exact: true }).click();
+	await expect(panel.getByRole('button', { name: 'Fit to width', exact: true })).toBeVisible();
+	await expect(nav.locator('[aria-current="page"]')).toHaveText('Org chart');
+	await expect(page).toHaveURL(/\/org-chart\?member=noor$/);
+	await shot(page, 'agents-views-inner-tabs-toolbar', { context: tabs });
+});
+
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: nav is readable on both loaded and empty pages at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		await openChart(page, width, scale);
+		for (const view of [
+			{ path: '/agents', current: 'Agents', empty: false },
+			{ path: '/org-chart?member=noor', current: 'Org chart', empty: false },
+			{ path: '/agents?org=empty', current: 'Agents', empty: true },
+			{ path: '/org-chart?org=empty', current: 'Org chart', empty: true }
+		]) {
+			await visit(page, view.path);
+			await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
+			await page.evaluate(() => document.fonts.ready.then(() => undefined));
+			const nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
+			await expect(nav.locator('[aria-current="page"]')).toHaveText(view.current);
+			await expect(nav.getByRole('link')).toHaveText(['Agents', 'Org chart']);
+			const dimensions = await nav.evaluate((element) => {
+				const box = element.getBoundingClientRect();
+				return { left: box.left, right: box.right, fits: element.scrollWidth <= element.clientWidth,
+					labelsFit: [...element.querySelectorAll('a')].every((link) => {
+						const r = link.getBoundingClientRect(), range = document.createRange();
+						range.selectNodeContents(link);
+						return [...range.getClientRects()].every((text) => text.left >= r.left - 1 && text.right <= r.right + 1);
+					}),
+					padding: parseFloat(getComputedStyle(element).paddingLeft),
+					underHeading: !!(document.getElementById('shell-page-title')!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING)
+				};
+			});
+			await expect(nav).toHaveCSS('overflow-x', 'auto');
+			expect(dimensions.left).toBeGreaterThanOrEqual(0);
+			expect(dimensions.right).toBeLessThanOrEqual(width);
+			expect(dimensions.labelsFit).toBe(true);
+			expect(dimensions.padding).toBe((width >= 1024 ? 32 : width >= 640 ? 24 : 16) * scale);
+			expect(dimensions.underHeading).toBe(true);
+			const selected = nav.locator('[aria-current="page"]');
+			await expect(selected).toHaveCSS('border-bottom-width', '2px');
+			const tones = await selected.evaluate((element) => {
+				const probe = document.createElement('span');probe.style.color = 'var(--color-indigo-400)';element.append(probe);
+				const expected = getComputedStyle(probe).color;probe.remove();
+				return { expected, actual: getComputedStyle(element).borderBottomColor };
+			});
+			expect(tones.actual).toBe(tones.expected);
+			await expect(selected).toHaveCSS('color', 'rgb(255, 255, 255)');
+			if (view.empty) await expect(page.getByText(view.current === 'Agents' ? 'No agents yet' : 'No teams yet', { exact: true })).toBeVisible();
+			await shot(page, `agents-views-${width}-${scale}-${view.current.replace(' ', '-').toLowerCase()}-${view.empty ? 'empty' : 'loaded'}`, { context: nav });
+			for (const link of await nav.getByRole('link').all()) {
+				await link.focus();
+				await expect(link).toBeFocused();
+				await expect.poll(() => link.evaluate((element) => {
+					const box = element.getBoundingClientRect();return box.left >= 0 && box.right <= innerWidth;
+				})).toBe(true);
+			}
+			if (!dimensions.fits) await shot(page, `agents-views-${width}-${scale}-${view.current.replace(' ', '-')}-${view.empty ? 'empty' : 'loaded'}-focused-end`, { context: nav });
+		}
+	});
+}
+
+for (const path of ['/agents', '/org-chart']) {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: ${path} keeps its loading/error boundary and recovers the nav`, async ({ page }) => {
+		await openChart(page, 1280);
+		const response = await page.request.get('/e2e/fakes/org-api.ts');
+		expect(response.ok()).toBe(true);
+		const module = await response.text();
+		let entered!: () => void, release!: () => void;
+		const started = new Promise<void>((resolve) => { entered = resolve; });
+		const held = new Promise<void>((resolve) => { release = resolve; });
+		await page.exposeFunction('__s2Entered', entered);
+		await page.exposeFunction('__s2Release', () => held);
+		await page.route('**/e2e/fakes/org-api.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: module + '\norgApi.view = async () => { await window.__s2Entered(); await window.__s2Release(); throw { source:"api", code:"storage_error", message:"S2 office unavailable" }; };' }));
+		try {
+			await page.goto(path);
+			await started;
+			await expect(page.getByRole('navigation', { name: 'Agents views', exact: true })).toHaveCount(0);
+			await shot(page, 'agents-views-' + path.slice(1) + '-loading');
+			release();
+			await expect(page.getByText('S2 office unavailable', { exact: true })).toBeVisible();
+			await expect(page.getByRole('navigation', { name: 'Agents views', exact: true })).toHaveCount(0);
+			await shot(page, 'agents-views-' + path.slice(1) + '-error');
+		} finally {
+			release();
+			await page.unrouteAll({ behavior: 'wait' });
+		}
+		await page.reload();
+		await expect(page.getByRole('navigation', { name: 'Agents views', exact: true })).toBeVisible();
+		await shot(page, 'agents-views-' + path.slice(1) + '-recovered');
+	});
+}

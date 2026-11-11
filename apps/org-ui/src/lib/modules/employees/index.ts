@@ -1,3 +1,4 @@
+export { default as AgentsTabs } from './AgentsTabs.svelte';
 export { default as AddAgentSheet } from './features/hire-employee/AddAgentSheet.svelte';
 export { default as EditAgentDialog } from './features/edit-profile/EditAgentDialog.svelte';
 export { default as HowItRunsDialog } from './features/configure-run/HowItRunsDialog.svelte';
