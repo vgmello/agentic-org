@@ -45,7 +45,7 @@
 		askDraftFor?: (askId: string) => DraftText;
 		delivery?: { status: 'sending' | 'failed'; error?: string };
 		onreact?: (m: ChatMessage, r: Reaction) => void;
-		onthread?: (m: ChatMessage) => void;
+		onthread?: (m: ChatMessage, opener: HTMLElement) => void;
 		onturn?: (m: ChatMessage, into: 'bug' | 'request' | 'task') => void;
 		onmute?: (m: ChatMessage, mode: MuteMode) => void;
 		onpin?: (m: ChatMessage) => void;
@@ -87,7 +87,7 @@
 
 		{#if card}
 			<div class="mt-1">
-				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
+				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)} />
 			</div>
 		{:else}
 			<div class="mt-0.5" data-testid="message-body">
@@ -115,7 +115,7 @@
 		{/if}
 
 		{#if replies.length && onthread}
-			<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => onthread?.(message)} data-testid="replies-link">↳ {replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
+			<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={(event) => onthread?.(message, event.currentTarget)} data-testid="replies-link">↳ {replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
 		{/if}
 
 		{#if onopen}
@@ -135,7 +135,7 @@
 				<Button type="button" variant="ghost" size="icon-xs" aria-label="React {r.label}" title={r.label} disabled={!officeRunning} onclick={() => onreact?.(message, r.id)}>{r.emoji}</Button>
 			{/each}
 			{#if !inThread && onthread}
-				<Button type="button" variant="ghost" size="icon-xs" aria-label="Reply in thread" title="Reply in thread" onclick={() => onthread?.(message)}><MessageSquareReply aria-hidden="true" /></Button>
+				<Button type="button" variant="ghost" size="icon-xs" aria-label="Reply in thread" title="Reply in thread" onclick={(event) => onthread?.(message, event.currentTarget)}><MessageSquareReply aria-hidden="true" /></Button>
 			{/if}
 			<DropdownMenu>
 				<DropdownMenuTrigger>
