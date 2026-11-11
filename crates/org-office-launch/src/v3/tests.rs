@@ -533,7 +533,7 @@ fn worker_events_on_the_rendezvous_are_v3_lines() {
     );
     assert_eq!(
         read_server_event(&mut Cursor::new(out)).unwrap(),
-        Some(ready.clone())
+        Some(RendezvousEvent::Server(ready.clone()))
     );
     let mut v2 = Vec::new();
     crate::write_server_event(&mut v2, &ready).unwrap();
@@ -585,7 +585,10 @@ fn worker_events_refuse_unknown_fields() {
     let mut out = Vec::new();
     write_server_event(&mut out, &created).unwrap();
     let good = line_value(&out);
-    assert_eq!(read(good.clone()).unwrap(), Some(created));
+    assert_eq!(
+        read(good.clone()).unwrap(),
+        Some(RendezvousEvent::Server(created))
+    );
     let mut bad = good.clone();
     bad["db_key"] = json!("x");
     assert!(matches!(read(bad), Err(LaunchError::Json(_))));
@@ -593,12 +596,12 @@ fn worker_events_refuse_unknown_fields() {
     newer["office"]["later"] = json!(1);
     assert!(matches!(
         read(newer).unwrap(),
-        Some(ServerEvent::Created { .. })
+        Some(RendezvousEvent::Server(ServerEvent::Created { .. }))
     ));
     // An unknown event name is still ignorable, whatever it carries.
     assert_eq!(
         read(json!({"v": 3, "event": "later", "anything": 1})).unwrap(),
-        Some(ServerEvent::Unknown)
+        Some(RendezvousEvent::Server(ServerEvent::Unknown))
     );
     // `v` is required on a v3 line.
     assert!(read(json!({"event": "discarded"})).is_err());
@@ -616,5 +619,176 @@ fn the_v3_reader_refuses_any_v2_line_as_a_version() {
             read_first_line(&mut Cursor::new(line), FirstLine::Start),
             Err(LaunchError::UnsupportedVersion { found: 2, .. })
         ));
+    }
+}
+
+#[test]
+fn fd_receipts_are_recognized_as_v3_events() {
+    for of in ["handoff", "01ARZ3NDEKTSV4RRFFQ69G5FAV"] {
+        let wire = format!("{{\"v\":3,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
+        let decoded = read_server_event(&mut Cursor::new(wire)).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(decoded).ok(),
+            Some(json!({"event":"fds_received", "of":of})),
+            "receipt must not be ignored as an unknown event"
+        );
+    }
+}
+
+#[test]
+fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
+    let vectors: Value =
+        serde_json::from_str(include_str!("../../test-vectors/v3/worker-events.json")).unwrap();
+    assert_eq!(vectors["schema_version"], 1);
+    let events = vectors["events"].as_array().unwrap();
+    let invalid = vectors["invalid"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(invalid.len(), 10);
+    for case in events {
+        let expected = RendezvousEvent::FdsReceived {
+            of: case["of"].as_str().unwrap().into(),
+        };
+        let wire = case["wire"].as_str().unwrap();
+        assert_eq!(
+            read_server_event(&mut Cursor::new(wire)).unwrap(),
+            Some(expected.clone())
+        );
+        let mut encoded = Vec::new();
+        write_rendezvous_event(&mut encoded, &expected).unwrap();
+        assert_eq!(encoded, wire.as_bytes());
+        assert!(matches!(
+            crate::read_server_event(&mut Cursor::new(wire)),
+            Err(LaunchError::UnsupportedVersion { found: 3, .. })
+        ));
+    }
+    for case in invalid {
+        let error =
+            read_server_event(&mut Cursor::new(case["wire"].as_str().unwrap())).unwrap_err();
+        assert!(
+            matches!(
+                (case["error"].as_str(), &error),
+                (Some("json"), LaunchError::Json(_))
+                    | (
+                        Some("unsupported"),
+                        LaunchError::UnsupportedVersion { found: 2, .. }
+                    )
+            ),
+            "{}: {error:?}",
+            case["name"]
+        );
+    }
+    // Version refusal must precede decoding fields, including malformed receipt fields.
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(
+            b"{\"v\":4,\"event\":\"fds_received\",\"extra\":null}\n"
+        )),
+        Err(LaunchError::UnsupportedVersion { found: 4, .. })
+    ));
+    // A v2 build still ignores this unknown event; it gains no receipt authority.
+    assert_eq!(
+        crate::read_server_event(&mut Cursor::new(
+            b"{\"v\":2,\"event\":\"fds_received\",\"of\":\"handoff\"}\n"
+        ))
+        .unwrap(),
+        Some(ServerEvent::Unknown)
+    );
+}
+
+#[test]
+fn rendezvous_writer_preserves_ordinary_event_validation() {
+    let office = crate::OfficeFile::new(
+        OFFICE,
+        "HQ",
+        OfficeRole::Hq,
+        ORG,
+        "Acme",
+        "2026-11-08T02:10:00.000Z",
+    );
+    let mut bad_office = office.clone();
+    bad_office.office_id = "bad/id".into();
+    for event in [
+        ServerEvent::Unknown,
+        ServerEvent::Created { office: bad_office },
+    ] {
+        let mut encoded = Vec::new();
+        assert!(write_rendezvous_event(&mut encoded, &RendezvousEvent::Server(event)).is_err());
+        assert!(encoded.is_empty());
+    }
+    for event in [
+        ServerEvent::Created { office },
+        ServerEvent::Ready {
+            socket: "/run/o.sock".into(),
+            pid: 42,
+        },
+        ServerEvent::Discarded,
+        ServerEvent::Failed {
+            code: crate::FailCode::StorageError,
+            message: "fixed message".into(),
+        },
+    ] {
+        let mut encoded = Vec::new();
+        write_rendezvous_event(&mut encoded, &RendezvousEvent::Server(event.clone())).unwrap();
+        assert_eq!(
+            read_server_event(&mut Cursor::new(encoded)).unwrap(),
+            Some(RendezvousEvent::Server(event))
+        );
+    }
+}
+
+#[test]
+fn rendezvous_receipts_keep_the_frame_size_limit() {
+    let of = "x".repeat(org_proto::MAX_FRAME_BYTES);
+    let mut encoded = Vec::new();
+    assert!(matches!(
+        write_rendezvous_event(
+            &mut encoded,
+            &RendezvousEvent::FdsReceived { of: of.clone() }
+        ),
+        Err(LaunchError::Frame(FrameError::TooLargeToSend))
+    ));
+    assert!(encoded.is_empty());
+    let wire = format!("{{\"v\":3,\"event\":\"fds_received\",\"of\":\"{of}\"}}\n");
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(wire)),
+        Err(LaunchError::Frame(FrameError::TooLarge))
+    ));
+}
+
+#[test]
+fn rendezvous_events_keep_the_office_file_size_limit() {
+    let office = crate::OfficeFile::new(
+        OFFICE,
+        "HQ",
+        OfficeRole::Hq,
+        ORG,
+        "Acme",
+        "2026-11-08T02:10:00.000Z",
+    );
+    for size in [
+        crate::MAX_OFFICE_FILE_BYTES,
+        crate::MAX_OFFICE_FILE_BYTES + 1,
+    ] {
+        // The forward-compatible extra field fits compact input but its pretty office.json
+        // reaches the exact file cap. A generic frame writer alone cannot enforce this rule.
+        let mut value = serde_json::to_value(&office).unwrap();
+        value["pad"] = json!("");
+        let base = serde_json::to_vec_pretty(&value).unwrap().len() + 1;
+        value["pad"] = json!("x".repeat(size - base));
+        let compact = serde_json::to_vec(&value).unwrap();
+        assert!(compact.len() <= crate::MAX_OFFICE_FILE_BYTES);
+        let padded = crate::OfficeFile::from_slice(&compact).unwrap();
+        let event = RendezvousEvent::Server(ServerEvent::Created { office: padded });
+        let mut encoded = Vec::new();
+        let written = write_rendezvous_event(&mut encoded, &event);
+        let wire = json!({"v":3, "event":"created", "office":value}).to_string() + "\n";
+        let read = read_server_event(&mut Cursor::new(wire));
+        if size == crate::MAX_OFFICE_FILE_BYTES {
+            assert!(written.is_ok());
+            assert_eq!(read.unwrap(), Some(event));
+        } else {
+            assert!(matches!(written, Err(LaunchError::Invalid(_))));
+            assert!(encoded.is_empty());
+            assert!(matches!(read, Err(LaunchError::Invalid(_))));
+        }
     }
 }
