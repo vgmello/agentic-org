@@ -163,7 +163,8 @@ pub enum RecoveryState {
     Delivered,
     /// Acknowledged: the staged copy is erased.
     Acknowledged,
-    #[serde(other)]
+    /// A state this build doesn't know. It is never sent: serializing it fails.
+    #[serde(other, skip_serializing)]
     Unknown,
 }
 
@@ -281,7 +282,8 @@ pub struct TlsFetch;
 /// [`TlsPrivateKey`]. The JSON itself is the envelope's raw result, a `serde_json::Value`: built
 /// with `serde_json::to_value` on the host's side and parsed from the response line on the
 /// gateway's, so the key also sits there, unzeroed, on both sides (§6.5's raw-JSON exception).
-/// `https` needs both `cert` and `key`; `http_loopback` takes neither; any other `mode` is
+/// `https` needs both `cert` and `key`, non-empty strings; `http_loopback` takes neither, so a
+/// `cert` or `key` there is refused whatever its value, `null` included; any other `mode` is
 /// refused. `origin` must be canonical; its fit to the listener is the gateway's check, not the
 /// decoder's.
 #[derive(Debug)]
@@ -331,15 +333,26 @@ enum TlsFetchOut<'a> {
     Unavailable(&'a ListenFailure),
 }
 
+/// `cert` and `key` are present-means-`Some`, like `Request.principal`: the outer `Option` says
+/// whether the key is there at all, so `http_loopback` refuses `"cert": null` as it refuses any
+/// other value, and the inner one carries a `null`, which `https` refuses too.
 #[derive(Deserialize)]
 struct RawTlsFetch {
     mode: ListenMode,
-    #[serde(default)]
-    cert: Option<String>,
-    #[serde(default)]
-    key: Option<TlsPrivateKey>,
+    #[serde(default, deserialize_with = "present")]
+    cert: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    key: Option<Option<TlsPrivateKey>>,
     origin: ListenOrigin,
     hsts: Hsts,
+}
+
+/// Decodes a present field as `Some`, even when its value is `null`. An absent one is `None`
+/// through `default`.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -392,16 +405,23 @@ impl<'de> Deserialize<'de> for TlsFetchResult {
             hsts,
         } = raw;
         match (mode, cert, key) {
-            (ListenMode::Https, Some(cert), Some(key)) => Ok(TlsFetchResult::Https {
-                cert,
-                key,
-                origin,
-                hsts,
-            }),
+            // `TlsPrivateKey` already refuses an empty key; the key test keeps the rule local.
+            (ListenMode::Https, Some(Some(cert)), Some(Some(key)))
+                if !cert.is_empty() && !key.expose().is_empty() =>
+            {
+                Ok(TlsFetchResult::Https {
+                    cert,
+                    key,
+                    origin,
+                    hsts,
+                })
+            }
             (ListenMode::HttpLoopback, None, None) => {
                 Ok(TlsFetchResult::HttpLoopback { origin, hsts })
             }
-            (ListenMode::Https, _, _) => Err(D::Error::custom("https needs a cert and a key")),
+            (ListenMode::Https, _, _) => {
+                Err(D::Error::custom("https needs a non-empty cert and key"))
+            }
             (ListenMode::HttpLoopback, _, _) => {
                 Err(D::Error::custom("http_loopback takes no cert or key"))
             }
@@ -416,8 +436,10 @@ impl Call for TlsFetch {
 }
 
 /// `tls.set` (`host.sock` only; admin, the signed `agentic-org` peer on macOS; journaled): install
-/// a TLS pair. Before it stores the pair and emits `tls.renew`, the host checks, in this order,
-/// and answers the first failure (X-02 §6.2):
+/// a TLS pair. First, as for every journaled op, the journal lookup: a known `operation_id` with
+/// a stored result replays it before any check (a stored success replays even if setup has since
+/// rewritten the origin; [`crate::journal`]). Otherwise, before it stores the pair and emits
+/// `tls.renew`, the host checks, in this order, and answers the first failure (X-02 §6.2):
 /// 1. the stored listener fields (`address`, `port`, `scheme`) and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]);
 /// 2. the stored `hsts` ([`TlsRefusal::HstsInvalid`]);
@@ -743,10 +765,13 @@ impl Call for Subscribe {
 /// `https` a first bootstrap needs `tls`; a replay may omit it and compares a given pair by
 /// fingerprint.
 ///
-/// **A replay checks the password as a sign-in** (X-02 §6.2 step 3, §6.3): never against a
-/// fingerprint, which holds no secret. A wrong password is the plain error `not_authorized`, and
-/// another `login` changes the fingerprint, so it is `operation_reused`; that lets setup tell a
-/// typo from a different login.
+/// The journal lookup by `operation_id` comes first, as for every journaled op. **A replay then
+/// checks the `login` and password as a sign-in** (X-02 §6.2 step 3, §6.3), never against a
+/// fingerprint, which holds no secret: a `login` and password that don't sign in are the plain
+/// error `not_authorized`, counted toward lockout as `account.verify` is, and setup answers it by
+/// asking for the password again. Then the fingerprint (the normalized `login` and
+/// `hq_operation_id`, [`crate::journal::Journaled`]): another `hq_operation_id` is the plain
+/// error `operation_reused`. Then the pair: another one is `tls_mismatch`.
 ///
 /// Its result is a [`BootstrapOutcome`] ([`HostOpResult`]'s wire form, **never `accepted`**):
 /// `completed` with [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order
@@ -804,18 +829,20 @@ pub enum BootstrapOutcome {
 /// `{"code": "already_bootstrapped"}` and `{"code": "bootstrap_finished"}`. None is ever stored
 /// ([`BootstrapRefusal::is_stored`]).
 ///
-/// **The host decides in this order**, and answers the first that applies:
+/// **The host decides in this order**, and answers the first that applies. Steps 1 to 3 act on
+/// the journal lookup's answer (no record, a finished one, or a replay), and that lookup comes
+/// first, as for every journaled op:
 /// 1. on a non-empty registry, an `operation_id` other than the recorded bootstrap's (or a
 ///    registry setup has no record of) is [`BootstrapRefusal::AlreadyBootstrapped`], whatever
 ///    else holds, even after bootstrap has finished;
 /// 2. the recorded `operation_id` gets [`BootstrapRefusal::BootstrapFinished`] once bootstrap has
 ///    finished;
-/// 3. otherwise the recorded `operation_id` replays, checked in this order: the password as a
-///    sign-in (a wrong one is the plain error `not_authorized`), then the fingerprint (another
-///    `login` is the plain error `operation_reused`), then the pair (one other than the stored
-///    one is [`BootstrapRefusal::TlsMismatch`]). A replay doesn't re-check the listen
-///    configuration. Bootstrap's fingerprint fields are move 2b's; replays must also match the
-///    stored `hq_operation_id` (X-02 §6.2);
+/// 3. otherwise the recorded `operation_id` replays, checked in this order: the `login` and
+///    password as a sign-in (a `login` and password that don't sign in are the plain error
+///    `not_authorized`), then the fingerprint (the normalized `login` and `hq_operation_id`:
+///    another `hq_operation_id` is the plain error `operation_reused`), then the pair (one other
+///    than the stored one is [`BootstrapRefusal::TlsMismatch`]). A replay doesn't re-check the
+///    listen configuration;
 /// 4. on an empty registry: the stored listener fields and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
 ///    ([`TlsRefusal::HstsInvalid`]), then

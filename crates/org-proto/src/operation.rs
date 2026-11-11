@@ -54,7 +54,8 @@ pub enum OperationOutcome {
     Rejected {
         refusal: ApiError,
     },
-    #[serde(other)]
+    /// A status this build doesn't know. It is never sent: serializing it fails.
+    #[serde(other, skip_serializing)]
     Unknown,
 }
 

@@ -710,6 +710,8 @@ fn operation_get_has_its_wire_shapes() {
     // `queued` arrives with relay (X-05): an older reader sees Unknown and looks again later.
     let queued: OperationOutcome = serde_json::from_value(json!({"status": "queued"})).unwrap();
     assert_eq!(queued, OperationOutcome::Unknown);
+    // It is never sent: writing it fails rather than inventing a status.
+    assert!(serde_json::to_value(&queued).is_err());
     let response = Response::ok::<OperationGet>(3, &outcome).unwrap();
     assert!(response.into_result::<OperationGet>().is_ok());
 }

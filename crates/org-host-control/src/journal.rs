@@ -9,6 +9,11 @@
 //! - the same `operation_id` with another fingerprint, another account or (`account.create`) a
 //!   password that doesn't match the verifier: `operation_reused`.
 //!
+//! **The journal lookup comes first** for every journaled op, `tls.set` included: a known
+//! `operation_id` is looked up before any of the op's checks, a stored result replays (a stored
+//! `tls.set` success replays even if setup has since rewritten the origin), and only an unknown
+//! or unstored one runs the checks.
+//!
 //! This crate defines the bytes the host hashes ([`fingerprint_input`]); the host computes the
 //! SHA-256.
 //!
@@ -24,21 +29,32 @@
 //!   the account's own hash and survives a host restart with the row. A replay verifies its
 //!   password against it through the same Argon2 pool, queue limit and rate limit as
 //!   `account.verify`, never against the account's current hash, so it reveals nothing the
-//!   replaying account didn't send and a later password change doesn't refuse an honest retry.
-//!   A mismatch is `operation_reused`: a retry with another password is **not** the same op,
-//!   though its fingerprint is the same. The host computes and stores the verifier (move 2b);
-//!   this crate defines no type for it. A **refused** create (`already_exists`, `invalid_name`,
-//!   stored) produced no hash and keeps no verifier: its refusal doesn't depend on the password,
-//!   so a replay returns it whatever password it carries.
-//! - A `bootstrap` replay checks the password as a sign-in instead, so a wrong one is
-//!   `not_authorized` (see [`crate::ops::Bootstrap`]).
+//!   replaying account didn't send. A mismatch is `operation_reused`: a retry with another
+//!   password is **not** the same op, though its fingerprint is the same.
+//! - `account.reset_password`, `account.set_password` and an account's revocation **delete** the
+//!   create-time verifiers of the account they act on, found by the created account in each
+//!   `account.create` row's result (`{ account }`), not by the row's `account` column (the
+//!   creator). A replay of that create afterwards gets `operation_reused`, and no old hash
+//!   outlives a reset. The host computes and stores the verifier (move 2b); this crate defines
+//!   no type for it. A **refused** create (`already_exists`, `invalid_name`, stored) produced no
+//!   hash and keeps no verifier: its refusal doesn't depend on the password, so a replay returns
+//!   it whatever password it carries.
+//! - A `bootstrap` replay checks the `login` and password as a sign-in instead, first: a `login`
+//!   and password that don't sign in are `not_authorized`. Then its fingerprint (the normalized
+//!   `login` and `hq_operation_id`, never the password or the TLS pair) and then the pair (see
+//!   [`crate::ops::Bootstrap`]).
+//!
+//! **Logins are fingerprinted normalized** (X-02 §6.3; §6.2: NFC, case-folded), so `Admin` and
+//! `admin` are the same op. This crate doesn't normalize and adds no dependency to do it: callers
+//! pass the normalized `login` in the params they fingerprint, and the host normalizes before
+//! fingerprinting (move 2b).
 
 use org_proto::Call;
 use serde::Serialize;
 
 use crate::ops::{
-    AccountCreate, AccountCreateParams, OfficeRestart, OfficeRestartParams, OrganizationCreate,
-    OrganizationCreateParams,
+    AccountCreate, AccountCreateParams, Bootstrap, BootstrapParams, OfficeRestart,
+    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
 };
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
@@ -116,6 +132,9 @@ impl Journaled for AccountCreateParams {
 
     /// `login`, `admin` and `owner_of`. Never the password: the host checks a replay's password
     /// against the row's create-time verifier instead (module docs).
+    ///
+    /// `login` is used as given: callers pass it **normalized** (NFC, case-folded; X-02 §6.2,
+    /// §6.3), because this crate doesn't normalize.
     fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
         #[derive(Serialize)]
         struct Fields<'a> {
@@ -135,6 +154,40 @@ impl Journaled for AccountCreateParams {
             login,
             admin: *admin,
             owner_of: owner_of.as_deref(),
+        })
+    }
+}
+
+impl Journaled for BootstrapParams {
+    const METHOD: &'static str = Bootstrap::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// `login` and `hq_operation_id` (X-02 §6.3). Never the password, which a replay checks as
+    /// a sign-in first, and never the TLS pair, which a replay compares after the fingerprint
+    /// (`tls_mismatch`): so another `hq_operation_id` is `operation_reused`, and another pair
+    /// passes the fingerprint and gets `tls_mismatch` with its guidance.
+    ///
+    /// `login` is used as given: callers pass it **normalized** (NFC, case-folded; X-02 §6.2,
+    /// §6.3), because this crate doesn't normalize.
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            login: &'a str,
+            hq_operation_id: &'a str,
+        }
+        let BootstrapParams {
+            operation_id: _,
+            password: _,
+            tls: _,
+            login,
+            hq_operation_id,
+        } = self;
+        serde_json::to_string(&Fields {
+            login,
+            hq_operation_id,
         })
     }
 }

@@ -162,6 +162,8 @@ fn organization_list_carries_the_recovery_state() {
         serde_json::from_value::<RecoveryState>(json!("shown")).unwrap(),
         RecoveryState::Unknown
     );
+    // It is never sent: writing it fails rather than inventing a state.
+    assert!(serde_json::to_value(RecoveryState::Unknown).is_err());
 }
 
 #[test]
@@ -334,6 +336,59 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
                 org_proto::ErrorCode::OperationReused
             );
         }
+    }
+}
+
+/// X-02 §6.3: `bootstrap`'s fingerprint is `login` and `hq_operation_id`; a replay checks the
+/// sign-in first, then the fingerprint, then the pair.
+#[test]
+fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
+    let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let vectors = &doc["bootstrap"];
+    let stored_params = &vectors["stored"];
+    let (stored_id, stored) = journaled::<BootstrapParams>("bootstrap", stored_params);
+    assert_eq!(
+        String::from_utf8(stored.clone()).unwrap(),
+        vectors["fingerprint_input"].as_str().unwrap()
+    );
+    let mut seen = Vec::new();
+    for retry in vectors["retries"].as_array().unwrap() {
+        let name = retry["name"].as_str().unwrap();
+        let params = &retry["params"];
+        let (retry_id, fingerprint) = journaled::<BootstrapParams>("bootstrap", params);
+        assert_eq!(retry_id, stored_id, "{name}");
+        // Never the password, the pair or the operation id.
+        let text = String::from_utf8(fingerprint.clone()).unwrap();
+        for secret in ["password", "key-secret", "CERTIFICATE", &retry_id] {
+            assert!(!text.contains(secret), "{name}: {text}");
+        }
+        let same = fingerprint == stored;
+        assert_eq!(same, retry["same_fingerprint"], "{name}");
+        // The replay's order: sign-in, fingerprint, pair.
+        let signs_in = params["login"] == stored_params["login"]
+            && params["password"] == stored_params["password"];
+        let pair = params.get("tls");
+        let outcome = if !signs_in {
+            "not_authorized"
+        } else if !same {
+            "operation_reused"
+        } else if pair.is_some_and(|pair| pair != &stored_params["tls"]) {
+            "tls_mismatch"
+        } else {
+            "replay"
+        };
+        assert_eq!(outcome, retry["expect"], "{name}");
+        seen.push((retry["same_fingerprint"].as_bool().unwrap(), outcome));
+    }
+    // Both sides of the fingerprint, and every outcome of the order.
+    for want in [
+        (true, "replay"),
+        (true, "tls_mismatch"),
+        (true, "not_authorized"),
+        (false, "operation_reused"),
+        (false, "not_authorized"),
+    ] {
+        assert!(seen.contains(&want), "{want:?}");
     }
 }
 
