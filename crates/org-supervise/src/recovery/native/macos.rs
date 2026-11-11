@@ -94,9 +94,29 @@ impl NativeRecovery {
         if info.pbi_flags & PROC_FLAG_LP64 == 0 || !unrestricted(pid) {
             return Ok(MarkEvidence::Unreadable);
         }
-        let mut bytes = vec![0; self.arg_max + std::mem::size_of::<i32>()];
-        let mut count = bytes.len();
+        let header = std::mem::size_of::<i32>();
         let mut oid = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+        let mut expected_size = 0;
+        // With no output buffer, XNU reports the full launch image size.
+        // SAFETY: valid OID and size output, with no read or write data buffer.
+        let sizing = unsafe {
+            libc::sysctl(
+                oid.as_mut_ptr(),
+                oid.len() as _,
+                std::ptr::null_mut(),
+                &mut expected_size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        check_time(deadline)?;
+        if sizing != 0 || !(header..self.arg_max + header).contains(&expected_size) {
+            return Ok(MarkEvidence::Unreadable);
+        }
+        // The extra byte distinguishes a complete image from a larger one
+        // truncated to the buffer size if exec raced the sizing query.
+        let mut bytes = vec![0; expected_size + 1];
+        let mut count = bytes.len();
         // SAFETY: valid OID and allocated output buffer, with no write input.
         let result = unsafe {
             libc::sysctl(
@@ -109,10 +129,10 @@ impl NativeRecovery {
             )
         };
         check_time(deadline)?;
-        if result != 0 || count >= bytes.len() || !unrestricted(pid) {
+        if result != 0 || count > bytes.len() || !unrestricted(pid) {
             return Ok(MarkEvidence::Unreadable);
         }
-        Ok(procargs_mark(&bytes[..count]))
+        Ok(procargs_mark(&bytes[..count], expected_size))
     }
 
     fn pids(&self, deadline: Instant) -> io::Result<Vec<libc::pid_t>> {
@@ -339,14 +359,17 @@ impl RecoveryProcesses for NativeRecovery {
         let gone = || -> io::Result<bool> {
             Ok(bsd_info(identity.pid)?.is_none_or(|info| !live_matches(&info, identity)))
         };
+        if Instant::now() >= deadline {
+            return gone();
+        }
         if gone()? {
-            return Ok(true);
+            return Ok(Instant::now() < deadline);
         }
         if Instant::now() >= deadline {
             return Ok(false);
         }
         let watch = crate::platform::Watch::new(identity.pid as libc::pid_t)?;
-        wait_after_registration(deadline, gone, |until| watch.wait(until))
+        wait_after_registration(deadline, Instant::now, gone, |until| watch.wait(until))
     }
 
     fn now(&mut self) -> Instant {
@@ -361,21 +384,24 @@ impl RecoveryProcesses for NativeRecovery {
 
 fn wait_after_registration(
     deadline: Instant,
+    mut now: impl FnMut() -> Instant,
     mut gone: impl FnMut() -> io::Result<bool>,
     mut wait: impl FnMut(Instant) -> io::Result<()>,
 ) -> io::Result<bool> {
     // XNU can refuse kqueue registration while libproc still reports the exact
     // process as live. Treat the queue as a hint and keep checking that identity.
-    loop {
-        if gone()? {
+    while now() < deadline {
+        let exited = gone()?;
+        let observed = now();
+        if observed >= deadline {
+            break;
+        }
+        if exited {
             return Ok(true);
         }
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(false);
-        }
-        wait(deadline.min(now + EXIT_RECHECK_INTERVAL))?;
+        wait(deadline.min(observed + EXIT_RECHECK_INTERVAL))?;
     }
+    Ok(false)
 }
 
 fn snapshot_info(pid: u32) -> io::Result<Option<libc::proc_bsdinfo>> {
@@ -482,7 +508,10 @@ fn unrestricted(pid: libc::pid_t) -> bool {
     status == 0 && flags & CS_RESTRICT == 0
 }
 
-fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
+fn procargs_mark(bytes: &[u8], expected_size: usize) -> MarkEvidence {
+    if bytes.len() != expected_size {
+        return MarkEvidence::Unreadable;
+    }
     let Some((header, payload)) = bytes.split_at_checked(std::mem::size_of::<i32>()) else {
         return MarkEvidence::Unreadable;
     };
@@ -528,6 +557,7 @@ fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
 mod tests {
     use super::{procargs_mark, wait_after_registration};
     use crate::recovery::MarkEvidence;
+    use std::cell::Cell;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -536,6 +566,7 @@ mod tests {
         let mut observations = 0;
         let gone = wait_after_registration(
             deadline,
+            Instant::now,
             || {
                 observations += 1;
                 Ok(observations == 2)
@@ -551,6 +582,29 @@ mod tests {
         .unwrap();
         assert!(gone);
         assert_eq!(observations, 2);
+    }
+
+    #[test]
+    fn exit_wait_never_starts_an_observation_after_its_deadline() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_millis(30);
+        let clock = Cell::new(start);
+        let observations = Cell::new(0);
+        let gone = wait_after_registration(
+            deadline,
+            || clock.get(),
+            || {
+                observations.set(observations.get() + 1);
+                Ok(clock.get() >= deadline)
+            },
+            |_| {
+                clock.set(deadline);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!gone, "an observation after the deadline was accepted");
+        assert_eq!(observations.get(), 1);
     }
 
     fn capture(argc: i32, entries: &[u8]) -> Vec<u8> {
@@ -570,11 +624,24 @@ mod tests {
             b"tool\0\0ORG_SESSION_MARK=argument\0ORG_SESSION_MARK=environment\0",
         );
         assert_eq!(
-            procargs_mark(&bytes),
+            procargs_mark(&bytes, bytes.len()),
             MarkEvidence::Present("environment".into())
         );
         let unrelated = capture(1, b"tool\0PREFIX_ORG_SESSION_MARK=prefix\0");
-        assert_eq!(procargs_mark(&unrelated), MarkEvidence::Absent);
+        assert_eq!(
+            procargs_mark(&unrelated, unrelated.len()),
+            MarkEvidence::Absent
+        );
+    }
+
+    #[test]
+    fn procargs_mark_rejects_an_aligned_prefix_shorter_than_the_kernel_size() {
+        let prefix = capture(1, b"tool\0ORG_SESSION_MARK=mark\0");
+        let full = capture(
+            1,
+            b"tool\0ORG_SESSION_MARK=mark\0ORG_SESSION_MARK=conflict\0",
+        );
+        assert_eq!(procargs_mark(&prefix, full.len()), MarkEvidence::Unreadable);
     }
 
     #[test]
@@ -589,7 +656,7 @@ mod tests {
             &conflicting,
             &valid[..valid.len() - 1],
         ] {
-            assert_eq!(procargs_mark(bad), MarkEvidence::Unreadable);
+            assert_eq!(procargs_mark(bad, bad.len()), MarkEvidence::Unreadable);
         }
     }
 }

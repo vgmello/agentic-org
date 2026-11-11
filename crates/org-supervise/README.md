@@ -139,8 +139,9 @@ Process and scan traits are sealed. `recovery::NativeRecovery::new` supplies the
 process operations for startup and live record recovery. The one-pass scanner
 continues to use the same policy and checkpoint contract.
 
-On Linux, the adapter checks the procfs PID namespace and binds each pidfd to
-an open procfs process directory before reading identity. It verifies that the
+On Linux, the adapter checks the procfs PID namespace and requires an unfiltered
+procfs mount. It binds each pidfd to an open procfs process directory before
+reading identity. It verifies that the
 environment read covers the entire procfs address range. It retains the pidfds
 through a scan, rechecks credentials and mark evidence before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd

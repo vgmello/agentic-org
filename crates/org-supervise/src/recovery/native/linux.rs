@@ -16,12 +16,14 @@ use super::{
 };
 
 const PROC_RECORD_LIMIT: usize = 64 * 1024;
+const MOUNTINFO_LIMIT: usize = 2 * 1024 * 1024;
 const ENVIRONMENT_LIMIT: usize = 2 * 1024 * 1024;
 
 /// Native Linux recovery operations. A snapshot retains pidfds for its live processes.
 /// Each signal is sent through the matching descriptor after revalidating the target.
 pub struct NativeRecovery {
     procfs: File,
+    procfs_mount_id: u64,
     context: RecoveryContext,
     pins: BTreeMap<u32, Pin>,
 }
@@ -58,6 +60,12 @@ impl NativeRecovery {
                 "procfs does not match the supervisor PID namespace",
             ));
         }
+        let root_info = CString::new(format!("self/fdinfo/{}", procfs.as_raw_fd())).unwrap();
+        let root_info = read_at(&procfs, &root_info, PROC_RECORD_LIMIT, Some(deadline))?;
+        let root_info = std::str::from_utf8(&root_info)
+            .map_err(|_| invalid("invalid procfs root descriptor metadata"))?;
+        let procfs_mount_id = number(field(root_info, "mnt_id:")?.trim().as_bytes())?;
+        check_mount(&procfs, procfs_mount_id, deadline)?;
         let boot = read_at(&procfs, c"sys/kernel/random/boot_id", 128, Some(deadline))?;
         let boot = std::str::from_utf8(&boot)
             .map_err(|_| invalid("invalid procfs boot identity"))?
@@ -67,6 +75,7 @@ impl NativeRecovery {
         }
         Ok(Self {
             procfs,
+            procfs_mount_id,
             context: RecoveryContext {
                 uid,
                 pid,
@@ -178,6 +187,7 @@ impl RecoveryProcesses for NativeRecovery {
 
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>> {
         self.pins.clear();
+        check_mount(&self.procfs, self.procfs_mount_id, deadline)?;
         let mut rows = Vec::new();
         let mut pins = BTreeMap::new();
         // Open the already validated procfs root through its held descriptor.
@@ -221,6 +231,7 @@ impl RecoveryProcesses for NativeRecovery {
                 row.parent = Some(self.identity(current.parent, parent.stat));
             }
         }
+        check_mount(&self.procfs, self.procfs_mount_id, deadline)?;
         check_time(deadline)?;
         self.pins = pins;
         Ok(rows)
@@ -545,6 +556,42 @@ fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+fn check_mount(procfs: &File, mount_id: u64, deadline: Instant) -> io::Result<()> {
+    let mountinfo = read_at(procfs, c"self/mountinfo", MOUNTINFO_LIMIT, Some(deadline))?;
+    validate_mountinfo(&mountinfo, mount_id)
+}
+
+fn validate_mountinfo(mountinfo: &[u8], mount_id: u64) -> io::Result<()> {
+    let id = mount_id.to_string();
+    for row in mountinfo.split(|byte| *byte == b'\n') {
+        let mut fields = row.split(|byte| *byte == b' ');
+        if fields.next() != Some(id.as_bytes()) {
+            continue;
+        }
+        let root = fields.nth(2);
+        if root != Some(b"/") || !fields.any(|field| field == b"-") {
+            return Err(invalid("invalid procfs mount record"));
+        }
+        let filesystem = fields.next();
+        let options = fields.nth(1);
+        let Some(options) = options.filter(|_| filesystem == Some(b"proc")) else {
+            return Err(invalid("invalid procfs mount options"));
+        };
+        if options
+            .split(|byte| *byte == b',')
+            .filter_map(|option| option.strip_prefix(b"hidepid="))
+            .any(|value| value != b"off" && value != b"0")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Linux recovery requires an unfiltered procfs mount (hidepid=off)",
+            ));
+        }
+        return Ok(());
+    }
+    Err(invalid("procfs mount ID is absent from mountinfo"))
+}
+
 fn check_time(deadline: Instant) -> io::Result<()> {
     if Instant::now() >= deadline {
         Err(io::Error::new(
@@ -678,7 +725,21 @@ fn exited(fd: &OwnedFd, deadline: Instant) -> io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_stat, Stat};
+    use super::{parse_stat, validate_mountinfo, Stat};
+
+    #[test]
+    fn checks_the_held_procfs_mount_for_filtering() {
+        let unfiltered = b"42 20 0:21 / /proc rw - proc proc rw\n";
+        assert!(validate_mountinfo(unfiltered, 42).is_ok());
+        assert!(validate_mountinfo(unfiltered, 44).is_err());
+        let another_mount = b"41 20 0:22 / /proc-alt rw - proc proc rw,hidepid=off\n";
+        let filtered = b"42 20 0:21 / /proc rw master:2 - proc proc rw,hidepid=ptraceable\n";
+        let mountinfo = [another_mount.as_slice(), filtered.as_slice()].concat();
+        assert!(validate_mountinfo(&mountinfo, 41).is_ok());
+        assert!(validate_mountinfo(&mountinfo, 42).is_err());
+        let bind = b"42 20 0:21 /2 /proc rw - proc proc rw\n";
+        assert!(validate_mountinfo(bind, 42).is_err());
+    }
 
     #[test]
     fn stat_uses_the_last_parenthesis_and_only_decodes_numeric_fields() {
