@@ -23,7 +23,7 @@ for (const panel of ['thread', 'members'] as const) {
 		const pane = page.getByTestId(`${panel}-panel`);
 		await expect(pane).toBeVisible();
 		await shot(page, `chat-${panel}-minimum`);
-		const composer = page.getByRole('region', { name: 'Conversation', exact: true }).getByTestId('composer');
+		const composer = page.getByRole('region', { name: 'Conversation', exact: true, includeHidden: true }).getByTestId('composer');
 		await expect.poll(async () => (await composer.boundingBox())?.width ?? 0).toBeGreaterThan(300);
 		const bounds = await pane.boundingBox();
 		expect(bounds).not.toBeNull();

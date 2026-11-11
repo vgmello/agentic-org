@@ -195,7 +195,7 @@
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}
-				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
+				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
 					{#if popup === 'mention'}
 						{#each mentions as o, i (o.handle)}
 							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % mentions.length}>
@@ -239,9 +239,13 @@
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
-			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
+			<ul class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
 				{#each attachments as a (a)}
-					<li class="flex items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">📎 {a} <button type="button" class="text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button></li>
+					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
+						<span aria-hidden="true" class="shrink-0">📎</span>
+						<span class="min-w-0 truncate" title={a}>{a}</span>
+						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button>
+					</li>
 				{/each}
 			</ul>
 		{/if}
@@ -257,3 +261,11 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	@media (width < 640px), (height <= 32rem) {
+		textarea {
+			max-block-size: min(128px, calc(100dvh - var(--chat-header-height, 4rem)));
+		}
+	}
+</style>
