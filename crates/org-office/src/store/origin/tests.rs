@@ -10,12 +10,16 @@ fn original_incarnation() -> String {
 }
 
 fn fixture() -> (tempfile::TempDir, Store) {
+    fixture_for_schema(&OFFICE_SCHEMA)
+}
+
+fn fixture_for_schema(schema: &Schema) -> (tempfile::TempDir, Store) {
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(
         &root.path().join("office.db"),
         &Key::from_bytes([34; 32]),
         Opening::New,
-        &OFFICE_SCHEMA,
+        schema,
     )
     .unwrap();
     store
@@ -792,4 +796,152 @@ fn origin_counter_schema_accepts_zero_and_refuses_negative_values() {
         .unwrap_err();
     assert!(matches!(error, OfficeError::Storage(_)));
     assert_eq!(state(&store), before);
+}
+
+#[test]
+fn origin_duplicate_across_appends_rolls_back_feed_prefix_and_counter_after_reopen() {
+    for source in ["new", "upgrade", "rotated"] {
+        let (root, mut store) = fixture_for_schema(if source == "upgrade" {
+            &V3
+        } else {
+            &OFFICE_SCHEMA
+        });
+        let path = root.path().join("office.db");
+        let key = Key::from_bytes([34; 32]);
+        if source == "upgrade" {
+            drop(store);
+            store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+        }
+        assert_eq!(commit(&store, vec![target(1, 0)]), 1..=1);
+        let active_incarnation = if source == "rotated" {
+            let next = crate::ulid::from_ms(11, 1);
+            let saved = next.clone();
+            store
+                .write(move |db| {
+                    db.execute(
+                        "UPDATE meta SET value = ?1 WHERE key = 'incarnation'",
+                        [&saved],
+                    )
+                    .map_err(OfficeError::storage)?;
+                    Ok(((), None))
+                })
+                .unwrap();
+            next
+        } else {
+            original_incarnation()
+        };
+        let before = state(&store);
+        let active_before = store
+            .read({
+                let active = active_incarnation.clone();
+                move |db| {
+                    Ok((
+                        origin::entries_after(db, &active, 0, 100)?,
+                        origin::high_water(db, &active)?,
+                    ))
+                }
+            })
+            .unwrap();
+        // This is a different writer request, and its first insert is new. The
+        // duplicate is encountered only after both the feed and prefix were written.
+        let error = store
+            .write(|db| {
+                let refs = [target(2, 0), target(1, 0)];
+                let seq = feed(db, &refs);
+                let range = origin::append(db, Position { epoch: 2, seq: 10 }, &refs, seq, 1001)?;
+                Ok((range, None))
+            })
+            .expect_err("a committed work version cannot acquire a second origin row");
+        let OfficeError::Storage(cause) = error else {
+            panic!("expected SQL constraint for {source}")
+        };
+        assert!(
+            matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
+            "{source}: {cause}"
+        );
+        assert_eq!(
+            state(&store),
+            before,
+            "{source}: rollback must retain prior rows and feed"
+        );
+        drop(store);
+        let store = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA).unwrap();
+        assert_eq!(
+            state(&store),
+            before,
+            "{source}: committed state after reopen"
+        );
+        let active = active_incarnation.clone();
+        store
+            .read(move |db| {
+                assert_eq!(
+                    (
+                        origin::entries_after(db, &active, 0, 100)?,
+                        origin::high_water(db, &active)?
+                    ),
+                    active_before
+                );
+                assert_eq!(
+                    db.query_row(
+                        "SELECT value FROM meta WHERE key = 'message_sequence'",
+                        [],
+                        |r| r.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                    "41"
+                );
+                assert_eq!(
+                    db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                        .unwrap(),
+                    4
+                );
+                Ok(())
+            })
+            .unwrap();
+        let next = if source == "rotated" { 1 } else { 2 };
+        assert_eq!(commit(&store, vec![target(2, 0)]), next..=next);
+        store
+            .read(move |db| {
+                let entries = origin::entries_after(db, &active_incarnation, next - 1, 100)?;
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].target, target(2, 0));
+                assert_eq!(
+                    entries[0].feed_seq, 2,
+                    "failed append must not consume the feed allocator"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn origin_unique_triple_allows_distinct_targets_generations_and_versions() {
+    let (root, store) = fixture();
+    let mut new_generation = target(1, 0);
+    new_generation.generation = 2;
+    let refs = [target(1, 0), target(1, 1), new_generation, target(2, 0)];
+    for (index, reference) in refs.iter().enumerate() {
+        let next = index as u64 + 1;
+        assert_eq!(commit(&store, vec![reference.clone()]), next..=next);
+    }
+    let before = state(&store);
+    assert_eq!((before.0.len(), before.1, before.2), (4, 4, 4));
+    assert_eq!(
+        before
+            .0
+            .iter()
+            .map(|r| r.target.clone())
+            .collect::<Vec<_>>(),
+        refs
+    );
+    drop(store);
+    let reopened = Store::open(
+        &root.path().join("office.db"),
+        &Key::from_bytes([34; 32]),
+        Opening::Existing,
+        &OFFICE_SCHEMA,
+    )
+    .unwrap();
+    assert_eq!(state(&reopened), before);
 }

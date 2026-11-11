@@ -4,6 +4,8 @@ mod relationships;
 
 #[cfg(test)]
 mod conformance;
+#[cfg(test)]
+mod low_tests;
 
 use std::sync::Arc;
 
@@ -309,7 +311,7 @@ pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Posit
         .optional()
         .map_err(OfficeError::storage)?;
     match row {
-        Some((_, true)) => Err(OfficeError::NotFound),
+        Some((_, true)) => Err(OfficeError::SnapshotPending),
         Some((position, false)) => Ok(Some(position)),
         None => Ok(None),
     }
@@ -697,7 +699,7 @@ mod tests {
     const COMMAND: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const SECOND: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
-    struct Hq;
+    pub(super) struct Hq;
 
     impl VerifiedPeer for Hq {
         fn identity(&self) -> PeerIdentity {
@@ -729,7 +731,7 @@ mod tests {
         }
     }
 
-    fn key() -> Key {
+    pub(super) fn key() -> Key {
         Key::from_bytes([3; 32])
     }
 
@@ -739,7 +741,7 @@ mod tests {
         (dir, office)
     }
 
-    fn new_office(dir: &TempDir, local_id: &str) -> Office {
+    pub(super) fn new_office(dir: &TempDir, local_id: &str) -> Office {
         Office::create(
             dir.path().join(local_id),
             &NewOffice {
