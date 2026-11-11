@@ -4,16 +4,20 @@
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import { orgApi } from '$lib/org/api';
 	import { noteChanged } from '$lib/org/live';
 	import { liveState } from '$lib/org/live-state.svelte';
 	import { navFor } from '$lib/nav';
+	import { provideDraftStore } from '$lib/modules/messaging';
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
+	const chatDrafts = provideDraftStore(() => organizationId);
+	$effect.pre(() => chatDrafts.syncScope());
+	onDestroy(() => chatDrafts.dispose());
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
 	function focusDesktopNavigation() {
 		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
