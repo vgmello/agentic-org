@@ -250,6 +250,7 @@ pub(super) fn capture_targets(
             let Some(identity) = safe_identity(current, context) else {
                 continue;
             };
+            // Optional job-proof errors fail closed at the sealed process boundary.
             let verified = ops
                 .verify_recorded_job(identity, leader, deadline)
                 .unwrap_or(false);
