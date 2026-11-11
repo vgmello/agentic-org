@@ -242,5 +242,11 @@ pub fn queue_local(tx: &mut dyn LocalWorkTxn, change: Change) -> Result<SourceKe
     Ok(key)
 }
 
+mod forward;
+pub use forward::{
+    acknowledge_local, AckProof, LocalStreamAttempt, LocalStreamOutput, LocalStreamStore,
+    LocalStreamTxn, RetainedOutcome, StreamAuthority, WorkOutcome, WorkStreamPeer,
+};
+
 #[cfg(test)]
 mod tests;
