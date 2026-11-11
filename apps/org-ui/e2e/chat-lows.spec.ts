@@ -211,3 +211,18 @@ test('CHAT-26 BUG-45d: punctuation after a slash word stays literal', async ({ p
 	}
 	await shot(page, 'chat-slash-punctuation-is-literal');
 });
+test('CHAT-34 BUG-63: disabled management leaves the Conversations overlay open', async ({ page }) => {
+	await open(page, '?chat=offline');
+	await page.setViewportSize({ width: 960, height: 720 });
+	const toggle = page.getByRole('button', { name: /^Conversations/ });
+	await toggle.press('Enter');
+	const sheet = page.getByRole('dialog', { name: 'Conversations', exact: true });
+	for (const name of ['Add channel', 'New message']) {
+		const action = sheet.getByRole('button', { name, exact: true });
+		await expect(action).toBeDisabled();
+		await action.dispatchEvent('click');
+		await expect(sheet).toBeVisible();
+	}
+	await expect(page.getByRole('dialog')).toHaveCount(1);
+	await shot(page, 'chat-stopped-conversation-sheet');
+});
