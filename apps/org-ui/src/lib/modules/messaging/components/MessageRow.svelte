@@ -65,7 +65,7 @@
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
 </script>
 
-<article class="group relative flex gap-x-3 rounded-md px-2 py-2 hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
+<article class="group relative flex gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
 	<Avatar name={nameOf(ctx, message.from)} kind={from?.kind ?? 'person'} />
 	<div class="min-w-0 flex-1">
 		<div class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
@@ -94,7 +94,7 @@
 
 		{#if message.attachments?.length}
 			<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
-				{#each message.attachments as a (a)}<li class="rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">📎 {a}</li>{/each}
+				{#each message.attachments as a (a)}<li class="max-w-full rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200 [overflow-wrap:anywhere]">📎 {a}</li>{/each}
 			</ul>
 		{/if}
 
