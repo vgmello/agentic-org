@@ -11,6 +11,7 @@
 		bar,
 		view,
 		ctx,
+		officeRunning,
 		container,
 		id,
 		inline = $bindable(true),
@@ -23,6 +24,7 @@
 		bar: Sidebar;
 		view: ChatView;
 		ctx: ChatContext;
+		officeRunning: boolean;
 		container?: HTMLElement;
 		id: string;
 		inline?: boolean;
@@ -127,7 +129,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="channels">
 			{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1" onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
+		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
 	</div>
 
 	<div>
@@ -135,7 +137,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="dms">
 			{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1" onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
+		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
 	</div>
 
 	{#if bar.asOwner.length}

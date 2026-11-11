@@ -6,16 +6,20 @@
 //!
 //! The database is SQLCipher (encrypted at rest) with exactly one writer: a dedicated
 //! thread owns the only writing connection. It takes every request queued at that moment,
-//! runs them in ONE transaction (each in its own SAVEPOINT, so a failure undoes only that
-//! request), commits once, and only then answers each request. Readers use their own
+//! runs them in ONE transaction (each in its own SAVEPOINT for ordinary failures), commits
+//! once, and only then answers successful requests. A batch-fatal failure rolls back the
+//! transaction and replays its other requests. Readers use their own
 //! connections (WAL lets them run beside the writer), so many concurrent callers never see
 //! `SQLITE_BUSY`.
 
 pub(crate) mod messages;
 pub(crate) mod org;
 pub(crate) mod status;
+mod sync;
 
 use std::any::Any;
+use std::error::Error;
+use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -38,11 +42,12 @@ const MAX_BATCH: usize = 64;
 /// was part of is not committed after all.
 pub(crate) type Undo = Box<dyn FnOnce() + Send>;
 
-/// One request for the writer. `attempt` may run more than once: if SQLite aborts the batch's
-/// transaction, every other request in it is run again in a fresh one (after its `Undo`).
+/// One request for the writer. `attempt` may run more than once: if a request aborts the
+/// batch's transaction, every other request runs again in a fresh one (after its `Undo`).
 struct WriteJob {
     attempt: Box<Attempt>,
-    /// Called once, after the batch's commit, with how this request ended.
+    abort_batch: fn(&OfficeError) -> bool,
+    /// Called once, after commit or rollback, with how this request ended.
     reply: Box<dyn FnOnce(Result<(), OfficeError>) + Send>,
 }
 
@@ -156,7 +161,18 @@ impl Store {
     /// database. It may be run again (see [`WriteJob`]).
     pub(crate) fn write<R: Send + 'static>(
         &self,
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+    ) -> Result<R, OfficeError> {
+        self.write_with_batch_abort(work, |_| false)
+    }
+
+    /// As `write`, with an error classifier for requests that require the entire
+    /// transaction to roll back. The failed request is answered once. Other requests
+    /// are replayed in a fresh transaction, just as after a SQLite-initiated abort.
+    pub(crate) fn write_with_batch_abort<R: Send + 'static>(
+        &self,
         mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        abort_batch: fn(&OfficeError) -> bool,
     ) -> Result<R, OfficeError> {
         let (reply, answer) = mpsc::sync_channel(1);
         let slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
@@ -170,6 +186,7 @@ impl Store {
         };
         let job = WriteJob {
             attempt: Box::new(attempt),
+            abort_batch,
             reply: Box::new(move |outcome| {
                 let result = outcome.map(|()| {
                     lock(&slot)
@@ -288,9 +305,26 @@ fn writer_loop(mut db: Connection, queue: mpsc::Receiver<WriteJob>) {
 enum BatchResult {
     /// Every request in the batch has been answered.
     Finished,
-    /// SQLite ended the transaction itself (e.g. disk full, an I/O error) while running the
-    /// request at `culprit`: everything else in the batch was undone with it.
+    /// A request required the transaction to roll back, or SQLite ended it (e.g. disk full).
+    /// Everything else in the batch was undone with the request at `culprit`.
     Aborted { culprit: usize, error: OfficeError },
+}
+
+/// A failed BEGIN or COMMIT can affect multiple requests. Keep the original SQLite
+/// error available to each one for storage diagnostics and retry classification.
+#[derive(Clone, Debug)]
+struct SharedTransactionError(Arc<rusqlite::Error>);
+
+impl fmt::Display for SharedTransactionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for SharedTransactionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.0.as_ref())
+    }
 }
 
 fn run_batch(db: &mut Connection, mut jobs: Vec<WriteJob>) {
@@ -316,9 +350,9 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
     let mut tx = match db.transaction_with_behavior(TransactionBehavior::Immediate) {
         Ok(tx) => tx,
         Err(cause) => {
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for job in jobs.drain(..) {
-                (job.reply)(Err(failure(reason.clone())));
+                (job.reply)(Err(OfficeError::storage(cause.clone())));
             }
             return BatchResult::Finished;
         }
@@ -359,9 +393,9 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
             Err(cause) => Err(OfficeError::storage(cause)),
         };
         match outcome {
-            Err(error) if tx.is_autocommit() => {
-                // SQLite ended the whole transaction: undo what the earlier requests did
-                // outside it, and let the caller run the others again.
+            Err(error) if tx.is_autocommit() || (job.abort_batch)(&error) => {
+                // Dropping the transaction rolls back any remaining savepoints. Undo the
+                // earlier requests' external effects before the caller replays them.
                 for undo in outcomes.drain(..).flatten().flatten() {
                     run_undo(undo);
                 }
@@ -385,14 +419,14 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
             // (SQLite can't rule out that the commit reached the WAL before a later fsync
             // failed; after a crash, recovery could then bring rows back whose folders were
             // just undone. A registered organization with no workspace folder is repairable.)
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for (job, outcome) in jobs.drain(..).zip(outcomes) {
                 match outcome {
                     Ok(undo) => {
                         if let Some(undo) = undo {
                             run_undo(undo);
                         }
-                        (job.reply)(Err(failure(reason.clone())));
+                        (job.reply)(Err(OfficeError::storage(cause.clone())));
                     }
                     Err(error) => (job.reply)(Err(error)),
                 }
@@ -1141,6 +1175,48 @@ mod tests {
         );
     }
 
+    fn sqlite_error_code(error: &OfficeError) -> Option<rusqlite::ErrorCode> {
+        let mut cause = error.source();
+        while let Some(error) = cause {
+            if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref() {
+                return Some(failure.code);
+            }
+            cause = error.source();
+        }
+        None
+    }
+
+    #[test]
+    fn a_busy_transaction_reports_the_sqlite_code_to_every_request() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("busy.db");
+        let mut other_writer = Connection::open(&path).unwrap();
+        let mut writer = Connection::open(&path).unwrap();
+        writer.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let lock = other_writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let (send, replies) = mpsc::channel();
+        let jobs = (0..2)
+            .map(|_| {
+                let send = send.clone();
+                WriteJob {
+                    attempt: Box::new(|_| panic!("request ran while BEGIN was blocked")),
+                    abort_batch: |_| false,
+                    reply: Box::new(move |result| send.send(result).unwrap()),
+                }
+            })
+            .collect();
+        drop(send);
+        run_batch(&mut writer, jobs);
+        let codes: Vec<_> = replies
+            .into_iter()
+            .map(|result| sqlite_error_code(&result.unwrap_err()))
+            .collect();
+        assert_eq!(codes, vec![Some(rusqlite::ErrorCode::DatabaseBusy); 2]);
+        lock.rollback().unwrap();
+    }
+
     #[test]
     fn a_failed_commit_fails_every_request_and_undoes_their_effects() {
         let dir = TempDir::new().unwrap();
@@ -1172,10 +1248,11 @@ mod tests {
         gate.join().unwrap();
 
         for worker in workers {
-            assert!(matches!(
-                worker.join().unwrap(),
-                Err(OfficeError::Storage(_))
-            ));
+            let error = worker.join().unwrap().unwrap_err();
+            assert_eq!(
+                sqlite_error_code(&error),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
         }
         assert!(registered_ids(&store).is_empty());
         assert!(
@@ -1307,5 +1384,65 @@ mod tests {
         let name = OrganizationName::parse("Later").unwrap();
         store.create_organization(&name, folders.effect()).unwrap();
         assert_eq!(registered_ids(&store), folders.ids());
+    }
+
+    #[test]
+    fn a_batch_fatal_request_rolls_back_and_replays_its_neighbors() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut writer = Connection::open_in_memory().unwrap();
+        writer
+            .execute_batch("CREATE TABLE writes (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        let (send, replies) = mpsc::channel();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let undos = Arc::new(AtomicUsize::new(0));
+        let jobs = (1..=3)
+            .map(|id| {
+                let attempts = Arc::clone(&attempts);
+                let undos = Arc::clone(&undos);
+                let send = send.clone();
+                WriteJob {
+                    attempt: Box::new(move |db| {
+                        db.execute("INSERT INTO writes VALUES (?1)", [id])
+                            .map_err(OfficeError::storage)?;
+                        match id {
+                            1 => {
+                                attempts.fetch_add(1, Ordering::Relaxed);
+                                let undos = Arc::clone(&undos);
+                                Ok(Some(Box::new(move || {
+                                    undos.fetch_add(1, Ordering::Relaxed);
+                                })))
+                            }
+                            2 => Err(OfficeError::Invalid("batch is inconsistent")),
+                            _ => Ok(None),
+                        }
+                    }),
+                    abort_batch: |error| matches!(error, OfficeError::Invalid(_)),
+                    reply: Box::new(move |result| send.send((id, result)).unwrap()),
+                }
+            })
+            .collect();
+        drop(send);
+        run_batch(&mut writer, jobs);
+
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(undos.load(Ordering::Relaxed), 1);
+        let replies: Vec<_> = replies.into_iter().collect();
+        assert!(matches!(
+            replies.as_slice(),
+            [
+                (2, Err(OfficeError::Invalid("batch is inconsistent"))),
+                (1, Ok(())),
+                (3, Ok(()))
+            ]
+        ));
+        let mut statement = writer.prepare("SELECT id FROM writes ORDER BY id").unwrap();
+        let committed = statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(committed, [1, 3]);
     }
 }

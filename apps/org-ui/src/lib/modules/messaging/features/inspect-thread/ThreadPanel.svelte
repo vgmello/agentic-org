@@ -7,6 +7,7 @@
 	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
 	import MessageRow from '../../components/MessageRow.svelte';
+	import { useDraftStore } from '../../drafts/context';
 
 	/** A thread on the right (CHAT-8): the message, its replies, and a box that can also send to the channel. */
 	let {
@@ -49,6 +50,9 @@
 		onaccept: (m: ChatMessage) => Promise<void> | void;
 	} = $props();
 
+	const draftStore = useDraftStore();
+	const threadId = $derived(root.id);
+	const drafts = $derived(draftStore.forThread(threadId));
 	const replies = $derived(repliesTo(chatState, root.id));
 	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
@@ -65,12 +69,14 @@
 		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
 	</div>
 	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]" role="log" data-focus-scope aria-label="Thread messages" aria-live="polite" aria-relevant="additions text">
-		<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+		{#key threadId}
+			<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+		{/key}
 		<p class="px-2 pt-2 text-xs/5 text-gray-400" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
 		{#each replies as r (r.id)}
-			<MessageRow message={r} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+			<MessageRow message={r} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		{/each}
 		{@render undelivered?.()}
 	</div>
-	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />
+	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" draft={drafts.reply} alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />
 </aside>

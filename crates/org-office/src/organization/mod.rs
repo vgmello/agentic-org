@@ -20,7 +20,7 @@ pub(crate) use people::{
 };
 pub(crate) use policy::{
     check_handle_free, check_id, check_member_id, check_text, check_version, fail, found,
-    parse_name, refuse_offboarded,
+    is_offboarded, parse_name, refuse_offboarded, valid_owner,
 };
 pub(crate) use status::check as check_status;
 pub(crate) use structure::{

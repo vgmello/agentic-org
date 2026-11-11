@@ -75,6 +75,8 @@
 	let highlight = $state<string | undefined>();
 	let started = false;
 	let lastSearch = '';
+	let pendingPlace = $state.raw<URL>();
+	let documentPlace = $state('Needs you');
 	let listEl = $state<HTMLElement | undefined>();
 	let chatEl = $state<HTMLElement | undefined>();
 	let heading = $state<HTMLHeadingElement | undefined>();
@@ -132,6 +134,7 @@
 		if (reason !== 'dialog') void tick().then(() => focusAfterNavigation(reason === 'selection'));
 	}
 	function startSidebarDialog(kind: 'channel' | 'dm', opener: HTMLElement) {
+		if (!officeRunning) return;
 		sidebarDialogMode = true;
 		sidebarDialogSelected = false;
 		sidebarDialogOpener = opener;
@@ -154,7 +157,7 @@
 
 	const viewId = $derived(view.type === 'conversation' ? view.id : undefined);
 	const conversation = $derived(viewId && chatState ? chatState.conversations.find((c) => c.id === viewId) : undefined);
-	const searching = $derived(query.trim() !== '');
+	const searching = $derived(query.trim() !== '' && page.url.searchParams.has('q'));
 	const convView = $derived(conversation && chatState ? conversationView(chatState, ctx, conversation.id) : undefined);
 	const root = $derived(threadRoot && chatState ? chatState.messages.find((m) => m.id === threadRoot) : undefined);
 	const threadConversation = $derived(root && chatState ? chatState.conversations.find((c) => c.id === root.conversation_id) : undefined);
@@ -185,6 +188,11 @@
 	const subtitle = $derived(conversation ? `${conversation.members.length} ${conversation.members.length === 1 ? 'member' : 'members'}${conversation.auto ? ` · follows ${followsWords(conversation)}` : ''}` : '');
 	const viewTitle = $derived(searching ? 'Search' : view.type === 'needs' ? 'Needs you' : view.type === 'mentions' ? 'Mentions' : view.type === 'threads' ? 'Threads' : conversation ? titleOf(conversation, ctx, ctx.owner) : 'Chat');
 
+	$effect(() => {
+		// Let SvelteKit push the new entry before updating its title.
+		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
+	});
+
 	async function load() {
 		try {
 			now = new Date().toISOString();
@@ -201,10 +209,7 @@
 		syncCompactPanels();
 		media.addEventListener('change', syncCompactPanels);
 		void load().then(() => {
-			// A link from Activity opens the message; otherwise the owner starts where something waits for them.
-			const loc = urlLocation(page.url.search);
-			if (chatState && (loc.conversation || loc.message || page.url.searchParams.has('v'))) openLocation(loc);
-			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' }, false);
+			openLocation(urlLocation(page.url.search));
 			lastSearch = page.url.search;
 			started = true;
 		});
@@ -217,23 +222,40 @@
 	// Only when the address itself changes: a refresh of the data must not pull the owner back to a link they followed.
 	$effect(() => {
 		const search = page.url.search;
+		const pending = pendingPlace;
 		untrack(() => {
 			if (!started || !chatState || search === lastSearch) return;
+			if (pending && search !== pending.search) return;
 			lastSearch = search;
-			openLocation(urlLocation(search));
+			// Local navigation already applied the view and query. Back and deep links restore them.
+			if (!pending) openLocation(urlLocation(search));
 		});
 	});
 
-	const urlLocation = (search: string) => ({ ...parseChatLocation(search), thread: new URLSearchParams(search).get('thread') ?? undefined });
-	function openLocation(loc: { conversation?: string; message?: string; thread?: string }) {
+	function urlLocation(search: string) {
+		const params = new URLSearchParams(search);
+		return {
+			...parseChatLocation(search),
+			thread: params.get('thread') ?? undefined,
+			view: params.get('v') ?? undefined,
+			query: params.get('q') ?? ''
+		};
+	}
+	function openLocation(loc: { conversation?: string; message?: string; thread?: string; view?: string; query?: string }) {
 		if (!chatState) return;
 		const found = locate(chatState, loc);
 		if (!found.conversation) {
-			const virtual = page.url.searchParams.get('v');
-			select({ type: virtual === 'mentions' || virtual === 'threads' ? virtual : 'needs' }, false);
+			const virtual = loc.view;
+			const implicitPlace = !loc.conversation && !loc.message && virtual === undefined;
+			const general = implicitPlace && bar?.needsYou.length === 0
+				? chatState.conversations.find((c) => c.auto?.type === 'general') : undefined;
+			if (general) select({ type: 'conversation', id: general.id }, false);
+			else select({ type: virtual === 'mentions' || virtual === 'threads' ? virtual : 'needs' }, false);
+			query = loc.query ?? '';
 			return;
 		}
 		select({ type: 'conversation', id: found.conversation.id }, false);
+		query = loc.query ?? '';
 		if (found.thread) threadRoot = found.thread.id;
 		else if (found.message && repliesTo(chatState, found.message.id).length) threadRoot = found.message.id;
 		const linkedThread = loc.thread;
@@ -262,14 +284,49 @@
 	// Use normal SvelteKit navigation so Back/Forward and direct links share one address model.
 	function writePlace(messageId?: string) {
 		const next = new URL(page.url);
-		for (const key of ['c', 'm', 'thread', 'v']) next.searchParams.delete(key);
+		for (const key of ['c', 'm', 'thread', 'v', 'q']) next.searchParams.delete(key);
 		if (view.type === 'conversation') next.searchParams.set('c', view.id);
-		else if (view.type !== 'needs') next.searchParams.set('v', view.type);
+		else next.searchParams.set('v', view.type);
 		if (threadRoot) next.searchParams.set('thread', threadRoot);
 		if (messageId) next.searchParams.set('m', messageId);
-		if (next.href === page.url.href) return;
-		lastSearch = next.search;
-		void goto(next, { keepFocus: true, noScroll: true });
+		if (query.trim()) next.searchParams.set('q', query);
+		navigateToPlace(next);
+	}
+
+	type ChatHistoryState = App.PageState & { chatSearchEntry?: true };
+	function changeQuery(value: string) {
+		const current = page.url;
+		const next = new URL(pendingPlace ?? current);
+		const existingSearch = current.searchParams.has('q');
+		const state: ChatHistoryState = page.state;
+		if (value.trim()) {
+			query = value;
+			next.searchParams.set('q', value);
+			const searchState: ChatHistoryState = existingSearch ? state : { ...state, chatSearchEntry: true };
+			navigateToPlace(next, { replaceState: existingSearch, state: searchState });
+			return;
+		}
+		// Return to the underlying entry if this tab opened Search. A direct Search link has no such entry.
+		if (existingSearch && state.chatSearchEntry) {
+			history.back();
+			return;
+		}
+		query = value;
+		next.searchParams.delete('q');
+		navigateToPlace(next, { replaceState: existingSearch });
+	}
+
+	function navigateToPlace(next: URL, options: { replaceState?: boolean; state?: App.PageState } = {}) {
+		if (next.href === (pendingPlace ?? page.url).href) return;
+		pendingPlace = next;
+		void goto(next, {
+			...options,
+			replaceState: options.replaceState || next.href === page.url.href,
+			keepFocus: true,
+			noScroll: true
+		}).finally(() => {
+			if (pendingPlace === next) pendingPlace = undefined;
+		});
 	}
 	function closeThread(restore = true) {
 		const wasOpen = !!threadRoot;
@@ -431,8 +488,9 @@
 	}
 	function openThread(m: ChatMessage) {
 		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id }, false);
-		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id }, false);
+		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
+			select({ type: 'conversation', id: m.conversation_id }, false);
+		}
 		threadOpener = opener;
 		threadRoot = m.thread_root_id ?? m.id;
 		showMembers = false;
@@ -459,9 +517,17 @@
 		if (dmOpen) dmDialog?.dismiss();
 		commandOpen = false;
 	});
-	const openChannelDialog = (mode: typeof channelMode) => ((channelMode = mode), (channelOpen = true));
+	function openChannelDialog(mode: typeof channelMode) {
+		if (!officeRunning) return;
+		channelMode = mode;
+		channelOpen = true;
+	}
+	function requireRunningOffice() {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
+	}
 
 	async function channelSubmit(r: { name: string; members: string[] }) {
+		requireRunningOffice();
 		if (channelMode === 'create') {
 			const accepted = await send({ method: 'channel.create', name: r.name, members: r.members });
 			await load();
@@ -476,6 +542,7 @@
 		}
 	}
 	async function dmSubmit(ids: string[]) {
+		requireRunningOffice();
 		const accepted = await send({ method: 'dm.open', members: ids });
 		await load();
 		if (accepted.conversation_id) select({ type: 'conversation', id: accepted.conversation_id });
@@ -495,7 +562,7 @@
 	}
 }} />
 
-<svelte:head><title>{viewTitle} · Chat · Agentic Org</title></svelte:head>
+<svelte:head><title>{documentPlace} · Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
@@ -514,7 +581,7 @@
 	{:else if !chatState || !bar}
 		<p class="m-8 text-sm/6 text-gray-400" role="status">Loading chat…</p>
 	{:else}
-		<ChatSidebar bind:this={conversationNavigation} {bar} {view} {ctx} container={chatEl} id={conversationsId} bind:inline={sidebarInline} bind:open={sidebarOpen} onCloseFocus={closeSidebarFocus} onselect={select} onnewchannel={(opener) => startSidebarDialog('channel', opener)} onnewmessage={(opener) => startSidebarDialog('dm', opener)} />
+		<ChatSidebar bind:this={conversationNavigation} {bar} {view} {ctx} {officeRunning} container={chatEl} id={conversationsId} bind:inline={sidebarInline} bind:open={sidebarOpen} onCloseFocus={closeSidebarFocus} onselect={select} onnewchannel={(opener) => startSidebarDialog('channel', opener)} onnewmessage={(opener) => startSidebarDialog('dm', opener)} />
 
 		<section bind:this={conversationEl} inert={(compactPanels && !!panelKind) || sidebarOpen} class="flex min-w-0 flex-1 flex-col overflow-y-auto" aria-label="Conversation">
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
@@ -540,7 +607,7 @@
 					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
 						<label class="sr-only" for="chat-search">Search chat</label>
-						<input id="chat-search" type="search" bind:value={query} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
+						<input id="chat-search" type="search" value={query} oninput={(event) => changeQuery(event.currentTarget.value)} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
 					</div>
 				</div>
 			</div>
@@ -663,7 +730,7 @@
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
-			<MembersPanel {sidebarInline} bind:this={panel} {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={closeMembers} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
+			<MembersPanel {sidebarInline} bind:this={panel} {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={closeMembers} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => { if (officeRunning) void act({ method: 'channel.remove_member', id: conversation.id, member_id: id }); }} onarchive={() => { if (officeRunning) void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`); }} />
 		{/if}
 	{/if}
 </div>
