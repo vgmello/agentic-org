@@ -579,6 +579,17 @@ fn serve_connection_with_poll(
                 subscribed = false;
                 held.cancel_all();
             }
+            if request.is::<Hello>() {
+                let response = hello_response(&request, shared);
+                let unsupported = matches!(
+                    &response.outcome,
+                    org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
+                );
+                if !send(&out, request.id, &response, shared.timing) || unsupported {
+                    break;
+                }
+                continue;
+            }
             if request.is::<MsgBind>() {
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
@@ -745,6 +756,29 @@ fn send(out: &Mutex<UnixStream>, id: u64, response: &Response, timing: Timing) -
     }
 }
 
+/// X-02 §3, B1-07.1: this office socket supports only v1 until instance-aware
+/// launch is available. Every call therefore stays at v1, including legacy-first
+/// calls and repeated hellos; the wider SUPPORTED_API is not active here yet.
+fn hello_response(request: &Request, shared: &Shared) -> Response {
+    match request.params::<Hello>() {
+        Ok(params) if params.api_range().contains(org_proto::ApiRange::V1.min) => {
+            Response::ok::<Hello>(request.id, &shared.hello)
+                .unwrap_or_else(|_| internal(request.id))
+        }
+        Ok(_) => Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::UnsupportedVersion,
+                "the office supports only API version 1",
+            ),
+        ),
+        Err(_) => Response::error(
+            request.id,
+            ApiError::new(ErrorCode::InvalidRequest, "invalid hello parameters"),
+        ),
+    }
+}
+
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     if request.is::<OrgSnapshotCall>() {
         // The whole organization: for a bound connection (the app; agents bind with messaging),
@@ -769,10 +803,6 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     }
     if request.is::<StatusSet>() {
         return status_set(request, shared, binding);
-    }
-    if request.is::<Hello>() {
-        return Response::ok::<Hello>(request.id, &shared.hello)
-            .unwrap_or_else(|_| internal(request.id));
     }
     if request.is::<MsgBind>() {
         return bind_connection(request, shared, binding);

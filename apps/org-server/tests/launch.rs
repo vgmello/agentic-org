@@ -224,6 +224,8 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
 
 #[test]
 fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
+    // X-02 §3: "unsupported_version and close" before the next request; this
+    // B1-07.1 phase is V1-only until instance-aware launch can enable V2.
     let world = World::new();
     let mut run = create(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
@@ -248,6 +250,7 @@ fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
 
 #[test]
 fn srv_32_legacy_first_call_locks_the_socket_to_version_one() {
+    // X-02 §3: "A first request that isn't hello ... fixes the connection at v1".
     let world = World::new();
     let mut run = create(&world);
     let mut peer = UnixStream::connect(socket(&world)).unwrap();
@@ -298,6 +301,8 @@ fn assert_unsupported_version_and_closed(reader: &mut BufReader<UnixStream>, req
 
 #[test]
 fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
+    // X-02 §3: malformed api/non-string client is "invalid_request, never
+    // answered as v1". The strict shared HelloParams decoder owns these shapes.
     let world = World::new();
     let mut run = create(&world);
     let cases = [
@@ -347,9 +352,11 @@ fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
 
 #[test]
 fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
+    // X-02 §3: "api: null is the same as an absent api"; unknown outer hints
+    // remain additive, while the nested api range has exactly min/max.
     let world = World::new();
     let mut run = create(&world);
-    let mut peer = UnixStream::connect(socket(&world)).unwrap();
+    let peer = UnixStream::connect(socket(&world)).unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     peer.set_write_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(peer);
