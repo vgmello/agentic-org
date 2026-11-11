@@ -21,6 +21,7 @@ mod live;
 mod msg_calls;
 mod serve;
 mod signals;
+mod startup;
 mod zeroed;
 
 use std::fs::File;
