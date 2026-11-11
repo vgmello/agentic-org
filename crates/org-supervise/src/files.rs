@@ -149,6 +149,12 @@ pub(crate) struct PrivateDirectory {
     present: bool,
 }
 
+// Shared by the pinned-parent and allocated-directory checks. Keep both identity
+// components explicit so cross-device refusal is testable without privileged mounts.
+fn same_directory(left: (u64, u64), right: (u64, u64)) -> bool {
+    left.0 == right.0 && left.1 == right.1
+}
+
 impl PrivateDirectory {
     pub(crate) fn new(parent_path: &Path) -> io::Result<Self> {
         let parent = root(parent_path)?;
@@ -199,7 +205,7 @@ impl PrivateDirectory {
         private_directory(&current_parent)?;
         let pinned = File::from(self.parent.try_clone()?).metadata()?;
         let current = File::from(current_parent).metadata()?;
-        if (pinned.dev(), pinned.ino()) != (current.dev(), current.ino()) {
+        if !same_directory((pinned.dev(), pinned.ino()), (current.dev(), current.ino())) {
             return Err(invalid("probe parent was replaced"));
         }
         let current = match open_directory(&self.parent, &self.name, DirectoryUse::Created) {
@@ -212,7 +218,7 @@ impl PrivateDirectory {
         };
         private_directory(&current)?;
         let metadata = File::from(current).metadata()?;
-        if (metadata.dev(), metadata.ino()) != (self.dev, self.ino) {
+        if !same_directory((metadata.dev(), metadata.ino()), (self.dev, self.ino)) {
             return Err(invalid("probe directory was replaced"));
         }
         // Rust's Unix remove_dir_all uses fd-relative traversal and protects against
@@ -316,6 +322,117 @@ pub(crate) fn write_file(base: &Path, relative: &Path, contents: &[u8]) -> io::R
 mod tests {
     use super::*;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    fn private_parent(root: &Path) -> PathBuf {
+        let parent = root.join("private");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+        parent
+    }
+
+    #[test]
+    fn private_directory_identity_refuses_a_changed_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let metadata = temp.path().metadata().unwrap();
+        let identity = (metadata.dev(), metadata.ino());
+        assert!(same_directory(identity, identity));
+        let changed = (identity.0.wrapping_add(1), identity.1);
+        assert!(!same_directory(identity, changed));
+        assert!(!same_directory(changed, identity));
+    }
+
+    #[test]
+    fn private_directory_identity_refuses_a_changed_inode() {
+        let temp = tempfile::tempdir().unwrap();
+        let metadata = temp.path().metadata().unwrap();
+        let identity = (metadata.dev(), metadata.ino());
+        assert!(same_directory(identity, identity));
+        let changed = (identity.0, identity.1.wrapping_add(1));
+        assert!(!same_directory(identity, changed));
+        assert!(!same_directory(changed, identity));
+    }
+
+    #[test]
+    fn private_directory_cleanup_refuses_a_replaced_cwd_and_keeps_both_trees() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = private_parent(&temp.path().canonicalize().unwrap());
+        let mut directory = PrivateDirectory::new(&parent).unwrap();
+        directory.attach();
+        let path = directory.path().to_owned();
+        std::fs::write(path.join("owned"), b"original").unwrap();
+        let saved = parent.join("saved");
+        std::fs::rename(&path, &saved).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(path.join("replacement"), b"untouched").unwrap();
+
+        let error = directory.remove().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "probe directory was replaced");
+        assert_eq!(std::fs::read(saved.join("owned")).unwrap(), b"original");
+        assert_eq!(
+            std::fs::read(path.join("replacement")).unwrap(),
+            b"untouched"
+        );
+        std::fs::remove_dir_all(&path).unwrap();
+        std::fs::rename(saved, &path).unwrap();
+        assert!(directory.remove().unwrap());
+        assert!(!path.exists());
+        assert!(!directory.remove().unwrap());
+    }
+
+    #[test]
+    fn private_directory_cleanup_refuses_a_replaced_parent_and_keeps_both_trees() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let parent = private_parent(&root);
+        let mut directory = PrivateDirectory::new(&parent).unwrap();
+        directory.attach();
+        let path = directory.path().to_owned();
+        let leaf = path.file_name().unwrap();
+        std::fs::write(path.join("owned"), b"original").unwrap();
+        let saved = root.join("saved-parent");
+        std::fs::rename(&parent, &saved).unwrap();
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(path.join("replacement"), b"untouched").unwrap();
+
+        let error = directory.remove().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "probe parent was replaced");
+        assert_eq!(
+            std::fs::read(saved.join(leaf).join("owned")).unwrap(),
+            b"original"
+        );
+        assert_eq!(
+            std::fs::read(path.join("replacement")).unwrap(),
+            b"untouched"
+        );
+        std::fs::remove_dir_all(&parent).unwrap();
+        std::fs::rename(saved, &parent).unwrap();
+        assert!(directory.remove().unwrap());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn private_directory_cleanup_refuses_a_changed_recorded_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = private_parent(&temp.path().canonicalize().unwrap());
+        let mut directory = PrivateDirectory::new(&parent).unwrap();
+        directory.attach();
+        let path = directory.path().to_owned();
+        std::fs::write(path.join("owned"), b"original").unwrap();
+        let device = directory.dev;
+        directory.dev = device.wrapping_add(1);
+        let error = directory.remove().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "probe directory was replaced");
+        assert_eq!(std::fs::read(path.join("owned")).unwrap(), b"original");
+        directory.dev = device;
+        assert!(directory.remove().unwrap());
+    }
 
     #[test]
     fn refuses_an_existing_directory_owned_by_another_user() {

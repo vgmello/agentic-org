@@ -10,8 +10,29 @@
 //! Numeric process group/session hints alone never authorize a signal.
 //!
 //! One-pass scanning cannot be driven directly by an external caller:
-//! ```compile_fail
+//! ```compile_fail,E0432
 //! use org_supervise::recovery::scan_one_pass;
+//! ```
+//!
+//! Scan requests and pass evidence belong to the crate's coordinator. Public
+//! callers receive diagnostics through [`ScanFailure`], not one-pass capabilities.
+//! ```
+//! use org_supervise::recovery::ScanFailure;
+//! ```
+//! ```compile_fail,E0432
+//! use org_supervise::recovery::ScanRequest;
+//! ```
+//! ```
+//! use org_supervise::recovery::ScanFailure;
+//! ```
+//! ```compile_fail,E0432
+//! use org_supervise::recovery::ScanPass;
+//! ```
+//! ```
+//! use org_supervise::recovery::ScanFailure;
+//! ```
+//! ```compile_fail,E0603
+//! use org_supervise::recovery::ScanPort;
 //! ```
 
 mod capture;
@@ -31,7 +52,8 @@ mod scan;
 mod startup;
 
 pub(crate) use scan::fixed_point;
-pub use scan::{ScanFailure, ScanPass, ScanPort, ScanRequest};
+pub use scan::ScanFailure;
+pub(crate) use scan::ScanPort;
 pub use startup::{recover_record, recover_startup, RecoveryBatch, RecoveryGone};
 
 use std::collections::BTreeSet;
@@ -369,6 +391,9 @@ pub enum SignalOutcome {
 /// impl RecoveryProcesses for Forged {
 ///     fn context(&mut self) -> io::Result<RecoveryContext> { unimplemented!() }
 ///     fn snapshot(&mut self, _: Instant) -> io::Result<Vec<ProcessObservation>> { unimplemented!() }
+///     fn verify_recorded_job(
+///         &mut self, _: &ProcessIdentity, _: &org_supervise::ChildIdentity, _: Instant,
+///     ) -> io::Result<bool> { unimplemented!() }
 ///     fn signal_checked(&mut self, _: &VerifiedTarget, _: RecoverySignal, _: Instant)
 ///         -> io::Result<SignalOutcome> { unimplemented!() }
 ///     fn wait_exited(&mut self, _: &ProcessIdentity, _: Instant) -> io::Result<bool> { unimplemented!() }
