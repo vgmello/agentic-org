@@ -53,7 +53,8 @@ async function fits(locator: Locator) {
 		const box = element.getBoundingClientRect();
 		const range = document.createRange();
 		range.selectNodeContents(element);
-		return [...range.getClientRects()].every((rect) => rect.left >= box.left - 1 && rect.right <= box.right + 1);
+		const rects = [...range.getClientRects()];
+		return rects.length > 0 && rects.every((rect) => rect.left >= box.left - 1 && rect.right <= box.right + 1);
 	});
 }
 
