@@ -2,10 +2,9 @@
 //! the writer transaction that advances the cursor. Local office data lives elsewhere.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, DirBuilder};
-use std::io::{self, Read, Write};
-use std::os::unix::fs::DirBuilderExt;
-use std::path::PathBuf;
+use std::fs;
+use std::io::{Read, Write};
+use std::path::Path;
 
 use org_proto::{Area, Member, Membership, Project, ProjectTeam, Team};
 use org_sync::error::{Refusal, StoreError, SyncError};
@@ -26,6 +25,9 @@ use crate::organization::{is_offboarded, valid_owner};
 use crate::private_fs::private_file;
 use crate::store::{connect, sync::storage_error, Store};
 use crate::ulid;
+
+mod scratch;
+use scratch::Scratch;
 
 pub(super) const CODEC: &str = "org.native.snapshot";
 const ARTIFACT_SCHEMA: &str = "CREATE TABLE snapshot (body BLOB NOT NULL) STRICT";
@@ -58,25 +60,11 @@ pub enum SnapshotStageMode {
     },
 }
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> io::Result<Self> {
-        let name = format!("agentic-org-snapshot-{}", ulid::generate()?);
-        let directory = std::path::absolute(std::env::temp_dir())?.join(name);
-        DirBuilder::new().mode(0o700).create(&directory)?;
-        Ok(Self(directory))
-    }
-
-    fn database(&self) -> PathBuf {
-        self.0.join("snapshot.db")
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+pub(crate) fn sweep_snapshot_scratch(folder: &Path) -> Result<(), OfficeError> {
+    scratch::sweep(folder).map_err(|error| {
+        scratch::warn(&error);
+        OfficeError::Invalid("snapshot scratch cleanup failed")
+    })
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -296,7 +284,7 @@ pub(crate) fn export_replication_snapshot(
         ));
     }
 
-    let scratch = Scratch::new().map_err(OfficeError::storage)?;
+    let scratch = Scratch::new(store).map_err(OfficeError::storage)?;
     let path = scratch.database();
     drop(private_file(&path).map_err(OfficeError::storage)?);
     let mut db = connect(&path, transport_key, true, false)?;
@@ -357,7 +345,7 @@ pub(crate) fn stage_replication_snapshot(
     if *transport_key == store.key {
         return Err(Refusal::InvalidInput.into());
     }
-    let scratch = Scratch::new().map_err(storage_error)?;
+    let scratch = Scratch::new(store).map_err(storage_error)?;
     let path = scratch.database();
     let mut file = private_file(&path).map_err(storage_error)?;
     let mut input = input.take(manifest.ciphertext_bytes.saturating_add(1));
