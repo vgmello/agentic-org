@@ -16,7 +16,13 @@
 	<StatusPill label="Paused" data-testid="word-and-icon">
 		{#snippet icon()}<svg role="img" aria-label="Status ornament" viewBox="0 0 16 16" class="size-4" fill="currentColor"><circle cx="8" cy="8" r="4" /></svg>{/snippet}
 	</StatusPill>
-	<div class="w-40 max-w-full"><StatusPill label={'Status' + 'x'.repeat(64)} data-testid="long-label" /></div>
+	<div class="flex w-32 max-w-full flex-wrap gap-2" data-testid="wrapping-pills">
+		<StatusPill label="On hold" />
+		<StatusPill label="Ready now" />
+	</div>
+	<div class="w-40 max-w-full"><StatusPill label={'Status' + 'x'.repeat(64)} data-testid="long-label">
+		{#snippet icon()}<svg viewBox="0 0 16 16" class="size-4" fill="currentColor"><circle cx="8" cy="8" r="4" /></svg>{/snippet}
+	</StatusPill></div>
 	<div class="w-40 max-w-full"><Callout data-testid="long-callout">{'Information' + 'x'.repeat(64)}</Callout></div>
 	<ol start="4" aria-label="Ordered facts"><DividedRow value={7} lang="pt" title="Native row" data-testid="native-row">Seventh fact</DividedRow></ol>
 </section>
