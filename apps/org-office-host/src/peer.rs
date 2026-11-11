@@ -35,6 +35,7 @@ pub(crate) struct Received {
 /// (the exec swap), so an app-only call is accepted only from a request line that starts at or
 /// after `buffered`.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) struct Accepted {
     pub(crate) token: Option<AuditToken>,
     pub(crate) buffered: u64,
@@ -128,6 +129,7 @@ pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BY
 
 /// The peer's pid (for the debug-only fallback; a pid can be reused, an audit token can't).
 #[cfg(all(target_os = "macos", debug_assertions))]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) fn pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
     let mut pid: libc::pid_t = 0;
     let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
@@ -150,6 +152,7 @@ pub(crate) fn pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
 
 /// The path of the executable process `pid` runs (for the debug-only fallback).
 #[cfg(all(target_os = "macos", debug_assertions))]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) fn executable(pid: libc::pid_t) -> io::Result<PathBuf> {
     let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
     // SAFETY: a buffer of exactly the size passed, which outlives the call.
