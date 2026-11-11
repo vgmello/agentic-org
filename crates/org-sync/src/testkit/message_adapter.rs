@@ -1222,4 +1222,24 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn an_undelivered_received_proof_aborts_instead_of_becoming_a_replay_ack() {
+        let (_, b, pa, _, m) = offices();
+        b.data.borrow_mut().received_messages.insert(
+            (m.origin.clone(), m.id.clone()),
+            Receipt {
+                message: m.clone(),
+                delivered: false,
+            },
+        );
+        let before = state(&b);
+        let error = messages::receive(&b, &pa, m, 10)
+            .expect_err("retained delivery proof must mean committed delivery");
+        assert!(matches!(
+            error,
+            SyncError::Refused(Refusal::InvariantFailure)
+        ));
+        assert!(error.aborts_batch());
+        assert_eq!(state(&b), before);
+    }
 }

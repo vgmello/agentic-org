@@ -131,6 +131,8 @@ pub trait MessageTxn {
     /// transport capabilities never bypass it. This read has no I/O or clock effects.
     fn supports_current_protocol(&mut self) -> Result<bool, StoreError>;
     fn outgoing_receipt(&mut self, id: &str) -> Result<Option<Receipt>, StoreError>;
+    /// Retained native delivery proof. An undelivered row is invalid here; false receipts
+    /// are local outgoing expiry notices, never destination ACKs.
     fn received(&mut self, origin: &OfficeId, id: &str) -> Result<Option<Receipt>, StoreError>;
     /// Validate native fingerprint and authorize the local principal's immutable intent.
     fn authorize_send(&mut self, message: &Message) -> Result<(), SyncError>;
@@ -289,6 +291,9 @@ pub fn receive(
         ready(tx)?;
         let mut queue = load_queue(tx)?;
         if let Some(old) = tx.received(&message.origin, &message.id)? {
+            if !old.delivered {
+                return Err(Refusal::InvariantFailure.into());
+            }
             if old.message != message {
                 return Err(Refusal::Divergence.into());
             }
