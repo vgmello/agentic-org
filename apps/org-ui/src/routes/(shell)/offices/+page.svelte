@@ -227,13 +227,13 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<li data-testid="office-row" data-office={office.id} class="flex items-center gap-x-4 px-4 py-3 max-[640px]:flex-wrap max-[640px]:gap-y-2">
+			<li data-testid="office-row" data-office={office.id} class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
 				<span class="flex h-6 w-10 shrink-0 items-center justify-center rounded text-xs font-semibold {isHq(office) ? 'bg-indigo-500/20 text-indigo-200' : 'text-transparent'}" aria-hidden="true">
 					{isHq(office) ? 'HQ' : ''}
 				</span>
 				<button
 					type="button"
-					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:order-first max-[640px]:w-full max-[640px]:flex-none"
+					class="min-w-0 flex-1 basis-32 text-left focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:order-first max-[640px]:w-full max-[640px]:flex-none"
 					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={(event) => open(office.id, event.currentTarget)}
