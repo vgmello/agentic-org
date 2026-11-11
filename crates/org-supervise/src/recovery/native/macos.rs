@@ -213,7 +213,7 @@ impl RecoveryProcesses for NativeRecovery {
             if pid <= 1 || pid as u32 == self.context.pid {
                 continue;
             }
-            let Some(before) = snapshot_info(pid as u32)? else {
+            let Some(before) = enumerated_info(pid as u32, self.context.uid, &mut rows)? else {
                 continue;
             };
             if before.pbi_ruid != self.context.uid {
@@ -227,7 +227,7 @@ impl RecoveryProcesses for NativeRecovery {
             };
             // SAFETY: getsid reads a session hint for a positive PID. Errors are not authority.
             let session = u32::try_from(unsafe { libc::getsid(pid) }).unwrap_or(0);
-            let Some(after) = snapshot_info(pid as u32)? else {
+            let Some(after) = enumerated_info(pid as u32, self.context.uid, &mut rows)? else {
                 continue;
             };
             if !same_identity(&before, &after) || after.pbi_ruid != self.context.uid {
@@ -257,7 +257,9 @@ impl RecoveryProcesses for NativeRecovery {
         }
         for row in &mut rows {
             check_time(deadline)?;
-            let initial_child = &observations[&row.pid];
+            let Some(initial_child) = observations.get(&row.pid) else {
+                continue;
+            };
             let parent_pid = initial_child.pbi_ppid;
             let Some(initial_parent) = observations.get(&parent_pid) else {
                 continue;
@@ -265,11 +267,16 @@ impl RecoveryProcesses for NativeRecovery {
             if row.zombie || is_zombie(initial_parent) {
                 continue;
             }
-            let (Some(parent_before), Some(child), Some(parent_after)) = (
+            let (
+                SnapshotInfo::Observed(parent_before),
+                SnapshotInfo::Observed(child),
+                SnapshotInfo::Observed(parent_after),
+            ) = (
                 snapshot_info(parent_pid)?,
                 snapshot_info(row.pid)?,
                 snapshot_info(parent_pid)?,
-            ) else {
+            )
+            else {
                 continue;
             };
             if same_identity(initial_parent, &parent_before)
@@ -437,12 +444,47 @@ fn wait_after_registration(
     Ok(false)
 }
 
-fn snapshot_info(pid: u32) -> io::Result<Option<libc::proc_bsdinfo>> {
+enum SnapshotInfo {
+    Observed(libc::proc_bsdinfo),
+    Absent,
+    Inaccessible,
+}
+
+fn snapshot_info(pid: u32) -> io::Result<SnapshotInfo> {
     match bsd_info(pid) {
-        // Real-UID enumeration also includes setuid processes. Skip inaccessible
-        // rows here; an exact recorded identity is still checked by wait_exited.
-        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
-        result => result,
+        Ok(Some(info)) => Ok(SnapshotInfo::Observed(info)),
+        Ok(None) => Ok(SnapshotInfo::Absent),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            Ok(SnapshotInfo::Inaccessible)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn enumerated_info(
+    pid: u32,
+    uid: u32,
+    rows: &mut Vec<ProcessObservation>,
+) -> io::Result<Option<libc::proc_bsdinfo>> {
+    match snapshot_info(pid)? {
+        SnapshotInfo::Observed(info) => Ok(Some(info)),
+        SnapshotInfo::Absent => Ok(None),
+        SnapshotInfo::Inaccessible => {
+            // The real-UID list supplies the PID. Without a readable identity
+            // or credentials the row can only contribute to S0 reporting.
+            rows.push(ProcessObservation {
+                pid,
+                identity: None,
+                parent: None,
+                group: 0,
+                session: 0,
+                uid,
+                credentials_safe: false,
+                zombie: false,
+                mark: MarkEvidence::Unreadable,
+            });
+            Ok(None)
+        }
     }
 }
 

@@ -1,9 +1,8 @@
 //! Crash recovery policy over explicit process and record ports.
 //!
-//! This module does not implement native process discovery or open a database. Native
-//! adapters must pin/revalidate identities as documented on [`RecoveryProcesses`]; a
-//! successful fake run is not permission to use real runtimes. The caller serializes
-//! recovery against spawning with the same mark and retains the session lock. It commits
+//! [`NativeRecovery`] discovers processes on macOS and Linux and checks identities
+//! as documented on [`RecoveryProcesses`]. The caller implements the record port,
+//! serializes recovery against spawning with the same mark, and retains the session lock. It commits
 //! the probe/session outcome before retiring the matching persisted owned-process row.
 //! `RecoveryGone` proves completion of this policy, subject to S0's explicit limitation:
 //! unreadable environments are reported and skipped, and an environment-clearing double
