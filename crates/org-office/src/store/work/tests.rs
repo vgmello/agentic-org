@@ -3,6 +3,9 @@ use crate::office::OFFICE_SCHEMA;
 use crate::store::origin;
 use crate::store::{Opening, Schema, Store};
 use crate::Key;
+
+mod call;
+mod metadata;
 use crate::OfficeError;
 use org_proto::work::{CommentKind, FieldChange, LinkKind, LinkTarget, WorkEventKind};
 use org_proto::work::{NewStep, TaskCreateParams, WorkEvent};
@@ -1154,7 +1157,7 @@ fn native_work_v3_upgrade_and_reopen_preserve_existing_message_metadata() {
             assert_eq!(
                 db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                     .unwrap(),
-                4
+                5
             );
             assert_eq!(
                 db.query_row(

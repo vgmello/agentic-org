@@ -415,7 +415,7 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 4);
+        assert_eq!(count(&office, "PRAGMA user_version"), 5);
         assert_eq!(
             count(
                 &office,

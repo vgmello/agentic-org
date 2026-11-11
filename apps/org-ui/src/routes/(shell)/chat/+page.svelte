@@ -5,6 +5,9 @@
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
+	import Info from '@lucide/svelte/icons/info';
+	import Unplug from '@lucide/svelte/icons/unplug';
+	import Callout from '$lib/components/Callout.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	// D-F14a: temporary route composition root; Jules's F1-02 factory cutover removes this exception.
@@ -616,13 +619,19 @@
 			</div>
 
 			{#if bridgePreview}
-				<p class="border-b border-white/10 bg-sky-400/10 px-5 py-2 text-sm/6 text-sky-100" data-testid="bridge-preview">Previewing how a bridge (Slack, Teams or Discord) shows this: read-only here, and asks to the owner and approvals open in Agentic Org.</p>
+				<Callout data-testid="bridge-preview">
+					{#snippet icon()}<Info class="size-4" aria-hidden="true" />{/snippet}
+					<p>Previewing how a bridge (Slack, Teams or Discord) shows this: read-only here, and asks to the owner and approvals open in Agentic Org.</p>
+				</Callout>
 			{/if}
 			{#if !officeRunning}
-				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
+				<Callout data-testid="office-down">
+					{#snippet icon()}<Unplug class="size-4" aria-hidden="true" />{/snippet}
+					<p>Read-only from the last copy. The office isn't running.</p>
+				</Callout>
 			{/if}
 
-			<div bind:this={listEl} data-focus-scope class="min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]" data-testid="message-list" tabindex="-1" role="region" aria-label="Messages">
+			<div bind:this={listEl} data-focus-scope class="min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]" data-testid="message-list" tabindex="-1" role="region" aria-label="Message area">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>

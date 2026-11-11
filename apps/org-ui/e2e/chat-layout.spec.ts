@@ -171,3 +171,71 @@ for (const width of [320, 600, 639, 640, 1440]) {
 		await expect(search).toHaveValue('');
 	});
 }
+
+const previewNotice = 'Previewing how a bridge (Slack, Teams or Discord) shows this: read-only here, and asks to the owner and approvals open in Agentic Org.';
+const offlineNotice = "Read-only from the last copy. The office isn't running.";
+
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test(`CHAT-1/29 BUG-70: quiet context notices preserve all flag combinations at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		await create(page);
+		await page.setViewportSize({ width, height: 900 });
+		expect((await page.request.get('/e2e/fakes/org-api.ts')).status()).toBe(200);
+		for (const [bridge, offline] of [[false, false], [true, false], [false, true], [true, true]]) {
+			const params = new URLSearchParams({ c: 'c-release-v1' });
+			if (bridge) params.set('surface', 'bridge');
+			if (offline) params.set('chat', 'offline');
+			await visit(page, `/chat?${params}`);
+			await fontSize(page, 16 * scale);
+			await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
+			const conversation = page.getByRole('region', { name: 'Conversation', exact: true });
+			const area = page.getByRole('region', { name: 'Message area', exact: true });
+			await expect(area.getByRole('log', { name: 'Messages', exact: true })).toBeVisible();
+			await expect(page.getByTestId('bridge-preview')).toHaveCount(bridge ? 1 : 0);
+			await expect(page.getByTestId('office-down')).toHaveCount(offline ? 1 : 0);
+			for (const [id, shown, text] of [['bridge-preview', bridge, previewNotice], ['office-down', offline, offlineNotice]] as const) {
+				if (!shown) continue;
+				const notice = page.getByTestId(id);
+				await expect(notice).toHaveText(text);
+				await expect(notice.getByRole('paragraph')).toHaveText(text);
+				expect(await notice.evaluate((element) => !!element.closest('[role=alert], [role=status], [aria-live]'))).toBe(false);
+				const style = await notice.evaluate((element) => {
+					const s = getComputedStyle(element);
+					const canvas = document.createElement('canvas');
+					canvas.width = canvas.height = 1;
+					const context = canvas.getContext('2d')!;
+					context.fillStyle = s.backgroundColor;
+					context.fillRect(0, 0, 1, 1);
+					const range = document.createRange();
+					range.selectNodeContents(element);
+					const bounds = element.getBoundingClientRect();
+					const glyphs = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+					return { background: [...context.getImageData(0, 0, 1, 1).data], top: parseFloat(s.borderTopWidth), bottom: parseFloat(s.borderBottomWidth), padding: parseFloat(s.paddingTop), textFits: glyphs.length > 0 && glyphs.every((r) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1) };
+				});
+				expect.soft(style.background).toEqual([255, 255, 255, 8]);
+				expect.soft(style.top).toBe(1);
+				expect.soft(style.bottom).toBe(1);
+				expect.soft(style.padding).toBe(12 * scale);
+				expect.soft(style.textFits).toBe(true);
+				expect.soft(await notice.locator('svg').count()).toBe(1);
+				expect.soft(await notice.locator('svg').evaluateAll((icons) => icons.every((icon) => !!icon.closest('[aria-hidden=true]')))).toBe(true);
+				await shot(page, `chat-context-${width}-${scale}-${bridge}-${offline}-${id}`, { context: notice });
+			}
+			if (bridge && offline) {
+				expect(await page.getByTestId('bridge-preview').evaluate((a) => !!(a.compareDocumentPosition(document.querySelector('[data-testid=office-down]')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+				const paths = (icons: Element[]) => icons.map((icon) => icon.innerHTML);
+				expect(await page.getByTestId('bridge-preview').locator('svg').evaluateAll(paths)).not.toEqual(await page.getByTestId('office-down').locator('svg').evaluateAll(paths));
+			}
+			await expect(conversation.getByTestId('composer')).toHaveCount(bridge || offline ? 0 : 1);
+			if (!bridge && !offline) {
+				await conversation.getByTestId('composer').focus();
+				await expect(conversation.getByTestId('composer')).toBeFocused();
+			}
+			await area.focus();
+			await expect(area).toBeFocused();
+			await expect(area).toHaveAccessibleName('Message area');
+			await expect(area.getByRole('log', { name: 'Messages', exact: true })).toHaveAttribute('aria-live', 'polite');
+			await expect(area.getByRole('log', { name: 'Messages', exact: true })).toHaveAttribute('aria-relevant', 'additions');
+			await noSidewaysScroll(page, false);
+		}
+	});
+}
