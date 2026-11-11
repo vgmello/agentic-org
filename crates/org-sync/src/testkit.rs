@@ -32,6 +32,7 @@ struct Data {
     outgoing_messages: BTreeMap<String, crate::messages::Receipt>,
     received_messages: BTreeMap<(OfficeId, String), crate::messages::Receipt>,
     delivered_messages: Vec<Arc<[u8]>>,
+    expired_messages: BTreeMap<(OfficeId, String), crate::messages::Message>,
 }
 
 /// A committed copy and its independently local office state. Every attempt mutates a clone;
@@ -74,6 +75,7 @@ impl MemoryOffice {
                 outgoing_messages: BTreeMap::new(),
                 received_messages: BTreeMap::new(),
                 delivered_messages: Vec::new(),
+                expired_messages: BTreeMap::new(),
             }),
             faults: RefCell::default(),
             attempts: RefCell::new(0),

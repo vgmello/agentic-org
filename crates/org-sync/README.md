@@ -77,3 +77,9 @@ A later authenticated delivered receipt can correct that notice atomically. Back
 cannot revive expired traffic. The test adapter injects individual read/write failures,
 commit failures and reopen; the guard matrix checks exact refusals and unchanged state.
 Real message-storage and framing adapters are separate slices.
+
+Initial expiry also retains immutable identity. Sender-side expiry uses a local
+undelivered notice; receiver-side expiry has a separate rejected-identity record,
+sharing the native origin/ID uniqueness and dedup horizon with delivered records.
+A matching receiver retry remains Expired without an ACK, and a conflicting intent
+is divergence. The identity and clock commit together, including on the first refusal.

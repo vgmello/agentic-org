@@ -151,6 +151,14 @@ pub trait MessageTxn {
         receipt: &Receipt,
     ) -> Result<(), SyncError>;
     fn apply_message(&mut self, message: &Message) -> Result<(), SyncError>;
+    /// Rejected identity shares the origin/ID uniqueness and native retention horizon
+    /// with received proofs, but never establishes delivery.
+    fn expired_identity(
+        &mut self,
+        origin: &OfficeId,
+        id: &str,
+    ) -> Result<Option<Message>, StoreError>;
+    fn record_expired(&mut self, message: &Message) -> Result<(), StoreError>;
     fn record_received(&mut self, receipt: &Receipt) -> Result<(), StoreError>;
     fn save_queue(&mut self, queue: &Queue, receipt: Option<&Receipt>) -> Result<(), StoreError>;
 }
@@ -219,7 +227,11 @@ pub fn enqueue(
         }
         queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
         if message.deadline_ms <= queue.clock_high_ms {
-            persist(tx, &queue, None)?;
+            let receipt = Receipt {
+                message: message.clone(),
+                delivered: false,
+            };
+            persist(tx, &queue, Some(&receipt))?;
             return Ok(MessageOutput::Refused(Refusal::Expired));
         }
         if queue.pending.len() >= MAX_PENDING
@@ -299,8 +311,15 @@ pub fn receive(
             }
             return Ok(MessageOutput::Receipt(old));
         }
+        if let Some(old) = tx.expired_identity(&message.origin, &message.id)? {
+            if old != message {
+                return Err(Refusal::Divergence.into());
+            }
+            return Ok(MessageOutput::Refused(Refusal::Expired));
+        }
         queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
         if message.deadline_ms <= queue.clock_high_ms {
+            tx.record_expired(&message)?;
             persist(tx, &queue, None)?;
             return Ok(MessageOutput::Refused(Refusal::Expired));
         }

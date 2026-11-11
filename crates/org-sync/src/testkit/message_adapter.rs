@@ -107,6 +107,26 @@ impl MessageTxn for Tx<'_> {
         }
         Ok(())
     }
+    fn expired_identity(
+        &mut self,
+        origin: &OfficeId,
+        id: &str,
+    ) -> Result<Option<Message>, StoreError> {
+        self.message_io("expired_identity")?;
+        Ok(self
+            .data
+            .expired_messages
+            .get(&(origin.clone(), id.to_owned()))
+            .cloned())
+    }
+    fn record_expired(&mut self, message: &Message) -> Result<(), StoreError> {
+        self.message_io("record_expired")?;
+        self.data.expired_messages.insert(
+            (message.origin.clone(), message.id.clone()),
+            message.clone(),
+        );
+        Ok(())
+    }
     fn record_received(&mut self, receipt: &Receipt) -> Result<(), StoreError> {
         self.message_io("record_received")?;
         self.data.received_messages.insert(
@@ -448,6 +468,7 @@ mod tests {
         outgoing: BTreeMap<String, Receipt>,
         received: BTreeMap<(OfficeId, String), Receipt>,
         delivered: Vec<Arc<[u8]>>,
+        expired: BTreeMap<(OfficeId, String), Message>,
     }
     fn state(office: &MemoryOffice) -> Saved {
         let d = office.data.borrow();
@@ -458,6 +479,7 @@ mod tests {
             outgoing: d.outgoing_messages.clone(),
             received: d.received_messages.clone(),
             delivered: d.delivered_messages.clone(),
+            expired: d.expired_messages.clone(),
         }
     }
     fn refused(result: Result<MessageOutput, SyncError>, reason: Refusal) {
@@ -1241,5 +1263,138 @@ mod tests {
         ));
         assert!(error.aborts_batch());
         assert_eq!(state(&b), before);
+    }
+    #[test]
+    fn initial_expiry_retains_immutable_identity_across_reopen() {
+        for action in ["receive", "enqueue"] {
+            let (a, b, pa, _, original) = offices();
+            let first = if action == "enqueue" {
+                messages::enqueue(&a, original.clone(), original.deadline_ms)
+            } else {
+                messages::receive(&b, &pa, original.clone(), original.deadline_ms)
+            };
+            assert_eq!(first.unwrap(), MessageOutput::Refused(Refusal::Expired));
+            let office = if action == "enqueue" {
+                a.restart()
+            } else {
+                b.restart()
+            };
+            let before = state(&office);
+            for field in ["payload", "deadline", "both"] {
+                let mut changed = original.clone();
+                if field != "deadline" {
+                    changed.payload = Arc::from(&b"changed after expiry"[..]);
+                }
+                if field != "payload" {
+                    changed.deadline_ms += 1000;
+                }
+                changed.fingerprint = fingerprint(&changed);
+                let retry = if action == "enqueue" {
+                    messages::enqueue(&office, changed, original.deadline_ms + 1)
+                } else {
+                    messages::receive(&office, &pa, changed, original.deadline_ms + 1)
+                };
+                refused(
+                    retry,
+                    if action == "enqueue" {
+                        Refusal::OperationReused
+                    } else {
+                        Refusal::Divergence
+                    },
+                );
+                assert_eq!(state(&office), before);
+            }
+        }
+    }
+    #[test]
+    fn initial_expiry_replays_without_requeue_delivery_or_clock_mutation() {
+        for action in ["enqueue", "receive"] {
+            let (a, b, pa, _, m) = offices();
+            let first = if action == "enqueue" {
+                messages::enqueue(&a, m.clone(), m.deadline_ms)
+            } else {
+                messages::receive(&b, &pa, m.clone(), m.deadline_ms)
+            };
+            assert_eq!(first.unwrap(), MessageOutput::Refused(Refusal::Expired));
+            let office = if action == "enqueue" {
+                a.restart()
+            } else {
+                b.restart()
+            };
+            let before = state(&office);
+            let replay = if action == "enqueue" {
+                messages::enqueue(&office, m.clone(), m.deadline_ms + 1)
+            } else {
+                messages::receive(&office, &pa, m.clone(), m.deadline_ms + 1)
+            };
+            assert_eq!(
+                replay.unwrap(),
+                if action == "enqueue" {
+                    MessageOutput::Receipt(Receipt {
+                        message: m.clone(),
+                        delivered: false,
+                    })
+                } else {
+                    MessageOutput::Refused(Refusal::Expired)
+                }
+            );
+            assert_eq!(state(&office), before);
+            assert!(office.data.borrow().message_queue.pending.is_empty());
+            assert!(office.data.borrow().received_messages.is_empty());
+            assert!(office.data.borrow().delivered_messages.is_empty());
+        }
+    }
+
+    #[test]
+    fn expiry_identity_and_clock_commit_together_and_storage_errors_abort() {
+        for fault in [
+            Fault::MessagePort("expired_identity", 0),
+            Fault::MessagePort("record_expired", 0),
+            Fault::CommitUnavailable,
+        ] {
+            let (_, b, pa, _, m) = offices();
+            let before = state(&b);
+            b.inject(fault);
+            assert!(matches!(
+                messages::receive(&b, &pa, m.clone(), m.deadline_ms),
+                Err(SyncError::Storage(_))
+            ));
+            assert_eq!(state(&b), before);
+            assert_eq!(
+                messages::receive(&b, &pa, m.clone(), m.deadline_ms).unwrap(),
+                MessageOutput::Refused(Refusal::Expired)
+            );
+            let reopened = b.restart();
+            assert_eq!(
+                reopened.data.borrow().message_queue.clock_high_ms,
+                m.deadline_ms
+            );
+            assert_eq!(
+                reopened.data.borrow().expired_messages[&(m.origin.clone(), m.id.clone())],
+                m
+            );
+            assert!(reopened.data.borrow().received_messages.is_empty());
+            assert!(reopened.data.borrow().delivered_messages.is_empty());
+        }
+        let (a, _, _, _, m) = offices();
+        let before = state(&a);
+        a.inject(Fault::CommitUnavailable);
+        assert!(matches!(
+            messages::enqueue(&a, m.clone(), m.deadline_ms),
+            Err(SyncError::Storage(_))
+        ));
+        assert_eq!(state(&a), before);
+        assert_eq!(
+            messages::enqueue(&a, m.clone(), m.deadline_ms).unwrap(),
+            MessageOutput::Refused(Refusal::Expired)
+        );
+        let reopened = a.restart();
+        assert_eq!(
+            reopened.data.borrow().outgoing_messages[&m.id],
+            Receipt {
+                message: m,
+                delivered: false
+            }
+        );
     }
 }
