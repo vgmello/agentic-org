@@ -1,230 +1,192 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+//! The gateway's use of [`ListenOrigin`] (X-02 §2, §10): the configured browser-facing origin is
+//! parsed by `ListenOrigin::parse` and checked against the bound listener by
+//! `ListenOrigin::check`, never by rules of the gateway's own. This module only maps a refusal to
+//! the gateway's start error and reads the origin's authority for the `Host` comparison.
 
-use hyper::Uri;
+use std::io;
+use std::net::SocketAddr;
 
-/// Public browser origin validated without DNS resolution. This is startup
-/// configuration; it is never inferred from a browser's Host/Origin headers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfiguredOrigin {
-    serialized: String,
-    ip: Option<IpAddr>,
-    port: u16,
-    https: bool,
-}
+use org_host_control::listen::{ListenMode, ListenOrigin, OriginScheme};
 
-impl ConfiguredOrigin {
-    pub fn parse(value: &str) -> Result<Self, &'static str> {
-        if value.len() > 4096
-            || !value.is_ascii()
-            || value
-                .bytes()
-                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == b'#')
-        {
-            return Err("invalid browser origin");
-        }
-        let uri: Uri = value.parse().map_err(|_| "invalid browser origin")?;
-        let https = match uri.scheme_str() {
-            Some("https") => true,
-            Some("http") => false,
-            _ => return Err("browser origin requires HTTP or HTTPS"),
-        };
-        if uri
-            .path_and_query()
-            .is_some_and(|path| path.as_str() != "/")
-        {
-            return Err("browser origin cannot contain a path or query");
-        }
-        let authority = uri
-            .authority()
-            .ok_or("browser origin requires an authority")?;
-        if authority.as_str().contains(['@', '%']) {
-            return Err("invalid browser origin authority");
-        }
-        let raw_host = authority.host();
-        let suffix = &authority.as_str()[raw_host.len()..];
-        let port = match suffix {
-            "" => {
-                if https {
-                    443
-                } else {
-                    80
-                }
-            }
-            suffix => suffix
-                .strip_prefix(':')
-                .filter(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
-                .ok_or("invalid browser origin port")?
-                .parse::<u16>()
-                .map_err(|_| "invalid browser origin port")?,
-        };
-        if port == 0 {
-            return Err("browser origin port must be nonzero");
-        }
-        let bare_host = raw_host
-            .strip_prefix('[')
-            .and_then(|host| host.strip_suffix(']'))
-            .unwrap_or(raw_host);
-        if bare_host.is_empty() {
-            return Err("browser origin requires a host");
-        }
-        let ip = bare_host.parse::<IpAddr>().ok();
-        let host = match ip {
-            Some(IpAddr::V4(ip)) => ip.to_string(),
-            Some(IpAddr::V6(ip)) => serialize_ipv6_host(ip),
-            None if !raw_host.starts_with('[') && canonical_domain(bare_host) => {
-                bare_host.to_owned()
-            }
-            None => return Err("invalid browser origin host"),
-        };
-        let scheme = if https { "https" } else { "http" };
-        let suffix = if port == if https { 443 } else { 80 } {
-            String::new()
-        } else {
-            format!(":{port}")
-        };
-        let serialized = format!("{scheme}://{host}{suffix}");
-        if value.strip_suffix('/').unwrap_or(value) != serialized {
-            return Err("browser origin must already be canonical");
-        }
-        Ok(Self {
-            serialized,
-            ip,
-            port,
-            https,
-        })
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.serialized
-    }
-
-    pub(crate) fn is_https(&self) -> bool {
-        self.https
-    }
-
-    pub(crate) fn authority(&self) -> &str {
-        &self.serialized[if self.https {
-            "https://".len()
-        } else {
-            "http://".len()
-        }..]
-    }
-
-    pub(crate) fn validate_https(&self, listener: SocketAddr) -> Result<(), &'static str> {
-        if !self.is_https() || self.port != listener.port() {
-            return Err("HTTPS origin must use HTTPS and the listener's port");
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_http_loopback(&self, listener: SocketAddr) -> Result<(), &'static str> {
-        if self.https
-            || !matches!(
-                listener.ip(),
-                IpAddr::V4(Ipv4Addr::LOCALHOST) | IpAddr::V6(Ipv6Addr::LOCALHOST)
-            )
-            || self.ip != Some(listener.ip())
-            || self.port != listener.port()
-        {
-            return Err("HTTP origin must be the listener's exact loopback IP literal and port");
-        }
-        Ok(())
-    }
-}
-
-fn canonical_domain(host: &str) -> bool {
-    let last = host.rsplit('.').next().unwrap_or_default();
-    // Browsers interpret a numeric final label as an IPv4 address. The IpAddr
-    // parser already accepted a canonical dotted quad, so aliases fail here.
-    host.len() <= 253
-        && !last.starts_with("0x")
-        && !last.bytes().all(|byte| byte.is_ascii_digit())
-        && host.split('.').all(|label| {
-            (1..=63).contains(&label.len())
-                && label.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'-' | b'_')
-                })
+/// Refuse to start unless `origin` fits the listener bound at `listener` in `mode`. Runs before
+/// any runtime or application initialization. The error carries the [`OriginError`] as its
+/// source: `PermissionDenied` for `http_loopback`, `InvalidInput` for `https`.
+///
+/// [`OriginError`]: org_host_control::listen::OriginError
+pub(crate) fn check_listener(
+    origin: &ListenOrigin,
+    mode: ListenMode,
+    listener: SocketAddr,
+) -> io::Result<()> {
+    origin
+        .check(mode, listener.ip(), listener.port())
+        .map_err(|error| {
+            let kind = match mode {
+                ListenMode::HttpLoopback => io::ErrorKind::PermissionDenied,
+                ListenMode::Https => io::ErrorKind::InvalidInput,
+            };
+            io::Error::new(kind, error)
         })
 }
 
-fn serialize_ipv6_host(ip: Ipv6Addr) -> String {
-    let segments = ip.segments();
-    let (mut longest_start, mut longest_len) = (0, 0);
-    let mut zeroes = 0;
-    for (index, piece) in segments.into_iter().enumerate() {
-        if piece == 0 {
-            zeroes += 1;
-            if zeroes > longest_len {
-                longest_start = index + 1 - zeroes;
-                longest_len = zeroes;
-            }
-        } else {
-            zeroes = 0;
-        }
-    }
-    // WHATWG uses hex for IPv4-mapped addresses, where Rust Display uses a dotted tail.
-    let pieces = segments.map(|piece| format!("{piece:x}"));
-    if longest_len < 2 {
-        format!("[{}]", pieces.join(":"))
-    } else {
-        format!(
-            "[{}::{}]",
-            pieces[..longest_start].join(":"),
-            pieces[longest_start + longest_len..].join(":"),
-        )
-    }
+/// Whether the origin is `https`.
+pub(crate) fn is_https(origin: &ListenOrigin) -> bool {
+    origin.scheme() == OriginScheme::Https
+}
+
+/// The origin's authority, `host[:port]`: what browsers send in `Host` for it.
+pub(crate) fn authority(origin: &ListenOrigin) -> &str {
+    let serialized = origin.as_str();
+    serialized
+        .split_once("://")
+        .map_or(serialized, |(_, authority)| authority)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
+    use org_host_control::listen::OriginError;
+    use serde_json::Value;
+
     use super::*;
+
+    /// X-02 §10: the gateway runs `ListenOrigin`'s vectors through its use of it.
+    const VECTORS: &str =
+        include_str!("../../../crates/org-host-control/test-vectors/listen-origin.json");
+
+    /// The start error's kind and the `ListenOrigin` refusal it carries.
+    fn refusal(result: io::Result<()>) -> Option<(io::ErrorKind, OriginError)> {
+        result.err().map(|error| {
+            let reason = error
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<OriginError>())
+                .copied()
+                .unwrap_or_else(|| panic!("not an origin refusal: {error}"));
+            (error.kind(), reason)
+        })
+    }
+
+    fn loopback(origin: &str, listener: &str) -> io::Result<()> {
+        check_listener(
+            &ListenOrigin::parse(origin).unwrap(),
+            ListenMode::HttpLoopback,
+            listener.parse().unwrap(),
+        )
+    }
+
+    fn https(origin: &str, listener: &str) -> io::Result<()> {
+        check_listener(
+            &ListenOrigin::parse(origin).unwrap(),
+            ListenMode::Https,
+            listener.parse().unwrap(),
+        )
+    }
 
     #[test]
     fn plaintext_origin_is_the_exact_bound_ip_and_port_never_a_dns_name() {
-        let v4: SocketAddr = "127.0.0.1:4321".parse().unwrap();
-        assert!(ConfiguredOrigin::parse("http://127.0.0.1:4321")
-            .unwrap()
-            .validate_http_loopback(v4)
-            .is_ok());
-        for origin in [
-            "http://localhost:4321",
-            "http://x.localhost:4321",
-            "http://[::1]:4321",
-            "http://127.0.0.2:4321",
-            "http://127.0.0.1:4322",
-            "https://127.0.0.1:4321",
+        use io::ErrorKind::PermissionDenied;
+        use OriginError::*;
+        assert!(loopback("http://127.0.0.1:4321", "127.0.0.1:4321").is_ok());
+        for (origin, reason) in [
+            ("http://localhost:4321", NotBoundLiteral),
+            ("http://x.localhost:4321", NotBoundLiteral),
+            ("http://[::1]:4321", NotBoundLiteral),
+            ("http://127.0.0.2:4321", NotBoundLiteral),
+            ("http://127.0.0.1:4322", PortMismatch),
+            ("https://127.0.0.1:4321", SchemeMismatch),
         ] {
-            assert!(
-                ConfiguredOrigin::parse(origin)
-                    .unwrap()
-                    .validate_http_loopback(v4)
-                    .is_err(),
+            assert_eq!(
+                refusal(loopback(origin, "127.0.0.1:4321")),
+                Some((PermissionDenied, reason)),
                 "{origin}"
             );
         }
-        let v6: SocketAddr = "[::1]:4321".parse().unwrap();
-        assert!(ConfiguredOrigin::parse("http://[::1]:4321")
-            .unwrap()
-            .validate_http_loopback(v6)
-            .is_ok());
-        assert!(ConfiguredOrigin::parse("http://127.0.0.1:4321")
-            .unwrap()
-            .validate_http_loopback(v6)
-            .is_err());
+        assert!(loopback("http://[::1]:4321", "[::1]:4321").is_ok());
+        assert_eq!(
+            refusal(loopback("http://127.0.0.1:4321", "[::1]:4321")),
+            Some((PermissionDenied, NotBoundLiteral))
+        );
     }
 
     #[test]
     fn plaintext_startup_rejects_unapproved_bind_addresses_even_with_matching_origins() {
+        // B1-05 A-10: the 127.0.0.2 case runs here, on the check function, because macOS
+        // configures only 127.0.0.1 on lo0. 0.0.0.0 also runs with a real listener.
         for address in ["127.0.0.2:4321", "0.0.0.0:4321"] {
-            let origin = ConfiguredOrigin::parse(&format!("http://{address}")).unwrap();
-            assert!(
-                origin
-                    .validate_http_loopback(address.parse().unwrap())
-                    .is_err(),
+            assert_eq!(
+                refusal(loopback(&format!("http://{address}"), address)),
+                Some((
+                    io::ErrorKind::PermissionDenied,
+                    OriginError::LoopbackAddress
+                )),
                 "{address}"
             );
+        }
+    }
+
+    #[test]
+    fn https_origin_needs_https_and_the_listener_port_on_any_address() {
+        use io::ErrorKind::InvalidInput;
+        assert!(https("https://gateway.test:8443", "0.0.0.0:8443").is_ok());
+        assert!(https("https://gateway.test", "192.168.1.10:443").is_ok());
+        assert_eq!(
+            refusal(https("https://gateway.test", "0.0.0.0:8443")),
+            Some((InvalidInput, OriginError::PortMismatch))
+        );
+        assert_eq!(
+            refusal(https("http://gateway.test:8443", "0.0.0.0:8443")),
+            Some((InvalidInput, OriginError::SchemeMismatch))
+        );
+    }
+
+    #[test]
+    fn listen_origin_vectors_run_through_the_gateway() {
+        let doc: Value = serde_json::from_str(VECTORS).unwrap();
+        let form = doc["form"].as_array().unwrap();
+        assert!(form.len() > 80);
+        for row in form {
+            let input = row["input"].as_str().unwrap();
+            let want = row["result"].as_str().unwrap();
+            match ListenOrigin::parse(input) {
+                Ok(origin) => {
+                    assert_eq!(want, "accepted", "{input:?}");
+                    let canonical = row["origin"].as_str().unwrap();
+                    assert_eq!(origin.as_str(), canonical, "{input:?}");
+                    // The gateway's own reads of it rebuild the same origin.
+                    let scheme = if is_https(&origin) { "https" } else { "http" };
+                    assert_eq!(
+                        format!("{scheme}://{}", authority(&origin)),
+                        canonical,
+                        "{input:?}"
+                    );
+                }
+                Err(error) => assert_eq!(error.code(), want, "{input:?}"),
+            }
+        }
+        let fit = doc["fit"].as_array().unwrap();
+        assert!(fit.len() > 20);
+        for row in fit {
+            let origin = ListenOrigin::parse(row["origin"].as_str().unwrap()).unwrap();
+            let mode: ListenMode = serde_json::from_value(row["scheme"].clone()).unwrap();
+            let address: IpAddr = row["address"].as_str().unwrap().parse().unwrap();
+            let port = u16::try_from(row["port"].as_u64().unwrap()).unwrap();
+            let got = match refusal(check_listener(
+                &origin,
+                mode,
+                SocketAddr::new(address, port),
+            )) {
+                None => "accepted",
+                Some((kind, reason)) => {
+                    let start_kind = match mode {
+                        ListenMode::HttpLoopback => io::ErrorKind::PermissionDenied,
+                        ListenMode::Https => io::ErrorKind::InvalidInput,
+                    };
+                    assert_eq!(kind, start_kind, "{row}");
+                    reason.code()
+                }
+            };
+            assert_eq!(got, row["result"].as_str().unwrap(), "{row}");
         }
     }
 
@@ -246,7 +208,7 @@ mod tests {
             ("https://a_b.example", "https://a_b.example"),
             ("https://example.test:8443", "https://example.test:8443"),
         ] {
-            assert_eq!(ConfiguredOrigin::parse(input).unwrap().as_str(), expected);
+            assert_eq!(ListenOrigin::parse(input).unwrap().as_str(), expected);
         }
     }
 
@@ -275,7 +237,7 @@ mod tests {
             "https://[2001:db8:0:0:1::1]:8443",
             "https://[fe80::1%25en0]",
         ] {
-            assert!(ConfiguredOrigin::parse(invalid).is_err(), "{invalid}");
+            assert!(ListenOrigin::parse(invalid).is_err(), "{invalid}");
         }
     }
 
@@ -288,9 +250,9 @@ mod tests {
                 "b".repeat(last)
             )
         };
-        assert!(ConfiguredOrigin::parse(&origin(61)).is_ok());
-        assert!(ConfiguredOrigin::parse(&origin(62)).is_err());
-        assert!(ConfiguredOrigin::parse(&format!("https://{}a.test", full_label)).is_err());
+        assert!(ListenOrigin::parse(&origin(61)).is_ok());
+        assert!(ListenOrigin::parse(&origin(62)).is_err());
+        assert!(ListenOrigin::parse(&format!("https://{}a.test", full_label)).is_err());
     }
 
     #[test]
@@ -313,7 +275,7 @@ mod tests {
             "https://example.test:",
             "https://[bad]",
         ] {
-            assert!(ConfiguredOrigin::parse(invalid).is_err(), "{invalid}");
+            assert!(ListenOrigin::parse(invalid).is_err(), "{invalid}");
         }
     }
 }
