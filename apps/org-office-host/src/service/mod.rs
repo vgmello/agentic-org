@@ -1,18 +1,18 @@
-//! The host's `org-proto` service: `hello`, `organization.create`, `organization.list`,
-//! `office.list`, `subscribe` (which receives `organization.created` and
-//! `office.status_changed`), and the app-only `office.app_token` and `office.restart`.
-//!
-//! Events and list answers go through the [`Broadcast`], so an event is never older than a list
-//! answer written before it on the same connection.
+//! host.sock's private control boundary: registered-instance hello and count-only status.
+//! Legacy backend operations remain for the later session cut, behind the refusal gate.
 
 pub(crate) mod listener;
 
 use std::sync::{Arc, Weak};
 
+use org_host_control::{
+    GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
+    InstanceStatusResult, OfficeCounts,
+};
 use org_proto::{
-    capability, ApiError, AppToken, Call, Empty, ErrorCode, Hello, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeAppToken, OfficeList, OfficeRestart, Organization,
-    OrganizationCreate, OrganizationList, Request, Response, Subscribe,
+    ApiError, AppToken, Call, Empty, ErrorCode, ListOfficesResult, ListOrganizationsResult,
+    OfficeAppToken, OfficeList, OfficeRestart, Organization, OrganizationCreate, OrganizationList,
+    Request, Response, Subscribe,
 };
 use serde::Serialize;
 
@@ -27,14 +27,21 @@ pub(crate) struct Service {
     broadcast: Arc<Broadcast>,
     /// Who may use the app-only calls.
     app: AppPolicy,
+    instance_id: Option<String>,
 }
 
 impl Service {
-    pub(crate) fn new(offices: Arc<Offices>, broadcast: Arc<Broadcast>, app: AppPolicy) -> Self {
+    pub(crate) fn new(
+        offices: Arc<Offices>,
+        broadcast: Arc<Broadcast>,
+        app: AppPolicy,
+        instance_id: Option<String>,
+    ) -> Self {
         Self {
             offices,
             broadcast,
             app,
+            instance_id,
         }
     }
 
@@ -123,15 +130,70 @@ impl Service {
 }
 
 impl Handler for Service {
-    /// The app-only calls are handled on the reader thread: their check needs to know that
+    /// Hello and the legacy app-only calls run on the reader thread: their checks need to know that
     /// nothing arrived after the request (see `app_auth`).
     fn inline(&self, request: &Request) -> bool {
-        request.is::<OfficeAppToken>() || request.is::<OfficeRestart>()
+        request.is::<Hello>() || request.is::<OfficeAppToken>() || request.is::<OfficeRestart>()
     }
 
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
+        let Some(instance_id) = self.instance_id.as_deref() else {
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "this host has no registered instance; run setup",
+                ),
+            ));
+            return;
+        };
+        if !request.is::<Hello>() && !request.is::<InstanceStatus>() {
+            connection.send_response(not_authorized(request.id));
+            return;
+        }
         if request.is::<Hello>() {
-            connection.send_response(answer::<Hello>(&request, |_| Ok(hello())));
+            let Ok(params) = request.params::<Hello>() else {
+                connection.send_response(params_dont_fit(request.id));
+                return;
+            };
+            // Host control speaks only version1; every connection is fixed at that version.
+            if !params.api_range().contains(org_host_control::API_VERSION) {
+                connection.refuse_and_finish(Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::UnsupportedVersion,
+                        "no common host control version",
+                    ),
+                ));
+                return;
+            }
+            let mut result = hello(instance_id);
+            result.api_version = org_host_control::API_VERSION;
+            connection.send_response(ok::<Hello>(request.id, &result));
+        } else if request.is::<InstanceStatus>() {
+            self.broadcast.snapshot(|| {
+                connection.send_response(answer::<InstanceStatus>(&request, |_| {
+                    let offices = self.offices.offices();
+                    Ok(InstanceStatusResult {
+                        instance_id: instance_id.to_owned(),
+                        mode: InstanceMode::Service,
+                        gateway: GatewayStatus {
+                            state: GatewayState::NotConfigured,
+                        },
+                        offices: OfficeCounts {
+                            total: offices.len() as u64,
+                            active: offices
+                                .iter()
+                                .filter(|o| o.status == org_proto::OfficeStatus::Active)
+                                .count() as u64,
+                            failed: offices
+                                .iter()
+                                .filter(|o| o.status.requires_operator_action())
+                                .count() as u64,
+                        },
+                    })
+                }))
+            });
         } else if request.is::<OrganizationCreate>() {
             self.create(&request, connection);
         } else if request.is::<OrganizationList>() {
@@ -200,7 +262,7 @@ fn not_authorized(id: u64) -> Response {
         id,
         ApiError::new(
             ErrorCode::NotAuthorized,
-            "only the desktop app may use this call",
+            "this request is not authorized on host.sock",
         ),
     )
 }
@@ -215,18 +277,9 @@ fn params_dont_fit(id: u64) -> Response {
     )
 }
 
-/// `hello` from this Mac's host: no office, and the optional calls and events it implements.
-fn hello() -> HelloResult {
-    HelloResult::host(env!("CARGO_PKG_VERSION"), THIS_MAC).with_capabilities(
-        [
-            capability::OFFICE_APP_TOKEN,
-            capability::OFFICE_RESTART,
-            // The event, and `status_reason` / `next_restart_at` on it and in `office.list`.
-            capability::OFFICE_STATUS_CHANGED,
-        ]
-        .map(str::to_owned)
-        .to_vec(),
-    )
+/// Host control names its immutable registered instance and advertises no retired calls.
+fn hello(instance_id: &str) -> HelloResult {
+    HelloResult::host(env!("CARGO_PKG_VERSION"), THIS_MAC).with_instance_id(instance_id)
 }
 
 /// Runs a typed handler: params that don't decode are `invalid_request`.
@@ -299,17 +352,18 @@ mod tests {
             &Timings::default(),
         );
         let app = AppPolicy::new(crate::app_auth::APP_BUNDLE_ID, None).unwrap();
-        Service::new(offices, broadcast, app)
+        Service::new(offices, broadcast, app, None)
     }
 
-    /// L1, the other half: exactly the app-only calls run inline (see the listener's
+    /// Hello and the app-only calls run inline (see the listener's
     /// `an_inline_call_runs_before_anything_more_is_read`).
     #[test]
-    fn only_the_app_only_calls_run_inline() {
+    fn hello_and_the_app_only_calls_run_inline() {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
         let id = "01AAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
         let inline = [
+            Request::new::<Hello>(1, &HelloParams::default()).unwrap(),
             Request::new::<OfficeAppToken>(
                 1,
                 &OfficeAppTokenParams {
@@ -323,7 +377,6 @@ mod tests {
             assert!(service.inline(request), "{}", request.method);
         }
         let threaded = [
-            Request::new::<Hello>(1, &HelloParams::default()).unwrap(),
             Request::new::<OfficeList>(1, &Empty {}).unwrap(),
             Request::new::<OrganizationCreate>(
                 1,

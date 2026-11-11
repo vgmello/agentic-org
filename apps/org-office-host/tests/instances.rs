@@ -83,8 +83,8 @@ fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and
     );
     let deadline = Instant::now() + Duration::from_secs(15);
     let endpoints = loop {
-        let a_info = support::office_info(a.socket_path(), OFFICE).unwrap();
-        let b_info = support::office_info(b.socket_path(), OFFICE).unwrap();
+        let a_info = support::office_info(&a, OFFICE).unwrap();
+        let b_info = support::office_info(&b, OFFICE).unwrap();
         if a_info.status == OfficeStatus::Active && b_info.status == OfficeStatus::Active {
             break [a_info.endpoint.unwrap(), b_info.endpoint.unwrap()];
         }
@@ -105,9 +105,7 @@ fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and
     );
     a.shutdown();
     assert_eq!(
-        support::office_info(b.socket_path(), OFFICE)
-            .unwrap()
-            .status,
+        support::office_info(&b, OFFICE).unwrap().status,
         OfficeStatus::Active
     );
     assert_eq!(

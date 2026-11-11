@@ -79,6 +79,9 @@ use crate::service::listener::{self, BindError, Listener, ListenerConfig};
 use crate::service::Service;
 use crate::supervisor::{Supervisor, SupervisorConfig};
 
+#[cfg(all(feature = "test-support", debug_assertions))]
+pub mod test_support;
+
 pub use crate::app_auth::APP_BUNDLE_ID;
 pub use crate::server_check::SERVER_SIGNING_ID;
 
@@ -426,7 +429,12 @@ impl Host {
                 max_in_flight: MAX_IN_FLIGHT_PER_CONNECTION,
                 expected_uid: home::euid(),
             };
-            let service = Arc::new(Service::new(Arc::clone(&offices), broadcast, app));
+            let service = Arc::new(Service::new(
+                Arc::clone(&offices),
+                broadcast,
+                app,
+                instance.as_ref().map(|i| i.id().to_owned()),
+            ));
             Listener::start(bound, config, service).map_err(io("starting the listener"))
         };
         let listener = match listener {
