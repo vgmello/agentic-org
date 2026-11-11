@@ -238,7 +238,7 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
             &Mutex::new(()),
             |fd, message, flags| {
                 calls += 1;
-                assert_eq!(message.msg_controllen as usize, control_space(1).unwrap());
+                assert_eq!(control_len(message), control_space(1).unwrap());
                 assert_ne!(flags & libc::MSG_DONTWAIT, 0);
                 #[cfg(target_os = "linux")]
                 assert_ne!(flags & libc::MSG_CMSG_CLOEXEC, 0);
@@ -575,7 +575,7 @@ fn reported_cleanup(case: &str) {
                 assert!(!header.is_null());
                 assert_eq!((*header).cmsg_level, libc::SOL_SOCKET);
                 assert_eq!((*header).cmsg_type, libc::SCM_RIGHTS);
-                let length = ((*header).cmsg_len as usize).min(message.msg_controllen as usize);
+                let length = ((*header).cmsg_len as usize).min(control_len(message));
                 let count = (length - libc::CMSG_LEN(0) as usize) / mem::size_of::<RawFd>();
                 assert_eq!(count, 2, "cleanup must cover both reported fds");
                 for index in 0..count {

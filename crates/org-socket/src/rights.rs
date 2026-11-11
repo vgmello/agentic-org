@@ -297,6 +297,18 @@ fn close_on_exec_with(fd: RawFd, mut call: impl FnMut(RawFd, i32, i32) -> i32) -
     ))
 }
 
+// libc uses size_t on Linux and socklen_t (u32) on macOS.
+fn control_len(message: &libc::msghdr) -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        message.msg_controllen
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        message.msg_controllen as usize
+    }
+}
+
 unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {
     let mut descriptors = Vec::new();
     // SAFETY: caller supplies successful recvmsg output with live control storage.
@@ -307,7 +319,7 @@ unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {
             let offset = header
                 .cast::<u8>()
                 .offset_from(message.msg_control.cast::<u8>()) as usize;
-            let available = message.msg_controllen as usize - offset;
+            let available = control_len(message) - offset;
             let reported = (*header).cmsg_len as usize;
             if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
                 // macOS retains the original cmsg_len when only a prefix was reported.
