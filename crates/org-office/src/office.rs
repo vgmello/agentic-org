@@ -58,8 +58,8 @@ const OFFICE_ENTRIES: [&str; 11] = [
 
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
 /// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
-/// gets the tables it lacks when it is opened. Unreleased v4 remains open for B1-11
-/// work tables until its final slice merges; subsequent changes require v5 or later.
+/// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3;
+/// later B1-11 tables require a v5 upgrade, open until that work's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     version: 4,
     create: |tx| {
