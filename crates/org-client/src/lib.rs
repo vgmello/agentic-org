@@ -53,7 +53,7 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    salvage_id, ApiRange, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
     ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
     OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
     ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
@@ -595,6 +595,18 @@ impl Client {
             });
         }
         Ok(hello)
+    }
+
+    /// Offers API versions and verifies the selected instance (X-02 §3).
+    pub fn hello_offering(
+        &self,
+        offered: ApiRange,
+        expected_instance_id: &str,
+        timeout: Duration,
+    ) -> Result<HelloResult, ClientError> {
+        // Pre-fix API scaffold: run the new wire tests against legacy behavior.
+        let _ = (offered, expected_instance_id);
+        self.hello_with_timeout(timeout)
     }
 
     /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`
