@@ -105,7 +105,7 @@
 		{/if}
 
 		{#if reactions.some((r) => r.who.length)}
-			<div class="mt-1 flex flex-wrap gap-1.5">
+			<div class="mt-1 flex flex-wrap gap-1.5" aria-live="off">
 				{#each reactions as r (r.id)}
 					{#if r.who.length}
 						<button type="button" class="rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 outline-1 -outline-offset-1 {r.who.includes(ctx.actor) ? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50' : 'bg-white/5 text-gray-200 outline-white/10'}" disabled={!officeRunning} aria-pressed={r.who.includes(ctx.actor)} aria-label="{r.label}, {r.who.length}" onclick={() => onreact?.(message, r.id)}>{r.emoji} {r.who.length}</button>
@@ -115,7 +115,7 @@
 		{/if}
 
 		{#if replies.length && onthread}
-			<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={(event) => onthread?.(message, event.currentTarget)} data-testid="replies-link">↳ {replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
+			<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" aria-live="off" onclick={(event) => onthread?.(message, event.currentTarget)} data-testid="replies-link">↳ {replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
 		{/if}
 
 		{#if onopen}
