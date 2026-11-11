@@ -10,3 +10,5 @@ vite.config.*.timestamp-*
 # Playwright
 test-results/
 playwright-report/
+
+test-results-csp-gateway/

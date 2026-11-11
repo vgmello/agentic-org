@@ -74,6 +74,46 @@ impl NativeRecovery {
         }
     }
 
+    fn job_observation(
+        &self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+    ) -> io::Result<Option<super::job::JobObservation>> {
+        self.job_observation_with(identity, deadline, |directory| {
+            Ok(directory.metadata()?.uid())
+        })
+    }
+
+    fn job_observation_with(
+        &self,
+        identity: &ProcessIdentity,
+        deadline: Instant,
+        owner: impl FnOnce(&File) -> io::Result<u32>,
+    ) -> io::Result<Option<super::job::JobObservation>> {
+        let Some(pin) = self
+            .pins
+            .get(&identity.pid)
+            .filter(|pin| pin.stat.started.to_string() == identity.started)
+        else {
+            return Ok(None);
+        };
+        let Some((directory, stat)) = self.reopen(identity.pid, pin, deadline)? else {
+            return Ok(None);
+        };
+        let credentials = credentials(&directory, deadline)?;
+        let safe = !stat.zombie
+            && credentials.safe(self.context.uid)
+            && owner(&directory)? == self.context.uid
+            && ordinary_exec(&directory, deadline)?;
+        Ok(Some(super::job::JobObservation {
+            identity: self.identity(identity.pid, stat),
+            order: (stat.started, 0),
+            group: stat.group,
+            session: stat.session,
+            safe,
+        }))
+    }
+
     fn sample(&self, pid: u32, deadline: Instant) -> io::Result<Option<(ProcessObservation, Pin)>> {
         let Some((pin, directory)) = self.pin(pid, Some(deadline))? else {
             return Ok(None);
@@ -186,6 +226,22 @@ impl sealed::Processes for NativeRecovery {}
 impl RecoveryProcesses for NativeRecovery {
     fn context(&mut self) -> io::Result<RecoveryContext> {
         Ok(self.context.clone())
+    }
+
+    fn verify_recorded_job(
+        &mut self,
+        target: &ProcessIdentity,
+        leader: &crate::ChildIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool> {
+        super::job::verify(
+            target,
+            leader,
+            &self.context,
+            deadline,
+            Instant::now,
+            |id| self.job_observation(id, deadline),
+        )
     }
 
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>> {
@@ -1394,6 +1450,80 @@ mod tests {
             .reopen(fixture.child.identity().pid, &pin, deadline)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn native_job_observation_requires_current_pin_credentials_owner_and_safe_exec() {
+        let fixture = ProcessFixture::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for variant in 0..9 {
+            fixture.reset();
+            let mut native = fixture.native();
+            let (pin, _directory) = native
+                .pin(fixture.child.identity().pid, Some(deadline))
+                .unwrap()
+                .unwrap();
+            let identity = native.identity(fixture.child.identity().pid, pin.stat);
+            if variant != 1 {
+                native.pins.insert(identity.pid, pin);
+            }
+            match variant {
+                2 => {
+                    native.pins.get_mut(&identity.pid).unwrap().stat.started += 1;
+                }
+                3 => fixture.stat(b'Z', 789),
+                4 => fixture.status(1),
+                5 => {
+                    std::fs::write(
+                        fixture.directory().join("auxv"),
+                        auxv(&[(libc::AT_SECURE as usize, 1), (0, 0)]),
+                    )
+                    .unwrap();
+                }
+                6 => native.context.uid += 1,
+                7 => fixture.stat(b'S', 790),
+                8 => {
+                    std::fs::remove_file(fixture.directory().join("status")).unwrap();
+                }
+                _ => {}
+            }
+            let result = native.job_observation(&identity, deadline);
+            match variant {
+                0 => {
+                    let value = result.unwrap().unwrap();
+                    assert!(value.safe);
+                    assert_eq!(value.identity, identity);
+                    assert_eq!(value.order, (789, 0));
+                    assert_eq!((value.group, value.session), (41, 44));
+                }
+                1 | 2 => assert!(result.unwrap().is_none(), "variant {variant}"),
+                3..=6 => assert!(!result.unwrap().unwrap().safe, "variant {variant}"),
+                7 => assert_eq!(result.err().unwrap().kind(), io::ErrorKind::InvalidData),
+                8 => assert!(result.is_err()),
+                _ => unreachable!(),
+            }
+        }
+        fixture.reset();
+        let mut native = fixture.native();
+        let (pin, _) = native
+            .pin(fixture.child.identity().pid, Some(deadline))
+            .unwrap()
+            .unwrap();
+        let identity = native.identity(fixture.child.identity().pid, pin.stat);
+        native.pins.insert(identity.pid, pin);
+        assert!(
+            !native
+                .job_observation_with(&identity, deadline, |_| Ok(native.context.uid + 1))
+                .unwrap()
+                .unwrap()
+                .safe
+        );
+        assert!(native
+            .job_observation_with(&identity, deadline, |_| Err(io::Error::from(
+                io::ErrorKind::PermissionDenied
+            )))
+            .is_err());
+        assert!(native.job_observation(&identity, Instant::now()).is_err());
     }
 
     #[test]
