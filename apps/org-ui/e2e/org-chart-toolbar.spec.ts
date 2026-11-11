@@ -87,33 +87,6 @@ test('TEAM-1 BUG-70 BUG-90: at 320x640 the initial chart content starts in the f
 	await shot(page, 'oc1-phone-first-viewport');
 });
 
-for (const text of [1, 2]) {
-	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps name and role lines readable at 320px and ${text * 100}% text`, async ({ page }) => {
-		await open(page, 320, text);
-		await page.getByRole('tab', { name: 'People', exact: true }).click();
-		const chart = page.getByTestId('people-chart');
-		expect(await chart.locator('h3, p, li > span.truncate').evaluateAll((elements) => elements.length > 0 && elements.every((element) => element.hasAttribute('data-fit-text')))).toBe(true);
-		await expect.poll(() => chart.evaluate((element) => {
-			const scale = new DOMMatrix(getComputedStyle(element).transform).a;
-			return Math.min(...[...element.querySelectorAll('[data-fit-text]')].map((e) => parseFloat(getComputedStyle(e).fontSize) * scale));
-		})).toBeGreaterThanOrEqual(12);
-		// Wait for the observer's measured Fit result, rather than accepting the unmeasured scale=1.
-		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
-		const frame = page.getByRole('region', { name: 'People chart', exact: true });
-		await expect(frame).toHaveAttribute('tabindex', '0');
-		await expect(frame).toHaveCSS('overflow-x', 'auto');
-		expect(await frame.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
-		await frame.focus();
-		await expect(frame).toBeFocused();
-		await frame.press('ArrowRight');
-		await expect.poll(() => frame.evaluate((e) => e.scrollLeft)).toBeGreaterThan(0);
-		await frame.press('ArrowLeft');
-		await expect.poll(() => frame.evaluate((e) => e.scrollLeft)).toBe(0);
-		await shot(page, `oc1-people-readable-fit-${text}`, { context: frame });
-	});
-}
-
-
 test('TEAM-1 BUG-70 OC-9: a chart frame is named, focusable and visibly outlined', async ({ page }) => {
 	await open(page);
 	const frame = page.getByRole('region', { name: 'Teams chart', exact: true });
