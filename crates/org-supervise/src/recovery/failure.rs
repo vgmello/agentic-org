@@ -3,8 +3,6 @@
 use std::time::Instant;
 use std::{fmt, io};
 
-use super::ScanFailure;
-
 /// Why recovery failed, independently of the underlying I/O error kind.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,14 +15,11 @@ pub enum ScanFailureKind {
     Other,
 }
 
-impl ScanFailure {
-    /// Read the source's typed classification without interpreting messages.
-    pub fn kind(&self) -> ScanFailureKind {
-        self.error
-            .get_ref()
-            .and_then(|error| error.downcast_ref::<FailureTag>())
-            .map_or(ScanFailureKind::Other, |tag| tag.kind)
-    }
+pub(super) fn classify(error: &io::Error) -> ScanFailureKind {
+    error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<FailureTag>())
+        .map_or(ScanFailureKind::Other, |tag| tag.kind)
 }
 
 #[derive(Debug)]
