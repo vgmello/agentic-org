@@ -28,9 +28,41 @@ for (const view of ['needs', 'mentions', 'threads', 'search'] as const) {
 		}
 		await shot(page, `chat-live-scope-${view}`);
 		await expect(page.getByRole('log', { name: 'Messages', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('region', { name: 'Messages', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toBeVisible();
+		await expect(page.getByTestId('message-list')).toHaveAccessibleName('Message area');
+		expect(await page.getByTestId('message-list').ariaSnapshot()).toContain('region "Message area"');
+		await page.getByTestId('message-list').focus();
+		await expect(page.getByTestId('message-list')).toBeFocused();
 		expect(await page.getByTestId('message-list').evaluate((element) => element.closest('[role="log"], [aria-live]') === null)).toBe(true);
 	});
 }
+
+test('CHAT-1/13: conversation landmarks have distinct names and the message area keeps programmatic focus', async ({ page }) => {
+	await open(page);
+	const conversation = page.getByRole('region', { name: 'Conversation', exact: true });
+	const log = page.getByRole('log', { name: 'Messages', exact: true });
+	const list = page.getByTestId('message-list');
+	for (const name of ['general', 'Inês Duarte']) {
+		await go(page, name);
+		await expect(conversation).toBeVisible();
+		await expect(log).toBeVisible();
+		await expect(log).toHaveAttribute('aria-live', 'polite');
+		await expect(log).toHaveAttribute('aria-relevant', 'additions');
+		const tree = await conversation.ariaSnapshot();
+		expect(tree).toContain('log "Messages"');
+		expect(tree).not.toContain('region "Messages"');
+		expect(tree).toContain('region "Message area"');
+		await expect(page.getByRole('region', { name: 'Messages', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('region', { name: 'Message area', exact: true })).toHaveAttribute('data-testid', 'message-list');
+		await expect(list).toHaveAccessibleName('Message area');
+		await expect(list).toHaveAttribute('tabindex', '-1');
+		await list.focus();
+		await expect(list).toBeFocused();
+		await expect(list).toHaveAttribute('data-focus-scope', '');
+		await shot(page, `chat-distinct-landmarks-${name}`);
+	}
+});
 
 test('CHAT-1/7 BUG-50: switching conversations replaces the log; new replies stay in the current polite log', async ({ page }) => {
 	await open(page);
