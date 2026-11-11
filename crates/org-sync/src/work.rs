@@ -242,5 +242,7 @@ pub fn queue_local(tx: &mut dyn LocalWorkTxn, change: Change) -> Result<SourceKe
     Ok(key)
 }
 
+mod forward;
+
 #[cfg(test)]
 mod tests;
