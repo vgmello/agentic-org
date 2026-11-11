@@ -18,6 +18,7 @@ path = "tests/launch.rs"
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
+org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true

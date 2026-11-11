@@ -37,7 +37,10 @@ mod operation;
 mod replication;
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "work OrgView is wired by RPC slice C")
+    expect(
+        dead_code,
+        reason = "C1 writes use OrgView; A2/C2 complete the work consumers"
+    )
 )]
 pub(crate) mod work_view;
 pub(crate) use replication::{

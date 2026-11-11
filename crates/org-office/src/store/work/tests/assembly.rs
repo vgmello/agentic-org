@@ -1574,6 +1574,7 @@ fn linked_sql_matches_typed_unknown_kind_for_every_json_shape() {
 
 #[test]
 fn sql_known_link_kind_constant_tracks_every_declared_serde_variant() {
+    // Update LINK_KINDS too when the defining-crate LinkKind inventory adds a known variant.
     let declared = [
         LinkKind::Fixes,
         LinkKind::PartOf,
