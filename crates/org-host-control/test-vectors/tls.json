@@ -1130,6 +1130,11 @@
       "valid": true
     },
     {
+      "name": "2000 is a leap year (divisible by 400)",
+      "text": "2000-02-29T00:00:00Z",
+      "valid": true
+    },
+    {
       "name": "an offset, even +00:00",
       "text": "2026-12-01T00:00:00+00:00",
       "valid": false
@@ -1165,6 +1170,11 @@
       "valid": false
     },
     {
+      "name": "day 0",
+      "text": "2026-12-00T00:00:00Z",
+      "valid": false
+    },
+    {
       "name": "day 32",
       "text": "2026-12-32T00:00:00Z",
       "valid": false
@@ -1187,6 +1197,11 @@
     {
       "name": "hour 24",
       "text": "2026-12-01T24:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "minute 60",
+      "text": "2026-12-01T00:60:00Z",
       "valid": false
     },
     {

@@ -40,9 +40,11 @@
 //! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
-//! This crate doesn't re-export it, so that its only dependencies stay `org-proto` and serde
-//! (X-02 §5.2, §11): the gateway imports it from `org-office-launch`.
+//! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde and
+//! `sha2` (X-02 §5.2, §11; `sha2` for `tls.set`'s fingerprint, [`journal`]): the gateway imports
+//! it from `org-office-launch`.
 
+// No unsafe code, except the one function that zeroes a decoded key's bytes (see `pem`).
 #![deny(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +53,7 @@ pub mod gateway;
 pub mod journal;
 pub mod listen;
 pub mod ops;
+mod pem;
 mod secret;
 
 pub use org_proto::{ApiRange, Call, Empty, Hello, HelloParams, HelloResult};

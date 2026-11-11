@@ -5,7 +5,8 @@
 //! The order: the host spawns the gateway suspended, checks its image, creates the rendezvous and
 //! writes [`GatewayFirstLine`] on its stdin. The gateway applies its sandbox, connects, and sends
 //! [`GatewayReadyForSecrets`]. After its post-accept and sandbox checks the host sends one
-//! [`GatewayHandoff`] line, then one `sendmsg` carrying a 1-byte marker and exactly the two
+//! [`GatewayHandoff`] line, then one `sendmsg` carrying a 1-byte marker (`host.sock`'s,
+//! [`crate::ops::HOST_SOCK_MARKER`]: this framing follows its rule) and exactly the two
 //! descriptors it names: the transfer socket, then the browser listener. The same connection then
 //! becomes the control connection. Transfer-socket records are `org-office-launch`'s v3
 //! `TransferRecord`.

@@ -240,6 +240,7 @@ dependencies = [
  "org-proto",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

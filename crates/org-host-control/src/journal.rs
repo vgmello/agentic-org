@@ -15,12 +15,12 @@
 //! or unstored one runs the checks.
 //!
 //! This crate defines the bytes the host hashes ([`fingerprint_input`]); the host computes the
-//! SHA-256.
+//! SHA-256. `tls.set`'s fields are themselves hashes, which this crate computes.
 //!
 //! **A secret is never part of a fingerprint.** The journal keeps fingerprints for 30 days, and
 //! an unsalted hash of a password would undo its Argon2id hash. So `account.create`'s fields leave
-//! out `password`, and `tls.set`'s fields are hashes of the certificate and the key, which the
-//! host computes (X-02 §6.2).
+//! out `password`, and `tls.set`'s fields are SHA-256 hashes of the certificate's and the key's
+//! DER, computed from the secret type by its [`Journaled`] implementation (X-02 §6.2).
 //!
 //! **Passwords on a replay** (X-02 §6.3):
 //! - `account.create`'s journal row also keeps a **create-time verifier** of the password it
@@ -49,13 +49,17 @@
 //! pass the normalized `login` in the params they fingerprint, and the host normalizes before
 //! fingerprinting (move 2b).
 
+use std::fmt::Write as _;
+
 use org_proto::Call;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::ops::{
     AccountCreate, AccountCreateParams, Bootstrap, BootstrapParams, OfficeRestart,
-    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
+    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams, TlsSet, TlsSetParams,
 };
+use crate::pem;
 
 /// A journaled op's params. Each implementation destructures its params exhaustively, so adding
 /// a param fails to compile until it is fingerprinted or explicitly excluded.
@@ -190,4 +194,63 @@ impl Journaled for BootstrapParams {
             hq_operation_id,
         })
     }
+}
+
+impl Journaled for TlsSetParams {
+    const METHOD: &'static str = TlsSet::METHOD;
+
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// `{"cert_der_sha256", "key_der_sha256"}` (X-02 §6.2): the SHA-256, as lowercase hex, of the
+    /// DER of `cert`'s first `CERTIFICATE` block and of `key`'s first `PRIVATE KEY`,
+    /// `RSA PRIVATE KEY` or `EC PRIVATE KEY` block. Never the pair itself, so the journal holds
+    /// no key and the stored result echoes neither.
+    ///
+    /// A block that's missing, or whose body isn't strict base64 (whitespace and line breaks
+    /// aside), is an error that never quotes the pair. The host never gets there: a pair that
+    /// doesn't parse is `tls_invalid`, unstored, and so never fingerprinted. The decoded key
+    /// bytes are zeroed once hashed (best effort: `sha2`'s own block buffer isn't).
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields {
+            cert_der_sha256: String,
+            key_der_sha256: String,
+        }
+        let TlsSetParams {
+            session: _,
+            operation_id: _,
+            cert,
+            key,
+        } = self;
+        let invalid = |what: &str| {
+            <serde_json::Error as serde::ser::Error>::custom(format!(
+                "tls.set's {what} has no PEM block it can be fingerprinted by"
+            ))
+        };
+        let cert_der =
+            pem::first_block(cert, pem::CERTIFICATE).map_err(|_| invalid("certificate"))?;
+        let cert_der_sha256 = sha256_hex(cert_der.bytes());
+        let key_der_sha256 = {
+            // Dropped, and so zeroed, at the end of this block.
+            let key_der =
+                pem::first_block(key.expose(), pem::PRIVATE_KEY).map_err(|_| invalid("key"))?;
+            sha256_hex(key_der.bytes())
+        };
+        serde_json::to_string(&Fields {
+            cert_der_sha256,
+            key_der_sha256,
+        })
+    }
+}
+
+/// SHA-256 as lowercase hex.
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        })
 }

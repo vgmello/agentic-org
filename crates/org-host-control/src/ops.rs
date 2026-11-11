@@ -216,9 +216,16 @@ impl Call for OfficeRestart {
 /// a new host-made channel to the office's worker. The answer carries only `channel_id`. On the
 /// control connection the descriptor arrives on the gateway's transfer socket in a `channel`
 /// record with the same `channel_id`; on `host.sock` the response line is followed by one
-/// `sendmsg` with a 1-byte marker and the descriptor. The host caps channels per office and keeps
-/// one slot for local channels.
+/// `sendmsg` with a 1-byte marker ([`HOST_SOCK_MARKER`]) and the descriptor. The host caps
+/// channels per office and keeps one slot for local channels.
 pub struct OfficeOpenChannel;
+
+/// The byte that precedes the descriptor on `host.sock` (X-02 §5.2): the one data byte of the
+/// `sendmsg` that follows an `office.open_channel` response line and carries the channel's fd. The
+/// CLI reads that connection only with `recvmsg` until it arrives. Defined here, not taken from
+/// `org-office-launch`'s `FD_MARKER` (the worker handoff's), so this crate's dependencies stay
+/// `org-proto`, serde and `sha2`.
+pub const HOST_SOCK_MARKER: u8 = 0x00;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OfficeOpenChannelParams {
@@ -450,7 +457,8 @@ impl Call for TlsFetch {
 ///    ([`TlsRefusal::TlsNameMismatch`]; Certificate coverage).
 ///
 /// It never changes the scheme. Its journal fingerprint is SHA-256 of the certificate DER plus
-/// SHA-256 of the key, computed by the host; the stored result echoes neither.
+/// SHA-256 of the key DER, computed from the secret type (`TlsSetParams`'s
+/// [`crate::journal::Journaled`] implementation); the stored result echoes neither.
 ///
 /// A failed check answers `{"status": "rejected", "refusal": <TlsRefusal>}` and stores no pair;
 /// only [`TlsRefusal::TlsKeyMismatch`] is journaled ([`TlsRefusal::is_stored`]).

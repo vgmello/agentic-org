@@ -432,7 +432,7 @@ impl RecoveryCode {
 ///
 /// It decodes as one flat object, not through serde's internally tagged enums, so each key goes
 /// straight from the JSON into its secret type without an intermediate buffer. A key the op
-/// doesn't carry is refused.
+/// doesn't carry is refused, even as `null`.
 #[derive(Debug, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -458,9 +458,12 @@ pub enum Handoff {
     },
 }
 
-/// A present `db_key`, `null` included, as `Some`.
-fn present_key<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<DbKey>>, D::Error> {
-    Option::<DbKey>::deserialize(d).map(Some)
+/// A present key, `null` included, as `Some`: so a key the op doesn't carry is refused even as
+/// `null`, and an absent one stays `None` through `#[serde(default)]`.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -475,12 +478,12 @@ enum HandoffOp {
 #[derive(Deserialize)]
 struct RawHandoff {
     op: HandoffOp,
-    #[serde(default, deserialize_with = "present_key")]
+    #[serde(default, deserialize_with = "present")]
     db_key: Option<Option<DbKey>>,
-    #[serde(default)]
-    grant_key: Option<GrantKey>,
-    #[serde(default)]
-    recovery_code: Option<RecoveryCode>,
+    #[serde(default, deserialize_with = "present")]
+    grant_key: Option<Option<GrantKey>>,
+    #[serde(default, deserialize_with = "present")]
+    recovery_code: Option<Option<RecoveryCode>>,
     fds: Vec<HandoffFd>,
 }
 
@@ -490,19 +493,24 @@ impl<'de> Deserialize<'de> for Handoff {
         let raw = RawHandoff::deserialize(d)?;
         let fds = raw.fds;
         match (raw.op, raw.db_key, raw.grant_key, raw.recovery_code) {
-            (HandoffOp::Create, Some(Some(db_key)), Some(grant_key), Some(recovery_code)) => {
-                Ok(Handoff::Create {
+            (
+                HandoffOp::Create,
+                Some(Some(db_key)),
+                Some(Some(grant_key)),
+                Some(Some(recovery_code)),
+            ) => Ok(Handoff::Create {
+                db_key,
+                grant_key,
+                recovery_code,
+                fds,
+            }),
+            (HandoffOp::Start, Some(Some(db_key)), Some(Some(grant_key)), None) => {
+                Ok(Handoff::Start {
                     db_key,
                     grant_key,
-                    recovery_code,
                     fds,
                 })
             }
-            (HandoffOp::Start, Some(Some(db_key)), Some(grant_key), None) => Ok(Handoff::Start {
-                db_key,
-                grant_key,
-                fds,
-            }),
             (HandoffOp::Discard, Some(db_key), None, None) => Ok(Handoff::Discard { db_key, fds }),
             _ => Err(D::Error::custom(
                 "a handoff must carry exactly the keys of its op",

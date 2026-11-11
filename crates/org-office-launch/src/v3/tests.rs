@@ -410,6 +410,19 @@ fn a_handoff_carries_exactly_the_keys_of_its_op() {
         format!(
             r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"]}}"#
         ),
+        // A key the op doesn't carry is refused even as null.
+        format!(
+            r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+        ),
+        r#"{"v":3,"op":"discard","db_key":null,"grant_key":null,"fds":[]}"#.to_owned(),
+        format!(r#"{{"v":3,"op":"discard","db_key":"{k}","recovery_code":null,"fds":[]}}"#),
+        // A key the op carries can't be null either.
+        format!(
+            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":null,"recovery_code":"c","fds":["transfer"]}}"#
+        ),
+        format!(
+            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":null,"fds":["transfer"]}}"#
+        ),
         format!(r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","fds":["transfer"]}}"#),
         format!(r#"{{"v":3,"op":"discard","db_key":null,"grant_key":"{k}","fds":[]}}"#),
         format!(r#"{{"v":3,"op":"start","db_key":null,"grant_key":"{k}","fds":["transfer"]}}"#),

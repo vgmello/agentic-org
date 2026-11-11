@@ -392,6 +392,84 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
     }
 }
 
+/// X-02 §6.2, §6.3: `tls.set`'s fingerprint fields are the SHA-256 of the certificate's and the
+/// key's DER, as lowercase hex, never the pair; the expected values come from openssl. A pair
+/// with no block to hash has no fingerprint.
+#[test]
+fn tls_set_vectors_fingerprint_the_der_hashes_only() {
+    let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let vectors = &doc["tls_set"];
+    let cases = vectors["cases"].as_array().unwrap();
+    let mut fields = Vec::new();
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let params = &case["params"];
+        let (operation_id, input) = journaled::<TlsSetParams>("tls.set", params);
+        let (cert, key) = (&case["cert_der_sha256"], &case["key_der_sha256"]);
+        for hash in [cert, key] {
+            let hash = hash.as_str().unwrap();
+            assert!(
+                hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+                "{name}: {hash}"
+            );
+        }
+        // Exactly these two fields, in this order.
+        let want = format!(r#"{{"cert_der_sha256":{cert},"key_der_sha256":{key}}}"#);
+        assert_eq!(
+            String::from_utf8(input.clone()).unwrap(),
+            format!("tls.set\u{0}{want}"),
+            "{name}"
+        );
+        // Never the pair, the session or the operation id.
+        let text = String::from_utf8(input).unwrap();
+        for secret in ["-----", "session-handle", &operation_id] {
+            assert!(!text.contains(secret), "{name}: {text}");
+        }
+        let key_body: String = params["key"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .filter(|line| !line.starts_with("-----") && !line.is_empty())
+            .collect();
+        assert!(!text.contains(&key_body[..16]), "{name}");
+        fields.push((params, cert, key));
+    }
+    // The same text always hashes the same, and another key with the same certificate changes
+    // key_der_sha256 only.
+    let mut another_key = false;
+    for (a, a_cert, a_key) in &fields {
+        for (b, b_cert, b_key) in &fields {
+            if a["cert"] == b["cert"] {
+                assert_eq!(a_cert, b_cert);
+                if a["key"] != b["key"] && a_key != b_key {
+                    another_key = true;
+                }
+            }
+            if a["key"] == b["key"] {
+                assert_eq!(a_key, b_key);
+            }
+        }
+    }
+    assert!(another_key);
+    for case in vectors["invalid"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let params: TlsSetParams = serde_json::from_value(case["params"].clone()).unwrap();
+        let error = params.fingerprint_fields().unwrap_err().to_string();
+        assert!(fingerprint_input(&params).is_err(), "{name}");
+        // The error never quotes the pair.
+        assert!(
+            !error.contains("MII") && !error.contains("-----"),
+            "{name}: {error}"
+        );
+    }
+}
+
+/// X-02 §5.2: the byte before the descriptor on `host.sock`.
+#[test]
+fn the_host_sock_marker_is_zero() {
+    assert_eq!(HOST_SOCK_MARKER, 0x00);
+}
+
 #[test]
 fn gateway_rendezvous_lines_have_their_wire_shapes() {
     fn clone_only<T: Clone>() {}
