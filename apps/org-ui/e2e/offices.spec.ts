@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import type { OfficeInfo, StatusUpdate } from '../src/lib/proto';
@@ -637,3 +637,111 @@ test('BUG-64: a delayed refusal cannot restore a note for an obsolete reason', a
 	await shot(page, 'office-obsolete-delayed-refusal');
 	await expect(sheet.getByTestId('restart-error')).toHaveCount(0);
 });
+
+async function expectOfficePill(badge: Locator, scale: number) {
+	const style = await badge.evaluate((element) => {
+		const css = getComputedStyle(element), box = element.getBoundingClientRect();
+		const range = document.createRange();
+		range.selectNodeContents(element);
+		return { radius: parseFloat(css.borderRadius), x: parseFloat(css.paddingLeft), y: parseFloat(css.paddingTop), shadow: css.boxShadow, inViewport: box.left >= 0 && box.right <= window.innerWidth,
+			fits: [...range.getClientRects()].every((r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) };
+	});
+	expect.soft(style.radius).toBeGreaterThanOrEqual(12 * scale);
+	expect.soft(style.x).toBe(8 * scale);
+	expect.soft(style.y).toBe(4 * scale);
+	expect.soft(style.shadow).not.toBe('none');
+	expect(style.fits).toBe(true);
+	expect(style.inViewport).toBe(true);
+	await expect(badge).toHaveCSS('white-space', 'normal');
+	await expect(badge.locator('svg')).toHaveCount(1);
+	await expect(badge.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+	expect(await badge.getAttribute('role')).toBeNull();
+	expect(await badge.getAttribute('aria-live')).toBeNull();
+}
+
+for (const width of [320, 640, 960, 1280]) {
+	for (const scale of [1, 2]) {
+		test(`OFC-13 BUG-70 Offices pill: list and details at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+			await page.setViewportSize({ width, height: 900 });
+			await openOffices(page);
+			await expect(rows(page).first()).toContainText('Online');
+			await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
+			await page.evaluate(() => document.fonts.ready.then(() => undefined));
+			const row = rows(page).first(), trigger = row.getByRole('button');
+			await expect(trigger).toHaveAccessibleName("HQ, HQ, the office's machine, Online, 7 agents, opens details");
+			const badge = row.locator('[data-status-icon]');
+			await expect(badge).toHaveText('Online');
+			await expect(badge).toHaveAttribute('data-status-icon', 'circle');
+
+			await shot(page, `office-pill-list-${width}-${scale * 100}`, { context: row });
+			expect(await trigger.locator('span').first().evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+			expect(await badge.getByText('Online', { exact: true }).evaluate((element) => {
+				const range = document.createRange(); range.selectNodeContents(element); return range.getClientRects().length;
+			})).toBe(1); // A normal short word must remain readable at 320px/200%.
+			await expectOfficePill(badge, scale);
+			const countFits = await row.evaluate((element) => {
+				const box = element.getBoundingClientRect(), count = element.querySelector('[data-testid=agent-count]')!.getBoundingClientRect();
+				return count.left >= box.left && count.right <= box.right;
+			});
+			expect(countFits).toBe(true);
+
+			await trigger.press('Enter');
+			const sheet = page.getByRole('dialog'), status = sheet.locator('[data-status-icon]');
+			await expect(status).toHaveText('Online');
+			await expectOfficePill(status, scale);
+			await shot(page, `office-pill-details-${width}-${scale * 100}`, { context: sheet });
+			await sheet.getByRole('button', { name: 'Close', exact: true }).press('Enter');
+			await expect(trigger).toBeFocused();
+		});
+	}
+}
+
+for (const scale of [1, 2]) {
+	test(`OFC-13 BUG-70 Offices pill: every status retains its word and icon at ${scale * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 900 });
+		await openOffices(page);
+		await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
+			await page.evaluate(() => document.fonts.ready.then(() => undefined));
+		await page.evaluate(async () => {
+			const path = '/src/lib/components/testing/office-status.ts';
+			const { mountOfficeStatuses } = await import(path);
+			const target = document.createElement('div'); document.body.append(target); mountOfficeStatuses(target);
+		});
+		const fixture = page.getByRole('region', { name: 'Office status contracts', exact: true });
+		const cases = [
+			['active', 'Online', 'circle', 'text-green-400', undefined],
+			['starting', 'Starting', 'loader', 'text-sky-400', 'M12 2v4'],
+			['pending', 'Invited', 'mail', 'text-gray-400', 'm22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7'],
+			['offline', 'Offline', 'circle-outline', 'text-gray-400', undefined],
+			['unavailable', 'Stopped', 'circle-x', 'text-red-400', 'm15 9-6 6'],
+			['update_needed', 'Update needed', 'circle-arrow-up', 'text-amber-400', 'm16 12-4-4-4 4'],
+			['unreachable', 'Unreachable', 'wifi-off', 'text-red-400', 'M12 20h.01'],
+			['checking', 'Checking…', 'loader', 'text-sky-400', 'M12 2v4'],
+			['status_unknown', 'Status unknown', 'circle-help', 'text-gray-400', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'],
+			['undefined', 'Status unknown', 'circle-help', 'text-gray-400', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'],
+			['future', 'Status unknown', 'circle-help', 'text-gray-400', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3']
+		] as const;
+		for (const [state, label, icon, tone, path] of cases) {
+			const badge = fixture.locator(`[data-office-status="${state}"] [data-status-icon]`);
+			await expect(badge).toBeVisible();
+			await badge.scrollIntoViewIfNeeded();
+			await expect(badge).toHaveText(label);
+			await expect(badge).toHaveAttribute('data-status-icon', icon);
+			await expect(badge.locator('svg')).toHaveClass(new RegExp(`\\b${tone}\\b`));
+			if (path) await expect(badge.locator('svg path').first()).toHaveAttribute('d', path);
+			if (icon === 'circle' || icon === 'circle-outline') {
+				await expect(badge.locator('svg circle')).toHaveAttribute('r', '10');
+				await expect(badge.locator('svg path')).toHaveCount(0);
+				expect((await badge.locator('svg').getAttribute('class'))?.includes('fill-current')).toBe(icon === 'circle');
+			}
+			if (icon === 'loader') {
+				await expect(badge.locator('svg')).toHaveCSS('animation-name', 'spin');
+				await page.emulateMedia({ reducedMotion: 'reduce' });
+				await expect(badge.locator('svg')).toHaveCSS('animation-name', 'none');
+				await page.emulateMedia({ reducedMotion: 'no-preference' });
+			}
+			await expectOfficePill(badge, scale);
+		}
+		await shot(page, `office-pill-vocabulary-${scale * 100}`, { context: fixture });
+	});
+}
