@@ -3,7 +3,9 @@ use std::io;
 use std::time::{Duration, Instant};
 use std::{cell::RefCell, rc::Rc};
 
-use super::scan::{fixed_point, scan_one_pass, test_support, MarkedScan, RequestIssuer};
+use super::scan::{
+    fixed_point, scan_one_pass, test_support, MarkedScan, RequestIssuer, ScanPass, ScanRequest,
+};
 use super::*;
 
 const MARK: &str = "recovery-fake-session";

@@ -103,6 +103,9 @@ fn unknown_methods_and_unreadable_lines_get_errors_and_the_connection_goes_on() 
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
 
     let reply = client.raw(r#"{"id":5,"method":"org.teleport","params":{}}"#);
     assert_eq!(reply.id, 5);

@@ -16,7 +16,7 @@ use super::{
 /// probe outcome before retiring the owned-process reference. S0 unreadable warnings
 /// are available in the report; this is not proof that undiscoverable processes cannot exist.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0451
 /// use org_supervise::recovery::{RecoveryGone, RecoveryReport};
 /// let gone = RecoveryGone { mark: "forged".into(), report: RecoveryReport::default() };
 /// ```

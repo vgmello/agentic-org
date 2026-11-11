@@ -53,7 +53,7 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    salvage_id, ApiRange, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
     ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
     OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
     ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
@@ -595,6 +595,67 @@ impl Client {
             });
         }
         Ok(hello)
+    }
+
+    /// Offers API versions and verifies the selected instance (X-02 §3).
+    ///
+    /// The offer is the caller's contract; it is not clamped to `SUPPORTED_API`.
+    /// A malformed range or noncanonical expected ULID returns a fixed protocol
+    /// error without sending anything or closing this connection.
+    ///
+    /// After valid arguments, checks the decoded answer's version, then its
+    /// instance. Version 1 cannot prove an instance. Transport and API errors keep
+    /// their variants; any handshake error closes this connection and later calls
+    /// fail with [`ClientError::Disconnected`]. Use this before sharing or using a
+    /// new connection. Each repeated hello checks its own offer and expected ID.
+    /// The legacy [`Client::hello`] wrappers retain their version-1 behavior.
+    pub fn hello_offering(
+        &self,
+        offered: ApiRange,
+        expected_instance_id: &str,
+        timeout: Duration,
+    ) -> Result<HelloResult, ClientError> {
+        if offered.min == 0 || offered.min > offered.max {
+            return Err(ClientError::Protocol(
+                "the offered API range is invalid".into(),
+            ));
+        }
+        if org_proto::ulid_time_ms(expected_instance_id).is_none() {
+            return Err(ClientError::Protocol(
+                "the expected instance id is invalid".into(),
+            ));
+        }
+        let outcome = (|| {
+            let mut params = HelloParams::default();
+            params.api = Some(offered);
+            let hello = self.call_with_timeout::<Hello>(&params, timeout)?;
+            if !offered.contains(hello.api_version) {
+                return Err(ClientError::Protocol(
+                    "the server chose an API version outside the offered range".into(),
+                ));
+            }
+            if hello.api_version == 1 {
+                return Err(ClientError::Protocol(
+                    "the instance cannot be verified with API version 1".into(),
+                ));
+            }
+            let instance = match hello.instance_id.as_deref() {
+                Some(id) if org_proto::ulid_time_ms(id).is_some() => id,
+                _ => {
+                    return Err(ClientError::Protocol(
+                        "the server's instance id is missing or malformed".into(),
+                    ))
+                }
+            };
+            if instance != expected_instance_id {
+                return Err(ClientError::InstanceMismatch);
+            }
+            Ok(hello)
+        })();
+        if outcome.is_err() {
+            self.shared.close();
+        }
+        outcome
     }
 
     /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`

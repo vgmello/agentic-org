@@ -140,9 +140,10 @@ pass before issuing `RecoveryGone`. That sealed proof is keyed by mark; the cons
 binds it to its owned-process reference and commits its probe outcome before retiring
 the reference. A signal/wait/deadline/scan failure retains incomplete evidence.
 
-Process and scan traits are sealed. `recovery::NativeRecovery::new` supplies the
-process operations for startup and live record recovery. The one-pass scanner
-continues to use the same policy and checkpoint contract.
+The public process trait is sealed. `recovery::NativeRecovery::new` supplies the
+process operations for startup and live record recovery. The one-pass scanner,
+its requests and its pass evidence are crate-private; the coordinator owns them
+and keeps the same policy and checkpoint contract.
 
 On Linux, the adapter checks the procfs PID namespace and requires an unfiltered
 procfs mount. It binds each pidfd to an open procfs process directory before
@@ -156,7 +157,11 @@ operations fail recovery. A recorded or checkpointed zombie group leader with
 live worker threads remains unresolved if its mark is unreadable. A mark-only
 record can complete with an S0 warning when no saved identity associates the
 workers with the record. The pidfd reports whole-thread-group exit and leaves
-status available to the owner.
+status available to the owner. Procfs directory enumeration is not an atomic
+snapshot: a process forked with a PID that wraps below the current readdir cursor
+can be missed, even in the final pass. This rare PID-wrap window remains a
+containment limit. Recovery still verifies target identities and requires a
+validated empty final pass; its guarantee covers the processes it can observe.
 
 On macOS, the adapter enumerates same-real-UID processes through
 `KERN_PROC_RUID`, reads start identity and credentials through libproc, and
@@ -167,7 +172,11 @@ signals follow an immediate identity and credential check, with a direct mark
 check for directly marked targets. XNU combines the saved argument count with
 current stack strings. Recovery assumes cooperating same-UID processes. A
 process that already knows the exact mark can deliberately rewrite its argv
-bytes to make an argument appear in the environment region.
+bytes to make an argument appear in the environment region. Rewriting argv with
+fewer NUL separators can also shift the argc walk into the environment, hiding a
+mark as Absent without an S0 warning. This includes argv title-rewriting helpers;
+the cooperative-process trust boundary does not make that observation complete.
+For observed targets, identity and credential checks still gate every signal.
 An unowned process can still exit and have its PID reused between that final check
 and `kill`. Kqueue wakes exit observation, and the adapter confirms the identity
 again without reaping. Processes that clear their environment and double-fork
