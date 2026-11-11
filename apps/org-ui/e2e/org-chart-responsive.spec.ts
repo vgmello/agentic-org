@@ -152,7 +152,8 @@ for (const width of [320, 960]) {
 				else expect(current.y).toBeGreaterThan(previous.y);
 			}
 			const sequence = [search, page.getByRole('tab', { name: 'Teams', exact: true }), page.getByLabel('Office filter', { exact: true }), ...['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all'].map((name) => actions.getByRole('button', { name, exact: true }))];
-			await search.focus();
+			// Start from a user-visible field; focus() alone does not wait for WebKit scrolling.
+			await search.click();
 			for (let index = 0; index < sequence.length; index++) {
 				await expect(sequence[index]).toBeFocused();
 				expect(await sequence[index].evaluate((element) => {
