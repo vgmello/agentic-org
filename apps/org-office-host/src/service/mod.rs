@@ -1,33 +1,25 @@
 //! host.sock's private control boundary: registered-instance hello and count-only status.
-//! Legacy backend operations remain for the later session cut, behind the refusal gate.
+//! Only the two open operations are dispatched; session capabilities arrive in 2b.3.
 
 pub(crate) mod listener;
 mod request;
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use org_host_control::{
     GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
     InstanceStatusResult, OfficeCounts,
 };
-use org_proto::{
-    ApiError, AppToken, Call, Empty, ErrorCode, ListOfficesResult, ListOrganizationsResult,
-    OfficeAppToken, OfficeList, OfficeRestart, Organization, OrganizationCreate, OrganizationList,
-    Request, Response, Subscribe,
-};
-use serde::Serialize;
+use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
-use crate::app_auth::AppPolicy;
-use crate::broadcast::{Broadcast, Subscriber};
+use crate::broadcast::Broadcast;
 use crate::offices::{Offices, THIS_MAC};
 use crate::peer::Received;
-use listener::{Connection, Handler, SecretLine};
+use listener::{Connection, Handler};
 
 pub(crate) struct Service {
     offices: Arc<Offices>,
     broadcast: Arc<Broadcast>,
-    /// Who may use the app-only calls.
-    app: AppPolicy,
     instance_id: Option<String>,
 }
 
@@ -35,98 +27,13 @@ impl Service {
     pub(crate) fn new(
         offices: Arc<Offices>,
         broadcast: Arc<Broadcast>,
-        app: AppPolicy,
         instance_id: Option<String>,
     ) -> Self {
         Self {
             offices,
             broadcast,
-            app,
             instance_id,
         }
-    }
-
-    fn subscribe(&self, request: &Request, connection: &Arc<Connection>) {
-        let subscriber: Weak<dyn Subscriber> = Arc::downgrade(connection) as Weak<Connection>;
-        self.broadcast.subscribe(subscriber, || {
-            let response = answer::<Subscribe>(request, |_from_position_is_ignored| Ok(Empty {}));
-            let ok = matches!(response.outcome, org_proto::Outcome::Result(_));
-            connection.send_response(response);
-            ok
-        });
-    }
-
-    /// `organization.create`. On success the answer is queued by `Offices`, in the same
-    /// critical section that adds the organization and publishes `organization.created`.
-    fn create(&self, request: &Request, connection: &Arc<Connection>) {
-        let Ok(params) = request.params::<OrganizationCreate>() else {
-            connection.send_response(params_dont_fit(request.id));
-            return;
-        };
-        let respond = |organization: &Organization| {
-            connection.send_response(ok::<OrganizationCreate>(request.id, organization));
-        };
-        if let Err(error) = self.offices.create_organization(&params.name, respond) {
-            connection.send_response(Response::error(request.id, error));
-        }
-    }
-
-    /// Whether the caller on `connection` is the desktop app.
-    /// `received`: where the request's line was in the connection's stream.
-    fn is_app(&self, connection: &Connection, received: Received) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            self.app.allows(&crate::app_auth::SocketPeer {
-                stream: connection.socket(),
-                accepted: connection.accepted(),
-                received,
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (connection, received);
-            false
-        }
-    }
-
-    /// `office.app_token`: the caller's signature first, then the office's token, written
-    /// straight into the response line (never a `serde_json::Value` or a `String`).
-    fn app_token(&self, request: &Request, connection: &Arc<Connection>, received: Received) {
-        if !self.is_app(connection, received) {
-            connection.send_response(not_authorized(request.id));
-            return;
-        }
-        let params = match request.params::<OfficeAppToken>() {
-            Ok(params) => params,
-            Err(_) => {
-                connection.send_response(params_dont_fit(request.id));
-                return;
-            }
-        };
-        let id = request.id;
-        match self
-            .offices
-            .app_token(&params.office_id, |token| token_line(id, token))
-        {
-            Ok(Some(line)) => connection.send_secret_line(line),
-            Ok(None) => connection.send_response(Response::error(
-                id,
-                ApiError::new(ErrorCode::StorageError, "the answer couldn't be encoded"),
-            )),
-            Err(error) => connection.send_response(Response::error(id, error)),
-        }
-    }
-
-    /// `office.restart`: the caller's signature first, then the restart.
-    fn restart(&self, request: &Request, connection: &Arc<Connection>, received: Received) {
-        if !self.is_app(connection, received) {
-            connection.send_response(not_authorized(request.id));
-            return;
-        }
-        connection.send_response(answer::<OfficeRestart>(request, |params| {
-            self.offices.restart_office(&params.office_id)?;
-            Ok(Empty {})
-        }));
     }
 }
 
@@ -136,7 +43,7 @@ impl Handler for Service {
         !connection.hello_completed() || request.is::<Hello>()
     }
 
-    fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
+    fn handle(&self, request: Request, connection: &Arc<Connection>, _received: Received) {
         let Some(instance_id) = self.instance_id.as_deref() else {
             connection.send_response(Response::error(
                 request.id,
@@ -154,115 +61,75 @@ impl Handler for Service {
             ));
             return;
         }
-        if !request.is::<Hello>() && !request.is::<InstanceStatus>() {
+        let Some(operation) = OpenOperation::from_method(&request.method) else {
             connection.send_response(not_authorized(request.id));
             return;
-        }
-        if request.is::<Hello>() {
-            let Ok(params) = request.params::<Hello>() else {
-                connection.send_response(params_dont_fit(request.id));
-                return;
-            };
-            // Host control speaks only version1; every connection is fixed at that version.
-            if !params.api_range().contains(org_host_control::API_VERSION) {
-                connection.refuse_and_finish(Response::error(
-                    request.id,
-                    ApiError::new(
-                        ErrorCode::UnsupportedVersion,
-                        "no common host control version",
-                    ),
-                ));
-                return;
+        };
+        match operation {
+            OpenOperation::Hello => {
+                let Ok(params) = request.params::<Hello>() else {
+                    connection.send_response(params_dont_fit(request.id));
+                    return;
+                };
+                // Host control speaks only version1; every connection is fixed at that version.
+                if !params.api_range().contains(org_host_control::API_VERSION) {
+                    connection.refuse_and_finish(Response::error(
+                        request.id,
+                        ApiError::new(
+                            ErrorCode::UnsupportedVersion,
+                            "no common host control version",
+                        ),
+                    ));
+                    return;
+                }
+                let mut result = hello(instance_id);
+                result.api_version = org_host_control::API_VERSION;
+                connection.complete_hello();
+                connection.send_response(ok::<Hello>(request.id, &result));
             }
-            let mut result = hello(instance_id);
-            result.api_version = org_host_control::API_VERSION;
-            connection.complete_hello();
-            connection.send_response(ok::<Hello>(request.id, &result));
-        } else if request.is::<InstanceStatus>() {
-            self.broadcast.snapshot(|| {
-                connection.send_response(answer::<InstanceStatus>(&request, |_| {
-                    let offices = self.offices.offices();
-                    Ok(InstanceStatusResult {
-                        instance_id: instance_id.to_owned(),
-                        mode: InstanceMode::Service,
-                        gateway: GatewayStatus {
-                            state: GatewayState::NotConfigured,
-                        },
-                        offices: OfficeCounts {
-                            total: offices.len() as u64,
-                            active: offices
-                                .iter()
-                                .filter(|o| o.status == org_proto::OfficeStatus::Active)
-                                .count() as u64,
-                            failed: offices
-                                .iter()
-                                .filter(|o| o.status.requires_operator_action())
-                                .count() as u64,
-                        },
-                    })
-                }))
-            });
-        } else if request.is::<OrganizationCreate>() {
-            self.create(&request, connection);
-        } else if request.is::<OrganizationList>() {
-            self.broadcast.snapshot(|| {
-                connection.send_response(answer::<OrganizationList>(&request, |_| {
-                    Ok(ListOrganizationsResult {
-                        organizations: self.offices.organizations(),
-                    })
-                }));
-            });
-        } else if request.is::<OfficeList>() {
-            self.broadcast.snapshot(|| {
-                connection.send_response(answer::<OfficeList>(&request, |_| {
-                    Ok(ListOfficesResult {
-                        offices: self.offices.offices(),
-                    })
-                }));
-            });
-        } else if request.is::<Subscribe>() {
-            self.subscribe(&request, connection);
-        } else if request.is::<OfficeAppToken>() {
-            self.app_token(&request, connection, received);
-        } else if request.is::<OfficeRestart>() {
-            self.restart(&request, connection, received);
-        } else {
-            connection.send_response(Response::error(
-                request.id,
-                ApiError::new(
-                    ErrorCode::UnknownMethod,
-                    "this host doesn't know that method",
-                ),
-            ));
+            OpenOperation::InstanceStatus => {
+                self.broadcast.snapshot(|| {
+                    connection.send_response(answer::<InstanceStatus>(&request, |_| {
+                        let offices = self.offices.offices();
+                        Ok(InstanceStatusResult {
+                            instance_id: instance_id.to_owned(),
+                            mode: InstanceMode::Service,
+                            gateway: GatewayStatus {
+                                state: GatewayState::NotConfigured,
+                            },
+                            offices: OfficeCounts {
+                                total: offices.len() as u64,
+                                active: offices
+                                    .iter()
+                                    .filter(|o| o.status == org_proto::OfficeStatus::Active)
+                                    .count() as u64,
+                                failed: offices
+                                    .iter()
+                                    .filter(|o| o.status.requires_operator_action())
+                                    .count() as u64,
+                            },
+                        })
+                    }))
+                });
+            }
         }
     }
 }
 
-/// The `office.app_token` response line for request `id`, encoded straight from the token into
-/// a buffer big enough never to reallocate (no copy left behind there). `None` if it couldn't be
-/// encoded.
-fn token_line(id: u64, token: &AppToken) -> Option<SecretLine> {
-    #[derive(Serialize)]
-    struct Line<'a> {
-        id: u64,
-        result: TokenResult<'a>,
+#[derive(Debug, PartialEq, Eq)]
+enum OpenOperation {
+    Hello,
+    InstanceStatus,
+}
+
+impl OpenOperation {
+    fn from_method(method: &str) -> Option<Self> {
+        match method {
+            Hello::METHOD => Some(Self::Hello),
+            InstanceStatus::METHOD => Some(Self::InstanceStatus),
+            _ => None,
+        }
     }
-    #[derive(Serialize)]
-    struct TokenResult<'a> {
-        app_token: &'a AppToken,
-    }
-    let mut bytes = Vec::with_capacity(256);
-    let encoded = serde_json::to_writer(
-        &mut bytes,
-        &Line {
-            id,
-            result: TokenResult { app_token: token },
-        },
-    );
-    bytes.push(b'\n');
-    // Wrapped at once, so the bytes are zeroed even when encoding failed.
-    let line = SecretLine::new(bytes);
-    encoded.ok().map(|()| line)
 }
 
 fn not_authorized(id: u64) -> Response {
@@ -329,14 +196,47 @@ mod tests {
     use std::path::Path;
 
     use org_proto::{
-        Empty, HelloParams, OfficeAppTokenParams, OfficeList, OfficeRestartParams,
-        OrganizationCreateParams,
+        Empty, HelloParams, OfficeAppToken, OfficeAppTokenParams, OfficeList, OfficeRestart,
+        OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
     };
 
     use crate::catalog::Catalog;
     use crate::keys::memory::MemoryKeys;
     use crate::supervisor::{Supervisor, SupervisorConfig};
     use crate::timings::Timings;
+
+    #[test]
+    fn only_hello_and_instance_status_have_dispatch_variants() {
+        assert_eq!(
+            OpenOperation::from_method("hello"),
+            Some(OpenOperation::Hello)
+        );
+        assert_eq!(
+            OpenOperation::from_method("instance.status"),
+            Some(OpenOperation::InstanceStatus)
+        );
+        for method in [
+            "organization.create",
+            "organization.list",
+            "office.list",
+            "subscribe",
+            "office.app_token",
+            "office.restart",
+            "account.verify",
+            "bootstrap",
+            "exit",
+            "session.grant",
+            "recovery.release",
+            "tls.fetch",
+            "fds.received",
+            "future.method",
+            "",
+            "Hello",
+            "instance.status.extra",
+        ] {
+            assert_eq!(OpenOperation::from_method(method), None, "{method}");
+        }
+    }
 
     fn service(home: &Path) -> Service {
         let supervisor = Supervisor::new(SupervisorConfig {
@@ -359,8 +259,7 @@ mod tests {
             Arc::clone(&broadcast),
             &Timings::default(),
         );
-        let app = AppPolicy::new(crate::app_auth::APP_BUNDLE_ID, None).unwrap();
-        Service::new(offices, broadcast, app, None)
+        Service::new(offices, broadcast, None)
     }
 
     /// Hello and pre-hello requests run inline (see the listener's

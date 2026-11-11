@@ -423,6 +423,7 @@ impl Drop for Release<'_> {
 enum Outbound {
     Response(Response),
     /// A response line already encoded, holding a secret: written as is, then zeroed.
+    #[expect(dead_code, reason = "Verified session secrets activate in 2b.3")]
     Secret(SecretLine),
     /// `seq` is given by the writer, so it counts without gaps in the order events are written.
     Event {
@@ -440,6 +441,7 @@ pub(crate) struct SecretLine(Vec<u8>);
 
 impl SecretLine {
     /// `bytes` is one JSON line, `\n` included.
+    #[expect(dead_code, reason = "Verified session secrets activate in 2b.3")]
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
@@ -456,6 +458,10 @@ pub(crate) struct Connection {
     outbound: SyncSender<Outbound>,
     stream: UnixStream,
     /// What the host noted about the client when it accepted the connection (`app_auth`).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "CLI peer checks activate in 2b.3")
+    )]
     accepted: Accepted,
     /// Ends the ticked reader even if shutdown misses a platform wakeup.
     closed: Arc<AtomicBool>,
@@ -497,17 +503,26 @@ impl Connection {
     }
 
     /// What the host noted about the client when it accepted the connection.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "CLI peer checks activate in 2b.3")
+    )]
     pub(crate) fn accepted(&self) -> Accepted {
         self.accepted
     }
 
     /// The connection's socket, to identify the client (`app_auth`).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "CLI peer checks activate in 2b.3")
+    )]
     pub(crate) fn socket(&self) -> &UnixStream {
         &self.stream
     }
 
     /// Queues an encoded response line that holds a secret. Never blocks, like
     /// [`Connection::send_response`].
+    #[expect(dead_code, reason = "Verified session secrets activate in 2b.3")]
     pub(crate) fn send_secret_line(&self, line: SecretLine) {
         self.enqueue(Outbound::Secret(line));
     }
