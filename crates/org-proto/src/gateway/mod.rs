@@ -18,8 +18,8 @@ pub use outcome::{
     OperationLookup, ReadResponse, ResourceAccess,
 };
 pub use session::{
-    AccountView, OrganizationLink, RecoveryCode, SecretText, SessionEstablished, SessionProof,
-    SessionView, SignInParams,
+    AccountView, OrganizationLink, SecretText, SessionEstablished, SessionProof, SessionView,
+    SignInParams,
 };
 pub use stream::{
     EventFrame, Feed, PollResponse, ResumeCursor, ResyncReason, SnapshotResponse, StreamRequest,

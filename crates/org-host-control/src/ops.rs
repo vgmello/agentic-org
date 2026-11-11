@@ -853,7 +853,8 @@ impl TlsPair {
 /// so the journal can keep it: it is `tls.set`'s journal fingerprint fields, serialized as
 /// `{"cert_der_sha256", "key_der_sha256"}` in that order, and what a `bootstrap` replay compares
 /// pairs by ([`TlsPair::fingerprint`]). The same DER fingerprints the same however its text is
-/// wrapped, whatever its line ends (LF, CRLF or a lone CR) and whatever text surrounds the block.
+/// wrapped, whatever its line ends (LF, CRLF or a lone CR) and whatever text surrounds the blocks; every
+/// `CERTIFICATE` block in the chain must frame, and the first (the leaf) is hashed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct TlsPairFingerprint {
     cert_der_sha256: String,
@@ -865,8 +866,10 @@ impl TlsPairFingerprint {
     /// [`crate::journal::Journaled`] implementation. The decoded key bytes are zeroed once hashed
     /// (best effort: `sha2`'s own block buffer isn't). Its error never quotes the pair.
     pub(crate) fn of(cert: &str, key: &TlsPrivateKey) -> Result<Self, InvalidPem> {
-        let cert_der = pem::first_block(cert, pem::CERTIFICATE)?;
-        let cert_der_sha256 = sha256_hex(cert_der.bytes());
+        // The whole chain must frame (the host reads it with `all_blocks`); the leaf is hashed.
+        let chain = pem::all_blocks(cert, pem::CERTIFICATE)?;
+        let leaf = chain.first().ok_or(InvalidPem)?;
+        let cert_der_sha256 = sha256_hex(leaf.bytes());
         let key_der_sha256 = {
             // Dropped, and so zeroed, at the end of this block.
             let key_der = pem::first_block(key.expose(), pem::PRIVATE_KEY)?;

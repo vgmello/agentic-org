@@ -98,6 +98,7 @@ mod events;
 mod name;
 mod operation;
 mod principal;
+mod recovery;
 mod token;
 mod types;
 mod ulid;
@@ -112,7 +113,6 @@ pub use calls::{
 pub use directory::ManagedHome;
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
-pub use gateway::RecoveryCode;
 pub use name::{NameError, OrganizationName};
 pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOutcome};
 pub use org::{
@@ -130,6 +130,7 @@ pub use principal::{
     grant_mac_input, Actor, ActorKind, Grant, GrantClaims, MalformedPrincipal, Principal,
     GRANT_MAC_DOMAIN,
 };
+pub use recovery::RecoveryCode;
 pub use retired::Retired;
 pub use token::zero as zero_bytes;
 pub use token::{

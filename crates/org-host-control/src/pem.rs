@@ -113,8 +113,14 @@ fn block_from(
     };
     let end_marker = format!("-----END {label}-----");
     let end_at = line_start_find(text, &end_marker, body_at).ok_or(InvalidPem)?;
+    // RFC 7468: only spaces or tabs, then a line end or the end of the text, after END.
+    let after = end_at + end_marker.len();
+    let tail = text[after..].trim_start_matches([' ', '\t']);
+    if !(tail.is_empty() || tail.starts_with(['\n', '\r'])) {
+        return Err(InvalidPem);
+    }
     let der = decode_base64(&text[body_at..end_at])?;
-    Ok(Some((der, end_at + end_marker.len())))
+    Ok(Some((der, after)))
 }
 
 /// The first `marker` in `text` at or after `from` that starts a line: the text's start, or
@@ -255,6 +261,7 @@ mod tests {
             "x-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----\nTWFu-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----TWFu\n-----END PRIVATE KEY-----\n",
+            "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----garbage\n",
         ] {
             assert!(first_block(bad, PRIVATE_KEY).is_err(), "{bad:?}");
         }
