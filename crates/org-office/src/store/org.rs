@@ -642,6 +642,11 @@ pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, 
                 |row| row.get(0),
             )
             .map_err(OfficeError::storage)?;
+        if after.epoch == EPOCH && after.seq == 0 && first == Some(1) {
+            // The original native feed starts at genesis. A restored epoch can have a
+            // materialized sequence-zero baseline, which remains resumable.
+            return Ok(false);
+        }
         return Ok(
             after == head || first.is_some_and(|seq| after.seq >= (seq as u64).saturating_sub(1))
         );

@@ -483,9 +483,7 @@ impl OrgTxn for OrganizationTxn<'_> {
         if event.codec.id() != CODEC || event.codec.version() != 1 {
             return Err(Refusal::IntegrityFailure.into());
         }
-        let record: NativeEvent =
-            serde_json::from_slice(&event.payload).map_err(|_| Refusal::IntegrityFailure)?;
-        record.apply(self.0, event.position)
+        NativeEvent::decode(&event.payload)?.apply(self.0, event.position)
     }
 
     fn record_event(&mut self, event: &OrgEvent, next: &OrgCheckpoint) -> Result<(), StoreError> {
@@ -562,7 +560,45 @@ pub(super) struct NativeAnswer {
     pub(super) refusal: Option<org_proto::ApiError>,
 }
 
+impl NativeAnswer {
+    pub(super) fn decode(payload: &str) -> Option<Self> {
+        let answer: Self = serde_json::from_str(payload).ok()?;
+        let wire = serde_json::from_str(payload).ok()?;
+        answer.preserves_refusal(&wire).then_some(answer)
+    }
+
+    fn preserves_refusal(&self, wire: &serde_json::Value) -> bool {
+        match (&self.refusal, wire.get("refusal")) {
+            (None, None | Some(serde_json::Value::Null)) => true,
+            (Some(refusal), Some(wire)) => {
+                serde_json::to_value(refusal).is_ok_and(|value| value == *wire)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl NativeEvent {
+    fn decode(payload: &[u8]) -> Result<Self, Refusal> {
+        let event: Self = serde_json::from_slice(payload).map_err(|_| Refusal::IntegrityFailure)?;
+        let wire: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| Refusal::IntegrityFailure)?;
+        let materialized =
+            serde_json::to_value(&event.changes).map_err(|_| Refusal::IntegrityFailure)?;
+        // Native change DTOs tolerate unfamiliar browser fields and values. The
+        // federation codec can acknowledge only the exact changes it stores.
+        if wire.get("changes") != Some(&materialized)
+            || event.answer.as_ref().is_some_and(|answer| {
+                !wire
+                    .get("answer")
+                    .is_some_and(|value| answer.preserves_refusal(value))
+            })
+        {
+            return Err(Refusal::IntegrityFailure);
+        }
+        Ok(event)
+    }
+
     fn apply(self, db: &Connection, position: Position) -> Result<(), SyncError> {
         if time::parse_rfc3339_ms(&self.at).is_none() {
             return Err(Refusal::IntegrityFailure.into());
@@ -778,6 +814,53 @@ mod tests {
                 .params_hash,
             "12".repeat(32)
         );
+    }
+
+    #[test]
+    fn federation_codec_refuses_changes_it_cannot_materialize_losslessly() {
+        let (_dir, satellite) = replica();
+        let checkpoint = satellite.replication_checkpoint().unwrap();
+        let sample = event(2, checkpoint.digest, COMMAND, "first");
+        let mut raw: serde_json::Value = serde_json::from_slice(&sample.payload).unwrap();
+        raw["changes"][0]["team"]["future_field"] = json!("unrecognized");
+        let future_team = raw["changes"][0].clone();
+        let mut future_status = serde_json::to_value(OrgChange::MemberUpserted {
+            member: agent_member("member", org_proto::org::AgentStatus::Active, None),
+        })
+        .unwrap();
+        future_status["member"]["agent"]["status"] = json!("frozen");
+        for change in [future_team, future_status] {
+            raw["changes"] = json!([change]);
+            let incoming = OrgEvent::new(
+                sample.org_id.clone(),
+                sample.position,
+                sample.previous,
+                sample.codec.clone(),
+                serde_json::to_vec(&raw).unwrap(),
+            )
+            .unwrap();
+            assert!(matches!(
+                organization::apply(&satellite, &Hq, incoming),
+                Err(SyncError::Refused(Refusal::IntegrityFailure))
+            ));
+            assert_eq!(satellite.replication_checkpoint().unwrap(), checkpoint);
+        }
+        raw["changes"] = json!([]);
+        raw["answer"]["refusal"] = json!({ "code": "newer_refusal", "message": "Refused" });
+        let future_refusal = OrgEvent::new(
+            sample.org_id.clone(),
+            sample.position,
+            sample.previous,
+            sample.codec.clone(),
+            serde_json::to_vec(&raw).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, future_refusal),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        assert_eq!(satellite.replication_checkpoint().unwrap(), checkpoint);
+        assert!(organization::apply(&satellite, &Hq, sample).is_ok());
     }
 
     #[test]
@@ -1194,6 +1277,41 @@ mod tests {
                 SnapshotStageMode::Normal,
             )
             .unwrap();
+        let retry_key = Key::from_bytes([10; 32]);
+        let retransmitted = hq
+            .export_replication_snapshot(&retry_key, MAX_BYTES)
+            .unwrap();
+        assert_eq!(
+            satellite
+                .stage_replication_snapshot(
+                    &Hq,
+                    &retransmitted.manifest,
+                    &retry_key,
+                    retransmitted.ciphertext.as_slice(),
+                    MAX_BYTES,
+                    SnapshotStageMode::Normal,
+                )
+                .unwrap(),
+            staged
+        );
+        hq.org_store().run_sql_for_test(
+            r#"UPDATE teams SET name_key = 'different',
+            body = '{"id":"first","name":"different","version":1}' WHERE id = 'first'"#,
+        );
+        let conflicting = hq
+            .export_replication_snapshot(&retry_key, MAX_BYTES)
+            .unwrap();
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &conflicting.manifest,
+                &retry_key,
+                conflicting.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            ),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
         assert!(matches!(
             satellite.stage_replication_snapshot(
                 &Hq,
@@ -1205,6 +1323,7 @@ mod tests {
             ),
             Err(SyncError::Refused(Refusal::Divergence))
         ));
+        let installed_stage_id = staged.staging_id.clone();
         drop(satellite);
         let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
         satellite.org_store().run_sql_for_test(
@@ -1226,6 +1345,20 @@ mod tests {
         assert_eq!(
             organization::install_snapshot(&satellite, staged).unwrap(),
             OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(
+            satellite
+                .stage_replication_snapshot(
+                    &Hq,
+                    &retransmitted.manifest,
+                    &retry_key,
+                    retransmitted.ciphertext.as_slice(),
+                    MAX_BYTES,
+                    SnapshotStageMode::Normal
+                )
+                .unwrap()
+                .staging_id,
+            installed_stage_id,
         );
         let installed = satellite.org_snapshot().unwrap();
         assert_eq!(installed.position.seq, 2);
@@ -1853,6 +1986,25 @@ mod tests {
         assert_eq!(installed.digest, restored_digest);
         assert_eq!(installed.pending_restore_base, None);
         assert!(!installed.restore_pending);
+        let baseline = org_proto::Position {
+            epoch: next.get(),
+            seq: 0,
+        };
+        assert!(satellite.org_can_resume_from(baseline).unwrap());
+        let first = event(1, restored_digest, COMMAND, "restored");
+        let first = OrgEvent::new(
+            first.org_id,
+            Position {
+                epoch: next,
+                seq: 1,
+            },
+            first.previous,
+            first.codec,
+            first.payload,
+        )
+        .unwrap();
+        organization::apply(&satellite, &HqAt(next), first).unwrap();
+        assert!(satellite.org_can_resume_from(baseline).unwrap());
     }
 
     #[test]
@@ -1865,6 +2017,9 @@ mod tests {
         let hq = new_office(&dir, "HQ");
         let ca = Digest::from_bytes([6; 32]);
         hq.bind_replication_hq(ca, MAX_BYTES).unwrap();
+        assert!(!hq
+            .org_can_resume_from(org_proto::Position { epoch: 1, seq: 0 })
+            .unwrap());
         let anchor = hq.replication_checkpoint().unwrap();
         assert_ne!(anchor.digest, Digest::ZERO);
         let new_team = |team_id: &str, name: &str| {
@@ -1999,6 +2154,24 @@ mod tests {
         ));
         hq.org_store()
             .run_sql_for_test("DELETE FROM teams WHERE id = 'extra'");
+        hq.org_store().run_sql_for_test(
+            "CREATE TEMP TABLE saved_outcome AS SELECT * FROM commands WHERE seq = 2;
+            DELETE FROM commands WHERE seq = 2;",
+        );
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test("INSERT INTO commands SELECT * FROM saved_outcome;
+            UPDATE commands SET result = json_set(result, '$.params_hash', lower(hex(zeroblob(32)))) WHERE seq = 2;");
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(
+            "DELETE FROM commands WHERE seq = 2;
+            INSERT INTO commands SELECT * FROM saved_outcome; DROP TABLE saved_outcome;",
+        );
         let pending = stage_latest().unwrap();
         assert_eq!(
             organization::install_snapshot(&satellite, pending).unwrap(),

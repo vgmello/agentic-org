@@ -13,7 +13,7 @@ use org_sync::organization::{OrgCheckpoint, OrgTxn, PeerIdentity, PeerRole, Vali
 use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use rusqlite::config::DbConfig;
 use rusqlite::types::{ToSqlOutput, ValueRef};
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -169,13 +169,15 @@ pub(super) fn create_table(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
              stage_id TEXT NOT NULL, epoch INTEGER NOT NULL CHECK (epoch > 0),
              seq INTEGER NOT NULL CHECK (seq >= 0),
-             digest BLOB NOT NULL CHECK (length(digest) = 32), body BLOB NOT NULL
+             digest BLOB NOT NULL CHECK (length(digest) = 32),
+             body_digest BLOB NOT NULL CHECK (length(body_digest) = 32), body BLOB NOT NULL
          ) STRICT;
          CREATE TABLE org_snapshot_install (
              singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
              stage_id TEXT NOT NULL, epoch INTEGER NOT NULL CHECK (epoch > 0),
              seq INTEGER NOT NULL CHECK (seq >= 0),
-             digest BLOB NOT NULL CHECK (length(digest) = 32)
+             digest BLOB NOT NULL CHECK (length(digest) = 32),
+             body_digest BLOB NOT NULL CHECK (length(body_digest) = 32)
          ) STRICT;",
     )
 }
@@ -415,6 +417,7 @@ pub(crate) fn stage_replication_snapshot(
         protocol_level: manifest.protocol_level,
     };
     let id = staged.staging_id.clone();
+    let body_digest = Digest::from_bytes(Sha256::digest(&body).into());
     let position = staged.position;
     let digest = staged.digest;
     staged.staging_id = store.sync_write(move |db| {
@@ -423,19 +426,23 @@ pub(crate) fn stage_replication_snapshot(
         check_projection_continuity(db, &current, &projection)?;
         let epoch = int(position.epoch.get())?;
         let seq = int(position.seq)?;
-        if let Some(committed) = installed_stage_id(db, position, digest)? {
+        if let Some((committed, committed_body)) = installed_stage_receipt(db, position, digest)? {
+            if body_digest != committed_body {
+                return Err(Refusal::Divergence.into());
+            }
             return Ok(committed);
         }
-        let existing: Option<(String, i64, [u8; 32])> = db
+        let existing: Option<(String, i64, [u8; 32], [u8; 32])> = db
             .query_row(
-                "SELECT stage_id, seq, digest FROM org_snapshot_stage WHERE epoch = ?1",
+                "SELECT stage_id, seq, digest, body_digest FROM org_snapshot_stage WHERE epoch = ?1",
                 [epoch],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(storage_error)?;
-        if let Some((existing_id, existing_seq, existing_digest)) = existing {
-            if seq < existing_seq || (seq == existing_seq && digest.as_bytes() != &existing_digest)
+        if let Some((existing_id, existing_seq, existing_digest, existing_body)) = existing {
+            if seq < existing_seq || (seq == existing_seq
+                && (digest.as_bytes() != &existing_digest || body_digest.as_bytes() != &existing_body))
             {
                 return Err(Refusal::Divergence.into());
             }
@@ -444,11 +451,11 @@ pub(crate) fn stage_replication_snapshot(
             }
         }
         db.execute(
-            "INSERT INTO org_snapshot_stage (singleton, stage_id, epoch, seq, digest, body)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5) ON CONFLICT(singleton) DO UPDATE SET
+            "INSERT INTO org_snapshot_stage (singleton, stage_id, epoch, seq, digest, body_digest, body)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(singleton) DO UPDATE SET
              stage_id = excluded.stage_id, epoch = excluded.epoch, seq = excluded.seq,
-             digest = excluded.digest, body = excluded.body",
-            params![id, epoch, seq, digest.as_bytes(), body],
+             digest = excluded.digest, body_digest = excluded.body_digest, body = excluded.body",
+            params![id, epoch, seq, digest.as_bytes(), body_digest.as_bytes(), body],
         )
         .map_err(storage_error)?;
         Ok(id.clone())
@@ -529,6 +536,7 @@ fn check_projection_continuity(
     } else {
         check_protected_members(db, &incoming.rows[0])?;
     }
+    check_retained_outcomes(db, &incoming.rows[ENTITY_TABLES], federation_advance == 0)?;
     Ok(preserve_native)
 }
 
@@ -544,18 +552,50 @@ fn same_entity_rows(db: &Connection, incoming: &Projection) -> Result<bool, Stor
             let Some(current) = stored.next().map_err(storage_error)? else {
                 return Ok(false);
             };
-            for (column, value) in expected.iter().enumerate() {
-                let local = current.get_ref(column).map_err(storage_error)?;
-                let incoming = value.sql_value();
-                if local == incoming {
-                    continue;
-                }
-                if column + 1 != expected.len() || !same_json_body(local, incoming)? {
-                    return Ok(false);
-                }
+            if !equivalent_row(current, expected)? {
+                return Ok(false);
             }
         }
         if stored.next().map_err(storage_error)?.is_some() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn check_retained_outcomes(
+    db: &Connection,
+    incoming: &[Vec<Cell>],
+    same_checkpoint: bool,
+) -> Result<(), SyncError> {
+    let mut incoming_by_id: HashMap<_, _> = incoming.iter().map(|row| (&row[0], row)).collect();
+    let mut query = db
+        .prepare("SELECT command_id, epoch, seq, expires_at, result FROM commands")
+        .map_err(storage_error)?;
+    let mut stored = query.query([]).map_err(storage_error)?;
+    while let Some(current) = stored.next().map_err(storage_error)? {
+        let id = Cell::Text(current.get(0).map_err(storage_error)?);
+        let expected = incoming_by_id.remove(&id).ok_or(Refusal::Divergence)?;
+        // The current native ledger retains these rows. Snapshot replacement must
+        // preserve their command identities and results within the same epoch.
+        if !equivalent_row(current, expected)? {
+            return Err(Refusal::Divergence.into());
+        }
+    }
+    if same_checkpoint && !incoming_by_id.is_empty() {
+        return Err(Refusal::Divergence.into());
+    }
+    Ok(())
+}
+
+fn equivalent_row(stored: &Row<'_>, expected: &[Cell]) -> Result<bool, StoreError> {
+    for (column, value) in expected.iter().enumerate() {
+        let local = stored.get_ref(column).map_err(storage_error)?;
+        let incoming = value.sql_value();
+        if local == incoming {
+            continue;
+        }
+        if column + 1 != expected.len() || !same_json_body(local, incoming)? {
             return Ok(false);
         }
     }
@@ -790,7 +830,7 @@ fn valid_command_row(row: &[Cell]) -> bool {
     match answer {
         // Older operation rows may predate the persisted result body.
         Cell::Null => true,
-        Cell::Text(body) => serde_json::from_str::<NativeAnswer>(body).is_ok_and(|answer| {
+        Cell::Text(body) => NativeAnswer::decode(body).is_some_and(|answer| {
             super::valid_fingerprint(&answer.params_hash)
                 && answer.refusal.is_some() == (*epoch == 0)
         }),
@@ -814,18 +854,23 @@ pub(super) fn install(
     if staged.codec.id() != CODEC || staged.codec.version() != 1 {
         return Err(Refusal::UnsupportedVersion.into());
     }
-    if installed_stage_id(db, next.position, next.digest)?.as_deref() == Some(&staged.staging_id) {
+    if installed_stage_receipt(db, next.position, next.digest)?
+        .is_some_and(|(id, _)| id == staged.staging_id)
+    {
         return Ok(false);
     }
-    let body: Vec<u8> = db
+    let (body, body_digest): (Vec<u8>, [u8; 32]) = db
         .query_row(
-            "SELECT body FROM org_snapshot_stage WHERE stage_id = ?1",
+            "SELECT body, body_digest FROM org_snapshot_stage WHERE stage_id = ?1",
             [&staged.staging_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(storage_error)?
         .ok_or(Refusal::InvalidInput)?;
+    if Digest::from_bytes(Sha256::digest(&body).into()).as_bytes() != &body_digest {
+        return Err(Refusal::IntegrityFailure.into());
+    }
     let projection = decode(&body)?;
     if projection.header
         != (Header {
@@ -852,14 +897,16 @@ pub(super) fn install(
         replace_projection(db, next.protocol_level, projection, preserve_native)?;
     }
     db.execute(
-        "INSERT INTO org_snapshot_install VALUES (1, ?1, ?2, ?3, ?4)
+        "INSERT INTO org_snapshot_install VALUES (1, ?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(singleton) DO UPDATE SET stage_id = excluded.stage_id,
-             epoch = excluded.epoch, seq = excluded.seq, digest = excluded.digest",
+             epoch = excluded.epoch, seq = excluded.seq, digest = excluded.digest,
+             body_digest = excluded.body_digest",
         params![
             staged.staging_id,
             int(next.position.epoch.get())?,
             int(next.position.seq)?,
-            next.digest.as_bytes()
+            next.digest.as_bytes(),
+            body_digest
         ],
     )
     .map_err(storage_error)?;
@@ -871,19 +918,19 @@ pub(super) fn install(
     Ok(replace)
 }
 
-fn installed_stage_id(
+fn installed_stage_receipt(
     db: &Connection,
     position: Position,
     digest: Digest,
-) -> Result<Option<String>, StoreError> {
+) -> Result<Option<(String, Digest)>, StoreError> {
     db.query_row(
-        "SELECT stage_id FROM org_snapshot_install WHERE (epoch, seq, digest) = (?1, ?2, ?3)",
+        "SELECT stage_id, body_digest FROM org_snapshot_install WHERE (epoch, seq, digest) = (?1, ?2, ?3)",
         (
             int(position.epoch.get())?,
             int(position.seq)?,
             digest.as_bytes(),
         ),
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, Digest::from_bytes(row.get(1)?))),
     )
     .optional()
     .map_err(storage_error)
