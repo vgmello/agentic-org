@@ -396,7 +396,12 @@ impl Serialize for ListenOrigin {
 impl<'de> Deserialize<'de> for ListenOrigin {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let text = String::deserialize(d)?;
-        ListenOrigin::parse(&text).map_err(serde::de::Error::custom)
+        let origin = ListenOrigin::parse(&text).map_err(serde::de::Error::custom)?;
+        // On the wire the origin is its serialization exactly: no trailing `/`, never rewritten.
+        if origin.as_str() != text {
+            return Err(serde::de::Error::custom(OriginError::Path));
+        }
+        Ok(origin)
     }
 }
 

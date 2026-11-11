@@ -206,7 +206,7 @@ impl Journaled for TlsSetParams {
         &self.operation_id
     }
 
-    /// The pair's [`TlsPairFingerprint`], serialized: `{"cert_der_sha256", "key_der_sha256"}`
+    /// The pair's [`TlsPairFingerprint`], serialized: `{"cert_chain_sha256", "key_der_sha256"}`
     /// (X-02 §6.2), the SHA-256, as lowercase hex, of the DER of `cert`'s first `CERTIFICATE`
     /// block and of `key`'s first `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block.
     /// Never the pair itself, so the journal holds no key and the stored result echoes neither.

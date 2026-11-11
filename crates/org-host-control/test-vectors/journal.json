@@ -341,7 +341,7 @@
     ]
   },
   "tls_set": {
-    "comment": "X-02 §6.2, §6.3: tls.set's fingerprint fields are exactly {\"cert_der_sha256\", \"key_der_sha256\"}, the SHA-256 as lowercase hex of the DER in cert's first CERTIFICATE block and in key's first PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY block, never the pair itself; session and operation_id are excluded as for every op. The certificate and keys are synthetic, made with openssl for these vectors (P-256 and a 512-bit RSA key, CN=mac.local and CN=ca.local); the expected hashes were computed with openssl (x509, pkey, ec and rsa -outform DER | sha256sum), not by this crate. A body is strict standard base64 (spaces, tabs, CR and LF aside); a pair with no such block, or a body that doesn't decode, has no fingerprint: fingerprint_fields() fails on it, and the host refuses it as tls_invalid, unstored, wherever it needs the fingerprint. Lines end with LF, CRLF or a lone CR (RFC 7468 §3's eol), in any mix: 'line_ends' is the same pair with each, and every one fingerprints the same. 'invalid' rows are pairs the PEM reader refuses: their fingerprint is an error ('fingerprint': 'error'), and the host answers them with tls_invalid, unstored, on every path, the journal lookup included. 'lookup' is the journal lookup, which needs the fingerprint: a known operation_id with a pair that has none is tls_invalid, unstored, never a replay or operation_reused; otherwise the same fingerprint replays and another is operation_reused.",
+    "comment": "X-02 §6.2, §6.3: tls.set's fingerprint fields are exactly {\"cert_chain_sha256\", \"key_der_sha256\"}, the SHA-256 as lowercase hex of cert's chain (every CERTIFICATE block's DER with a u32 big-endian length prefix, in order) and in key's first PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY block, never the pair itself; session and operation_id are excluded as for every op. The certificate and keys are synthetic, made with openssl for these vectors (P-256 and a 512-bit RSA key, CN=mac.local and CN=ca.local); the expected hashes were computed with openssl (chain: each block's DER from openssl x509 -outform DER, length-prefixed, then sha256; key: pkey, ec and rsa -outform DER | sha256sum), not by this crate. A body is strict standard base64 (spaces, tabs, CR and LF aside); a pair with no such block, or a body that doesn't decode, has no fingerprint: fingerprint_fields() fails on it, and the host refuses it as tls_invalid, unstored, wherever it needs the fingerprint. Lines end with LF, CRLF or a lone CR (RFC 7468 §3's eol), in any mix: 'line_ends' is the same pair with each, and every one fingerprints the same. 'invalid' rows are pairs the PEM reader refuses: their fingerprint is an error ('fingerprint': 'error'), and the host answers them with tls_invalid, unstored, on every path, the journal lookup included. 'lookup' is the journal lookup, which needs the fingerprint: a known operation_id with a pair that has none is tls_invalid, unstored, never a replay or operation_reused; otherwise the same fingerprint replays and another is operation_reused.",
     "cases": [
       {
         "name": "a certificate and a PKCS #8 key",
@@ -351,7 +351,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -362,7 +362,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgJpa7TB8DxDcXjHm4\nUVKaS+G3S5WdluKet0SRqUxOJ7ihRANCAAQbdD/bUhC6Iq66TNEgbeuMXMxvQwtP\ntJMht48+J/NNmNV3Rd6cHyDCTZMSNUmEAUpVi7NR7sKIdiNXx+7NzV7+\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "6539ecce255db8ef354834b54ec836779ce1d608b1b663a759fff3a9c857bde4"
       },
       {
@@ -373,7 +373,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -384,7 +384,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rkvXlb+96YkVQo\njGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0XnUivw3DWy/beO+sQSnywxr1\nD7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -395,7 +395,7 @@
           "cert": "subject=CN=mac.local\r\n-----BEGIN CERTIFICATE-----\r\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\r\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\r\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\r\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\r\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\r\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r\n-----END CERTIFICATE-----\r\n-----BEGIN CERTIFICATE-----\r\nMIIBRjCB7aADAgECAgECMAoGCCqGSM49BAMCMBMxETAPBgNVBAMMCGNhLmxvY2Fs\r\nMB4XDTI2MTExMTAxNTMxM1oXDTM2MTEwODAxNTMxM1owEzERMA8GA1UEAwwIY2Eu\r\nbG9jYWwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQbdD/bUhC6Iq66TNEgbeuM\r\nXMxvQwtPtJMht48+J/NNmNV3Rd6cHyDCTZMSNUmEAUpVi7NR7sKIdiNXx+7NzV7+\r\nozIwMDAdBgNVHQ4EFgQUU21+bvUbCv05RbSC0eWzAkAg2W0wDwYDVR0TAQH/BAUw\r\nAwEB/zAKBggqhkjOPQQDAgNIADBFAiAuyrff93yxzwJz9qXBfdeLjbajAcWWGMRZ\r\nTnryBqIStAIhAOZ90e64hiERG4sebfOpqXMLZ64baX5WB6nAzK6XigJX\r\n-----END CERTIFICATE-----\r\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "c6c083f481ef69c80dde9176ba2b10c2e0b1ae40cf5219e89a73dd65a4172674",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -406,7 +406,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN EC PARAMETERS-----\nBggqhkjOPQMBBw==\n-----END EC PARAMETERS-----\n-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIGjjo+DRIhM7mtNK5L15W/vemJFUKIxoaz3iChDcKTZBoAoGCCqGSM49\nAwEHoUQDQgAEX5c+PUWKI5/5TW6QCDPqJ2ua2d/HdF51Ir8Nw1sv23jvrEEp8sMa\n9Q+/0rPmlbBsYUyUPQZE8o2zuM4D1SJ+cA==\n-----END EC PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "43d085aeb280a644be025bb724626ff396127e99a59068d02700d3ca364ad93b"
       },
       {
@@ -417,8 +417,19 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN RSA PRIVATE KEY-----\nMIIBOwIBAAJBAJ4g6XWZCs8jieSVgbWHjq92+v46vpBfqBYukJtNtA7U6A1oDjT4\nhxidir+ryp9OCkATNQs51awWIMm4i+3bs/8CAwEAAQJBAJhTZBHgp8T6my8Txqu0\nNgNZPlgBBunU+/rCSJMSu008z5vAsE+88hti8rEN62g7GrfVhqBYcV0EgjkQHomT\nR2ECIQDQe5ZMGdmujGnoDp4ZUPaSQJiwrc82kfxUsdYBjG9Y9QIhAMIrSqlms1UV\nVl7LdQc7FBAQin/+gDxdcETgjI9ek9CjAiB8TnQbA/7LGGW9O5oAtkmOgn2IOtom\nS30McsyLN9TcUQIhAJB0Tr6K5n41OqWZrj4r6Lgu5itlNxgx19WWTVxYW5YLAiAi\nbkOfHyVELh54qXF4uA3Zpr+OQc42+3x9it62aU+E/g==\n-----END RSA PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7e7e81dd994b93af0dd0b548dc827427daecbff5ceed29b3d956aed6a0d110ba"
+      },
+      {
+        "name": "the leaf plus an intermediate: the whole chain is hashed, so it differs from the leaf alone",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H08",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\r\nMIIBRjCB7aADAgECAgECMAoGCCqGSM49BAMCMBMxETAPBgNVBAMMCGNhLmxvY2Fs\r\nMB4XDTI2MTExMTAxNTMxM1oXDTM2MTEwODAxNTMxM1owEzERMA8GA1UEAwwIY2Eu\r\nbG9jYWwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQbdD/bUhC6Iq66TNEgbeuM\r\nXMxvQwtPtJMht48+J/NNmNV3Rd6cHyDCTZMSNUmEAUpVi7NR7sKIdiNXx+7NzV7+\r\nozIwMDAdBgNVHQ4EFgQUU21+bvUbCv05RbSC0eWzAkAg2W0wDwYDVR0TAQH/BAUw\r\nAwEB/zAKBggqhkjOPQQDAgNIADBFAiAuyrff93yxzwJz9qXBfdeLjbajAcWWGMRZ\r\nTnryBqIStAIhAOZ90e64hiERG4sebfOpqXMLZ64baX5WB6nAzK6XigJX\r\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+        },
+        "cert_chain_sha256": "c6c083f481ef69c80dde9176ba2b10c2e0b1ae40cf5219e89a73dd65a4172674",
+        "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       }
     ],
     "line_ends": [
@@ -431,7 +442,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -443,7 +454,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\r\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\r\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\r\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\r\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\r\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\r\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r\n-----END CERTIFICATE-----\r\n",
           "key": "-----BEGIN PRIVATE KEY-----\r\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\r\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\r\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r\n-----END PRIVATE KEY-----\r\n"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       },
       {
@@ -455,7 +466,7 @@
           "cert": "-----BEGIN CERTIFICATE-----\rMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\rbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\rYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\rfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\rBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\rz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r-----END CERTIFICATE-----\r",
           "key": "-----BEGIN PRIVATE KEY-----\rMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\rvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\rXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r-----END PRIVATE KEY-----\r"
         },
-        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "cert_chain_sha256": "ffe2d865cff57777ed4cd6fa977f1170285d2972417f40146b5443a022cb80d7",
         "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
       }
     ],

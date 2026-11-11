@@ -126,12 +126,14 @@ fn block_from(
 }
 
 /// Refuse rather than skip: any `-----BEGIN ` that doesn't start a line (an indented block, or text
-/// before it on its line) fails the whole text, so a chain is never silently cut short.
+/// before it on its line), or a stray `-----END ` without its BEGIN, fails the whole text, so a
+/// chain is never silently cut short.
 fn refuse_misplaced_begin(text: &str) -> Result<(), InvalidPem> {
     let misplaced = text
         .match_indices("-----BEGIN ")
         .any(|(at, _)| at != 0 && !matches!(text.as_bytes()[at - 1], b'\n' | b'\r'));
-    if misplaced {
+    let unpaired = text.matches("-----BEGIN ").count() != text.matches("-----END ").count();
+    if misplaced || unpaired {
         Err(InvalidPem)
     } else {
         Ok(())
@@ -278,6 +280,7 @@ mod tests {
             "-----BEGIN PRIVATE KEY-----TWFu\n-----END PRIVATE KEY-----\n",
             "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----garbage\n",
             "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----\n  -----BEGIN PRIVATE KEY-----\n!!!\n-----END PRIVATE KEY-----\n",
+            "-----BEGIN PRIVATE KEY-----\nTWFu\n-----END PRIVATE KEY-----\nTQ==\n-----END PRIVATE KEY-----\n",
         ] {
             assert!(first_block(bad, PRIVATE_KEY).is_err(), "{bad:?}");
         }

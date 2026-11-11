@@ -42,7 +42,13 @@ fn listen_origin_form_vectors() {
             assert_eq!(origin.as_str(), want, "{input:?}");
             assert_eq!(origin.to_string(), want, "{input:?}");
             assert_eq!(serde_json::to_value(&origin).unwrap(), json!(want));
-            assert_eq!(from_serde.unwrap(), origin, "{input:?}");
+            // On the wire (serde) only the serialization itself is accepted; `parse` also takes
+            // operator input with one trailing `/`.
+            if input == want {
+                assert_eq!(from_serde.unwrap(), origin, "{input:?}");
+            } else {
+                assert!(from_serde.is_err(), "{input:?}");
+            }
             // The serialization is canonical: it parses back to itself.
             assert_eq!(ListenOrigin::parse(want).unwrap(), origin);
             // Every accepted origin is what a WHATWG parser gives.

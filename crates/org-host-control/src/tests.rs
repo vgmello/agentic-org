@@ -442,7 +442,7 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
         let name = case["name"].as_str().unwrap();
         let params = &case["params"];
         let (operation_id, input) = journaled::<TlsSetParams>("tls.set", params);
-        let (cert, key) = (&case["cert_der_sha256"], &case["key_der_sha256"]);
+        let (cert, key) = (&case["cert_chain_sha256"], &case["key_der_sha256"]);
         for hash in [cert, key] {
             let hash = hash.as_str().unwrap();
             assert!(
@@ -451,7 +451,7 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
             );
         }
         // Exactly these two fields, in this order.
-        let want = format!(r#"{{"cert_der_sha256":{cert},"key_der_sha256":{key}}}"#);
+        let want = format!(r#"{{"cert_chain_sha256":{cert},"key_der_sha256":{key}}}"#);
         assert_eq!(
             String::from_utf8(input.clone()).unwrap(),
             format!("tls.set\u{0}{want}"),
@@ -503,11 +503,11 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
             );
         }
         let (_, input) = journaled::<TlsSetParams>("tls.set", params);
-        let (cert, key) = (&case["cert_der_sha256"], &case["key_der_sha256"]);
+        let (cert, key) = (&case["cert_chain_sha256"], &case["key_der_sha256"]);
         assert_eq!(
             String::from_utf8(input).unwrap(),
             format!(
-                r#"tls.set{}{{"cert_der_sha256":{cert},"key_der_sha256":{key}}}"#,
+                r#"tls.set{}{{"cert_chain_sha256":{cert},"key_der_sha256":{key}}}"#,
                 '\0'
             ),
             "{name}"
@@ -582,7 +582,11 @@ fn bootstrap_and_tls_set_fingerprint_a_pair_identically() {
             match (pair.fingerprint(), params.fingerprint_fields()) {
                 (Ok(pair), Ok(fields)) => {
                     assert_eq!(serde_json::to_string(&pair).unwrap(), fields, "{name}");
-                    assert_eq!(pair.cert_der_sha256(), case["cert_der_sha256"], "{name}");
+                    assert_eq!(
+                        pair.cert_chain_sha256(),
+                        case["cert_chain_sha256"],
+                        "{name}"
+                    );
                     assert_eq!(pair.key_der_sha256(), case["key_der_sha256"], "{name}");
                     checked += 1;
                 }

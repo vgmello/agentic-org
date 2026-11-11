@@ -847,17 +847,18 @@ impl TlsPair {
     }
 }
 
-/// A TLS pair's fingerprint (X-02 §6.2, §6.3): the SHA-256, as lowercase hex, of the DER of the
-/// certificate's first `CERTIFICATE` block and of the key's first `PRIVATE KEY`,
+/// A TLS pair's fingerprint (X-02 §6.2, §6.3): the SHA-256, as lowercase hex, of the certificate
+/// chain (every `CERTIFICATE` block's DER, each with a u32 big-endian length prefix, in order) and
+/// of the DER of the key's first `PRIVATE KEY`,
 /// `RSA PRIVATE KEY` or `EC PRIVATE KEY` block, each read by [`crate::pem`]. It holds no secret,
 /// so the journal can keep it: it is `tls.set`'s journal fingerprint fields, serialized as
-/// `{"cert_der_sha256", "key_der_sha256"}` in that order, and what a `bootstrap` replay compares
+/// `{"cert_chain_sha256", "key_der_sha256"}` in that order, and what a `bootstrap` replay compares
 /// pairs by ([`TlsPair::fingerprint`]). The same DER fingerprints the same however its text is
 /// wrapped, whatever its line ends (LF, CRLF or a lone CR) and whatever text surrounds the blocks; every
-/// `CERTIFICATE` block in the chain must frame, and the first (the leaf) is hashed.
+/// `CERTIFICATE` block in the chain must frame, and the whole chain is hashed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct TlsPairFingerprint {
-    cert_der_sha256: String,
+    cert_chain_sha256: String,
     key_der_sha256: String,
 }
 
@@ -866,24 +867,30 @@ impl TlsPairFingerprint {
     /// [`crate::journal::Journaled`] implementation. The decoded key bytes are zeroed once hashed
     /// (best effort: `sha2`'s own block buffer isn't). Its error never quotes the pair.
     pub(crate) fn of(cert: &str, key: &TlsPrivateKey) -> Result<Self, InvalidPem> {
-        // The whole chain must frame (the host reads it with `all_blocks`); the leaf is hashed.
+        // The whole chain, as the host reads it with `all_blocks`: each block's DER with a u32
+        // big-endian length prefix, in order, so a changed intermediate changes the fingerprint.
         let chain = pem::all_blocks(cert, pem::CERTIFICATE)?;
-        let leaf = chain.first().ok_or(InvalidPem)?;
-        let cert_der_sha256 = sha256_hex(leaf.bytes());
+        let mut hasher = Sha256::new();
+        for der in &chain {
+            let len = u32::try_from(der.bytes().len()).map_err(|_| InvalidPem)?;
+            hasher.update(len.to_be_bytes());
+            hasher.update(der.bytes());
+        }
+        let cert_chain_sha256 = hex(&hasher.finalize());
         let key_der_sha256 = {
             // Dropped, and so zeroed, at the end of this block.
             let key_der = pem::first_block(key.expose(), pem::PRIVATE_KEY)?;
             sha256_hex(key_der.bytes())
         };
         Ok(TlsPairFingerprint {
-            cert_der_sha256,
+            cert_chain_sha256,
             key_der_sha256,
         })
     }
 
-    /// The SHA-256 of the certificate's DER, lowercase hex.
-    pub fn cert_der_sha256(&self) -> &str {
-        &self.cert_der_sha256
+    /// The SHA-256 of the length-prefixed certificate chain, lowercase hex.
+    pub fn cert_chain_sha256(&self) -> &str {
+        &self.cert_chain_sha256
     }
 
     /// The SHA-256 of the key's DER, lowercase hex.
@@ -894,12 +901,15 @@ impl TlsPairFingerprint {
 
 /// SHA-256 as lowercase hex.
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, b| {
-            let _ = write!(hex, "{b:02x}");
-            hex
-        })
+    hex(&Sha256::digest(bytes))
+}
+
+/// Lowercase hex.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::with_capacity(64), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    })
 }
 
 /// `bootstrap`'s completed result: a session for the first account.

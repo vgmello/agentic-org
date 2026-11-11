@@ -363,6 +363,17 @@
       "name": "neither",
       "wire": {},
       "expect": "refused"
+    },
+    {
+      "name": "an origin with a trailing / on the wire: refused, never rewritten",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "origin": "http://127.0.0.1:8080/",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
     }
   ],
   "listen_failure": [
