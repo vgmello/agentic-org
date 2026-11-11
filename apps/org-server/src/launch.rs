@@ -14,6 +14,7 @@ pub(super) struct Create {
     pub key: Key,
     pub auth: LaunchAuth,
     pub instance: Option<String>,
+    pub owner_member_id: Option<String>,
     // The remaining field stays alive through create AND the blocking serve call.
     pub _recovery: CreationRecovery,
 }
@@ -24,15 +25,25 @@ pub(super) enum CreationRecovery {
     V3 { _code: RecoveryCode },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
+pub(super) struct OfficeIdentity {
+    pub office_id: String,
+    pub instance_id: String,
+}
+
 #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
 pub(super) enum Launch {
     Create(Create),
     Start {
         key: Key,
         auth: LaunchAuth,
-        instance: Option<String>,
+        office: Option<OfficeIdentity>,
     },
-    Discard(Option<Key>),
+    Discard {
+        key: Option<Key>,
+        office: Option<OfficeIdentity>,
+    },
 }
 
 #[cfg_attr(not(test), expect(dead_code, reason = "activated by X-02 2a.3.2b.2b"))]
@@ -51,14 +62,18 @@ impl Launch {
                 key: Key::from_db_key(c.db_key),
                 auth: c.app_token.into(),
                 instance: None,
+                owner_member_id: None,
                 _recovery: CreationRecovery::Legacy,
             }),
             Request::V2(HostMessage::Start(s)) => Self::Start {
                 key: Key::from_db_key(s.db_key),
                 auth: s.app_token.into(),
-                instance: None,
+                office: None,
             },
-            Request::V2(HostMessage::Discard(d)) => Self::Discard(d.db_key.map(Key::from_db_key)),
+            Request::V2(HostMessage::Discard(d)) => Self::Discard {
+                key: d.db_key.map(Key::from_db_key),
+                office: None,
+            },
             Request::V3 {
                 line: HostFirstLine::Create(c),
                 handoff:
@@ -80,6 +95,7 @@ impl Launch {
                 key: Key::from_db_key(db_key),
                 auth: LaunchAuth::Grants { _key: grant_key },
                 instance: Some(c.office.instance_id),
+                owner_member_id: Some(c.owner_member_id),
                 _recovery: CreationRecovery::V3 {
                     _code: recovery_code,
                 },
@@ -93,12 +109,21 @@ impl Launch {
             } => Self::Start {
                 key: Key::from_db_key(db_key),
                 auth: LaunchAuth::Grants { _key: grant_key },
-                instance: Some(s.instance_id),
+                office: Some(OfficeIdentity {
+                    office_id: s.office_id,
+                    instance_id: s.instance_id,
+                }),
             },
             Request::V3 {
-                line: HostFirstLine::Discard(_),
+                line: HostFirstLine::Discard(d),
                 handoff: Handoff::Discard { db_key, .. },
-            } => Self::Discard(db_key.map(Key::from_db_key)),
+            } => Self::Discard {
+                key: db_key.map(Key::from_db_key),
+                office: Some(OfficeIdentity {
+                    office_id: d.office_id,
+                    instance_id: d.instance_id,
+                }),
+            },
             _ => return Err(LaunchError::Invalid("unknown launch request")),
         })
     }

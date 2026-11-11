@@ -4,6 +4,7 @@ use org_office_launch::{CreateOffice, DiscardOffice, StartOffice};
 use org_proto::{AppToken, DbKey, GrantKey};
 
 const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn db_key() -> DbKey {
     DbKey::from_bytes([0xb3; 32])
 }
@@ -16,18 +17,18 @@ fn token() -> AppToken {
 fn office() -> OfficeLine {
     OfficeLine {
         instance_id: INSTANCE.into(),
-        office_id: "office-1".into(),
+        office_id: "OFFICE1".into(),
         rendezvous: "/unused".into(),
     }
 }
 fn create() -> CreateLine {
     CreateLine {
         office: office(),
-        org_id: "org-2".into(),
+        org_id: "ORG2".into(),
         org_name: "Acme".into(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
-        owner_member_id: INSTANCE.into(),
+        owner_member_id: OWNER.into(),
     }
 }
 fn request(version: u8, op: u8, key: bool) -> Request {
@@ -87,9 +88,12 @@ fn versions_preserve_create_identity_keys_and_typed_recovery() {
         let Launch::Create(c) = Launch::from_request(request(version, 0, true)).unwrap() else {
             panic!("not create")
         };
-        assert_eq!(c.office.office_id, "office-1");
+        assert_eq!(
+            c.office.office_id,
+            if version == 2 { "office-1" } else { "OFFICE1" }
+        );
         assert_eq!(c.office.office_name, "HQ");
-        assert_eq!(c.office.org_id, "org-2");
+        assert_eq!(c.office.org_id, if version == 2 { "org-2" } else { "ORG2" });
         assert_eq!(c.office.org_name, "Acme");
         assert_eq!(c.office.role, org_office::OfficeRole::Hq);
         assert_eq!(c.role, OfficeRole::Hq);
@@ -98,6 +102,10 @@ fn versions_preserve_create_identity_keys_and_typed_recovery() {
         assert_eq!(
             c.instance.as_deref(),
             if version == 3 { Some(INSTANCE) } else { None }
+        );
+        assert_eq!(
+            c.owner_member_id.as_deref(),
+            (version == 3).then_some(OWNER)
         );
         match (c._recovery, version) {
             (CreationRecovery::Legacy, 2) => {}
@@ -109,19 +117,19 @@ fn versions_preserve_create_identity_keys_and_typed_recovery() {
 #[test]
 fn versions_preserve_start_keys_authority_and_instance() {
     for version in [2, 3] {
-        let Launch::Start {
-            key,
-            auth,
-            instance,
-        } = Launch::from_request(request(version, 1, true)).unwrap()
+        let Launch::Start { key, auth, office } =
+            Launch::from_request(request(version, 1, true)).unwrap()
         else {
             panic!("not start")
         };
         assert!(key == Key::from_db_key(db_key()));
         assert_auth(&auth, version);
         assert_eq!(
-            instance.as_deref(),
-            if version == 3 { Some(INSTANCE) } else { None }
+            office,
+            (version == 3).then(|| OfficeIdentity {
+                office_id: "OFFICE1".into(),
+                instance_id: INSTANCE.into(),
+            })
         );
     }
 }
@@ -129,11 +137,19 @@ fn versions_preserve_start_keys_authority_and_instance() {
 fn versions_preserve_discard_null_and_present_key() {
     for version in [2, 3] {
         for present in [false, true] {
-            let Launch::Discard(key) = Launch::from_request(request(version, 2, present)).unwrap()
+            let Launch::Discard { key, office } =
+                Launch::from_request(request(version, 2, present)).unwrap()
             else {
                 panic!("not discard")
             };
             assert!(key == present.then(|| Key::from_db_key(db_key())));
+            assert_eq!(
+                office,
+                (version == 3).then(|| OfficeIdentity {
+                    office_id: "OFFICE1".into(),
+                    instance_id: INSTANCE.into(),
+                })
+            );
         }
     }
 }
@@ -194,6 +210,43 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
                 panic!("not create")
             };
             assert_eq!(c.role, role);
+        }
+    }
+}
+
+#[test]
+fn distinct_v3_identities_are_preserved_on_every_operation() {
+    const OTHER_INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
+    const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    for op in 0..3 {
+        let Request::V3 { mut line, handoff } = request(3, op, true) else {
+            unreachable!()
+        };
+        let office = match &mut line {
+            HostFirstLine::Create(c) => {
+                c.owner_member_id = OTHER_OWNER.into();
+                &mut c.office
+            }
+            HostFirstLine::Start(office) | HostFirstLine::Discard(office) => office,
+            _ => unreachable!(),
+        };
+        office.office_id = "OFFICE2".into();
+        office.instance_id = OTHER_INSTANCE.into();
+        match Launch::from_request(Request::V3 { line, handoff }).unwrap() {
+            Launch::Create(c) => {
+                assert_eq!(c.office.office_id, "OFFICE2");
+                assert_eq!(c.instance.as_deref(), Some(OTHER_INSTANCE));
+                assert_eq!(c.owner_member_id.as_deref(), Some(OTHER_OWNER));
+            }
+            Launch::Start { office, .. } | Launch::Discard { office, .. } => {
+                assert_eq!(
+                    office,
+                    Some(OfficeIdentity {
+                        office_id: "OFFICE2".into(),
+                        instance_id: OTHER_INSTANCE.into(),
+                    })
+                );
+            }
         }
     }
 }
