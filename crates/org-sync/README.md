@@ -53,3 +53,27 @@ fencing, bootstrap, snapshot install, and version negotiation.
 At the crate level, excluding standard and third-party libraries, `org-sync` depends
 only on `org-sync-proto`, which has no outgoing workspace dependencies. Native adapters
 depend on the core contracts. SHA-256 is the protocol crate's sole production dependency.
+
+## Independent message replication
+
+Messages retain their native ID and original payload/fingerprint. They use a separate
+queue with no command-state dependency and no replication sequence. Native message
+counters are unchanged; Work streams own their separate per-origin ordering.
+
+A message queue is bound to the pinned organization and local office. The same validator
+checks its shape and binding on load and save. Native delivery and its dedup receipt
+share one writer attempt; an output becomes visible only after durable commit. An ACK
+lost after that commit is replayed from the retained receipt without enqueuing or applying
+again. A failed attempt leaves queue, clock, native delivery and receipts unchanged.
+
+Native adapters authorize recipients, fingerprints, peer roles and routes. The core checks
+the pinned organization, endpoint and highest authenticated session epoch before reading
+restore state or receipts. Restore and unsupported organization protocol levels fence every
+message operation. Payload limits derive from the encoded frame limit with base64 reserve;
+pending message count and bytes are bounded. Debug prints payload length rather than bytes.
+
+Local expiry retains its notice and identity; it does not establish remote non-delivery.
+A later authenticated delivered receipt can correct that notice atomically. Backward clocks
+cannot revive expired traffic. The test adapter injects individual read/write failures,
+commit failures and reopen; the guard matrix checks exact refusals and unchanged state.
+Real message-storage and framing adapters are separate slices.
