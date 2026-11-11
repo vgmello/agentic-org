@@ -12,5 +12,6 @@ export default defineConfig(({ command, mode, isPreview }) => ({
 		productionImportGuard({ mode: 'report' }),
 		...(command === 'serve' && mode === 'e2e' && !isPreview ? [testComposition()] : [])
 	],
+	build: { assetsInlineLimit: 0 },
 	test: { include: ['src/**/*.{test,spec}.{js,ts}'], environment: 'node' }
 }));
