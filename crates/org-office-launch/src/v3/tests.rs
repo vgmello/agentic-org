@@ -242,9 +242,26 @@ fn ready_for_secrets_has_its_wire_shape() {
         json!({"v": 2, "event": "ready_for_secrets"}),
         json!({"v": 3, "event": "ready"}),
         json!({"event": "ready_for_secrets"}),
+        json!({"v": 3, "event": "ready_for_secrets", "db_key": "01"}),
     ] {
         assert!(serde_json::from_value::<ReadyForSecrets>(bad).is_err());
     }
+}
+
+/// A transfer record carries exactly its fields: an extra key is refused, not dropped.
+#[test]
+fn transfer_records_refuse_unknown_fields() {
+    let revoked = json!({"type": "revoked", "session_ids": []});
+    serde_json::from_value::<TransferRecord>(revoked.clone()).unwrap();
+    let mut extra = revoked;
+    extra["fd"] = json!(1);
+    assert!(serde_json::from_value::<TransferRecord>(extra).is_err());
+    let channel =
+        json!({"type": "channel", "kind": "gateway", "office_id": "o", "channel_id": "c"});
+    serde_json::from_value::<TransferRecord>(channel.clone()).unwrap();
+    let mut extra = channel;
+    extra["grant_key"] = json!("secret");
+    assert!(serde_json::from_value::<TransferRecord>(extra).is_err());
 }
 
 const KEY_HEX: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";

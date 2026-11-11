@@ -403,6 +403,7 @@ impl Serialize for ReadyForSecrets {
 impl<'de> Deserialize<'de> for ReadyForSecrets {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Wire {
             v: u32,
             event: String,
@@ -595,7 +596,7 @@ pub enum ChannelKind {
 /// of another kind, or with another descriptor count, is fatal: the receiver closes the transfer
 /// socket (a worker exits and the host restarts it with a new key).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransferRecord {
     /// A new host-made channel to this office: one `SOCK_STREAM` descriptor.
     Channel {

@@ -89,6 +89,7 @@ pub struct GatewayReadyForSecrets {
 /// What the gateway reports about its Landlock domain. The host requires an ABI at or above its
 /// minimum and full enforcement, and kills the gateway otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LandlockStatus {
     /// `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`.
     pub abi: u32,

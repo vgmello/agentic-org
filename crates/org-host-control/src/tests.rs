@@ -775,4 +775,11 @@ fn gateway_lines_refuse_unknown_fields() {
     assert!(serde_json::from_value::<GatewayFirstLine>(first).is_err());
     assert!(serde_json::from_value::<GatewayReadyForSecrets>(ready).is_err());
     assert!(serde_json::from_value::<GatewayHandoff>(handoff).is_err());
+    // Nested: the Landlock report carries exactly its fields too.
+    let landlock = serde_json::json!({"v": 1, "event": "ready_for_secrets",
+        "landlock": {"abi": 3, "enforcement": "fully_enforced"}});
+    serde_json::from_value::<GatewayReadyForSecrets>(landlock.clone()).unwrap();
+    let mut extra = landlock;
+    extra["landlock"]["grant_key"] = serde_json::json!("secret");
+    assert!(serde_json::from_value::<GatewayReadyForSecrets>(extra).is_err());
 }

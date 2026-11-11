@@ -149,8 +149,9 @@ fn blocks(text: &str) -> Result<Vec<(&str, Der)>, InvalidPem> {
     Ok(found)
 }
 
-/// RFC 7468's label: printable ASCII other than `-`, with single hyphens or spaces between those
-/// characters. So it is never empty, and never holds a marker's five dashes.
+/// RFC 7468's label, stricter in one way: printable ASCII other than `-`, with single hyphens or
+/// spaces between those characters, and never empty (RFC 7468 allows an empty label; X-02 §6.2
+/// refuses it, since no TLS block has one). So it never holds a marker's five dashes.
 fn is_label(label: &str) -> bool {
     label.split([' ', '-']).all(|word| {
         !word.is_empty()
