@@ -11,6 +11,7 @@ pub mod body;
 mod csp;
 mod origin;
 pub mod path;
+pub mod service;
 mod static_ui;
 pub mod tls;
 pub mod transport;

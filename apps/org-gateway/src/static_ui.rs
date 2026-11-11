@@ -49,54 +49,44 @@ impl StaticUi {
     }
 
     pub fn serve<B>(&self, request: &Request<B>) -> Response<Full<Bytes>> {
-        self.serve_request(request, false)
-    }
-
-    /// The browser-test harness has the production static routes and an unavailable v1 API.
-    pub fn serve_with_unavailable_api<B>(&self, request: &Request<B>) -> Response<Full<Bytes>> {
-        self.serve_request(request, true)
-    }
-
-    fn serve_request<B>(
-        &self,
-        request: &Request<B>,
-        unavailable_api: bool,
-    ) -> Response<Full<Bytes>> {
-        let head = request.method() == Method::HEAD;
         let mut response = match RequestPath::parse(request.uri().path()) {
-            Err(_) => json_error(StatusCode::BAD_REQUEST, INVALID_PATH, head),
-            Ok(path)
-                if unavailable_api
-                    && matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") =>
-            {
-                json_error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE, head)
-            }
-            Ok(path)
-                if !matches!(*request.method(), Method::GET | Method::HEAD) || path.is_api() =>
-            {
-                json_error(StatusCode::NOT_FOUND, NOT_FOUND, head)
-            }
-            Ok(path) => {
-                let key = if path.segments().is_empty() {
-                    "index.html".to_owned()
-                } else {
-                    path.asset_key()
-                };
-                if let Some(bytes) = self.files.file(&key) {
-                    self.asset(&key, bytes, request.headers(), head)
-                } else if !path.is_app_asset() && is_navigation(request.headers()) {
-                    let entry = self
-                        .files
-                        .file("index.html")
-                        .expect("startup validated index.html");
-                    self.asset("index.html", entry, request.headers(), head)
-                } else {
-                    json_error(StatusCode::NOT_FOUND, NOT_FOUND, head)
-                }
-            }
+            Err(_) => json_error(
+                StatusCode::BAD_REQUEST,
+                INVALID_PATH,
+                request.method() == Method::HEAD,
+            ),
+            Ok(path) => self.serve_static(request.method(), request.headers(), &path),
         };
-        self.add_common_headers(request.headers(), response.headers_mut());
+        self.finish_response(request.headers(), &mut response);
         response
+    }
+
+    pub(crate) fn serve_static(
+        &self,
+        method: &Method,
+        headers: &HeaderMap,
+        path: &RequestPath,
+    ) -> Response<Full<Bytes>> {
+        let head = method == Method::HEAD;
+        if !matches!(*method, Method::GET | Method::HEAD) || path.is_api() {
+            return json_error(StatusCode::NOT_FOUND, NOT_FOUND, head);
+        }
+        let key = if path.segments().is_empty() {
+            "index.html".to_owned()
+        } else {
+            path.asset_key()
+        };
+        if let Some(bytes) = self.files.file(&key) {
+            self.asset(&key, bytes, headers, head)
+        } else if !path.is_app_asset() && is_navigation(headers) {
+            let entry = self
+                .files
+                .file("index.html")
+                .expect("startup validated index.html");
+            self.asset("index.html", entry, headers, head)
+        } else {
+            json_error(StatusCode::NOT_FOUND, NOT_FOUND, head)
+        }
     }
 
     fn asset(
@@ -132,7 +122,15 @@ impl StaticUi {
         response
     }
 
-    fn add_common_headers(&self, request: &HeaderMap, headers: &mut HeaderMap) {
+    pub(crate) fn finish_response(
+        &self,
+        request: &HeaderMap,
+        response: &mut Response<Full<Bytes>>,
+    ) {
+        let headers = response.headers_mut();
+        if !headers.contains_key("content-security-policy") {
+            headers.insert("content-security-policy", csp::non_html_policy());
+        }
         for (name, value) in [
             ("x-content-type-options", "nosniff"),
             ("referrer-policy", "same-origin"),
@@ -157,25 +155,20 @@ impl StaticUi {
 }
 
 const NOT_FOUND: &[u8] = br#"{"error":{"code":"not_found","message":"Not found."}}"#;
-const UNAVAILABLE: &[u8] = br#"{"error":{"code":"unavailable","message":"Service unavailable."}}"#;
 const INVALID_PATH: &[u8] =
     br#"{"error":{"code":"invalid_request","message":"Invalid request path."}}"#;
 
 fn json_error(status: StatusCode, body: &'static [u8], head: bool) -> Response<Full<Bytes>> {
-    let mut response = response(
+    response(
         status,
         Bytes::from_static(body),
         head,
         "application/json; charset=utf-8",
         "no-store",
-    );
-    response
-        .headers_mut()
-        .insert("content-security-policy", csp::non_html_policy());
-    response
+    )
 }
 
-fn response(
+pub(crate) fn response(
     status: StatusCode,
     bytes: Bytes,
     head: bool,

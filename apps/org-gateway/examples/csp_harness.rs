@@ -1,14 +1,14 @@
 //! Test-only loopback listener for the production UI build.
 
-use std::convert::Infallible;
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use org_gateway::assets::BuildFiles;
-use org_gateway::transport::{run_http, HttpLimits, ListenMode};
-use org_gateway::{ConfiguredOrigin, Hsts, StaticUi};
+use org_gateway::service::{run_gateway, ApiLimits, GatewayConfig, UnavailableApi};
+use org_gateway::transport::{HttpLimits, ListenMode};
+use org_gateway::{ConfiguredOrigin, Hsts};
 
 fn main() -> ExitCode {
     match run() {
@@ -31,23 +31,22 @@ fn run() -> io::Result<()> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     let origin = ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr()?))
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    let service = StaticUi::new(files, origin.clone(), Hsts::Off);
-    run_http(
+    run_gateway(
         listener,
-        ListenMode::HttpLoopback,
-        origin,
-        HttpLimits::default(),
+        GatewayConfig {
+            mode: ListenMode::HttpLoopback,
+            origin,
+            hsts: Hsts::Off,
+            http: HttpLimits::default(),
+            api: ApiLimits::default(),
+        },
+        files,
         move || {
-            println!("ready");
-            let _ = io::stdout().flush();
-            (
-                move |request| {
-                    std::future::ready(Ok::<_, Infallible>(
-                        service.serve_with_unavailable_api(&request),
-                    ))
-                },
-                std::future::pending(),
-            )
+            Ok((UnavailableApi, async {
+                println!("ready");
+                let _ = io::stdout().flush();
+                std::future::pending::<()>().await;
+            }))
         },
     )
 }

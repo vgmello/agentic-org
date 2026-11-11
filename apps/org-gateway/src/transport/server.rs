@@ -95,6 +95,21 @@ where
     F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
     S: Future<Output = ()>,
 {
+    try_run_http(listener, mode, origin, limits, || Ok(initialize()))
+}
+
+pub(crate) fn try_run_http<H, F, S>(
+    listener: TcpListener,
+    mode: ListenMode,
+    origin: ConfiguredOrigin,
+    limits: HttpLimits,
+    initialize: impl FnOnce() -> io::Result<(H, S)>,
+) -> io::Result<()>
+where
+    H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
+    F: Future<Output = Result<Response<Full<Bytes>>, Infallible>> + Send + 'static,
+    S: Future<Output = ()>,
+{
     limits.validate()?;
     let address = listener.local_addr()?;
     if matches!(mode, ListenMode::HttpLoopback) {
@@ -117,7 +132,7 @@ where
         .build()?;
     runtime.block_on(async move {
         let listener = tokio::net::TcpListener::from_std(listener)?;
-        let (handler, shutdown) = initialize();
+        let (handler, shutdown) = initialize()?;
         let handler = Arc::new(handler);
         let mut shutdown = pin!(shutdown);
         let capacity = Arc::new(Semaphore::new(limits.connections));
