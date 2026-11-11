@@ -7,7 +7,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 pub(super) fn decode(line: &[u8]) -> serde_json::Result<Request> {
-    serde_json::from_slice::<UniqueKeys>(line)?;
+    object::<UniqueKeys>(line)?;
     serde_json::from_slice(line)
 }
 
@@ -17,9 +17,25 @@ pub(super) fn salvage_id(line: &[u8]) -> Option<u64> {
         id: u64,
     }
     // Derived struct decoding refuses a second id, including an escaped spelling.
-    serde_json::from_slice::<Id>(line)
-        .ok()
-        .map(|request| request.id)
+    object::<Id>(line).ok().map(|request| request.id)
+}
+
+// Derived structs also accept sequences; framing and ID recovery require a whole object.
+fn object<'de, T: Deserialize<'de>>(line: &'de [u8]) -> serde_json::Result<T> {
+    struct Object<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for Object<T> {
+        type Value = T;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a JSON request object")
+        }
+        fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<T, M::Error> {
+            T::deserialize(de::value::MapAccessDeserializer::new(map))
+        }
+    }
+    let mut deserializer = serde_json::Deserializer::from_slice(line);
+    let value = deserializer.deserialize_map(Object(std::marker::PhantomData))?;
+    deserializer.end()?;
+    Ok(value)
 }
 
 struct UniqueKeys;
@@ -77,6 +93,23 @@ impl<'de> Visitor<'de> for UniqueKeys {
 #[cfg(test)]
 mod tests {
     use super::{decode, salvage_id};
+
+    #[test]
+    fn nonobject_frames_have_no_trustworthy_request_id() {
+        for line in [
+            r#"[7]"#,
+            r#"[7,"hello"]"#,
+            r#"[7,"hello",null,{}]"#,
+            "null",
+            "7",
+            "true",
+            r#""hello""#,
+            r#"{"id":7,"method":"hello"} {"id":8}"#,
+        ] {
+            assert!(decode(line.as_bytes()).is_err(), "{line}");
+            assert_eq!(salvage_id(line.as_bytes()), None, "{line}");
+        }
+    }
 
     #[test]
     fn only_one_unambiguous_top_level_id_can_be_salvaged() {

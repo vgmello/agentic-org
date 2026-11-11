@@ -421,6 +421,13 @@ fn preconditions_ambiguous_ids_use_zero_and_do_not_establish_hello() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
+    for frame in [r#"[7]"#, r#"[7,"hello",null,{}]"#] {
+        let response = client.raw(frame);
+        assert_eq!(response.id, org_proto::UNREADABLE_REQUEST_ID);
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+        );
+    }
     for fields in [
         r#""id":1,"id":2"#,
         r#""id":1,"\u0069d":1"#,
