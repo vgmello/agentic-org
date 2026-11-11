@@ -35,6 +35,11 @@ use crate::{time, ulid};
 
 mod operation;
 mod replication;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "work OrgView is wired by RPC slice C")
+)]
+pub(crate) mod work_view;
 pub(crate) use replication::{
     bind_replication, replication_checkpoint, replication_events_after, transact_replication,
     ReplicationBootstrap,

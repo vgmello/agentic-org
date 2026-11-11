@@ -88,6 +88,8 @@ fn clock_commits_noops_and_refusals_but_rolls_back_errors_and_survives_reopen() 
         .downcast_ref::<WorkCallError>()
         .is_none());
     assert_eq!(store.read(metadata::high_water).unwrap(), T0 + 30);
+    wall.set(0);
+    assert_eq!(outside.now_ms(), T0 + 30);
     drop(native);
     drop(store);
     let store = Arc::new(reopen(&root));
@@ -571,6 +573,7 @@ struct Oracle {
     db: Arc<Store>,
     mem: Arc<MemStore>,
     org: Arc<Mutex<MemOrg>>,
+    org_db: Arc<Store>,
     native: WorkService<Arc<OfficeWorkStore>>,
     reference: WorkService<Arc<MemStore>>,
     next: u128,
@@ -604,24 +607,31 @@ fn normalize_output(mut output: TxnOutput) -> TxnOutput {
 }
 
 impl Oracle {
-    fn new() -> Self {
+    fn new(real_source: bool) -> Self {
         let (root, store) = fixture();
         super::super::tests::initialize_origin(&store);
         let db = Arc::new(store);
-        let mut org = MemOrg::new("owner1")
+        let mut org = MemOrg::new(crate::store::org::work_view::tests::OWNER)
             .with_project("project1", "one", &[])
             .with_project("project2", "two", &[])
             .with_area("old-area", "project1", None, None);
-        org.position = Position { epoch: 3, seq: 11 };
+        let org_db = crate::store::org::work_view::tests::load(root.path(), &mut org);
         let mem = Arc::new(MemStore::new(org.clone()));
         let org = Arc::new(Mutex::new(org));
-        let native =
-            Arc::new(OfficeWorkStore::new(db.clone(), org.clone(), Arc::new(|| T0)).unwrap());
+        let source: Arc<dyn OrgSource> = if real_source {
+            Arc::new(crate::store::org::work_view::OrgDbSource::new(
+                org_db.clone(),
+            ))
+        } else {
+            org.clone()
+        };
+        let native = Arc::new(OfficeWorkStore::new(db.clone(), source, Arc::new(|| T0)).unwrap());
         let clock = native.clock();
         Self {
             _root: root,
             db,
             org,
+            org_db,
             mem: mem.clone(),
             native: WorkService::new(native, clock, "OFFICE1"),
             reference: WorkService::new(mem, TestClock::at(T0), "OFFICE1"),
@@ -645,7 +655,10 @@ impl Oracle {
         })
         .unwrap()
         .unwrap();
-        let out = self.command(Caller::app("owner1"), command.clone());
+        let out = self.command(
+            Caller::app(crate::store::org::work_view::tests::OWNER),
+            command.clone(),
+        );
         (command, out)
     }
     fn command(&self, caller: Caller, command: Command) -> TxnOutput {
@@ -724,7 +737,12 @@ impl Oracle {
 
 #[test]
 fn workservice_scripts_match_memory_for_tasks_bugs_checklists_replay_refusals_and_cascades() {
-    let mut w = Oracle::new();
+    for real_source in [false, true] {
+        run_workservice_script(Oracle::new(real_source));
+    }
+}
+
+fn run_workservice_script(mut w: Oracle) {
     let task = w.task("project1");
     let second = w.task("project2");
     let bug = w.bug();
@@ -735,7 +753,7 @@ fn workservice_scripts_match_memory_for_tasks_bugs_checklists_replay_refusals_an
         json!({"item_id":task,"expected_version":w.version(&task),"title":"updated task"}),
     );
     assert!(matches!(
-        w.command(Caller::app("owner1"), cmd),
+        w.command(Caller::app(crate::store::org::work_view::tests::OWNER), cmd),
         TxnOutput::Replayed(Ok(_))
     ));
     w.ok(
@@ -780,7 +798,10 @@ fn workservice_scripts_match_memory_for_tasks_bugs_checklists_replay_refusals_an
     assert!(matches!(out, TxnOutput::Refused(_)));
     assert!(w.mem.snapshot().results.contains_key(stored.change_id()));
     assert!(matches!(
-        w.command(Caller::app("owner1"), stored),
+        w.command(
+            Caller::app(crate::store::org::work_view::tests::OWNER),
+            stored
+        ),
         TxnOutput::Replayed(Err(_))
     ));
     let delete = Command::Delete(org_proto::work::WorkDeleteParams {
@@ -806,6 +827,7 @@ fn workservice_scripts_match_memory_for_tasks_bugs_checklists_replay_refusals_an
         .delete_area("old-area", "project1-general");
     w.mem
         .org_mut(|org| org.delete_area("old-area", "project1-general"));
+    w.org_db.run_sql_for_test("UPDATE areas SET body=json_set(body,'$.deleted',json('true'),'$.replaced_by','project1-general','$.version',2) WHERE id='old-area'");
     let expected = w.reference.reconcile_bugs().unwrap();
     let actual = w.native.reconcile_bugs().unwrap();
     assert_eq!(normalize_output(actual), normalize_output(expected));
@@ -1178,7 +1200,7 @@ fn stopped_writer_and_disconnected_job_reply_keep_the_workcall_storage_wrapper()
 #[test]
 fn request_fixture_create_update_delete_and_global_numbering_match_native_ports() {
     // Request commands belong to a later domain phase; exercise its existing stored shape.
-    let w = Oracle::new();
+    let w = Oracle::new(true);
     let (mut item, mut events) = task_fixture(90, false);
     item.kind = ItemKind::Request;
     item.project_id = None;
@@ -1410,29 +1432,19 @@ fn linked_sql_matches_typed_unknown_kind_for_every_json_shape() {
 
 #[test]
 fn sql_known_link_kind_constant_tracks_every_declared_serde_variant() {
-    // Discover the declared wire inventory too, so adding a future macro variant makes
-    // this fail until the SQL constant is updated; a hand-written test array would miss it.
-    let source = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../org-proto/src/work.rs"
-    ));
-    let body = source
-        .split_once("LinkKind {")
-        .unwrap()
-        .1
-        .split_once('}')
-        .unwrap()
-        .0;
-    let declared: Vec<Value> = body
-        .lines()
-        .filter_map(|line| {
-            line.split_once(" = ")
-                .map(|(_, wire)| serde_json::from_str(wire.trim().trim_end_matches(',')).unwrap())
-        })
-        .collect();
-    assert!(!declared.is_empty());
+    let declared = [
+        LinkKind::Fixes,
+        LinkKind::PartOf,
+        LinkKind::FromRequest,
+        LinkKind::ReportedFrom,
+        LinkKind::RelatesTo,
+        LinkKind::PaysBack,
+    ];
     let known: Vec<Value> = serde_json::from_str(LINK_KINDS).unwrap();
-    assert_eq!(known, declared);
+    assert_eq!(
+        known,
+        declared.map(|kind| serde_json::to_value(kind).unwrap())
+    );
     assert!(!known.contains(&json!("unknown")));
     for wire in known {
         let kind: LinkKind = serde_json::from_value(wire.clone()).unwrap();

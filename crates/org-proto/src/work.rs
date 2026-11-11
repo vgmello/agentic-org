@@ -1645,3 +1645,36 @@ write_call!(
         step_id: String,
     }
 );
+
+#[cfg(test)]
+mod link_kind_inventory_test {
+    use super::LinkKind;
+
+    #[test]
+    fn typed_link_kind_inventory_is_exhaustive() {
+        // This match is inside the defining crate: a new enum variant must get an index.
+        fn index(kind: LinkKind) -> usize {
+            match kind {
+                LinkKind::Fixes => 0,
+                LinkKind::PartOf => 1,
+                LinkKind::FromRequest => 2,
+                LinkKind::ReportedFrom => 3,
+                LinkKind::RelatesTo => 4,
+                LinkKind::PaysBack => 5,
+                LinkKind::Unknown => 6,
+            }
+        }
+        let kinds = [
+            LinkKind::Fixes,
+            LinkKind::PartOf,
+            LinkKind::FromRequest,
+            LinkKind::ReportedFrom,
+            LinkKind::RelatesTo,
+            LinkKind::PaysBack,
+            LinkKind::Unknown,
+        ];
+        for (i, kind) in kinds.into_iter().enumerate() {
+            assert_eq!(index(kind), i);
+        }
+    }
+}

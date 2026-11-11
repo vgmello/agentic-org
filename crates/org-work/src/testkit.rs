@@ -205,14 +205,20 @@ impl OrgView for MemOrg {
         Ok(self.projects.get(id).cloned())
     }
     fn project_by_key(&self, key: &str) -> Result<Option<Project>, StoreError> {
-        Ok(self.projects.values().find(|p| p.key == key).cloned())
+        Ok(self
+            .projects
+            .values()
+            .find(|p| !key.is_empty() && p.key == key)
+            .cloned())
     }
     fn project_teams(&self, project_id: &str) -> Result<Vec<String>, StoreError> {
-        Ok(self
+        let mut teams = self
             .project_teams
             .get(project_id)
             .cloned()
-            .unwrap_or_default())
+            .unwrap_or_default();
+        teams.sort();
+        Ok(teams)
     }
     fn area(&self, id: &str) -> Result<Option<Area>, StoreError> {
         Ok(self.areas.get(id).cloned())
@@ -583,5 +589,18 @@ impl TestClock {
 impl Clock for TestClock {
     fn now_ms(&self) -> u64 {
         self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod org_view_alignment_tests {
+    use super::*;
+
+    #[test]
+    fn empty_project_key_never_matches_and_project_teams_are_sorted() {
+        let org = MemOrg::new("owner").with_project("empty", "", &["z", "a"]);
+        assert_eq!(org.project_by_key("").unwrap(), None);
+        assert_eq!(org.project_teams("empty").unwrap(), ["a", "z"]);
+        assert_eq!(org.project_teams("missing").unwrap(), Vec::<String>::new());
     }
 }
