@@ -12,6 +12,42 @@ pub(crate) struct RequestAdmission {
     origin: ListenOrigin,
 }
 
+impl RequestAdmission {
+    pub(crate) fn new(origin: ListenOrigin) -> Self {
+        Self { origin }
+    }
+
+    /// DNS-rebinding defence for every request, before routing or body polling.
+    pub(crate) fn accepts_target_and_host(&self, request: &Parts) -> bool {
+        // An origin server admits origin-form only. Refuse absolute-form even
+        // when its authority agrees, avoiding HTTP's Host-override semantics.
+        if request.method == Method::CONNECT
+            || request.uri.authority().is_some()
+            || !request.uri.path().starts_with('/')
+        {
+            return false;
+        }
+        let mut hosts = request.headers.get_all(HOST).iter();
+        hosts.next().is_some_and(|host| {
+            // Only hostname/IPv6 hex letters can differ in case; the serialized
+            // port remains byte-exact, including omission of the default port.
+            host.as_bytes()
+                .eq_ignore_ascii_case(authority(&self.origin).as_bytes())
+        }) && hosts.next().is_none()
+    }
+
+    /// API reads without Origin still require the route's own proof check.
+    pub(crate) fn accepts_api_origin(&self, request: &Parts) -> bool {
+        let mut origins = request.headers.get_all(ORIGIN).iter();
+        match origins.next() {
+            None => matches!(request.method, Method::GET | Method::HEAD),
+            Some(origin) => {
+                origin.as_bytes() == self.origin.as_str().as_bytes() && origins.next().is_none()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,42 +157,6 @@ mod tests {
                     !admission.accepts_api_origin(&parts(method.clone(), "/api", &[], &origins)),
                     "{method} {origins:?}"
                 );
-            }
-        }
-    }
-}
-
-impl RequestAdmission {
-    pub(crate) fn new(origin: ListenOrigin) -> Self {
-        Self { origin }
-    }
-
-    /// DNS-rebinding defence for every request, before routing or body polling.
-    pub(crate) fn accepts_target_and_host(&self, request: &Parts) -> bool {
-        // An origin server admits origin-form only. Refuse absolute-form even
-        // when its authority agrees, avoiding HTTP's Host-override semantics.
-        if request.method == Method::CONNECT
-            || request.uri.authority().is_some()
-            || !request.uri.path().starts_with('/')
-        {
-            return false;
-        }
-        let mut hosts = request.headers.get_all(HOST).iter();
-        hosts.next().is_some_and(|host| {
-            // Only hostname/IPv6 hex letters can differ in case; the serialized
-            // port remains byte-exact, including omission of the default port.
-            host.as_bytes()
-                .eq_ignore_ascii_case(authority(&self.origin).as_bytes())
-        }) && hosts.next().is_none()
-    }
-
-    /// API reads without Origin still require the route's own proof check.
-    pub(crate) fn accepts_api_origin(&self, request: &Parts) -> bool {
-        let mut origins = request.headers.get_all(ORIGIN).iter();
-        match origins.next() {
-            None => matches!(request.method, Method::GET | Method::HEAD),
-            Some(origin) => {
-                origin.as_bytes() == self.origin.as_str().as_bytes() && origins.next().is_none()
             }
         }
     }
