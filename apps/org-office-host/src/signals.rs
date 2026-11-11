@@ -39,8 +39,9 @@ impl ShutdownSignals {
         }
         // Block BEFORE changing dispositions, before any threads start: restoring defaults
         // while unblocked would let a shutdown signal terminate the host without cleanup.
-        // Once each default is restored, it stays pending for wait(). Inherited SIG_IGN
-        // would otherwise let the OS discard it, even with the signal blocked.
+        // Ownership starts once BOTH resets complete; signals received before then are not
+        // promised. Subsequent signals stay pending for wait(). Inherited SIG_IGN would
+        // otherwise let the OS discard them, even with the signal blocked.
         // SIGHUP, SIGPIPE, SIGQUIT and all other dispositions remain as inherited.
         for signal in [libc::SIGTERM, libc::SIGINT] {
             default_disposition(signal)?;
