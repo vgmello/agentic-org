@@ -343,6 +343,11 @@ fn refusal_precedence_matches_frozen_contract() {
     );
     store.refused(&store.peer(), store.ack(1, 2, &[]), Refusal::Gap);
     store.authority.pruned_through = 1;
+    store.refused(
+        &store.peer(),
+        store.ack(1, 2, &[]),
+        Refusal::InvariantFailure,
+    );
     store.refused(&store.peer(), store.ack(0, 0, &[]), Refusal::Malformed);
     store.refused(
         &store.peer(),
