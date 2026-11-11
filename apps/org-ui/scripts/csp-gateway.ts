@@ -23,6 +23,7 @@ function execute(command: string, args: string[], cwd: string, env = process.env
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, { cwd, env, stdio: ['ignore', capture ? 'pipe' : 'inherit', 'inherit'] });
 		let output = '';
+		child.stdout?.setEncoding('utf8');
 		child.stdout?.on('data', (chunk) => { output += chunk; });
 		const interrupt = () => child.kill('SIGINT');
 		const terminate = () => child.kill('SIGTERM');
