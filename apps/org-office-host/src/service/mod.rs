@@ -2,6 +2,7 @@
 //! Legacy backend operations remain for the later session cut, behind the refusal gate.
 
 pub(crate) mod listener;
+mod request;
 
 use std::sync::{Arc, Weak};
 
@@ -130,10 +131,9 @@ impl Service {
 }
 
 impl Handler for Service {
-    /// Hello and the legacy app-only calls run on the reader thread: their checks need to know that
-    /// nothing arrived after the request (see `app_auth`).
-    fn inline(&self, request: &Request) -> bool {
-        request.is::<Hello>() || request.is::<OfficeAppToken>() || request.is::<OfficeRestart>()
+    /// Decide handshake refusals before a later pipelined request can change the state.
+    fn inline(&self, request: &Request, connection: &Connection) -> bool {
+        !connection.hello_completed() || request.is::<Hello>()
     }
 
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
@@ -147,6 +147,13 @@ impl Handler for Service {
             ));
             return;
         };
+        if !connection.hello_completed() && !request.is::<Hello>() {
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(ErrorCode::InvalidRequest, "hello must come first"),
+            ));
+            return;
+        }
         if !request.is::<Hello>() && !request.is::<InstanceStatus>() {
             connection.send_response(not_authorized(request.id));
             return;
@@ -169,6 +176,7 @@ impl Handler for Service {
             }
             let mut result = hello(instance_id);
             result.api_version = org_host_control::API_VERSION;
+            connection.complete_hello();
             connection.send_response(ok::<Hello>(request.id, &result));
         } else if request.is::<InstanceStatus>() {
             self.broadcast.snapshot(|| {
@@ -355,10 +363,10 @@ mod tests {
         Service::new(offices, broadcast, app, None)
     }
 
-    /// Hello and the app-only calls run inline (see the listener's
+    /// Hello and pre-hello requests run inline (see the listener's
     /// `an_inline_call_runs_before_anything_more_is_read`).
     #[test]
-    fn hello_and_the_app_only_calls_run_inline() {
+    fn hello_and_pre_hello_requests_run_inline() {
         let dir = tempfile::tempdir().unwrap();
         let service = service(dir.path());
         let id = "01AAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
@@ -373,10 +381,8 @@ mod tests {
             .unwrap(),
             Request::new::<OfficeRestart>(1, &OfficeRestartParams { office_id: id }).unwrap(),
         ];
-        for request in &inline {
-            assert!(service.inline(request), "{}", request.method);
-        }
         let threaded = [
+            Request::new::<InstanceStatus>(1, &Default::default()).unwrap(),
             Request::new::<OfficeList>(1, &Empty {}).unwrap(),
             Request::new::<OrganizationCreate>(
                 1,
@@ -386,8 +392,18 @@ mod tests {
             )
             .unwrap(),
         ];
-        for request in &threaded {
-            assert!(!service.inline(request), "{}", request.method);
+        let connection = Connection::for_test();
+        for request in inline.iter().chain(&threaded) {
+            assert!(service.inline(request, &connection), "{}", request.method);
+        }
+        connection.complete_hello();
+        for request in inline.iter().chain(&threaded) {
+            assert_eq!(
+                service.inline(request, &connection),
+                request.is::<Hello>(),
+                "{}",
+                request.method
+            );
         }
         service.offices.shutdown();
     }
