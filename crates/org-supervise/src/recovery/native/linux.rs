@@ -15,6 +15,8 @@ use super::{
 };
 
 const PROC_RECORD_LIMIT: usize = 64 * 1024;
+// status can include 65,536 decimal supplementary group IDs plus other fields.
+const PROC_STATUS_LIMIT: usize = 2 * 1024 * 1024;
 const MOUNTINFO_LIMIT: usize = 2 * 1024 * 1024;
 const ENVIRONMENT_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -431,7 +433,7 @@ impl Credentials {
 }
 
 fn credentials(directory: &File, deadline: Instant) -> io::Result<Credentials> {
-    let bytes = read_at(directory, c"status", PROC_RECORD_LIMIT, Some(deadline))?;
+    let bytes = read_at(directory, c"status", PROC_STATUS_LIMIT, Some(deadline))?;
     // A comm field can contain non-UTF-8 bytes. Parse only the exact numeric rows.
     let value = |key: &[u8]| -> io::Result<&str> {
         let mut rows = bytes
@@ -849,10 +851,23 @@ fn poll_until(
 
 #[cfg(test)]
 mod tests {
-    use super::{open_at, parse_stat, poll_until, validate_mountinfo, Stat};
+    use super::{credentials, open_at, parse_stat, poll_until, validate_mountinfo, Stat};
     use std::cell::Cell;
     use std::fs::File;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn proc_status_accepts_the_kernel_group_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let groups = "4294967294 ".repeat(65_536);
+        let status = format!(
+            "Uid:\t501 501 501 501\nGid:\t20 20 20 20\nGroups:\t{groups}\nCapPrm:\t0\nCapEff:\t0\n"
+        );
+        std::fs::write(root.path().join("status"), status).unwrap();
+        let directory = File::open(root.path()).unwrap();
+        let identity = credentials(&directory, Instant::now() + Duration::from_secs(5)).unwrap();
+        assert!(identity.safe(501));
+    }
 
     #[test]
     fn process_record_open_rejects_crossing_a_mount() {

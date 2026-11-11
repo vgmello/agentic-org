@@ -214,7 +214,8 @@ impl RecoveryProcesses for NativeRecovery {
             if pid <= 1 || pid as u32 == self.context.pid {
                 continue;
             }
-            let Some(before) = enumerated_info(pid as u32, self.context.uid, &mut rows)? else {
+            let Some(before) = enumerated_info(pid as u32, self.context.uid, &mut rows, bsd_info)?
+            else {
                 continue;
             };
             if before.pbi_ruid != self.context.uid {
@@ -228,7 +229,8 @@ impl RecoveryProcesses for NativeRecovery {
             };
             // SAFETY: getsid reads a session hint for a positive PID. Errors are not authority.
             let session = u32::try_from(unsafe { libc::getsid(pid) }).unwrap_or(0);
-            let Some(after) = enumerated_info(pid as u32, self.context.uid, &mut rows)? else {
+            let Some(after) = enumerated_info(pid as u32, self.context.uid, &mut rows, bsd_info)?
+            else {
                 continue;
             };
             if !same_identity(&before, &after) || after.pbi_ruid != self.context.uid {
@@ -457,7 +459,13 @@ enum SnapshotInfo {
 }
 
 fn snapshot_info(pid: u32) -> io::Result<SnapshotInfo> {
-    match bsd_info(pid) {
+    classify_snapshot_info(bsd_info(pid))
+}
+
+fn classify_snapshot_info(
+    result: io::Result<Option<libc::proc_bsdinfo>>,
+) -> io::Result<SnapshotInfo> {
+    match result {
         Ok(Some(info)) => Ok(SnapshotInfo::Observed(info)),
         Ok(None) => Ok(SnapshotInfo::Absent),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
@@ -471,8 +479,9 @@ fn enumerated_info(
     pid: u32,
     uid: u32,
     rows: &mut Vec<ProcessObservation>,
+    query: impl FnOnce(u32) -> io::Result<Option<libc::proc_bsdinfo>>,
 ) -> io::Result<Option<libc::proc_bsdinfo>> {
-    match snapshot_info(pid)? {
+    match classify_snapshot_info(query(pid))? {
         SnapshotInfo::Observed(info) => Ok(Some(info)),
         SnapshotInfo::Absent => Ok(None),
         SnapshotInfo::Inaccessible => {
@@ -653,6 +662,28 @@ mod tests {
     use crate::recovery::MarkEvidence;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn denied_libproc_query_preserves_an_unreadable_same_uid_row() {
+        let mut rows = Vec::new();
+        let observed = super::enumerated_info(54, 501, &mut rows, |pid| {
+            assert_eq!(pid, 54);
+            Err(std::io::Error::from_raw_os_error(libc::EPERM))
+        })
+        .unwrap();
+        assert!(observed.is_none());
+        let [row] = rows.as_slice() else {
+            panic!("expected one S0 row");
+        };
+        assert_eq!((row.pid, row.uid), (54, 501));
+        assert_eq!(row.mark, MarkEvidence::Unreadable);
+        assert!(row.identity.is_none() && row.parent.is_none());
+        assert!(!row.credentials_safe && !row.zombie);
+
+        let absent = super::enumerated_info(56, 501, &mut rows, |_| Ok(None)).unwrap();
+        assert!(absent.is_none());
+        assert_eq!(rows.len(), 1);
+    }
 
     #[test]
     fn debugger_parent_is_not_process_ancestry() {
