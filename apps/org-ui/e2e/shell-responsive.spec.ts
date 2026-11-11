@@ -84,6 +84,10 @@ for (const width of [639, 600, 320]) {
 		await expect(dialog).not.toBeVisible();
 		await expect(menu).toBeFocused();
 		await menu.click();
+		await dialog.getByRole('link', { name: 'Offices', exact: true }).click();
+		await expect(page.getByRole('heading', { level: 1, name: 'Offices', exact: true })).toBeFocused();
+		await expect(dialog).not.toBeVisible();
+		await menu.click();
 		await dialog.getByRole('link', { name: 'Settings', exact: true }).click();
 		await expect(page).toHaveURL(/\/settings$/);
 		await expect(dialog).not.toBeVisible();
@@ -91,6 +95,10 @@ for (const width of [639, 600, 320]) {
 		await expect(page.getByRole('main')).toHaveCount(1);
 		await expect(menu).toHaveAttribute('aria-expanded', 'false');
 		await shot(page, `shell-mobile-destination-${width}`);
+		await page.goBack();
+		await expect(page).toHaveURL(/\/offices$/);
+		await page.goBack();
+		await expect(page).toHaveURL(/\/agents$/);
 	});
 }
 
@@ -127,35 +135,49 @@ for (const dismissal of ['Escape', 'scrim', 'Close']) {
 		await expect(dialog).not.toBeVisible();
 		await expect(menu).toBeFocused();
 		await shot(page, `shell-menu-return-${dismissal.toLowerCase()}`);
+		await page.goBack();
+		await expect(page).toHaveURL(/\/agents$/);
 	});
 }
 
-test('BUG-59: browser Back closes Menu and focuses the destination heading', async ({ page }) => {
+test('BUG-59: browser Back dismisses Menu before leaving the page', async ({ page }) => {
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
-	await page.getByRole('button', { name: 'Menu', exact: true }).click();
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
 	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 	await expect(dialog).toBeVisible();
 	await page.goBack();
-	await expect(page).toHaveURL(/\/agents$/);
 	await expect(dialog).not.toBeVisible();
-	await expect(page.getByRole('heading', { level: 1, name: 'Agents', exact: true })).toBeFocused();
-	await shot(page, 'shell-menu-back-destination');
+	await expect(page).toHaveURL(/\/offices$/);
+	await expect(menu).toBeFocused();
+	await shot(page, 'shell-menu-back-stays-on-page');
+	await page.goBack();
+	await expect(page).toHaveURL(/\/agents$/);
 });
 
-test('BUG-59: Back from a same-page fragment closes Menu and focuses the heading', async ({ page }) => {
+test('BUG-59: Back dismisses Menu before traversing same-page fragment history', async ({ page }) => {
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
 	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
 	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
-	await page.getByRole('button', { name: 'Menu', exact: true }).click();
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
 	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 	await expect(dialog).toBeVisible();
 	await page.goBack();
-	await expect(page).toHaveURL(/\/offices$/);
 	await expect(dialog).not.toBeVisible();
-	await expect(page.getByRole('heading', { level: 1, name: 'Offices', exact: true })).toBeFocused();
+	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+	await expect(menu).toBeFocused();
 	await shot(page, 'shell-menu-back-fragment');
+	await menu.click();
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(dialog).not.toBeVisible();
+	await expect(menu).toBeFocused();
+	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+	await page.goBack();
+	await expect(page).toHaveURL(/\/offices$/);
 });
 
 test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
