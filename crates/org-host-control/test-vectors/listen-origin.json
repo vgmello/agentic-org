@@ -272,6 +272,16 @@
       "whatwg": null
     },
     {
+      "input": "http://:8080",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
       "input": "https://mac..local:8443",
       "result": "invalid_host",
       "whatwg": "https://mac..local:8443",
@@ -324,6 +334,11 @@
     },
     {
       "input": "https://[fe80::1%25en0]:8443",
+      "result": "invalid_host",
+      "whatwg": null
+    },
+    {
+      "input": "http://[fe80::1%25en0]",
       "result": "invalid_host",
       "whatwg": null
     },

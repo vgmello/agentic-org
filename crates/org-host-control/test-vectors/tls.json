@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "X-02 \u00a72, \u00a76.1-\u00a76.3 (rev 14). 'fetch': tls.fetch's tagged result, {ok:{mode:https,cert,key,origin,hsts}} | {ok:{mode:http_loopback,origin,hsts}} | {unavailable:ListenFailure}; 'expect' is the decoded form or 'refused'. Accepted rows serialize back to the same JSON. 'listen_failure' is ListenFailure alone (status, doctor and unavailable): {reason:origin_invalid} | {reason:hsts_invalid} | {reason:tls_name_mismatch,uncovered:[canonical origins]}. 'refusals': the tls.set/bootstrap refusals with their wire forms and whether each op journals them (only tls.set's tls_key_mismatch; no bootstrap refusal is ever stored). 'bad_refusals' don't decode. 'listen_config': the invalid-configuration rule on a stored listen configuration; 'result' is 'valid', 'origin_invalid' (with the OriginError code) or 'hsts_invalid', which the host reports as that ListenFailure and bootstrap and tls.set refuse with as that code. A missing origin or hsts has no default. 'bootstrap': bootstrap's HostOpResult, never 'accepted': completed {result:{session}} or rejected {refusal}, the refusal a TlsRefusal or {code:tls_required} / {code:tls_mismatch}; 'expect' is 'completed', the refusal's code, or 'refused'. No bootstrap refusal is ever stored.",
+  "comment": "X-02 \u00a72, \u00a76.1-\u00a76.3 (rev 14). 'fetch': tls.fetch's tagged result, {ok:{mode:https,cert,key,origin,hsts}} | {ok:{mode:http_loopback,origin,hsts}} | {unavailable:ListenFailure}; 'expect' is the decoded form or 'refused'. Accepted rows serialize back to the same JSON. 'listen_failure' is ListenFailure alone (status, doctor and unavailable): {reason:origin_invalid} | {reason:hsts_invalid} | {reason:tls_name_mismatch,uncovered:[canonical origins]}. 'refusals': the tls.set/bootstrap refusals with their wire forms and whether each op journals them (only tls.set's tls_key_mismatch; no bootstrap refusal is ever stored). 'bad_refusals' don't decode. 'listen_config': the invalid-configuration rule on a stored listen configuration; 'result' is 'valid', 'origin_invalid' (with the OriginError code) or 'hsts_invalid', which the host reports as that ListenFailure and bootstrap and tls.set refuse with as that code. A missing origin or hsts has no default. 'bootstrap': bootstrap's HostOpResult, never 'accepted': completed {result:{session}} or rejected {refusal}, the refusal a TlsRefusal or {code:tls_required} / {code:tls_mismatch} / {code:already_bootstrapped} / {code:bootstrap_finished}; 'expect' is 'completed', the refusal's code, or 'refused'. No bootstrap refusal is ever stored. The host decides in this order: bootstrap_finished; on a non-empty registry, the same operation_id replays (the password checked as a sign-in; another pair is tls_mismatch) and any other is already_bootstrapped; on an empty registry, origin_invalid, hsts_invalid, tls_required, then tls.set's order (tls_key_mismatch, tls_not_valid, tls_name_mismatch).",
   "fetch": [
     {
       "name": "https serves the stored pair with the snapshot's origin and hsts",
@@ -655,6 +655,26 @@
         }
       },
       "expect": "tls_mismatch"
+    },
+    {
+      "name": "already_bootstrapped: a different operation_id on a non-empty registry, or a registry setup has no record of",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "already_bootstrapped"
+        }
+      },
+      "expect": "already_bootstrapped"
+    },
+    {
+      "name": "bootstrap_finished: the registry records that bootstrap has finished, so setup goes on to step 5",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "bootstrap_finished"
+        }
+      },
+      "expect": "bootstrap_finished"
     },
     {
       "name": "tls_name_mismatch: the pair doesn't cover the configured origin",

@@ -553,7 +553,9 @@ impl Call for AccountResetPassword {
 /// `account.create` (`host.sock`; admin, the signed `agentic-org` peer and OS user presence on
 /// macOS; journaled): add an account. `admin: false` with `owner_of` makes an owner without the
 /// create right (dogfood 1.6, SRV-24). The actor is always the session, never a param. Logins are
-/// normalized (NFC, case-folded) and unique.
+/// normalized (NFC, case-folded) and unique. Its fingerprint leaves out `password`; a replay whose
+/// password doesn't match the row's create-time verifier is `operation_reused`
+/// ([`crate::journal`]).
 pub struct AccountCreate;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -635,15 +637,21 @@ impl Call for Subscribe {
 /// `bootstrap` (bootstrap-mode host only, on its connection to setup's listener): create the
 /// registry and the first account, and answer with a session for it. The host stores
 /// `operation_id` and `hq_operation_id`; the same `operation_id` on a non-empty registry replays
-/// (a fresh session, after the password is checked), and a different one aborts. Under `https` a
-/// first bootstrap needs `tls`; a replay may omit it and compares a given pair by fingerprint.
+/// with a fresh session, and a different one is refused with `already_bootstrapped`. Under
+/// `https` a first bootstrap needs `tls`; a replay may omit it and compares a given pair by
+/// fingerprint.
+///
+/// **A replay checks the password as a sign-in** (X-02 §6.2 step 3, §6.3): never against a
+/// fingerprint, which holds no secret. A wrong password is the plain error `not_authorized`, and
+/// another `login` changes the fingerprint, so it is `operation_reused`; that lets setup tell a
+/// typo from a different login.
 ///
 /// Its result is a [`HostOpResult`] that is **never `accepted`**: `completed` with
-/// [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`]. The host checks the stored
-/// listen configuration with or without `tls` (`origin_invalid`, `hsts_invalid`), and a first
-/// `tls` gets `tls.set`'s checks in `tls.set`'s order. It runs every check before it creates the
-/// registry, so **no bootstrap refusal is ever stored**: a re-run with the same `operation_id`
-/// is a first bootstrap.
+/// [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order that type states.
+/// On an empty registry the host checks the stored listen configuration with or without `tls`
+/// (`origin_invalid`, `hsts_invalid`), and a first `tls` gets `tls.set`'s checks in `tls.set`'s
+/// order, all before it creates the registry. **No bootstrap refusal is ever stored**: a re-run
+/// with the same `operation_id` after a refusal on an empty registry is a first bootstrap.
 pub struct Bootstrap;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -677,8 +685,23 @@ impl Call for Bootstrap {
 }
 
 /// Why `bootstrap` refused (X-02 §6.3, "Result shapes fixed by move 1"): a [`TlsRefusal`], or
-/// one of bootstrap's own two, `{"code": "tls_required"}` and `{"code": "tls_mismatch"}`. None is
-/// ever stored ([`BootstrapRefusal::is_stored`]).
+/// one of bootstrap's own four, `{"code": "tls_required"}`, `{"code": "tls_mismatch"}`,
+/// `{"code": "already_bootstrapped"}` and `{"code": "bootstrap_finished"}`. None is ever stored
+/// ([`BootstrapRefusal::is_stored`]).
+///
+/// **The host decides in this order**, and answers the first that applies:
+/// 1. the registry records that bootstrap has finished: [`BootstrapRefusal::BootstrapFinished`],
+///    whatever the `operation_id`;
+/// 2. on a non-empty registry, the same `operation_id` replays (the password checked as a
+///    sign-in, so a wrong one is the plain error `not_authorized`; another `login` changes the
+///    fingerprint, so it is the plain error `operation_reused`; a pair other than the stored one
+///    is [`BootstrapRefusal::TlsMismatch`]), and any other `operation_id` is
+///    [`BootstrapRefusal::AlreadyBootstrapped`]. Bootstrap's fingerprint fields are move 2b's;
+///    replays must also match the stored `hq_operation_id` (X-02 §6.2);
+/// 3. on an empty registry: the stored `origin` ([`TlsRefusal::OriginInvalid`]; a missing listen
+///    configuration is one), then `hsts` ([`TlsRefusal::HstsInvalid`]), then
+///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (key match,
+///    validity, coverage). Every refusal here but `tls_required` is a [`BootstrapRefusal::Tls`].
 ///
 /// It is one flat object tagged by `code`, like [`TlsRefusal`]. A code neither type knows decodes
 /// as `Tls(TlsRefusal::Unknown)`; it is never sent.
@@ -690,17 +713,29 @@ pub enum BootstrapRefusal {
     /// fingerprint). Setup tells the operator to re-run `setup --resume` with the original pair,
     /// or without `tls` and then `agentic-org tls renew`.
     TlsMismatch,
+    /// `{"code": "already_bootstrapped"}`: a different `operation_id` on a non-empty registry, or
+    /// a registry setup has no record of. Setup aborts and tells the operator to resume by signing
+    /// in (`agentic-org setup --resume`) or to repair or uninstall.
+    AlreadyBootstrapped,
+    /// `{"code": "bootstrap_finished"}`: the registry records that bootstrap has finished (setup's
+    /// `exit` followed the HQ link), so bootstrap mode is refused. A distinct result, not an
+    /// abort: setup goes on to start the service host (X-02 §6.2 step 5).
+    BootstrapFinished,
     /// The listen configuration or the pair failed one of `tls.set`'s checks.
     Tls(TlsRefusal),
 }
 
 impl BootstrapRefusal {
-    /// Always `false`: the host runs every bootstrap check before it creates the registry, so a
-    /// refused bootstrap leaves no record ([`TlsRefusal::is_stored`] with
-    /// [`TlsInstallOp::Bootstrap`]).
+    /// Always `false`. On an empty registry the host runs every check before it creates the
+    /// registry, so a refused bootstrap leaves no record ([`TlsRefusal::is_stored`] with
+    /// [`TlsInstallOp::Bootstrap`]); on a non-empty one, `tls_mismatch`, `already_bootstrapped`
+    /// and `bootstrap_finished` answer the request without journaling it.
     pub fn is_stored(&self) -> bool {
         match self {
-            BootstrapRefusal::TlsRequired | BootstrapRefusal::TlsMismatch => false,
+            BootstrapRefusal::TlsRequired
+            | BootstrapRefusal::TlsMismatch
+            | BootstrapRefusal::AlreadyBootstrapped
+            | BootstrapRefusal::BootstrapFinished => false,
             BootstrapRefusal::Tls(refusal) => refusal.is_stored(TlsInstallOp::Bootstrap),
         }
     }
@@ -712,6 +747,8 @@ impl BootstrapRefusal {
 enum BootstrapOwnRefusal {
     TlsRequired,
     TlsMismatch,
+    AlreadyBootstrapped,
+    BootstrapFinished,
 }
 
 /// Bootstrap's own codes first: [`TlsRefusal`] would take any other code as its `Unknown`.
@@ -727,6 +764,12 @@ impl Serialize for BootstrapRefusal {
         match self {
             BootstrapRefusal::TlsRequired => BootstrapOwnRefusal::TlsRequired.serialize(s),
             BootstrapRefusal::TlsMismatch => BootstrapOwnRefusal::TlsMismatch.serialize(s),
+            BootstrapRefusal::AlreadyBootstrapped => {
+                BootstrapOwnRefusal::AlreadyBootstrapped.serialize(s)
+            }
+            BootstrapRefusal::BootstrapFinished => {
+                BootstrapOwnRefusal::BootstrapFinished.serialize(s)
+            }
             BootstrapRefusal::Tls(refusal) => refusal.serialize(s),
         }
     }
@@ -740,6 +783,12 @@ impl<'de> Deserialize<'de> for BootstrapRefusal {
             }
             BootstrapRefusalWire::Own(BootstrapOwnRefusal::TlsMismatch) => {
                 BootstrapRefusal::TlsMismatch
+            }
+            BootstrapRefusalWire::Own(BootstrapOwnRefusal::AlreadyBootstrapped) => {
+                BootstrapRefusal::AlreadyBootstrapped
+            }
+            BootstrapRefusalWire::Own(BootstrapOwnRefusal::BootstrapFinished) => {
+                BootstrapRefusal::BootstrapFinished
             }
             BootstrapRefusalWire::Tls(refusal) => BootstrapRefusal::Tls(refusal),
         })

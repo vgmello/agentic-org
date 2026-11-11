@@ -293,6 +293,7 @@ fn listen_config_vectors() {
 #[test]
 fn bootstrap_result_vectors() {
     let doc = doc(include_str!("../../test-vectors/tls.json"));
+    let mut seen = Vec::new();
     for row in rows(&doc, "bootstrap") {
         let name = text(&row["name"]);
         let decoded =
@@ -323,10 +324,31 @@ fn bootstrap_result_vectors() {
                 "{name}"
             );
         }
+        seen.push(got);
+    }
+    // A vector per refusal (X-02 §6.3), bootstrap's own four and the TlsRefusals alike.
+    for code in [
+        "completed",
+        "tls_required",
+        "tls_mismatch",
+        "already_bootstrapped",
+        "bootstrap_finished",
+        "tls_name_mismatch",
+        "tls_key_mismatch",
+        "tls_not_valid",
+        "origin_invalid",
+        "hsts_invalid",
+    ] {
+        assert!(seen.iter().any(|got| got == code), "no vector for {code}");
     }
     for (refusal, code) in [
         (BootstrapRefusal::TlsRequired, "tls_required"),
         (BootstrapRefusal::TlsMismatch, "tls_mismatch"),
+        (
+            BootstrapRefusal::AlreadyBootstrapped,
+            "already_bootstrapped",
+        ),
+        (BootstrapRefusal::BootstrapFinished, "bootstrap_finished"),
         (
             BootstrapRefusal::Tls(TlsRefusal::TlsKeyMismatch),
             "tls_key_mismatch",

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "X-02 §6.3: the host's op journal compares a request with the stored op by fingerprint (SHA-256 of method || 0x00 || the params without session and operation_id) and by account. Same operation_id, fingerprint and account: replay. Same operation_id with another fingerprint or account: operation_reused. fingerprint_input is the exact bytes hashed, as UTF-8. A secret (account.create's password) is never part of the fingerprint.",
+  "comment": "X-02 §6.3: the host's op journal compares a request with the stored op by fingerprint (SHA-256 of method || 0x00 || the params without session and operation_id) and by account. Same operation_id, fingerprint and account: replay. Same operation_id with another fingerprint or account: operation_reused. fingerprint_input is the exact bytes hashed, as UTF-8. A secret (account.create's password) is never part of the fingerprint. account.create's row also keeps a create-time verifier of its password (HMAC-SHA256 under a host-held journal key, computed by the host in move 2b); 'password_verifier' says whether the retry's password matches it, and a mismatch is operation_reused even when the fingerprint and account match.",
   "cases": [
     {
       "name": "the same op after a new sign-in by the same account replays",
@@ -91,7 +91,36 @@
       "expect": "replay"
     },
     {
-      "name": "an account create retried with another password is the same op, and the password isn't fingerprinted",
+      "name": "an account create retried after a new sign-in with the same password matches the verifier: replay",
+      "method": "account.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "first-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G01"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-two",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "first-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G01"
+        }
+      },
+      "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
+      "password_verifier": "match",
+      "expect": "replay"
+    },
+    {
+      "name": "an account create retried with another password has the same fingerprint (the password isn't fingerprinted) but fails the create-time verifier: reused",
       "method": "account.create",
       "stored": {
         "account": "01M72N8MG00000000000000A01",
@@ -116,7 +145,8 @@
         }
       },
       "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
-      "expect": "replay"
+      "password_verifier": "mismatch",
+      "expect": "operation_reused"
     },
     {
       "name": "an account create for another organization is reused",
@@ -144,6 +174,7 @@
         }
       },
       "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
+      "password_verifier": "match",
       "expect": "operation_reused"
     }
   ]

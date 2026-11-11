@@ -19,8 +19,12 @@
 //! holds no organization data and parses no HTTP.
 //!
 //! **Secrets** (§6.5) decode straight into secret newtypes ([`Password`], [`SessionHandle`],
-//! [`TlsPrivateKey`], [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no `Clone`, zeroed on
-//! drop. Responses carrying them are written through the host's secret-line path.
+//! [`TlsPrivateKey`], [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no
+//! `Clone`, zeroed on drop. Responses carrying them are written through the host's secret-line
+//! path. Until they decode, a request's secrets sit in `org-proto`'s envelope as raw JSON: its
+//! `params` until `Request::params` decodes them, and (the exception §6.5 records) a grant MAC in
+//! its `principal` until `Request::principal` does. That JSON is never logged: the envelope's
+//! `Debug` elides both.
 //!
 //! **The listen configuration** ([`listen`], X-02 rev 14): the browser-facing origin
 //! ([`listen::ListenOrigin`], the one implementation that parses, checks and serialises it), the
@@ -30,8 +34,7 @@
 //! This crate holds types and pure functions only. Not here yet, because X-02 leaves their params
 //! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the instance status
 //! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
-//! event payloads, and the host-only results and refusals (`needs_local_session`, bootstrap's
-//! "already finished").
+//! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`; this crate doesn't
 //! re-export it (X-02 §5.2 says it would), so that its only dependencies stay `org-proto` and
 //! serde (§11).

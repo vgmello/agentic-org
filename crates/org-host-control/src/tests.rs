@@ -267,7 +267,8 @@ fn journaled<P: serde::de::DeserializeOwned + Journaled>(
 }
 
 /// X-02 §6.3: the same op after a new sign-in by the same account replays; another account or
-/// other params is `operation_reused`.
+/// other params is `operation_reused`, and so is an `account.create` whose password doesn't match
+/// the row's create-time verifier (the host's HMAC, which `password_verifier` stands for).
 #[test]
 fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
     let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
@@ -296,7 +297,29 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         );
         assert!(!text.contains("password"), "{name}: {text}");
         let same_account = case["stored"]["account"] == case["retry"]["account"];
-        let outcome = if stored == retry && same_account {
+        // Only account.create carries a password, and its rows say whether it matches.
+        let verifier_matches = match case.get("password_verifier") {
+            None => {
+                assert_ne!(method, "account.create", "{name}: no password_verifier");
+                true
+            }
+            Some(v) => {
+                assert_eq!(method, "account.create", "{name}");
+                let want = v == "match";
+                assert!(want || v == "mismatch", "{name}: {v}");
+                // The password never reaches the fingerprint, so the verifier is what tells two
+                // passwords apart.
+                let same_password =
+                    case["stored"]["params"]["password"] == case["retry"]["params"]["password"];
+                assert_eq!(want, same_password, "{name}");
+                if !want {
+                    // Only the password differs, and the fingerprint doesn't see it.
+                    assert_eq!(stored, retry, "{name}");
+                }
+                want
+            }
+        };
+        let outcome = if stored == retry && same_account && verifier_matches {
             "replay"
         } else {
             "operation_reused"
