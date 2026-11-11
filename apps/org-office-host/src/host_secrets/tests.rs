@@ -7,10 +7,11 @@ thread_local! { pub(super) static WIPES: std::cell::Cell<usize> = const { std::c
 struct Memory(Mutex<BTreeMap<Name, Value>>);
 impl HostSecrets for Memory {
     fn put(&self, n: &Name, v: &Value) -> Result<(), Error> {
-        self.0
-            .lock()
-            .unwrap()
-            .insert(n.clone(), Value::new(v.expose().to_vec())?);
+        let mut values = self.0.lock().unwrap();
+        if n.as_str().starts_with("tls.") && values.contains_key(n) {
+            return Ok(());
+        }
+        values.insert(n.clone(), Value::new(v.expose().to_vec())?);
         Ok(())
     }
     fn load(&self, n: &Name) -> Result<Option<Value>, Error> {
@@ -691,5 +692,309 @@ mod development {
             .args(["--exact", "host_secrets::tests::development::restrictive_umask_cannot_publish_an_unreadable_replacement", "--nocapture"])
             .env(MARKER, "1"));
         assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
+    fn tls_native_publish_collision_and_error_preserve_state_and_clean_temps() {
+        for mode in ["existing", "symlink", "missing-temporary"] {
+            let f = Fixture::new();
+            let store = f.open(A).unwrap();
+            let raw = format!("tls.{}", "a".repeat(64));
+            let n = Name::parse(&raw).unwrap();
+            let other = f.base.join("untouched");
+            write(&other, b"outside");
+            let target = other.clone();
+            super::PUBLISH_HOOK.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move |dir| {
+                    let leaf = dir.join(&raw);
+                    match mode {
+                        "existing" => write(&leaf, b"raced first"),
+                        "symlink" => symlink(&target, &leaf).unwrap(),
+                        _ => {
+                            for entry in fs::read_dir(dir).unwrap() {
+                                let entry = entry.unwrap();
+                                if entry.file_name().to_str().unwrap().starts_with(".put.") {
+                                    fs::remove_file(entry.path()).unwrap();
+                                }
+                            }
+                        }
+                    }
+                }))
+            });
+            let result = store.put(&n, &Value::new(b"new".to_vec()).unwrap());
+            match mode {
+                "existing" => {
+                    result.unwrap();
+                    assert_eq!(store.load(&n).unwrap().unwrap().expose(), b"raced first");
+                }
+                "symlink" => {
+                    assert!(result.is_err());
+                    assert!(fs::symlink_metadata(f.dir(A).join(n.as_str()))
+                        .unwrap()
+                        .file_type()
+                        .is_symlink());
+                }
+                _ => {
+                    assert_eq!(result, Err(Error::Io(std::io::ErrorKind::NotFound)));
+                    assert!(store.load(&n).unwrap().is_none());
+                }
+            }
+            assert_eq!(fs::read(&other).unwrap(), b"outside");
+            assert!(fs::read_dir(f.dir(A)).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".put.")));
+        }
+    }
+
+    #[test]
+    fn tls_replacement_preserves_first_bytes_and_reopens() {
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        let name = Name::parse(&format!("tls.{}", "a".repeat(64))).unwrap();
+        store
+            .put(&name, &Value::new(b"first".to_vec()).unwrap())
+            .unwrap();
+        store
+            .put(&name, &Value::new(b"second".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(store.load(&name).unwrap().unwrap().expose(), b"first");
+        drop(store);
+        let store = f.open(A).unwrap();
+        store
+            .put(&name, &Value::new(b"third".to_vec()).unwrap())
+            .unwrap();
+        assert_eq!(store.load(&name).unwrap().unwrap().expose(), b"first");
+        assert_eq!(store.list().unwrap(), vec![name]);
+    }
+}
+
+const HOST_INSTANCE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+const HOST_GROUP: &str = "TEAMID1234.org.agentic.host";
+fn signing() -> crate::code_signing::Signing {
+    crate::code_signing::Signing {
+        flags: Some(crate::code_signing::HARDENED_RUNTIME),
+        entitlements: Some(vec![]),
+        keychain_access_groups: Some(vec![HOST_GROUP.to_owned()]),
+    }
+}
+fn selection_error(
+    result: Result<std::sync::Arc<dyn HostSecrets>, SelectionError>,
+) -> SelectionError {
+    match result {
+        Err(error) => error,
+        Ok(_) => panic!("selection unexpectedly accepted"),
+    }
+}
+#[test]
+fn release_selection_validates_instance_then_group_before_signing() {
+    for instance in [
+        "",
+        "../bad",
+        "01aaaaaaaaaaaaaaaaaaaaaaaa",
+        "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    ] {
+        assert_eq!(
+            selection_error(release_store(None, instance, || panic!(
+                "invalid identity must not inspect signing"
+            ))),
+            SelectionError::InvalidInstance
+        );
+        assert_eq!(
+            selection_error(store_for(
+                None,
+                std::path::Path::new("/"),
+                instance,
+                || panic!("invalid identity must not inspect signing")
+            )),
+            SelectionError::InvalidInstance
+        );
+    }
+    for group in [None, Some(""), Some(" "), Some("\t\n")] {
+        assert_eq!(
+            selection_error(release_store(group, HOST_INSTANCE, || panic!(
+                "missing group must not inspect signing"
+            ))),
+            SelectionError::NoGroup
+        );
+    }
+    assert_eq!(
+        selection_error(release_store(Some(HOST_GROUP), HOST_INSTANCE, || None)),
+        SelectionError::NotHardened
+    );
+}
+#[test]
+fn release_selection_exact_entitlement_precedes_hardening() {
+    for groups in [
+        None,
+        Some(vec![]),
+        Some(vec![HOST_GROUP.to_lowercase()]),
+        Some(vec![format!("{HOST_GROUP}.suffix")]),
+    ] {
+        let mut signature = signing();
+        signature.keychain_access_groups = groups;
+        signature.flags = None;
+        assert_eq!(
+            selection_error(release_store(Some(HOST_GROUP), HOST_INSTANCE, || Some(
+                signature
+            ))),
+            SelectionError::NotEntitled
+        );
+    }
+    assert_eq!(
+        selection_error(release_store(
+            Some(&format!(" {HOST_GROUP} ")),
+            HOST_INSTANCE,
+            || Some(signing())
+        )),
+        SelectionError::NotEntitled
+    );
+    for flags in [None, Some(0), Some(!crate::code_signing::HARDENED_RUNTIME)] {
+        let mut signature = signing();
+        signature.flags = flags;
+        assert_eq!(
+            selection_error(release_store(Some(HOST_GROUP), HOST_INSTANCE, || Some(
+                signature
+            ))),
+            SelectionError::NotHardened
+        );
+    }
+    for entitlement in crate::code_signing::REJECTED_ENTITLEMENTS {
+        for rejected_value in [None, Some(true)] {
+            let mut signature = signing();
+            signature.entitlements = Some(vec![(entitlement.to_owned(), rejected_value)]);
+            assert_eq!(
+                selection_error(release_store(Some(HOST_GROUP), HOST_INSTANCE, || Some(
+                    signature
+                ))),
+                SelectionError::NotHardened
+            );
+        }
+    }
+}
+#[test]
+fn release_selection_constructs_only_an_eligible_platform_backend_without_io() {
+    for entitlements in [
+        None,
+        Some(vec![]),
+        Some(
+            crate::code_signing::REJECTED_ENTITLEMENTS
+                .iter()
+                .map(|key| ((*key).to_owned(), Some(false)))
+                .collect(),
+        ),
+    ] {
+        let mut signature = signing();
+        signature.entitlements = entitlements;
+        signature.flags = Some(crate::code_signing::HARDENED_RUNTIME | 1);
+        signature.keychain_access_groups = Some(vec!["unrelated".into(), HOST_GROUP.into()]);
+        let calls = std::cell::Cell::new(0);
+        let result = release_store(Some(HOST_GROUP), HOST_INSTANCE, || {
+            calls.set(calls.get() + 1);
+            Some(signature)
+        });
+        assert_eq!(calls.get(), 1);
+        #[cfg(target_os = "macos")]
+        assert!(result.is_ok()); // Construction does not call SecItem* or create any item.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(selection_error(result), SelectionError::Unsupported);
+    }
+}
+#[cfg(target_os = "macos")]
+#[test]
+fn actual_unsigned_binary_fails_release_selection_before_keychain_io() {
+    let signature = crate::code_signing::own_signing();
+    assert!(
+        !signature.as_ref().is_some_and(|s| s
+            .keychain_access_groups
+            .as_ref()
+            .is_some_and(|groups| groups.iter().any(|group| group == HOST_GROUP))
+            && crate::code_signing::hardened_and_clean(s)),
+        "this probe is intended for an unsigned test binary"
+    );
+    let error = selection_error(release_store(Some(HOST_GROUP), HOST_INSTANCE, || signature));
+    assert!(matches!(
+        error,
+        SelectionError::NotHardened | SelectionError::NotEntitled
+    ));
+}
+#[cfg(debug_assertions)]
+#[test]
+fn debug_factory_requires_safe_existing_base_and_never_probes_signing() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let (base, home) = (root.join("base"), root.join("home"));
+    for dir in [&base, &home] {
+        std::fs::create_dir(dir).unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let store = store_for(Some(&base), &home, HOST_INSTANCE, || {
+        panic!("debug must never sign")
+    })
+    .unwrap();
+    let n = Name::parse("registry").unwrap();
+    store
+        .put(&n, &Value::new(b"dev only".to_vec()).unwrap())
+        .unwrap();
+    assert_eq!(store.load(&n).unwrap().unwrap().expose(), b"dev only");
+    assert_eq!(
+        selection_error(store_for(None, &home, HOST_INSTANCE, || panic!(
+            "debug must never sign"
+        ))),
+        SelectionError::NoDevBase
+    );
+    assert_eq!(
+        selection_error(store_for(Some(&home), &home, HOST_INSTANCE, || panic!(
+            "debug must never sign"
+        ))),
+        SelectionError::Storage(Error::Unsafe)
+    );
+    assert_eq!(
+        selection_error(store_for(
+            Some(&root.join("missing")),
+            &home,
+            HOST_INSTANCE,
+            || panic!("debug must never sign")
+        )),
+        SelectionError::Storage(Error::Io(std::io::ErrorKind::NotFound))
+    );
+}
+#[cfg(not(debug_assertions))]
+#[test]
+fn release_factory_ignores_dev_base_and_uses_only_compiled_group() {
+    let group_present =
+        option_env!("ORG_HOST_KEYCHAIN_GROUP").is_some_and(|g| !g.trim().is_empty());
+    let calls = std::cell::Cell::new(0);
+    let error = selection_error(store_for(
+        Some(std::path::Path::new("/never-created-host-secret-test")),
+        std::path::Path::new("/"),
+        HOST_INSTANCE,
+        || {
+            calls.set(calls.get() + 1);
+            None
+        },
+    ));
+    assert_eq!(calls.get(), usize::from(group_present));
+    assert_eq!(
+        error,
+        if group_present {
+            SelectionError::NotHardened
+        } else {
+            SelectionError::NoGroup
+        }
+    );
+}
+
+#[cfg(debug_assertions)]
+type PublishHook = Box<dyn FnOnce(&std::path::Path)>;
+#[cfg(debug_assertions)]
+thread_local! { static PUBLISH_HOOK: std::cell::RefCell<Option<PublishHook>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(debug_assertions)]
+pub(super) fn before_publish(path: &std::path::Path) {
+    let hook = PUBLISH_HOOK.with(|hook| hook.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook(path);
     }
 }
