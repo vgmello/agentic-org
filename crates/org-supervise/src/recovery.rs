@@ -5,8 +5,9 @@
 //! serializes recovery against spawning with the same mark, and retains the session lock. It commits
 //! the probe/session outcome before retiring the matching persisted owned-process row.
 //! `RecoveryGone` proves completion of this policy, subject to S0's explicit limitation:
-//! unreadable environments are reported and skipped, and an environment-clearing double
-//! fork can escape discovery. No numeric process group/session ID authorizes a signal.
+//! unreadable environments need an exact saved identity or fresh proof of membership in
+//! the recorded spawn's job. Escaped unreadable processes remain warned and skipped.
+//! Numeric process group/session hints alone never authorize a signal.
 //!
 //! One-pass scanning cannot be driven directly by an external caller:
 //! ```compile_fail
@@ -14,6 +15,7 @@
 //! ```
 
 mod capture;
+mod job;
 #[cfg(target_os = "linux")]
 #[path = "recovery/native/linux.rs"]
 mod native;
@@ -245,7 +247,7 @@ pub enum MarkEvidence {
     Present(String),
     /// Environment read successfully; no mark was present.
     Absent,
-    /// S0: log/count and skip, without guessing or failing a scan.
+    /// S0: count; target only with checkpoint or freshly verified recorded-job authority.
     Unreadable,
 }
 
@@ -368,6 +370,15 @@ pub trait RecoveryProcesses: sealed::Processes {
     /// numeric PPID from a stale observation cannot establish ancestry. A truncated or
     /// failed enumeration is an error, never an empty successful scan.
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>>;
+    /// Freshly prove the target belongs to the session/group this recorded spawn
+    /// created, is no older than it, and its exact leader remains live after the
+    /// membership observation. Errors are nonmatches (S0), never authority.
+    fn verify_recorded_job(
+        &mut self,
+        target: &ProcessIdentity,
+        leader: &ChildIdentity,
+        deadline: Instant,
+    ) -> io::Result<bool>;
     /// Revalidate/pin the policy-issued target and signal it individually.
     fn signal_checked(
         &mut self,
@@ -393,7 +404,7 @@ pub struct RecoveryReport {
     pub passes: usize,
     /// Live eligible processes found across those passes.
     pub found_live: usize,
-    /// S0 environment reads skipped (summed across passes; a process can repeat).
+    /// S0 environment reads (summed across passes, including recovered targets).
     pub unreadable_environments: usize,
     /// Processes whose identity could not be read.
     pub unreadable_identities: usize,
@@ -497,8 +508,11 @@ fn signal_mark_matches(target: &VerifiedTarget, mark: &MarkEvidence) -> bool {
         target.evidence(),
         TargetEvidence::Marked | TargetEvidence::RecordedLeader
     );
-    *mark != MarkEvidence::Unreadable
-        && (!direct || *mark == MarkEvidence::Present(target.mark().into()))
+    if *mark == MarkEvidence::Unreadable {
+        matches!(target.evidence(), TargetEvidence::Checkpoint(_))
+    } else {
+        !direct || *mark == MarkEvidence::Present(target.mark().into())
+    }
 }
 
 fn native_mark(bytes: &[u8]) -> MarkEvidence {
@@ -511,9 +525,9 @@ fn native_mark(bytes: &[u8]) -> MarkEvidence {
     let Some(value) = marks.next() else {
         return MarkEvidence::Absent;
     };
-    // Identical entries are valid mark evidence on macOS. Conflicting values
-    // are ambiguous, and Linux continues to reject duplicate entries.
-    if marks.any(|duplicate| cfg!(target_os = "linux") || duplicate != value) {
+    // Identical entries count as one mark on both platforms; conflicting values
+    // are ambiguous evidence.
+    if marks.any(|duplicate| duplicate != value) {
         return MarkEvidence::Unreadable;
     }
     let Ok(value) = std::str::from_utf8(value) else {
