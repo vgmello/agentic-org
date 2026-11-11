@@ -1,0 +1,12 @@
+{
+  "request": {"id": 7, "method": "instance.status", "params": {}},
+  "response": {
+    "id": 7,
+    "result": {
+      "instance_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "mode": "service",
+      "gateway": {"state": "not_configured"},
+      "offices": {"total": 3, "active": 1, "failed": 1}
+    }
+  }
+}

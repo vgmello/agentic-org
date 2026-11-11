@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use org_office_host::Host;
 use org_proto::{
-    Empty, ErrorCode, Hello, HelloParams, HelloResult, OfficeInfo, OfficeList, OfficeStatus,
+    ErrorCode, Hello, HelloParams, HelloResult, OfficeInfo, OfficeList, OfficeStatus,
     OfficeStatusChanged, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
     OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
     UNREADABLE_REQUEST_ID,
@@ -28,8 +28,8 @@ fn error_code(outcome: &Outcome) -> Option<ErrorCode> {
 
 #[test]
 fn hello_names_the_host_and_no_office() {
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
     let hello = Client::connect(host.socket_path())
         .call::<Hello>(&HelloParams::default())
         .unwrap();
@@ -37,16 +37,8 @@ fn hello_names_the_host_and_no_office() {
     assert_eq!(hello.server_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(hello.host, "This Mac");
     assert_eq!(hello.office, None);
-    // Every optional call and event this host implements, once each.
-    assert_eq!(
-        hello.capabilities,
-        [
-            org_proto::capability::OFFICE_APP_TOKEN,
-            org_proto::capability::OFFICE_RESTART,
-            org_proto::capability::OFFICE_STATUS_CHANGED,
-        ]
-    );
-    assert!(hello.supports(org_proto::capability::OFFICE_STATUS_CHANGED));
+    assert_eq!(hello.instance_id.as_deref(), Some(home.instance_id()));
+    assert!(hello.capabilities.is_empty());
     host.shutdown();
 }
 
@@ -55,8 +47,8 @@ fn hello_names_the_host_and_no_office() {
 /// `params` and `"api": null` are still a v1 `hello`.
 #[test]
 fn a_malformed_hello_is_invalid_request_and_an_empty_one_is_v1() {
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
 
     for (id, params) in [
@@ -108,13 +100,13 @@ fn a_malformed_hello_is_invalid_request_and_an_empty_one_is_v1() {
 
 #[test]
 fn unknown_methods_and_unreadable_lines_get_errors_and_the_connection_goes_on() {
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
 
     let reply = client.raw(r#"{"id":5,"method":"org.teleport","params":{}}"#);
     assert_eq!(reply.id, 5);
-    assert_eq!(error_code(&reply.outcome), Some(ErrorCode::UnknownMethod));
+    assert_eq!(error_code(&reply.outcome), Some(ErrorCode::NotAuthorized));
 
     let reply = client.raw("this isn't json");
     assert_eq!(reply.id, UNREADABLE_REQUEST_ID);
@@ -122,20 +114,17 @@ fn unknown_methods_and_unreadable_lines_get_errors_and_the_connection_goes_on() 
 
     let reply = client.raw(r#"{"id":6,"method":"office.list","params":[1]}"#);
     assert_eq!(reply.id, 6);
-    assert_eq!(error_code(&reply.outcome), Some(ErrorCode::InvalidRequest));
-
-    // Subscribe's position (for offices) is accepted and ignored by the host.
+    assert_eq!(error_code(&reply.outcome), Some(ErrorCode::NotAuthorized));
     let reply = client
         .raw(r#"{"id":7,"method":"subscribe","params":{"from_position":{"epoch":1,"seq":2}}}"#);
-    assert_eq!(error_code(&reply.outcome), None);
-    client
-        .call::<Subscribe>(&SubscribeParams::default())
-        .unwrap();
-    assert!(client
-        .call::<OfficeList>(&Empty {})
-        .unwrap()
-        .offices
-        .is_empty());
+    assert_eq!(error_code(&reply.outcome), Some(ErrorCode::NotAuthorized));
+    let status =
+        client
+            .call::<org_host_control::InstanceStatus>(
+                &org_host_control::InstanceStatusParams::default(),
+            )
+            .unwrap();
+    assert_eq!(status.offices.total, 0);
     host.shutdown();
 }
 
@@ -162,9 +151,13 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
     fs::create_dir_all(stale.path()).unwrap();
     drop(std::os::unix::net::UnixListener::bind(stale.path().join("host.sock")).unwrap());
     let host = Host::start(stale.config()).unwrap();
-    Client::connect(host.socket_path())
-        .call::<Hello>(&HelloParams::default())
-        .unwrap();
+    assert_eq!(
+        Client::connect(host.socket_path())
+            .call::<Hello>(&HelloParams::default())
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
     host.shutdown();
 
     let blocked = TestHome::new();
@@ -182,23 +175,20 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
 /// so a watchdog turns that into a failure instead of a stuck test run.
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.script(serde_json::json!({"create": {"do": "hang"}}));
-    let host = Host::start(home.config()).unwrap();
+    let host = home.start(home.config()).unwrap();
     let _idle = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
-    let mut subscribed = Client::connect(host.socket_path());
+    let mut subscribed = Client::for_host(&host);
     subscribed
         .call::<Subscribe>(&SubscribeParams::default())
         .unwrap();
-    let mut creating = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
-    creating
-        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-        .unwrap();
-    std::io::Write::write_all(
-        &mut creating,
-        b"{\"id\":1,\"method\":\"organization.create\",\"params\":{\"name\":\"Acme\"}}\n",
-    )
-    .unwrap();
+    let mut creating = Client::for_host(&host);
+    let creator = std::thread::spawn(move || {
+        creating.call::<OrganizationCreate>(&OrganizationCreateParams {
+            name: "Acme".into(),
+        })
+    });
     support::eventually(
         std::time::Duration::from_secs(10),
         "the create to start",
@@ -214,17 +204,15 @@ fn shutdown_with_clients_connected_finishes_promptly() {
         .recv_timeout(std::time::Duration::from_secs(10))
         .expect("shutdown hung");
     // The create in flight got an error or its connection closed: never a success.
-    let mut answer = String::new();
-    let _ = std::io::BufRead::read_line(&mut std::io::BufReader::new(creating), &mut answer);
-    assert!(!answer.contains("\"result\""), "{answer}");
-    assert!(!home.path().join("host.sock").exists());
+    assert!(creator.join().unwrap().is_err());
+    assert!(!home.runtime().join("host.sock").exists());
     // Nothing was stored. The interrupted create's folder can't be discarded while stopping,
     // so the next start discards it.
     for folder in home.office_folders() {
         assert!(!home.office_dir(&folder).join("office.json").exists());
     }
     home.script(serde_json::json!({}));
-    let host = support::restart_host(&home.config());
+    let host = support::restart_host(&home, &home.config());
     support::eventually(
         std::time::Duration::from_secs(10),
         "the interrupted create's folder to be discarded",
@@ -240,31 +228,22 @@ fn shutdown_with_clients_connected_finishes_promptly() {
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
     use std::collections::{HashMap, HashSet};
-    use std::io::{BufRead, BufReader, Write};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
 
     const CREATES: usize = 40;
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
-    let path = host.socket_path().to_path_buf();
-    let stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
-    let mut out = stream.try_clone().unwrap();
-    out.write_all(b"{\"id\":0,\"method\":\"subscribe\",\"params\":{}}\n")
-        .unwrap();
-    // Subscribed before anything is created, so every event reaches this connection.
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let fixture = org_office_host::test_support::Fixture::new(&host);
+    fixture.submit(org_proto::Request::new::<Subscribe>(0, &SubscribeParams::default()).unwrap());
     assert!(
-        matches!(serde_json::from_str(&line), Ok(ServerMessage::Response(r)) if r.id == 0),
-        "{line}"
+        matches!(fixture.recv(std::time::Duration::from_secs(30)),Some(ServerMessage::Response(r)) if r.id==0)
     );
 
     let (creating, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
     let answered = Arc::new(AtomicU64::new(0));
     let writer = {
+        let out = Arc::clone(&fixture);
         let (creating, sent, answered) = (
             Arc::clone(&creating),
             Arc::clone(&sent),
@@ -288,7 +267,7 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                     "office.list"
                 };
                 let line = format!("{{\"id\":{id},\"method\":\"{method}\",\"params\":{{}}}}\n");
-                out.write_all(line.as_bytes()).unwrap();
+                out.submit(serde_json::from_str(&line).unwrap());
                 sent.store(id, Ordering::SeqCst);
                 if last {
                     return;
@@ -297,9 +276,9 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         })
     };
     let creator = {
-        let (path, creating) = (path.clone(), Arc::clone(&creating));
+        let creating = Arc::clone(&creating);
+        let mut client = Client::for_host(&host);
         std::thread::spawn(move || {
-            let mut client = Client::connect(&path);
             for i in 0..CREATES {
                 client
                     .call::<OrganizationCreate>(&OrganizationCreateParams {
@@ -337,9 +316,10 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         if done && heard.len() == CREATES {
             break;
         }
-        let mut line = String::new();
-        assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
-        match serde_json::from_str::<ServerMessage>(&line).unwrap() {
+        match fixture
+            .recv(std::time::Duration::from_secs(30))
+            .expect("native event or response")
+        {
             ServerMessage::Event(event) => match event.event.as_str() {
                 "organization.created" => {
                     let org = event.data::<OrganizationCreated>().unwrap().unwrap();
@@ -400,21 +380,16 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
 #[test]
 fn a_subscribed_creator_gets_its_answer_before_any_event_about_it() {
     use std::collections::HashSet;
-    use std::io::{BufRead, BufReader, Write};
 
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
-    let stream = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
-    let mut out = stream.try_clone().unwrap();
-    let mut reader = BufReader::new(stream);
-    let mut next = || {
-        let mut line = String::new();
-        assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
-        serde_json::from_str::<ServerMessage>(&line).unwrap()
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let fixture = org_office_host::test_support::Fixture::new(&host);
+    let next = || {
+        fixture
+            .recv(std::time::Duration::from_secs(30))
+            .expect("native response or event")
     };
-    out.write_all(b"{\"id\":0,\"method\":\"subscribe\",\"params\":{}}\n")
-        .unwrap();
+    fixture.submit(org_proto::Request::new::<Subscribe>(0, &SubscribeParams::default()).unwrap());
     assert!(matches!(next(), ServerMessage::Response(r) if r.id == 0));
 
     let mut answered: HashSet<String> = HashSet::new();
@@ -423,7 +398,7 @@ fn a_subscribed_creator_gets_its_answer_before_any_event_about_it() {
         let line = format!(
             "{{\"id\":{id},\"method\":\"organization.create\",\"params\":{{\"name\":\"Org {id}\"}}}}\n"
         );
-        out.write_all(line.as_bytes()).unwrap();
+        fixture.submit(serde_json::from_str(&line).unwrap());
         // Read until this create's answer; every event before it must be about organizations
         // already answered (and, for a status change, already announced).
         loop {

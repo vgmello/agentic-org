@@ -23,7 +23,15 @@ required-features = ["test-support"]
 test = false
 doc = false
 
+[[bin]]
+name = "fixture-office-host"
+path = "testing/fixture_host.rs"
+required-features = ["test-support"]
+test = false
+doc = false
+
 [dependencies]
+org-host-control = { path = "../../crates/org-host-control" }
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }

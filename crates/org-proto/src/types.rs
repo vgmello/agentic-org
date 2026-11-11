@@ -88,6 +88,16 @@ pub enum OfficeStatus {
     Unknown,
 }
 
+impl OfficeStatus {
+    /// Whether the state needs operator action instead of recovering on its own.
+    pub const fn requires_operator_action(self) -> bool {
+        match self {
+            Self::Unavailable | Self::UpdateNeeded | Self::Unknown => true,
+            Self::Active | Self::Starting | Self::Pending | Self::Offline => false,
+        }
+    }
+}
+
 /// Why an office is `offline` or `unavailable` ([`OfficeInfo::status_reason`]). The host sets
 /// it from how the office server's start ended (the launch `failed` codes) or from how it
 /// supervises it. Unknown values decode as [`OfficeStatusReason::Unknown`].

@@ -41,8 +41,7 @@
 //! `tls_invalid`, unstored, on every path.
 //!
 //! This crate holds types and pure functions only. Not here yet, because X-02 leaves their params
-//! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the instance status
-//! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
+//! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
 //! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde,
@@ -59,6 +58,11 @@ pub mod listen;
 pub mod ops;
 pub mod pem;
 mod secret;
+mod status;
+pub use status::{
+    GatewayState, GatewayStatus, InstanceMode, InstanceStatus, InstanceStatusParams,
+    InstanceStatusResult, OfficeCounts,
+};
 
 /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
 /// printed only to a TTY, never in JSON status output or logs. Defined once in `org-proto`, shared

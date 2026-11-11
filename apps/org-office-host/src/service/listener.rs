@@ -317,6 +317,9 @@ fn serve_with_poll(
         consumed: 0,
     };
     loop {
+        if connection.closed.load(Ordering::SeqCst) {
+            break;
+        }
         let sent_at = reader.consumed;
         let Ok(Some(line)) = frame::read_line(&mut reader) else {
             break;
@@ -471,6 +474,13 @@ impl Connection {
         (Arc::new(connection), queue)
     }
 
+    /// Drain the refusal before closing, but stop even already-buffered requests.
+    pub(crate) fn refuse_and_finish(&self, response: Response) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.enqueue(Outbound::Response(response));
+        self.enqueue(Outbound::Close);
+    }
+
     /// What the host noted about the client when it accepted the connection.
     pub(crate) fn accepted(&self) -> Accepted {
         self.accepted
@@ -601,6 +611,62 @@ mod tests {
     use super::*;
     use std::io::{BufRead, Write};
     use std::path::PathBuf;
+
+    #[test]
+    fn refusal_marks_reader_closed_and_queues_response_before_close() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        connection.refuse_and_finish(Response::error(
+            9,
+            ApiError::new(ErrorCode::UnsupportedVersion, "unsupported"),
+        ));
+        assert!(connection.closed.load(Ordering::SeqCst));
+        assert!(matches!(queue.recv().unwrap(),Outbound::Response(response) if response.id==9));
+        assert!(matches!(queue.recv().unwrap(), Outbound::Close));
+    }
+
+    #[test]
+    fn refusal_prevents_dispatch_of_an_already_buffered_suffix() {
+        use std::sync::atomic::AtomicUsize;
+        struct Closing(Arc<AtomicUsize>);
+        impl Handler for Closing {
+            fn inline(&self, _: &Request) -> bool {
+                true
+            }
+            fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
+                let call = self.0.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    assert!(
+                        received.buffered_after > 0,
+                        "suffix must already be buffered"
+                    );
+                }
+                connection.refuse_and_finish(Response::error(
+                    request.id,
+                    ApiError::new(ErrorCode::UnsupportedVersion, "unsupported"),
+                ));
+            }
+        }
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        peer.write_all(b"{\"id\":1,\"method\":\"hello\"}\n{\"id\":2,\"method\":\"suffix\"}\n")
+            .unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let worker =
+            thread::spawn(move || serve(stream, connection, queue, Arc::new(Closing(observed)), 4));
+        let mut reader = io::BufReader::new(peer);
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        assert_eq!(serde_json::from_str::<Response>(&line).unwrap().id, 1);
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        worker.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn ticked_reader_repolls_a_missed_eof_at_the_host_call_site() {
