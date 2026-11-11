@@ -11,6 +11,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::OfficeError;
 
 mod call;
+mod metadata;
+pub(crate) use metadata::create_tables as create_v5_tables;
 
 pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(
