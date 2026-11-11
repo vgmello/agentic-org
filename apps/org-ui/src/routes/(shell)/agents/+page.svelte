@@ -83,7 +83,7 @@
 		{#if shown.length === 0}
 			<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-400 outline-1 -outline-offset-1 outline-white/10" data-testid="no-match">No {filter} agents.</p>
 		{:else}
-			<div class="overflow-x-auto rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+			<div class="overflow-x-auto border-y border-white/5 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-indigo-400 focus-visible:-outline-offset-2">
 				<table class="w-full text-left text-sm/6" data-testid="agent-roster">
 					<caption class="sr-only">Agents</caption>
 					<thead class="text-xs/5 text-gray-400">
@@ -101,22 +101,22 @@
 					<tbody class="divide-y divide-white/5 text-gray-200">
 						{#each shown as row (row.member.id)}
 							<tr data-testid="agent-row" data-agent={row.member.id}>
-								<th scope="row" class="px-4 py-2 font-normal">
+								<th scope="row" class="px-4 py-4 font-normal">
 									<a href="/org-chart?member={row.member.id}" class="block font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]">{row.member.name}</a>
 									<span class="block text-xs/5 text-gray-400">{row.member.agent?.title ?? ''} · <code class="font-mono">{row.member.agent?.messaging_name ?? ''}</code></span>
 								</th>
-								<td class="px-4 py-2">{runtimeLabel(row.member.agent?.runtime)}</td>
-								<td class="px-4 py-2">{runModeLabel(row.member.agent?.run_mode)}</td>
-								<td class="px-4 py-2">
+								<td class="px-4 py-4">{runtimeLabel(row.member.agent?.runtime)}</td>
+								<td class="px-4 py-4">{runModeLabel(row.member.agent?.run_mode)}</td>
+								<td class="px-4 py-4">
 									<StatusPill label={row.live.word + (row.live.detail ? ` · ${row.live.detail}` : '')} class={row.live.id === 'paused' ? 'bg-amber-400/10 text-amber-200 ring-amber-400/30' : ''} data-testid="agent-status">
 										{#snippet icon()}<AgentStatusIcon status={row.live.id} />{/snippet}
 									</StatusPill>
 								</td>
 								<!-- What it is doing now comes with the Activity feed; until then there is nothing to say. -->
-								<td class="px-4 py-2 text-gray-400" data-testid="agent-now" aria-label="Nothing reported">—</td>
-								<td class="px-4 py-2 [overflow-wrap:anywhere]">{row.teams.length > 0 ? row.teams.join(', ') : '—'}</td>
-								<td class="px-4 py-2">{row.office}</td>
-								<td class="px-4 py-2 [overflow-wrap:anywhere]">{row.manager}</td>
+								<td class="px-4 py-4 text-gray-400" data-testid="agent-now" aria-label="Nothing reported">—</td>
+								<td class="px-4 py-4 [overflow-wrap:anywhere]">{row.teams.length > 0 ? row.teams.join(', ') : '—'}</td>
+								<td class="px-4 py-4">{row.office}</td>
+								<td class="px-4 py-4 [overflow-wrap:anywhere]">{row.manager}</td>
 							</tr>
 						{/each}
 					</tbody>

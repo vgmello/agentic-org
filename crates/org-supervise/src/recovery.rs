@@ -26,6 +26,7 @@ mod native;
 mod native;
 pub use native::NativeRecovery;
 mod checkpoint;
+pub mod probe;
 mod scan;
 mod startup;
 

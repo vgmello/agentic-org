@@ -1004,9 +1004,40 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     );
     assert_eq!(
         api_code(team_create(&client, &command, "Other").unwrap_err()),
-        org_proto::ErrorCode::InvalidRequest,
+        org_proto::ErrorCode::OperationReused,
         "the same id with other params"
     );
+    let lookup = |client: &Client, id: &str| {
+        client.call::<org_proto::OperationGet>(&org_proto::OperationGetParams {
+            kind: org_proto::OperationKind::Org,
+            id: id.into(),
+        })
+    };
+    let expected = org_proto::OperationOutcome::Committed {
+        result: serde_json::to_value(accepted).unwrap(),
+    };
+    assert_eq!(lookup(&client, &command).unwrap(), expected);
+    // Before grants, even a legacy-first unbound connection acts as the owner for lookup.
+    let reader = Client::connect(socket(&world)).unwrap();
+    assert_eq!(lookup(&reader, &command).unwrap(), expected);
+    assert_eq!(
+        api_code(lookup(&reader, "bad").unwrap_err()),
+        org_proto::ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        api_code(lookup(&reader, &command_id(9)).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
+    let refusal_id = command_id(2);
+    let refused = team_create(&client, &refusal_id, " ").unwrap_err();
+    let org_client::ClientError::Api(refusal) = refused else {
+        panic!("expected a domain refusal")
+    };
+    let rejected = org_proto::OperationOutcome::Rejected { refusal };
+    assert_eq!(lookup(&reader, &refusal_id).unwrap(), rejected);
+    reader.hello().unwrap();
+    assert_eq!(lookup(&reader, &command).unwrap(), expected);
+    drop(reader);
     let after = snapshot(&client);
     assert_eq!(after.teams.len(), 1);
     assert_eq!(after.teams[0].name, "Platform");
@@ -1018,6 +1049,8 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     let client = Client::connect(socket(&world)).unwrap();
+    assert_eq!(lookup(&client, &command).unwrap(), expected);
+    assert_eq!(lookup(&client, &refusal_id).unwrap(), rejected);
     bind(&client, token()).unwrap();
     assert_eq!(snapshot(&client), after);
     assert_eq!(

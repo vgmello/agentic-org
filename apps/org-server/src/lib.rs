@@ -285,6 +285,14 @@ fn serve_office(
         &info,
         &socket,
         serve::OfficePorts {
+            operation_get: {
+                let office = Arc::clone(&office);
+                Box::new(move |id| {
+                    office
+                        .org_operation_get(id)
+                        .map_err(|e| logged("operation.get", &e))
+                })
+            },
             snapshot: {
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))

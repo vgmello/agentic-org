@@ -370,7 +370,7 @@ fn legacy_native_write_replay_conflict_and_rollback_keep_null_principals() {
     assert_eq!(team(&store, &id, "Engineering").unwrap(), accepted);
     assert_eq!(
         team(&store, &id, "Different").unwrap_err().code,
-        ErrorCode::InvalidRequest
+        ErrorCode::OperationReused
     );
     assert_eq!(legacy_rows(&store), before);
 
@@ -556,10 +556,23 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
     sync_org::install_snapshot(&Adapter(&replica), staged).unwrap();
     assert_eq!(legacy_rows(&replica), legacy_rows(&legacy));
     assert_unbound(&replica, 1);
+    let retained = fingerprint_vectors()["org"][0]["params"]["command_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The imported old row exists but its retained window has expired by CLOCK.
+    assert_eq!(
+        replica
+            .read(|db| operation_get(db, CLOCK, &retained))
+            .unwrap()
+            .unwrap_err()
+            .code,
+        ErrorCode::Expired
+    );
 
     let command = ulid::from_ms(CLOCK, 91);
     team(&legacy, &command, "Engineering").unwrap();
-    team(&current, &command, "Engineering").unwrap();
+    let accepted = team(&current, &command, "Engineering").unwrap();
     let old_events = replication_events_after(&legacy, old_base.position, old_base.digest, 10)
         .unwrap()
         .unwrap();
@@ -592,12 +605,29 @@ fn snapshot_roundtrip_keeps_projection_two_and_null_columns() {
     assert_eq!(legacy_rows(&replica), legacy_rows(&current));
     assert_unbound(&current, 2);
     assert_unbound(&replica, 2);
+    let expected = org_proto::OperationOutcome::Committed {
+        result: serde_json::to_value(accepted).unwrap(),
+    };
+    assert_eq!(
+        replica
+            .read(|db| operation_get(db, CLOCK, &command))
+            .unwrap()
+            .unwrap(),
+        expected
+    );
     let after = replication_checkpoint(&replica).unwrap();
     drop(replica);
     let reopened = open(&replica_path, Opening::Existing, &SCHEMA);
     assert_eq!(replication_checkpoint(&reopened).unwrap(), after);
     assert_eq!(legacy_rows(&reopened), legacy_rows(&current));
     assert_unbound(&reopened, 2);
+    assert_eq!(
+        reopened
+            .read(|db| operation_get(db, CLOCK, &command))
+            .unwrap()
+            .unwrap(),
+        expected
+    );
 }
 
 fn schema_image(store: &Store) -> Vec<(String, String, Option<String>)> {
