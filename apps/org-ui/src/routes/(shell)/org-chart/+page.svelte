@@ -355,9 +355,9 @@
 	<OwnerBar owner={owner(snapshot)} organization={organizationName} sample={data.sample} />
 
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-		<label class="flex items-center gap-x-2 text-sm/6 text-gray-300">
+		<label class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-gray-300 max-[640px]:w-full">
 			Search
-			<input bind:this={searchInput} type="search" bind:value={query} onkeydown={(e) => e.key === 'Escape' && query !== '' && ((query = ''), e.preventDefault())} placeholder="Search members…" aria-label="Search members" autocomplete="off" class="w-64 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" />
+			<input bind:this={searchInput} type="search" bind:value={query} onkeydown={(e) => e.key === 'Escape' && query !== '' && ((query = ''), e.preventDefault())} placeholder="Search members…" aria-label="Search members" autocomplete="off" class="w-64 min-w-0 max-w-full rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:basis-full" />
 		</label>
 		{#if anyPaused}
 			<label class="flex items-center gap-x-2 text-sm/6 text-gray-300"><input type="checkbox" bind:checked={showPaused} /> Show paused</label>
@@ -368,7 +368,7 @@
 	</div>
 
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<div role="tablist" aria-label="Org chart views" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
+		<div role="tablist" aria-label="Org chart views" class="inline-flex max-w-full flex-wrap rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
 			{#each TABS as t (t.id)}
 				<button
 					type="button"
@@ -387,7 +387,7 @@
 		</div>
 		{#if data.sample}
 			<!-- TEMPORARY: until the real office answers org.snapshot, this page shows an invented organization. -->
-			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+			<p class="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-gray-400" data-testid="sample-data-note">
 				<Badge variant="secondary">Sample data</Badge> An invented organization, not yours.
 			</p>
 		{/if}
@@ -407,15 +407,15 @@
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
 			<h2 class="sr-only">Teams</h2>
 			<div class="flex flex-wrap items-center gap-3">
-				<label class="flex items-center gap-x-2 text-sm/6 text-gray-300">
+				<label class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-gray-300">
 					Office
-					<select aria-label="Office filter" bind:value={filterValue} class="rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<select aria-label="Office filter" bind:value={filterValue} class="min-w-0 max-w-full rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 						<option value="all">All offices</option>
 						{#each offices as office (office.id)}<option value={office.id}>{office.name} · {office.host}</option>{/each}
 						<option value="unplaced">Unplaced</option>
 					</select>
 				</label>
-				<div class="ml-auto flex items-center gap-x-2">
+				<div class="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
 					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
 					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
 					<Button variant="outline" size="sm" onclick={() => (addAgentOpen = true)}><Plus aria-hidden="true" /> Add agent</Button>
@@ -453,7 +453,7 @@
 					<p class="text-sm/6 font-semibold text-white">No teams yet</p>
 					<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">Teams group your agents and people. A team can be part of another team, so a whole division is just a team with teams under it.</p>
 					<div class="mt-4 flex flex-wrap justify-center gap-3">
-						<Button onclick={() => newTeam()}>Create your first team</Button>
+						<Button class="h-auto min-h-9 max-w-full whitespace-normal" onclick={() => newTeam()}>Create your first team</Button>
 					</div>
 				</div>
 			{:else if asList}
@@ -488,9 +488,9 @@
 					<h3 id="unassigned" class="text-sm/6 font-semibold text-white">Unassigned projects</h3>
 					<ul class="mt-2 space-y-1 text-sm/6 text-gray-300">
 						{#each unassigned as project (project.id)}
-							<li class="flex items-center gap-x-3">
+							<li class="flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 wrap-anywhere">
 								{project.name}
-								<Button variant="outline" size="xs" aria-label="Assign a team to {project.name}" onclick={() => ((assigning = project), (projectTeam = undefined), (projectTeamOpen = true))}>Assign team…</Button>
+								<Button variant="outline" size="xs" class="h-auto min-h-6 max-w-full whitespace-normal" aria-label="Assign a team to {project.name}" onclick={() => ((assigning = project), (projectTeam = undefined), (projectTeamOpen = true))}>Assign team…</Button>
 							</li>
 						{/each}
 					</ul>
@@ -504,7 +504,7 @@
 			<p class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20" data-testid="people-note">
 				Agents can only reach the people listed in your organization.
 			</p>
-			<div class="flex justify-end">
+			<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
 				<Button size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
 			</div>
 			{#if tree.length === 0}
@@ -512,7 +512,7 @@
 					<p class="text-sm/6 font-semibold text-white">No teams yet</p>
 				</div>
 			{:else}
-				<div class="flex justify-end gap-x-2">
+				<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
 					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
 					<Button variant="outline" size="sm" onclick={() => collapsed.clear()}>Expand all</Button>
 					<Button variant="outline" size="sm" onclick={() => parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</Button>
@@ -540,7 +540,7 @@
 				Reporting lines show who reports to whom. They are separate from teams: changing a team or its lead doesn't change anyone's manager.
 			</p>
 			{#if reporting}
-				<div class="flex justify-end gap-x-2">
+				<div class="flex max-w-full flex-wrap items-center justify-end gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:max-w-full [&>button]:whitespace-normal">
 					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
 					<Button variant="outline" size="sm" onclick={() => collapsedReports.clear()}>Expand all</Button>
 					<Button variant="outline" size="sm" onclick={() => reportParents(reporting).forEach((id) => collapsedReports.add(id))}>Collapse all</Button>
