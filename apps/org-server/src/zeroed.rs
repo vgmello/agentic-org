@@ -13,6 +13,20 @@ const SIZE: usize = 1024;
 thread_local! {
     /// How many times a buffer was wiped on this thread (tests count it, to know `Drop` wipes).
     static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SECRET_WIPES: std::cell::RefCell<Vec<SecretWipe>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SecretWipe {
+    pub len: usize,
+    pub had_data: bool,
+    pub zeroed: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn take_secret_wipes() -> Vec<SecretWipe> {
+    SECRET_WIPES.with(|records| std::mem::take(&mut *records.borrow_mut()))
 }
 
 pub struct ZeroedReader {
@@ -23,11 +37,34 @@ pub struct ZeroedReader {
 }
 
 /// Fixed-size handoff storage, wiped even when decoding or reception fails.
-pub(crate) struct SecretBuffer(pub Box<[u8]>);
+pub(crate) struct SecretBuffer(Box<[u8]>);
+
+impl SecretBuffer {
+    pub(crate) fn new(len: usize) -> Self {
+        Self(vec![0; len].into_boxed_slice())
+    }
+}
+
+impl AsMut<[u8]> for SecretBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
 
 impl Drop for SecretBuffer {
     fn drop(&mut self) {
+        #[cfg(test)]
+        let had_data = self.0.iter().any(|byte| *byte != 0);
         wipe_bytes(&mut self.0);
+        // Observe the actual allocation before deallocation, without retaining secret bytes.
+        #[cfg(test)]
+        SECRET_WIPES.with(|records| {
+            records.borrow_mut().push(SecretWipe {
+                len: self.0.len(),
+                had_data,
+                zeroed: self.0.iter().all(|byte| *byte == 0),
+            })
+        });
     }
 }
 
@@ -122,7 +159,8 @@ mod tests {
         for outcome in 0..3 {
             let before = WIPES.with(std::cell::Cell::get);
             let result = std::panic::catch_unwind(|| {
-                let _buffer = SecretBuffer(vec![0xb3; 4096].into_boxed_slice());
+                let mut buffer = SecretBuffer::new(4096);
+                buffer.as_mut().fill(0xb3);
                 match outcome {
                     0 => Ok(()),
                     1 => Err(()),
@@ -130,6 +168,14 @@ mod tests {
                 }
             });
             assert_eq!(WIPES.with(std::cell::Cell::get), before + 1);
+            assert_eq!(
+                take_secret_wipes(),
+                vec![SecretWipe {
+                    len: 4096,
+                    had_data: true,
+                    zeroed: true
+                }]
+            );
             assert_eq!(result.is_err(), outcome == 2);
         }
     }

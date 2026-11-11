@@ -56,25 +56,49 @@ fn handoff(op: FirstLine) -> Handoff {
 }
 
 fn control(bytes: &[u8]) -> (Control, File) {
+    control_with_fence(bytes, Arc::new(Mutex::new(())))
+}
+
+fn control_with_fence(bytes: &[u8], fence: Arc<Mutex<()>>) -> (Control, File) {
+    crate::zeroed::take_secret_wipes();
     let mut from_host = tempfile::tempfile().unwrap();
     from_host.write_all(bytes).unwrap();
     from_host.rewind().unwrap();
     let output = tempfile::tempfile().unwrap();
     (
-        Control::new(ControlPipe {
-            from_host,
-            to_host: output.try_clone().unwrap(),
-        }),
+        Control::new(
+            ControlPipe {
+                from_host,
+                to_host: output.try_clone().unwrap(),
+            },
+            fence,
+        ),
         output,
     )
 }
 
+fn assert_header_wiped(had_data: bool) {
+    assert_eq!(
+        crate::zeroed::take_secret_wipes(),
+        vec![crate::zeroed::SecretWipe {
+            len: HANDOFF_HEADER_MAX_BYTES + 1,
+            had_data,
+            zeroed: true,
+        }],
+        "the actual handoff allocation must be wiped before it is freed"
+    );
+}
+
 fn launch(line: &HostFirstLine) -> (Control, File) {
+    launch_with_fence(line, Arc::new(Mutex::new(())))
+}
+
+fn launch_with_fence(line: &HostFirstLine, fence: Arc<Mutex<()>>) -> (Control, File) {
     let mut bytes = vec![];
     v3::write_first_line(&mut bytes, line).unwrap();
     // Subsequent pipe lines are never decoded, even if they look like secret commands.
     bytes.extend_from_slice(b"garbage\n{\"db_key\":\"unparsed\"}\n");
-    control(&bytes)
+    control_with_fence(&bytes, fence)
 }
 
 fn listener() -> (tempfile::TempDir, UnixListener, std::path::PathBuf) {
@@ -181,6 +205,7 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
             );
         });
         let request = control.read(op).unwrap().unwrap();
+        assert_header_wiped(true);
         match (request, op) {
             (
                 Request::V3 {
@@ -249,6 +274,7 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
             handoff: Handoff::Discard { db_key, .. }, ..
         }) if db_key.is_some() == key)
         );
+        assert_header_wiped(true);
         assert!(control.transfer.is_none());
         control.emit(&ServerEvent::Discarded).unwrap();
         sender.join().unwrap();
@@ -286,6 +312,7 @@ fn v2_and_empty_first_lines_keep_the_legacy_transport() {
         assert!(
             matches!(control.read(op).unwrap(), Some(Request::V2(actual)) if actual == message)
         );
+        assert!(crate::zeroed::take_secret_wipes().is_empty());
         assert!(control.rendezvous.is_none());
         assert!(control.transfer.is_none());
         control.emit(&ServerEvent::Discarded).unwrap();
@@ -308,13 +335,26 @@ fn handoff_fault_child() {
         return;
     };
     let (_dir, listener, path) = listener();
-    let (mut control, output) = launch(&first(&path, FirstLine::Create));
+    let fence = Arc::new(Mutex::new(()));
+    let (mut control, output) =
+        launch_with_fence(&first(&path, FirstLine::Create), Arc::clone(&fence));
     let expected_case = case.clone();
     let sender = std::thread::spawn(move || {
         let (mut stream, _reader) = accept(listener);
         let (fd, _other) = UnixDatagram::pair().unwrap();
         let mut header = v3::encode_handoff(&handoff(FirstLine::Create)).unwrap();
         match case.as_str() {
+            "poison_fence" => {
+                // Configure the host and receive Ready before poisoning. No header byte is
+                // sent until the shared fence is poisoned, irrespective of worker scheduling.
+                #[cfg(target_os = "macos")]
+                let _ = std::panic::catch_unwind(|| {
+                    let _guard = fence.lock().unwrap();
+                    panic!("synthetic poisoned receive/spawn fence");
+                });
+                let _ = stream.write_all(&header);
+                let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+            }
             "early_fd" => {
                 send_fds(&stream, header[0], &[fd.as_raw_fd()]);
                 let _ = stream.write_all(&header[1..]);
@@ -322,11 +362,16 @@ fn handoff_fault_child() {
                 // an ordinary-read header mutant would otherwise fail only at marker EOF.
                 let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
             }
+            "ctrunc_header" => {
+                stream.write_all(&header[..16]).unwrap();
+                send_fds(&stream, header[16], &[fd.as_raw_fd(); 8]);
+                let _ = stream.write_all(&header[17..]);
+            }
             "eof_header" => {
                 stream.write_all(b"{\"v\":3").unwrap();
             }
             "oversize" => {
-                let _ = stream.write_all(&vec![b'x'; org_proto::MAX_FRAME_BYTES + 1]);
+                let _ = stream.write_all(&vec![b'x'; HANDOFF_HEADER_MAX_BYTES + 1]);
             }
             "wrong_op" => {
                 stream
@@ -367,12 +412,16 @@ fn handoff_fault_child() {
                     "extra_fds" => {
                         send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd(), fd.as_raw_fd()])
                     }
+                    "ctrunc" => send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd(); 8]),
                     "wrong_marker" => send_fds(&stream, 9, &[fd.as_raw_fd()]),
                     _ => panic!("unknown test case"),
                 }
             }
         }
-        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        if let Err(error) = stream.shutdown(std::net::Shutdown::Write) {
+            // A poisoned fence can refuse before the host finishes writing.
+            assert_eq!(error.kind(), io::ErrorKind::NotConnected);
+        }
         // Keep every sender copy until the worker ends the connection on refusal.
         let mut byte = [0];
         match stream.read(&mut byte) {
@@ -382,6 +431,10 @@ fn handoff_fault_child() {
         }
     });
     let result = control.read(FirstLine::Create);
+    assert_header_wiped(!matches!(
+        expected_case.as_str(),
+        "early_fd" | "poison_fence"
+    ));
     assert!(result.is_err(), "accepted malformed/faulted handoff");
     let error = result.err().unwrap();
     if expected_case == "bad_version" {
@@ -403,7 +456,10 @@ fn handoff_fault_child() {
 #[test]
 fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
     for case in [
+        #[cfg(target_os = "macos")]
+        "poison_fence",
         "early_fd",
+        "ctrunc_header",
         "eof_header",
         "oversize",
         "wrong_op",
@@ -415,6 +471,7 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
         "eof_marker",
         "zero_fds",
         "extra_fds",
+        "ctrunc",
         "wrong_marker",
     ] {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -450,8 +507,9 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
 }
 
 #[test]
-fn handoff_header_accepts_exact_frame_cap_and_refuses_one_byte_more() {
-    for size in [org_proto::MAX_FRAME_BYTES, org_proto::MAX_FRAME_BYTES + 1] {
+fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
+    assert_eq!(HANDOFF_HEADER_MAX_BYTES, 1024);
+    for size in [1024, 1025] {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
         let sender = std::thread::spawn(move || {
@@ -462,12 +520,13 @@ fn handoff_header_accepts_exact_frame_cap_and_refuses_one_byte_more() {
             header.resize(size, b' ');
             header.push(b'\n');
             let _ = stream.write_all(&header);
-            if size == org_proto::MAX_FRAME_BYTES {
+            if size == 1024 {
                 assert_eq!(event(&mut reader), json!({"v":3,"event":"discarded"}));
             }
         });
         let result = control.read(FirstLine::Discard);
-        if size == org_proto::MAX_FRAME_BYTES {
+        assert_header_wiped(true);
+        if size == 1024 {
             assert!(matches!(
                 result,
                 Ok(Some(Request::V3 {
@@ -533,10 +592,13 @@ fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
 fn event_writer_errors_are_propagated_on_both_transports() {
     let input = tempfile::tempfile().unwrap();
     let output = tempfile::NamedTempFile::new().unwrap();
-    let mut control = Control::new(ControlPipe {
-        from_host: input,
-        to_host: File::open(output.path()).unwrap(),
-    });
+    let mut control = Control::new(
+        ControlPipe {
+            from_host: input,
+            to_host: File::open(output.path()).unwrap(),
+        },
+        Arc::new(Mutex::new(())),
+    );
     assert!(matches!(
         control.emit(&ServerEvent::Discarded),
         Err(LaunchError::Frame(FrameError::Io(_)))
@@ -548,4 +610,94 @@ fn event_writer_errors_are_propagated_on_both_transports() {
         control.emit(&ServerEvent::Discarded),
         Err(LaunchError::Frame(FrameError::Io(_)))
     ));
+}
+
+#[test]
+fn interrupted_polls_retry_but_other_poll_errors_end_reception() {
+    let calls = std::cell::Cell::new(0);
+    let polls = std::cell::Cell::new(0);
+    assert_eq!(
+        receive_with_poll(
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() < 4 {
+                    Err(ReceiveError::WouldBlock)
+                } else {
+                    Ok(7)
+                }
+            },
+            || {
+                polls.set(polls.get() + 1);
+                match polls.get() {
+                    1 => Err(io::Error::from(io::ErrorKind::Interrupted)),
+                    2 => Ok(false),
+                    _ => Ok(true),
+                }
+            }
+        )
+        .unwrap(),
+        7
+    );
+    assert_eq!((calls.get(), polls.get()), (4, 3));
+    let mut calls = 0;
+    let error = receive_with_poll(
+        || {
+            calls += 1;
+            if calls == 1 {
+                Err(ReceiveError::WouldBlock)
+            } else {
+                Ok(7)
+            }
+        },
+        || Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, LaunchError::Frame(FrameError::Io(ref e)) if e.kind() == io::ErrorKind::PermissionDenied)
+    );
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn handoff_framing_uses_the_move_one_header_cap_vector() {
+    let vectors: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/org-office-launch/test-vectors/v3/transfer-records.json"
+    )))
+    .unwrap();
+    assert_eq!(vectors["header_max_bytes"], HANDOFF_HEADER_MAX_BYTES);
+    for (section, size) in [("records", 1024), ("refused", 1025)] {
+        let wire = vectors[section]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["bytes"] == size)
+            .unwrap()["wire"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(wire.len(), size);
+        let (_dir, listener, path) = listener();
+        let (mut control, output) = launch(&first(&path, FirstLine::Discard));
+        let sender = std::thread::spawn(move || {
+            let (mut stream, _) = accept(listener);
+            writeln!(stream, "{wire}").unwrap();
+        });
+        let result = control.read(FirstLine::Discard);
+        assert_header_wiped(true);
+        if size == 1024 {
+            // The record fits framing; it is not a handoff and is refused by its decoder.
+            assert!(matches!(
+                result,
+                Err(LaunchError::Invalid("invalid secret handoff"))
+            ));
+        } else {
+            assert!(matches!(
+                result,
+                Err(LaunchError::Frame(FrameError::TooLarge))
+            ));
+        }
+        sender.join().unwrap();
+        stdout_is_empty(output);
+    }
 }
