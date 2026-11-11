@@ -14,6 +14,14 @@
 
 pub(crate) mod messages;
 pub(crate) mod org;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "A1 origin capability is wired by the next WorkTxn slice"
+    )
+)]
+pub(crate) mod origin;
 pub(crate) mod status;
 mod sync;
 

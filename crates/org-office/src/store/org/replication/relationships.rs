@@ -105,6 +105,11 @@ pub(super) fn after_apply(
                         NOT EXISTS(SELECT 1 FROM teams WHERE id = l.team_id)))",
                 &project_team.id,
             ),
+            OrgChange::AreaUpserted { area } => (
+                "SELECT EXISTS(SELECT 1 FROM areas a WHERE a.id = ?1
+                    AND NOT EXISTS(SELECT 1 FROM projects WHERE id = a.project_id))",
+                &area.id,
+            ),
             _ => continue,
         };
         if exists(db, query, [id])? {

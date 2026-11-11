@@ -100,7 +100,7 @@
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
-// A new deadline gets an immediate sample. Repeated reads of the same deadline don't advance the clock.
+// A new deadline gets an immediate sample, which anchors its stable screen-reader label.
 let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
 let countdownClock = $state(Date.now());
 // Capture the new deadline before rendering its visible and accessible text.
@@ -128,8 +128,22 @@ $effect.pre(() => {
 			});
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
-	const tick = setInterval(() => (countdownClock = Date.now()), 10_000);
-		return () => (clearInterval(again), clearInterval(tick), (leaving = true), stopListening?.());
+		return () => (clearInterval(again), (leaving = true), stopListening?.());
+	});
+	$effect(() => {
+		const deadlines = Array.from(deadlineSamples.values(), ({ deadline }) => Date.parse(deadline));
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		function tick() {
+			const now = Date.now();
+			countdownClock = now;
+			const delay = Math.min(...deadlines
+				.filter((deadline) => deadline > now)
+				.map((deadline) => (deadline - now) % 10_000 + 1));
+			// Cross the exact deadline boundary by 1 ms before displaying the next lower step.
+			if (Number.isFinite(delay)) timer = setTimeout(tick, delay);
+		}
+		tick();
+		return () => clearTimeout(timer);
 	});
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
 const deadlineObservedAt = (office: OfficeInfo) => {
@@ -276,7 +290,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 			<p id="place-reason" class="mt-2 text-xs/5 text-amber-100/80">Placing agents is available in a later release.</p>
 		</section>
 	{/if}
-	<p class="text-xs/5 text-gray-400">Shown from this Mac.</p>
+	<p class="text-xs/5 text-gray-400">Shown from HQ. Statuses include last-seen information.</p>
 </div>
 
 <OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} onCloseAutoFocus={restoreDetailsFocus} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

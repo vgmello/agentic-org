@@ -375,8 +375,39 @@ pub fn classify_org_reply(
                     OrgReplyClassification::NeedsAuthorizationRecheck
                 }
                 GatewayErrorCode::Unknown => unknown(OrgReplyIssue::UnknownErrorCode),
+                GatewayErrorCode::InvalidRequest
+                | GatewayErrorCode::InvalidName
+                | GatewayErrorCode::AlreadyExists
+                | GatewayErrorCode::StorageError
+                | GatewayErrorCode::Cycle
+                | GatewayErrorCode::NotEmpty
+                | GatewayErrorCode::NotAMember
+                | GatewayErrorCode::OwnerProtected
+                | GatewayErrorCode::NotFound
+                | GatewayErrorCode::Conflict
+                | GatewayErrorCode::Expired
+                | GatewayErrorCode::ClockSkew
+                | GatewayErrorCode::Unavailable
+                | GatewayErrorCode::OperationReused => OrgReplyClassification::Outcome {
+                    outcome: MutationOutcome::Rejected {
+                        operation_id,
+                        error: GatewayError::new(error.code, error.message),
+                    },
+                    issue: None,
+                },
+                // These codes belong to other domains, HTTP admission or
+                // negotiation, not a correlated organization command refusal.
+                // Keep the match exhaustive: a new vocabulary entry requires
+                // an explicit decision here rather than forwarding its text.
                 GatewayErrorCode::Other(_)
                 | GatewayErrorCode::UnknownMethod
+                | GatewayErrorCode::SnapshotRequired
+                | GatewayErrorCode::UnknownRecipient
+                | GatewayErrorCode::NotReady
+                | GatewayErrorCode::Timeout
+                | GatewayErrorCode::TooLarge
+                | GatewayErrorCode::ChecklistIncomplete
+                | GatewayErrorCode::UnsupportedVersion
                 | GatewayErrorCode::RateLimited => OrgReplyClassification::Outcome {
                     outcome: MutationOutcome::Rejected {
                         operation_id,
@@ -386,13 +417,6 @@ pub fn classify_org_reply(
                         ),
                     },
                     issue: Some(OrgReplyIssue::UnexpectedRefusal),
-                },
-                _ => OrgReplyClassification::Outcome {
-                    outcome: MutationOutcome::Rejected {
-                        operation_id,
-                        error: GatewayError::new(error.code, error.message),
-                    },
-                    issue: None,
                 },
             }
         }

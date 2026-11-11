@@ -37,7 +37,14 @@ use org_proto::{
 };
 
 /// Reads the organization's snapshot (the office's `org_snapshot`), or says why it cannot.
-pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, String> + Send + Sync>;
+/// Availability is distinct from storage failure at the organization read boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotFailure {
+    Unavailable,
+    Storage,
+}
+
+pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, SnapshotFailure> + Send + Sync>;
 
 /// Runs one organization command (the office's `submit_org`): HQ's answer, or why it could not
 /// answer at all (storage).
@@ -795,7 +802,14 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
         return match (shared.ports.snapshot)() {
             Ok(snapshot) => Response::ok::<OrgSnapshotCall>(request.id, &snapshot)
                 .unwrap_or_else(|_| internal(request.id)),
-            Err(_) => internal(request.id),
+            Err(SnapshotFailure::Unavailable) => Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "organization snapshot is not available yet",
+                ),
+            ),
+            Err(SnapshotFailure::Storage) => internal(request.id),
         };
     }
     if request.is::<Who>() {
@@ -1280,7 +1294,7 @@ mod tests {
             inner,
             revoke: Mutex::new(None),
         });
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = mailbox;
         ports.directory = directory.clone();
         let shared = Shared::new(
@@ -1350,7 +1364,7 @@ mod tests {
         Arc::new(Shared::new(
             &test_info(),
             path,
-            ports(Box::new(|| Err("none".to_owned()))),
+            ports(Box::new(|| Err(SnapshotFailure::Storage))),
             token(),
         ))
     }
@@ -1617,7 +1631,7 @@ mod tests {
             Box::new(move || {
                 let _ = entered.send(());
                 let _ = hold.lock().unwrap().recv();
-                Err("none".to_owned())
+                Err(SnapshotFailure::Storage)
             }),
         );
         let (stop, server) = start(&path, &shared);
@@ -1744,7 +1758,7 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
-                snapshot: Box::new(|| Err("none".to_owned())),
+                snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 submit: Box::new(move |_| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
@@ -2147,6 +2161,26 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_pending_is_unavailable_only_after_binding() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let shared = shared_with(&path, Box::new(|| Err(SnapshotFailure::Unavailable)));
+        let (stop, server) = start(&path, &shared);
+        let mut client = Client::connect(&path);
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::NotAuthorized
+        );
+        client.bind(None, Some(token()));
+        assert_eq!(
+            code_of(client.ask(snapshot_request)),
+            ErrorCode::Unavailable
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
     fn the_organization_is_read_only_by_a_bound_connection() {
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -2187,7 +2221,7 @@ mod tests {
                 &test_info(),
                 path,
                 OfficePorts {
-                    snapshot: Box::new(|| Err("none".to_owned())),
+                    snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
@@ -2641,7 +2675,7 @@ mod tests {
             &test_info(),
             path,
             OfficePorts {
-                snapshot: Box::new(|| Err("none".to_owned())),
+                snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 submit: Box::new(|_| Err("none".to_owned())),
                 who: Box::new(move |params| {
                     counter.fetch_add(1, Ordering::SeqCst);
@@ -2772,7 +2806,7 @@ mod tests {
         std::thread::JoinHandle<()>,
     ) {
         let (mailbox, directory) = messaging();
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.submit = Box::new(|_| committed());
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = directory.clone();
@@ -3371,7 +3405,7 @@ mod tests {
     fn status_server(path: &Path) -> (StatusLog, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let log: StatusLog = Arc::default();
         let (mailbox, directory) = messaging();
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = mailbox;
         ports.directory = directory;
         let recorded = Arc::clone(&log);
@@ -3498,7 +3532,7 @@ mod tests {
         live: &Arc<LiveEvents>,
     ) -> (Arc<Mailbox>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let (mailbox, directory) = messaging_with(Arc::clone(live));
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = directory;
         ports.live = Arc::clone(live);
@@ -3599,7 +3633,7 @@ mod tests {
         timing: Timing,
     ) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let (mailbox, directory) = messaging_with(Arc::clone(live));
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = mailbox;
         ports.directory = directory;
         ports.live = Arc::clone(live);
@@ -3787,7 +3821,7 @@ mod tests {
             Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
         };
         let (mailbox, directory) = messaging_with(Arc::clone(&live));
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = directory.clone();
         ports.live = Arc::clone(&live);
@@ -3959,7 +3993,7 @@ mod tests {
             inner: Arc::clone(&memory),
             failing: AtomicBool::new(false),
         });
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = flaky.clone();
         ports.live = Arc::clone(&live);
@@ -4054,7 +4088,7 @@ mod tests {
             inner: Arc::clone(&memory),
             failing: AtomicBool::new(false),
         });
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.mailbox = Arc::clone(&mailbox);
         ports.directory = flaky.clone();
         ports.live = Arc::clone(&live);

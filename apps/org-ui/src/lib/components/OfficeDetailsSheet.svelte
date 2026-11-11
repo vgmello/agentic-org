@@ -61,6 +61,16 @@
 	// same office must not cancel the run that is waiting for it.
 	const officeId = $derived(office?.id);
 	const canRestart = $derived(capabilities?.includes('office.restart'));
+	const reportedStatus = $derived(office?.status);
+	const reportedReason = $derived(office?.status_reason);
+	let noteRevision = 0;
+	$effect(() => {
+		void status;
+		void reportedStatus;
+		void reportedReason;
+		noteRevision++;
+		restartNote = undefined;
+	});
 	$effect(() => {
 		// Another office starts clean (the run for the old one stops).
 		void officeId;
@@ -86,6 +96,7 @@
 		if (!office || restarting) return;
 		const mine = ++run;
 		const id = office.id;
+		const revision = noteRevision;
 		restarting = true;
 		restartNote = undefined;
 		const live = () => mine === run;
@@ -99,8 +110,10 @@
 			if (outcome.kind === 'refresh') await onrestarted?.();
 			if (outcome.kind !== 'wait') {
 				if (!live()) return;
-				// Unsupported says it once, in the note; the others say it here, in the host's words if the app has none.
-				restartNote = outcome.kind === 'unsupported' ? undefined : (outcome.message ?? err.message);
+				// The reason row owns unavailable responses. A response from an older state has no note.
+				if (revision === noteRevision) {
+					restartNote = outcome.kind === 'unsupported' ? undefined : outcome.message;
+				}
 				restarting = false;
 				return;
 			}
