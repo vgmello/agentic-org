@@ -298,6 +298,11 @@ impl Offices {
         Ok(())
     }
 
+    #[cfg(all(feature = "test-support", debug_assertions))]
+    pub(crate) fn broadcast_for_test(&self) -> Arc<Broadcast> {
+        Arc::clone(&self.broadcast)
+    }
+
     /// Every organization with an office on this Mac (see [`Catalog::organizations`]).
     pub(crate) fn organizations(&self) -> Vec<Organization> {
         let catalog = lock(&self.catalog);

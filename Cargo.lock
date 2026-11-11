@@ -524,6 +524,7 @@ version = "0.0.0"
 dependencies = [
  "core-foundation",
  "libc",
+ "org-host-control",
  "org-office-host",
  "org-office-launch",
  "org-proto",

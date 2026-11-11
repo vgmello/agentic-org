@@ -27,7 +27,7 @@ const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
 
 fn status(host: &Host, office_id: &str) -> OfficeStatus {
-    Client::connect(host.socket_path())
+    Client::for_host(host)
         .call::<OfficeList>(&Empty {})
         .unwrap()
         .offices
@@ -56,11 +56,11 @@ fn kill(pid: u32) {
 
 #[test]
 fn every_start_gets_its_office_token_and_restarts_reuse_it() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [{"do": "crash"}, {"do": "crash"}, {"do": "ready"}] }));
-    let host = Host::start(home.config()).unwrap();
+    let host = home.start(home.config()).unwrap();
     wait_for(&host, A, OfficeStatus::Active);
     wait_for(&host, B, OfficeStatus::Active);
 
@@ -88,10 +88,10 @@ fn every_start_gets_its_office_token_and_restarts_reuse_it() {
 
 #[test]
 fn a_host_restart_makes_new_tokens() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     for _ in 0..2 {
-        let host = restart_host(&home.config());
+        let host = restart_host(&home, &home.config());
         wait_for(&host, A, OfficeStatus::Active);
         host.shutdown();
     }
@@ -106,9 +106,9 @@ fn a_host_restart_makes_new_tokens() {
 
 #[test]
 fn a_created_office_keeps_its_token_when_it_restarts() {
-    let home = TestHome::new();
-    let host = Host::start(home.config()).unwrap();
-    let mut client = Client::connect(host.socket_path());
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::for_host(&host);
     let org = client
         .call::<OrganizationCreate>(&OrganizationCreateParams {
             name: "Acme".into(),
@@ -174,11 +174,11 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         ),
     ];
     for (name, body) in cases {
-        let home = TestHome::new();
+        let home = TestHome::registered();
         home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
         let mut config = home.config();
         config.set_server_program(home.wrapper(name, &body));
-        let host = Host::start(config).unwrap();
+        let host = home.start(config).unwrap();
         wait_for(&host, A, OfficeStatus::Unavailable);
         // Several backoff periods (100 + 200 + 400 ms) pass without a restart:
         // invalid_request is fatal.
@@ -193,11 +193,11 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
 
 #[test]
 fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     let mut config = home.config();
     config.set_server_program(home.wrapper("no-first-line", r#"exec "$FAKE" "$@" </dev/null"#));
-    let host = Host::start(config).unwrap();
+    let host = home.start(config).unwrap();
     // The contract: the host is gone, so the server exits 0 without a `failed` line. That
     // isn't fatal: the host restarts it with backoff.
     eventually(WAIT, "two runs", || {
@@ -215,14 +215,14 @@ fn a_create_whose_first_line_is_a_start_line_fails() {
         app_token: AppToken::from_bytes([7; 32]),
         db_key: DbKey::from_bytes([8; 32]),
     }));
-    let home = TestHome::new();
+    let home = TestHome::registered();
     let mut config = home.config();
     config.set_server_program(home.wrapper(
         "start-op",
         &format!(r#"printf '%s' '{start}' | "$FAKE" "$@""#),
     ));
-    let host = Host::start(config).unwrap();
-    let err = Client::connect(host.socket_path())
+    let host = home.start(config).unwrap();
+    let err = Client::for_host(&host)
         .call::<OrganizationCreate>(&OrganizationCreateParams {
             name: "Acme".into(),
         })

@@ -45,6 +45,7 @@ pub fn fast_timings() -> Timings {
 /// logs).
 pub struct TestHome {
     dir: tempfile::TempDir,
+    instance_id: Option<String>,
 }
 
 impl TestHome {
@@ -53,17 +54,86 @@ impl TestHome {
             .prefix("oh")
             .tempdir_in("/tmp")
             .unwrap();
-        Self { dir }
+        Self {
+            dir,
+            instance_id: None,
+        }
+    }
+
+    /// Initialize a real private registry before seeding offices in its own layout.
+    #[cfg(debug_assertions)]
+    pub fn registered() -> Self {
+        let mut home = Self::new();
+        let base = home.dir.path().canonicalize().unwrap();
+        let temp = base.join("t");
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
+            .create(&temp)
+            .unwrap();
+        let host = org_office_host::start_instance_for_test(
+            home.config(),
+            &base.join("l"),
+            &temp,
+            None,
+            &base.join("i"),
+        )
+        .unwrap();
+        host.shutdown();
+        let config: Value =
+            serde_json::from_slice(&fs::read(base.join("i/instance.json")).unwrap()).unwrap();
+        home.instance_id = Some(config["binding"]["id"].as_str().unwrap().to_owned());
+        home
+    }
+    pub fn runtime(&self) -> PathBuf {
+        if self.instance_id.is_some() {
+            let config: Value =
+                serde_json::from_slice(&fs::read(self.dir.path().join("i/instance.json")).unwrap())
+                    .unwrap();
+            PathBuf::from(config["binding"]["temp_folder"].as_str().unwrap())
+        } else {
+            self.path().join("run")
+        }
+    }
+    pub fn fixture_base(&self) -> PathBuf {
+        self.dir.path().canonicalize().unwrap()
+    }
+    pub fn instance_id(&self) -> &str {
+        self.instance_id.as_deref().unwrap()
+    }
+    #[cfg(debug_assertions)]
+    pub fn start(&self, config: Config) -> Result<Host, HostError> {
+        if self.instance_id.is_some() {
+            let base = self.dir.path().canonicalize().unwrap();
+            org_office_host::start_instance_for_test(
+                config,
+                &base.join("l"),
+                &base.join("t"),
+                None,
+                &base.join("i"),
+            )
+        } else {
+            Host::start(config)
+        }
     }
 
     /// The office home itself, a folder inside the temp dir (so the host makes it).
     pub fn path(&self) -> PathBuf {
-        self.dir.path().join("h")
+        if self.instance_id.is_some() {
+            self.dir
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("i/office-state")
+        } else {
+            self.dir.path().join("h")
+        }
     }
 
     /// The host's development key folder (`<id>.key` files), outside the office home.
     pub fn keys_dir(&self) -> PathBuf {
-        self.dir.path().join("k")
+        match &self.instance_id {
+            Some(id) => self.dir.path().canonicalize().unwrap().join("k").join(id),
+            None => self.dir.path().join("k"),
+        }
     }
 
     /// A debug host's config for this home (release builds can't set one: they trust only what
@@ -72,7 +142,7 @@ impl TestHome {
     pub fn config(&self) -> Config {
         let mut config = Config::new(self.path(), fake_server());
         config.timings = fast_timings();
-        config.dev_key_dir = Some(self.keys_dir());
+        config.dev_key_dir = Some(self.dir.path().join("k"));
         config
     }
 
@@ -461,11 +531,10 @@ pub fn rfc3339(at: std::time::SystemTime) -> String {
 }
 
 /// The office `office_id` as `office.list` shows it now.
-pub fn office_info(socket: &Path, office_id: &str) -> Option<org_proto::OfficeInfo> {
-    Client::connect(socket)
-        .call::<org_proto::OfficeList>(&org_proto::Empty {})
-        .unwrap()
-        .offices
+#[cfg(debug_assertions)]
+pub fn office_info(host: &Host, office_id: &str) -> Option<org_proto::OfficeInfo> {
+    org_office_host::test_support::Fixture::new(host)
+        .offices()
         .into_iter()
         .find(|o| o.id == office_id)
 }
@@ -479,10 +548,11 @@ pub fn hq(office_id: &str, org_id: &str, name: &str, created_at: &str) -> Office
 /// a while: a child that another test spawns at that moment holds a copy of every fd (the old
 /// `host.lock` too) until its `exec` completes (usually a few ms). A real host restart is a new
 /// process, which can't hit this.
-pub fn restart_host(config: &Config) -> Host {
+#[cfg(debug_assertions)]
+pub fn restart_host(home: &TestHome, config: &Config) -> Host {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match Host::start(config.clone()) {
+        match home.start(config.clone()) {
             Ok(host) => return host,
             Err(HostError::AlreadyRunning { .. }) if Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(20));
@@ -513,6 +583,8 @@ pub struct Client {
     reader: BufReader<UnixStream>,
     next_id: u64,
     events: VecDeque<Event>,
+    #[cfg(debug_assertions)]
+    fixture: Option<std::sync::Arc<org_office_host::test_support::Fixture>>,
 }
 
 impl Client {
@@ -526,7 +598,16 @@ impl Client {
             reader: BufReader::new(stream),
             next_id: 1,
             events: VecDeque::new(),
+            #[cfg(debug_assertions)]
+            fixture: None,
         }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn for_host(host: &Host) -> Self {
+        let mut client = Self::connect(host.socket_path());
+        client.fixture = Some(org_office_host::test_support::Fixture::new(host));
+        client
     }
 
     /// Calls `C` and waits for its answer (events that arrive meanwhile are kept).
@@ -534,6 +615,16 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
         let request = Request::new::<C>(id, params).unwrap();
+        #[cfg(debug_assertions)]
+        if let Some(fixture) = &self.fixture {
+            fixture.submit(request);
+            let response = self.response();
+            assert_eq!(response.id, id);
+            return response.into_result::<C>().map_err(|e| match e {
+                org_proto::CallError::Api(e) => e,
+                other => panic!("{other}"),
+            });
+        }
         let mut line = serde_json::to_vec(&request).unwrap();
         line.push(b'\n');
         self.out.write_all(&line).unwrap();
@@ -547,6 +638,11 @@ impl Client {
 
     /// Sends a raw line and returns the next response.
     pub fn raw(&mut self, line: &str) -> Response {
+        #[cfg(debug_assertions)]
+        assert!(
+            self.fixture.is_none(),
+            "raw wire assertions need Client::connect"
+        );
         self.out.write_all(line.as_bytes()).unwrap();
         self.out.write_all(b"\n").unwrap();
         self.response()
@@ -556,6 +652,14 @@ impl Client {
     pub fn next_event(&mut self, timeout: Duration) -> Option<Event> {
         if let Some(event) = self.events.pop_front() {
             return Some(event);
+        }
+        #[cfg(debug_assertions)]
+        if let Some(fixture) = &self.fixture {
+            return match fixture.recv(timeout) {
+                Some(ServerMessage::Event(event)) => Some(event),
+                None => None,
+                other => panic!("expected event, got {other:?}"),
+            };
         }
         // macOS refuses (EINVAL) to set a timeout on a socket whose peer already closed: that
         // is EOF.
@@ -620,6 +724,10 @@ impl Client {
     }
 
     fn read(&mut self) -> Option<ServerMessage> {
+        #[cfg(debug_assertions)]
+        if let Some(fixture) = &self.fixture {
+            return fixture.recv(Duration::from_secs(20));
+        }
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
             Ok(0) | Err(_) => None,
