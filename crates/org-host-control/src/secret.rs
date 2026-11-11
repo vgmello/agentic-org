@@ -36,8 +36,8 @@ macro_rules! secret_text {
 secret_text!(
     /// A password, as typed: `account.verify`, `account.set_password`,
     /// `account.reset_password`, `account.create` and `bootstrap`. The host keeps only its
-    /// Argon2id hash, and for `account.create` the journal row's create-time verifier (an
-    /// HMAC-SHA256 under a host-held key, X-02 §6.3); never the password or an unkeyed hash.
+    /// Argon2id hash, and for `account.create` the journal row's create-time verifier (a copy of
+    /// that Argon2id PHC string, X-02 §6.3); never the password, a fast hash or a separate key.
     Password
 );
 

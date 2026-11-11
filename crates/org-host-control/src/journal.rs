@@ -19,12 +19,15 @@
 //!
 //! **Passwords on a replay** (X-02 §6.3):
 //! - `account.create`'s journal row also keeps a **create-time verifier** of the password it
-//!   carried: HMAC-SHA256 under a host-held journal key, never the password and never an unkeyed
-//!   hash. A replay compares its password with that verifier, never with the account's current
-//!   hash, so a later password change doesn't refuse an honest retry. A mismatch is
-//!   `operation_reused`: a retry with another password is **not** the same op, though its
-//!   fingerprint is the same. The host computes and stores the verifier (move 2b); this crate
-//!   defines no type for it.
+//!   carried: a copy of the Argon2id PHC string the create produced for the account (the same
+//!   salt and parameters), never the password, a fast hash or a separate key. It is as strong as
+//!   the account's own hash and survives a host restart with the row. A replay verifies its
+//!   password against it through the same Argon2 pool, queue limit and rate limit as
+//!   `account.verify`, never against the account's current hash, so it reveals nothing the
+//!   replaying account didn't send and a later password change doesn't refuse an honest retry.
+//!   A mismatch is `operation_reused`: a retry with another password is **not** the same op,
+//!   though its fingerprint is the same. The host computes and stores the verifier (move 2b);
+//!   this crate defines no type for it.
 //! - A `bootstrap` replay checks the password as a sign-in instead, so a wrong one is
 //!   `not_authorized` (see [`crate::ops::Bootstrap`]).
 

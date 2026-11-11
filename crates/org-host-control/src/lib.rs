@@ -21,10 +21,10 @@
 //! **Secrets** (§6.5) decode straight into secret newtypes ([`Password`], [`SessionHandle`],
 //! [`TlsPrivateKey`], [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no
 //! `Clone`, zeroed on drop. Responses carrying them are written through the host's secret-line
-//! path. Until they decode, a request's secrets sit in `org-proto`'s envelope as raw JSON: its
-//! `params` until `Request::params` decodes them, and (the exception §6.5 records) a grant MAC in
-//! its `principal` until `Request::principal` does. That JSON is never logged: the envelope's
-//! `Debug` elides both.
+//! path. §6.5's raw-JSON exception: until they decode, a request's secrets sit unzeroed in
+//! `org-proto`'s envelope as raw JSON, in its `params` until `Request::params` decodes them and,
+//! for a grant MAC, in its `principal` until `Request::principal` does. That JSON is never
+//! logged: the envelope's `Debug` elides both.
 //!
 //! **The listen configuration** ([`listen`], X-02 rev 14): the browser-facing origin
 //! ([`listen::ListenOrigin`], the one implementation that parses, checks and serialises it), the

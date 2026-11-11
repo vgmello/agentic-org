@@ -413,7 +413,8 @@ impl Call for TlsFetch {
 /// `tls.set` (`host.sock` only; admin, the signed `agentic-org` peer on macOS; journaled): install
 /// a TLS pair. Before it stores the pair and emits `tls.renew`, the host checks, in this order,
 /// and answers the first failure (X-02 §6.2):
-/// 1. the stored `origin` ([`TlsRefusal::OriginInvalid`]);
+/// 1. the stored listener fields (`address`, `port`, `scheme`) and `origin`
+///    ([`TlsRefusal::OriginInvalid`]);
 /// 2. the stored `hsts` ([`TlsRefusal::HstsInvalid`]);
 /// 3. that the key matches the certificate ([`TlsRefusal::TlsKeyMismatch`]);
 /// 4. that the certificate is valid now ([`TlsRefusal::TlsNotValid`]);
@@ -461,7 +462,8 @@ pub enum TlsRefusal {
         not_before: String,
         not_after: String,
     },
-    /// `{"code": "origin_invalid"}`: the stored listen configuration's `origin` is invalid.
+    /// `{"code": "origin_invalid"}`: the stored listen configuration's `origin` is invalid, or an
+    /// `address`, `port` or `scheme` it is checked against is missing or malformed.
     OriginInvalid,
     /// `{"code": "hsts_invalid"}`: the stored listen configuration's `hsts` is invalid.
     HstsInvalid,
@@ -491,7 +493,9 @@ impl From<InvalidListenConfig> for TlsRefusal {
     /// The invalid-configuration rule's refusal, as `bootstrap` and `tls.set` answer it.
     fn from(invalid: InvalidListenConfig) -> Self {
         match invalid {
-            InvalidListenConfig::Origin(_) => TlsRefusal::OriginInvalid,
+            InvalidListenConfig::Listen(_) | InvalidListenConfig::Origin(_) => {
+                TlsRefusal::OriginInvalid
+            }
             InvalidListenConfig::Hsts => TlsRefusal::HstsInvalid,
         }
     }
@@ -709,10 +713,12 @@ pub enum BootstrapOutcome {
 ///    sign-in, so a wrong one is the plain error `not_authorized`; another `login` changes the
 ///    fingerprint, so it is the plain error `operation_reused`; a pair other than the stored one
 ///    is [`BootstrapRefusal::TlsMismatch`]), and any other `operation_id` is
-///    [`BootstrapRefusal::AlreadyBootstrapped`]. Bootstrap's fingerprint fields are move 2b's;
-///    replays must also match the stored `hq_operation_id` (X-02 §6.2);
-/// 3. on an empty registry: the stored `origin` ([`TlsRefusal::OriginInvalid`]; a missing listen
-///    configuration is one), then `hsts` ([`TlsRefusal::HstsInvalid`]), then
+///    [`BootstrapRefusal::AlreadyBootstrapped`]. A replay doesn't re-check the listen
+///    configuration. Bootstrap's fingerprint fields are move 2b's; replays must also match the
+///    stored `hq_operation_id` (X-02 §6.2);
+/// 3. on an empty registry: the stored listener fields and `origin`
+///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
+///    ([`TlsRefusal::HstsInvalid`]), then
 ///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (key match,
 ///    validity, coverage). Every refusal here but `tls_required` is a [`BootstrapRefusal::Tls`].
 ///

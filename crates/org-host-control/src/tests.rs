@@ -270,7 +270,8 @@ fn journaled<P: serde::de::DeserializeOwned + Journaled>(
 
 /// X-02 §6.3: the same op after a new sign-in by the same account replays; another account or
 /// other params is `operation_reused`, and so is an `account.create` whose password doesn't match
-/// the row's create-time verifier (the host's HMAC, which `password_verifier` stands for).
+/// the row's create-time verifier (a copy of the create's Argon2id hash, which the host checks;
+/// `password_verifier` stands for that check).
 #[test]
 fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
     let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();

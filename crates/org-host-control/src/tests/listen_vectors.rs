@@ -266,6 +266,10 @@ fn listen_config_vectors() {
             }
             (Err(invalid), want) => {
                 let code = match invalid {
+                    InvalidListenConfig::Listen(field) => {
+                        assert_eq!(field.as_str(), text(&row["field"]), "{name}");
+                        "origin_invalid"
+                    }
                     InvalidListenConfig::Origin(why) => {
                         assert_eq!(why.code(), text(&row["origin_error"]), "{name}");
                         "origin_invalid"
@@ -273,7 +277,11 @@ fn listen_config_vectors() {
                     InvalidListenConfig::Hsts => "hsts_invalid",
                 };
                 assert_eq!(code, want, "{name}");
-                assert_eq!(invalid.field(), &code[..code.find('_').unwrap()]);
+                // Setup names the field: a listener field, or the one the code names.
+                let field = row["field"]
+                    .as_str()
+                    .unwrap_or(&code[..code.find('_').unwrap()]);
+                assert_eq!(invalid.field(), field, "{name}");
                 // The one rule: the host reports it as that ListenFailure, and bootstrap and
                 // tls.set refuse with that code, which neither op stores.
                 assert_eq!(
@@ -297,9 +305,19 @@ fn listen_config_vectors() {
         "address": "0.0.0.0", "port": 8443, "scheme": "https", "origin": 8443, "hsts": ""
     }))
     .unwrap();
-    assert_eq!(stored.origin, Some(StoredText::NotAString));
-    assert_eq!(stored.hsts, Some(StoredText::Text(String::new())));
+    assert_eq!(stored.origin, Some(Stored::Malformed));
+    assert_eq!(stored.hsts, Some(Stored::Value(String::new())));
     assert!(serde_json::to_value(&stored).is_err());
+    // Each listener field is checked before the origin, which can't be checked against it.
+    let both: StoredListenConfig = serde_json::from_value(json!({
+        "address": "mac.local", "port": 8443, "scheme": "https", "hsts": "on"
+    }))
+    .unwrap();
+    assert_eq!(both.address, Some(Stored::Malformed));
+    assert_eq!(
+        both.validate(),
+        Err(InvalidListenConfig::Listen(ListenField::Address))
+    );
 }
 
 #[test]

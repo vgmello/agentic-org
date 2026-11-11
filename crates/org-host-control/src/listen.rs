@@ -8,8 +8,9 @@
 //! three use [`ListenOrigin`], never a copy of their own.
 //!
 //! **An invalid stored configuration is one rule everywhere** ([`StoredListenConfig::validate`]):
-//! an `origin` that fails [`ListenOrigin::parse`] or [`ListenOrigin::check`] is `origin_invalid`;
-//! an `hsts` value outside `off`/`on`/`clear` is `hsts_invalid`. The host's pre-spawn check
+//! an `origin` that fails [`ListenOrigin::parse`] or [`ListenOrigin::check`], or a missing or
+//! malformed `address`, `port` or `scheme` it can't be checked against, is `origin_invalid`; an
+//! `hsts` value outside `off`/`on`/`clear` is `hsts_invalid`. The host's pre-spawn check
 //! reports it as a [`ListenFailure`]; `bootstrap` and `tls.set` refuse with `ops::TlsRefusal`
 //! (`ops` depends on this module, not the other way round). Certificate coverage is the host's
 //! check, not this module's.
@@ -591,11 +592,11 @@ impl ListenConfig {
     /// The configuration as it is stored.
     pub fn to_stored(&self) -> StoredListenConfig {
         StoredListenConfig {
-            address: self.address,
-            port: self.port,
-            scheme: self.scheme,
-            origin: Some(StoredText::Text(self.origin.as_str().to_owned())),
-            hsts: Some(StoredText::Text(self.hsts.as_str().to_owned())),
+            address: Some(Stored::Value(self.address)),
+            port: Some(Stored::Value(self.port)),
+            scheme: Some(Stored::Value(self.scheme)),
+            origin: Some(Stored::Value(self.origin.as_str().to_owned())),
+            hsts: Some(Stored::Value(self.hsts.as_str().to_owned())),
         }
     }
 }
@@ -617,109 +618,169 @@ impl<'de> Deserialize<'de> for ListenConfig {
 }
 
 /// The listen configuration as setup stores it in the instance configuration, before
-/// validation: `origin` and `hsts` are read without judging them, so a missing or invalid value
-/// is reported as the one rule says rather than as an unreadable file. A missing field, `null`,
-/// reads as `None`; a value that isn't a string reads as [`StoredText::NotAString`]. Both are
-/// invalid.
+/// validation: every field is read without judging it, so a missing or invalid value is reported
+/// as the one rule says rather than as an unreadable file. A missing field and `null` read as
+/// `None`; a value of the wrong type or out of range reads as [`Stored::Malformed`]. Both are
+/// invalid ([`StoredListenConfig::validate`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredListenConfig {
-    pub address: IpAddr,
-    pub port: u16,
-    pub scheme: ListenMode,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub address: Option<Stored<IpAddr>>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub port: Option<Stored<u16>>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scheme: Option<Stored<ListenMode>>,
     /// Always written by setup: in `http_loopback` it derives one when the operator gives none.
     #[serde(
         default,
-        deserialize_with = "lenient_text",
+        deserialize_with = "lenient",
         skip_serializing_if = "Option::is_none"
     )]
-    pub origin: Option<StoredText>,
+    pub origin: Option<Stored<String>>,
     /// Always written by setup.
     #[serde(
         default,
-        deserialize_with = "lenient_text",
+        deserialize_with = "lenient",
         skip_serializing_if = "Option::is_none"
     )]
-    pub hsts: Option<StoredText>,
+    pub hsts: Option<Stored<String>>,
 }
 
-/// A stored text field as read, before validation: a JSON string, or a value of another type,
-/// which no field accepts. A missing field and `null` are `None` around it.
+/// A stored field as read, before validation: a value of the field's type, or one that isn't
+/// (the wrong JSON type, an address that isn't an IP literal, a port outside `u16`, a scheme
+/// other than `https` and `http_loopback`). A missing field and `null` are `None` around it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StoredText {
-    Text(String),
-    /// A number, a boolean, an array or an object. Never written: serializing it fails.
-    NotAString,
+pub enum Stored<T> {
+    Value(T),
+    /// Never written: serializing it fails.
+    Malformed,
 }
 
-impl StoredText {
-    /// The string, if the value is one.
-    pub fn as_text(&self) -> Option<&str> {
+impl<T> Stored<T> {
+    /// The value, if it is one.
+    pub fn value(&self) -> Option<&T> {
         match self {
-            StoredText::Text(text) => Some(text),
-            StoredText::NotAString => None,
+            Stored::Value(value) => Some(value),
+            Stored::Malformed => None,
         }
     }
 }
 
-impl Serialize for StoredText {
+impl<T: Serialize> Serialize for Stored<T> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            StoredText::Text(text) => s.serialize_str(text),
-            StoredText::NotAString => Err(serde::ser::Error::custom(
-                "a stored field that isn't a string is never written",
+            Stored::Value(value) => value.serialize(s),
+            Stored::Malformed => Err(serde::ser::Error::custom(
+                "a malformed stored field is never written",
             )),
         }
     }
 }
 
-/// A string as itself, `null` as `None`, and any other value as [`StoredText::NotAString`].
-fn lenient_text<'de, D: Deserializer<'de>>(d: D) -> Result<Option<StoredText>, D::Error> {
+/// A value of `T` as itself, `null` as `None`, and anything else as [`Stored::Malformed`].
+fn lenient<'de, D, T>(d: D) -> Result<Option<Stored<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Lenient {
-        Text(String),
+    enum Lenient<T> {
+        Value(T),
         Null(()),
         Other(serde::de::IgnoredAny),
     }
-    Ok(match Lenient::deserialize(d)? {
-        Lenient::Text(text) => Some(StoredText::Text(text)),
+    Ok(match Lenient::<T>::deserialize(d)? {
+        Lenient::Value(value) => Some(Stored::Value(value)),
         Lenient::Null(()) => None,
-        Lenient::Other(_) => Some(StoredText::NotAString),
+        Lenient::Other(_) => Some(Stored::Malformed),
     })
 }
 
 impl StoredListenConfig {
-    /// The invalid-configuration rule (X-02 §2): an `origin` that is missing, isn't a string
-    /// ([`OriginError::NotAString`]) or fails [`ListenOrigin::parse`] or [`ListenOrigin::check`]
-    /// (including the loopback address narrowing) is [`InvalidListenConfig::Origin`]; an `hsts`
-    /// that is missing, isn't a string or is outside `off`/`on`/`clear` is
-    /// [`InvalidListenConfig::Hsts`]. There is no default for either. When
-    /// both are invalid the origin is reported.
+    /// The invalid-configuration rule (X-02 §2), checked in this order:
+    /// 1. an `address`, `port` or `scheme` that is missing or malformed (port `0` included) is
+    ///    [`InvalidListenConfig::Listen`], reported as `origin_invalid`, because `origin` can't
+    ///    be checked against it;
+    /// 2. an `origin` that is missing, isn't a string ([`OriginError::NotAString`]) or fails
+    ///    [`ListenOrigin::parse`] or [`ListenOrigin::check`] (including the loopback address
+    ///    narrowing) is [`InvalidListenConfig::Origin`];
+    /// 3. an `hsts` that is missing, isn't a string or is outside `off`/`on`/`clear` is
+    ///    [`InvalidListenConfig::Hsts`].
+    ///
+    /// There is no default for any of them. The first failure is reported.
     pub fn validate(&self) -> Result<ListenConfig, InvalidListenConfig> {
+        fn listen<T: Copy>(
+            stored: &Option<Stored<T>>,
+            field: ListenField,
+        ) -> Result<T, InvalidListenConfig> {
+            stored
+                .as_ref()
+                .and_then(Stored::value)
+                .copied()
+                .ok_or(InvalidListenConfig::Listen(field))
+        }
+        let address = listen(&self.address, ListenField::Address)?;
+        let port = listen(&self.port, ListenField::Port)?;
+        if port == 0 {
+            return Err(InvalidListenConfig::Listen(ListenField::Port));
+        }
+        let scheme = listen(&self.scheme, ListenField::Scheme)?;
         let origin = match &self.origin {
             None => return Err(InvalidListenConfig::Origin(OriginError::Missing)),
-            Some(StoredText::NotAString) => {
+            Some(Stored::Malformed) => {
                 return Err(InvalidListenConfig::Origin(OriginError::NotAString))
             }
-            Some(StoredText::Text(text)) => text,
+            Some(Stored::Value(text)) => text,
         };
         let origin = ListenOrigin::parse(origin).map_err(InvalidListenConfig::Origin)?;
         origin
-            .check(self.scheme, self.address, self.port)
+            .check(scheme, address, port)
             .map_err(InvalidListenConfig::Origin)?;
         let hsts = self
             .hsts
             .as_ref()
-            .and_then(StoredText::as_text)
+            .and_then(Stored::value)
             .ok_or(InvalidListenConfig::Hsts)?
             .parse::<Hsts>()?;
         Ok(ListenConfig {
-            address: self.address,
-            port: self.port,
-            scheme: self.scheme,
+            address,
+            port,
+            scheme,
             origin,
             hsts,
         })
+    }
+}
+
+/// The listener fields of a stored listen configuration, which `origin` is checked against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ListenField {
+    Address,
+    Port,
+    Scheme,
+}
+
+impl ListenField {
+    /// The field's name in the stored configuration.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ListenField::Address => "address",
+            ListenField::Port => "port",
+            ListenField::Scheme => "scheme",
+        }
     }
 }
 
@@ -728,6 +789,9 @@ impl StoredListenConfig {
 /// `TlsRefusal` it converts into (`From`) and store nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidListenConfig {
+    /// `origin_invalid`: the listener field `origin` is checked against is missing or malformed
+    /// (X-02 §2). Setup's message names that field.
+    Listen(ListenField),
     /// `origin_invalid`, with the check that failed ([`OriginError::Missing`] when there is none).
     Origin(OriginError),
     /// `hsts_invalid`: missing, or not `off`, `on` or `clear`.
@@ -738,6 +802,7 @@ impl InvalidListenConfig {
     /// The field setup names in "the listen configuration is invalid: `<field>`".
     pub fn field(self) -> &'static str {
         match self {
+            InvalidListenConfig::Listen(field) => field.as_str(),
             InvalidListenConfig::Origin(_) => "origin",
             InvalidListenConfig::Hsts => "hsts",
         }
@@ -746,7 +811,9 @@ impl InvalidListenConfig {
     /// As status, `doctor` and `tls.fetch`'s `unavailable` report it.
     pub fn listen_failure(self) -> ListenFailure {
         match self {
-            InvalidListenConfig::Origin(_) => ListenFailure::OriginInvalid,
+            InvalidListenConfig::Listen(_) | InvalidListenConfig::Origin(_) => {
+                ListenFailure::OriginInvalid
+            }
             InvalidListenConfig::Hsts => ListenFailure::HstsInvalid,
         }
     }
@@ -755,6 +822,11 @@ impl InvalidListenConfig {
 impl fmt::Display for InvalidListenConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            InvalidListenConfig::Listen(field) => write!(
+                f,
+                "origin_invalid: the listen {} is missing or malformed",
+                field.as_str()
+            ),
             InvalidListenConfig::Origin(why) => write!(f, "origin_invalid: {why}"),
             InvalidListenConfig::Hsts => f.write_str("hsts_invalid: hsts must be off, on or clear"),
         }
@@ -772,7 +844,8 @@ impl std::error::Error for InvalidListenConfig {}
 ///
 /// **The pre-spawn check** (move 2b) runs on the snapshot **before binding**, so a hand-edited
 /// `http_loopback` configuration with a non-loopback address is never bound, even briefly. Its
-/// order, first failure reported: `origin` (`origin_invalid`), `hsts` (`hsts_invalid`), in
+/// order, first failure reported: the listener fields and `origin` (`origin_invalid`), `hsts`
+/// (`hsts_invalid`), in
 /// `https` a stored pair (`tls_missing`, a status reason that isn't a `ListenFailure`), then
 /// coverage (`tls_name_mismatch`). On a failure the host neither binds nor spawns.
 ///
@@ -782,7 +855,8 @@ impl std::error::Error for InvalidListenConfig {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum ListenFailure {
-    /// The stored `origin` is missing, isn't a string or fails [`ListenOrigin`]'s checks.
+    /// The stored `origin` is missing, isn't a string or fails [`ListenOrigin`]'s checks, or a
+    /// stored `address`, `port` or `scheme` it is checked against is missing or malformed.
     OriginInvalid,
     /// The stored `hsts` is missing, isn't a string or isn't `off`, `on` or `clear`.
     HstsInvalid,
