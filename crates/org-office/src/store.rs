@@ -115,6 +115,7 @@ impl Store {
         instance: &str,
         office: &str,
     ) -> Result<(), OfficeError> {
+        check_existing_file(db_path)?;
         let db = connect(db_path, key, false, false)?;
         let stored: Option<String> = db
             .query_row("SELECT value FROM meta WHERE key='office_id'", [], |r| {
@@ -144,12 +145,7 @@ impl Store {
             // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
             Opening::New => drop(private_file(db_path).map_err(OfficeError::storage)?),
             Opening::Existing => {
-                // SQLite deletes a WAL beside an empty main file on the first read, which
-                // would destroy whatever that log still holds: don't let it look.
-                let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
-                if !metadata.is_file() || metadata.len() == 0 {
-                    return Err(failure("the database file is missing or empty"));
-                }
+                check_existing_file(db_path)?;
                 tighten_file_if_present(db_path).map_err(OfficeError::storage)?
             }
         }
@@ -567,6 +563,16 @@ fn wipe(text: &mut String) {
     bytes.fill(0);
     *text = String::from_utf8(bytes).expect("zero bytes are valid UTF-8");
     std::hint::black_box(&*text);
+}
+
+fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
+    // SQLite deletes a WAL beside an empty main file on the first read, which would
+    // destroy whatever that log still holds: neither open nor inspection may look.
+    let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(failure("the database file is missing or empty"));
+    }
+    Ok(())
 }
 
 /// Opens a connection to the encrypted database and proves the key works. Only with

@@ -371,3 +371,38 @@ fn v3_failed_create_removes_instance_binding_and_allows_a_different_retry() {
         );
     }
 }
+
+#[test]
+fn v3_preflight_preserves_a_wal_beside_an_empty_missing_or_non_file_database() {
+    for kind in ["empty", "missing", "directory"] {
+        let (_dir, key, folder) = legacy_instance_office(5, None);
+        let database = folder.join(OFFICE_DB);
+        fs::remove_file(&database).unwrap();
+        match kind {
+            "empty" => fs::write(&database, b"").unwrap(),
+            "directory" => fs::create_dir(&database).unwrap(),
+            _ => {}
+        }
+        let wal = folder.join("office.db-wal");
+        fs::write(&wal, b"recoverable frames").unwrap();
+        let org_before = fs::read(folder.join(ORG_DB)).unwrap();
+        let Err(OfficeError::Storage(cause)) = Office::open_for_instance(&folder, key, INSTANCE)
+        else {
+            panic!("{kind}: invalid database was not refused");
+        };
+        if kind != "missing" {
+            assert_eq!(cause.to_string(), "the database file is missing or empty");
+        }
+        assert_eq!(
+            fs::read(&wal).ok().as_deref(),
+            Some(b"recoverable frames".as_slice()),
+            "{kind}: inspection must not delete the log"
+        );
+        assert_eq!(fs::read(folder.join(ORG_DB)).unwrap(), org_before);
+        match kind {
+            "empty" => assert_eq!(fs::metadata(database).unwrap().len(), 0),
+            "directory" => assert!(database.is_dir()),
+            _ => assert!(!database.exists()),
+        }
+    }
+}
