@@ -2172,6 +2172,29 @@ mod tests {
             "DELETE FROM commands WHERE seq = 2;
             INSERT INTO commands SELECT * FROM saved_outcome; DROP TABLE saved_outcome;",
         );
+        hq.org_store().run_sql_for_test(
+            "INSERT INTO commands VALUES
+            ('01ARZ3NDEKTSV4RRFFQ69G5FAX', 1, 1, '2016-08-29T00:00:00.000Z', NULL)",
+        );
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(
+            "UPDATE commands SET seq = 2 WHERE command_id = '01ARZ3NDEKTSV4RRFFQ69G5FAX'",
+        );
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store().run_sql_for_test("UPDATE commands SET epoch = 0, seq = 0 WHERE command_id = '01ARZ3NDEKTSV4RRFFQ69G5FAX'");
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(
+            "DELETE FROM commands WHERE command_id = '01ARZ3NDEKTSV4RRFFQ69G5FAX'",
+        );
         let pending = stage_latest().unwrap();
         assert_eq!(
             organization::install_snapshot(&satellite, pending).unwrap(),

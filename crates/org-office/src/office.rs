@@ -1,7 +1,7 @@
 use std::fs::{self, File, TryLockError};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::directory::{self, RuntimeView, ThisOffice};
@@ -513,11 +513,12 @@ impl Office {
         &self,
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        // Replays use one timestamp. The durable high-water keeps it monotonic in commit order.
-        let now = time::now_ms();
-        let answer = self
-            .org
-            .write_replayable(move |db| org_db::submit(db, now, &command))?;
+        // Sample when the writer first admits the command. Replays keep this
+        // timestamp, and the durable high-water keeps commit order monotonic.
+        let now = OnceLock::new();
+        let answer = self.org.write_replayable(move |db| {
+            org_db::submit(db, *now.get_or_init(time::now_ms), &command)
+        })?;
         // After the commit: whoever follows the log reads it again (a retry of an old command
         // changes nothing, and the extra wake-up is harmless).
         self.changes.bump();

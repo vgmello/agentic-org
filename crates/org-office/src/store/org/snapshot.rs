@@ -14,7 +14,8 @@ use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use rusqlite::config::DbConfig;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, Transaction};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
 use super::replication::{int, NativeAnswer, OrganizationTxn, PROTOCOL};
@@ -536,7 +537,7 @@ fn check_projection_continuity(
     } else {
         check_protected_members(db, &incoming.rows[0])?;
     }
-    check_retained_outcomes(db, &incoming.rows[ENTITY_TABLES], federation_advance == 0)?;
+    check_retained_outcomes(db, &incoming.rows[ENTITY_TABLES], local, federation_advance)?;
     Ok(preserve_native)
 }
 
@@ -566,7 +567,8 @@ fn same_entity_rows(db: &Connection, incoming: &Projection) -> Result<bool, Stor
 fn check_retained_outcomes(
     db: &Connection,
     incoming: &[Vec<Cell>],
-    same_checkpoint: bool,
+    local: org_proto::org::Position,
+    federation_advance: u64,
 ) -> Result<(), SyncError> {
     let mut incoming_by_id: HashMap<_, _> = incoming.iter().map(|row| (&row[0], row)).collect();
     let mut query = db
@@ -582,8 +584,14 @@ fn check_retained_outcomes(
             return Err(Refusal::Divergence.into());
         }
     }
-    if same_checkpoint && !incoming_by_id.is_empty() {
+    if incoming_by_id.len() as u64 > federation_advance {
         return Err(Refusal::Divergence.into());
+    }
+    for added in incoming_by_id.into_values() {
+        let (epoch, seq) = command_position(added)?;
+        if epoch != 0 && (epoch != local.epoch || seq <= local.seq) {
+            return Err(Refusal::Divergence.into());
+        }
     }
     Ok(())
 }
@@ -700,19 +708,32 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         || links
             .iter()
             .any(|row| !references(&row[1], &project_ids) || !references(&row[2], &team_ids))
-        || commands.iter().any(|row| {
-            let (Cell::Integer(epoch), Cell::Integer(seq)) = (&row[1], &row[2]) else {
-                return true;
-            };
-            *epoch as u64 > value.header.epoch
-                || (*epoch as u64 == value.header.epoch && *seq as u64 > value.native_seq)
-        })
         || !acyclic(members, 2)
         || !acyclic(teams, 1)
     {
         return Err(Refusal::IntegrityFailure);
     }
+    let mut committed_positions = HashSet::new();
+    for command in commands {
+        let (epoch, seq) = command_position(command)?;
+        if epoch > value.header.epoch
+            || (epoch == value.header.epoch && seq > value.native_seq)
+            || (epoch != 0 && !committed_positions.insert((epoch, seq)))
+        {
+            return Err(Refusal::IntegrityFailure);
+        }
+    }
     Ok(())
+}
+
+fn command_position(row: &[Cell]) -> Result<(u64, u64), Refusal> {
+    let [_, Cell::Integer(epoch), Cell::Integer(seq), ..] = row else {
+        return Err(Refusal::IntegrityFailure);
+    };
+    Ok((
+        u64::try_from(*epoch).map_err(|_| Refusal::IntegrityFailure)?,
+        u64::try_from(*seq).map_err(|_| Refusal::IntegrityFailure)?,
+    ))
 }
 
 fn member_rows(members: &[Vec<Cell>]) -> Result<HashMap<&str, Member>, Refusal> {
@@ -785,31 +806,58 @@ fn valid_row(table: &str, row: &[Cell]) -> bool {
         return false;
     };
     match table {
-        "members" => serde_json::from_str::<Member>(body).is_ok_and(|member| {
+        "members" => decode_entity::<Member>(body).is_some_and(|member| {
             member.id == *id
                 && matches_text(&row[1], super::handle_key(&member).as_deref())
                 && matches_text(&row[2], member.reports_to_member_id.as_deref())
         }),
-        "teams" => serde_json::from_str::<Team>(body).is_ok_and(|team| {
+        "teams" => decode_entity::<Team>(body).is_some_and(|team| {
             team.id == *id
                 && matches_text(&row[1], team.owner_team_id.as_deref())
                 && matches_text(&row[2], Some(&crate::rules::name_key(&team.name)))
                 && matches_text(&row[3], team.lead_member_id.as_deref())
         }),
-        "projects" => serde_json::from_str::<Project>(body).is_ok_and(|project| project.id == *id),
-        "areas" => serde_json::from_str::<Area>(body)
-            .is_ok_and(|area| area.id == *id && matches_text(&row[1], Some(&area.project_id))),
-        "memberships" => serde_json::from_str::<Membership>(body).is_ok_and(|membership| {
+        "projects" => decode_entity::<Project>(body).is_some_and(|project| project.id == *id),
+        "areas" => decode_entity::<Area>(body)
+            .is_some_and(|area| area.id == *id && matches_text(&row[1], Some(&area.project_id))),
+        "memberships" => decode_entity::<Membership>(body).is_some_and(|membership| {
             membership.id == *id
                 && matches_text(&row[1], Some(&membership.team_id))
                 && matches_text(&row[2], Some(&membership.member_id))
         }),
-        "project_teams" => serde_json::from_str::<ProjectTeam>(body).is_ok_and(|link| {
+        "project_teams" => decode_entity::<ProjectTeam>(body).is_some_and(|link| {
             link.id == *id
                 && matches_text(&row[1], Some(&link.project_id))
                 && matches_text(&row[2], Some(&link.team_id))
         }),
         _ => false,
+    }
+}
+
+fn decode_entity<T: DeserializeOwned + Serialize>(body: &str) -> Option<T> {
+    let entity: T = serde_json::from_str(body).ok()?;
+    let incoming = serde_json::from_str(body).ok()?;
+    let stored = serde_json::to_value(&entity).ok()?;
+    // Older rows may omit fields that later gained defaults. Every field that
+    // is present must still be understood by this federation codec.
+    preserves_fields(&incoming, &stored).then_some(entity)
+}
+
+fn preserves_fields(incoming: &Value, stored: &Value) -> bool {
+    match (incoming, stored) {
+        (Value::Object(incoming), Value::Object(stored)) => incoming.iter().all(|(key, value)| {
+            stored
+                .get(key)
+                .is_some_and(|stored| preserves_fields(value, stored))
+        }),
+        (Value::Array(incoming), Value::Array(stored)) => {
+            incoming.len() == stored.len()
+                && incoming
+                    .iter()
+                    .zip(stored)
+                    .all(|(value, stored)| preserves_fields(value, stored))
+        }
+        _ => incoming == stored,
     }
 }
 
@@ -985,6 +1033,20 @@ pub(super) fn clear_projection(db: &Connection) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_entities_allow_legacy_defaults_without_losing_new_fields_or_values() {
+        let body = r#"{"id":"member","kind":"agent","name":"Member","version":1,
+            "agent":{"role":"engineer","title":"Engineer","messaging_name":"member"}}"#;
+        assert!(decode_entity::<Member>(body).is_some());
+        let mut body: Value = serde_json::from_str(body).unwrap();
+        body["agent"]["status"] = Value::String("frozen".into());
+        assert!(decode_entity::<Member>(&body.to_string()).is_none());
+        body["agent"]["status"] = Value::String("active".into());
+        assert!(decode_entity::<Member>(&body.to_string()).is_some());
+        body["agent"]["newer_field"] = Value::String("meaningful value".into());
+        assert!(decode_entity::<Member>(&body.to_string()).is_none());
+    }
 
     #[test]
     fn command_row_requires_the_columns_the_receiver_will_insert() {
