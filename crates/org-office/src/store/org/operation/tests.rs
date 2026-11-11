@@ -113,6 +113,23 @@ fn org_lookup_retains_commit_refusal_and_bytes_after_reopen() {
     assert_eq!(get(&reopened, CLOCK, &id, None).unwrap(), committed);
     assert_eq!(get(&reopened, CLOCK, &refused_id, None).unwrap(), rejected);
     assert_eq!(image(&reopened), before);
+    let removed = id.clone();
+    reopened
+        .write(move |db| {
+            assert_eq!(
+                db.execute("DELETE FROM commands WHERE command_id=?1", [&removed])
+                    .map_err(OfficeError::storage)?,
+                1
+            );
+            Ok(((), None))
+        })
+        .unwrap();
+    assert_eq!(
+        get(&reopened, CLOCK, &id, None).unwrap_err().code,
+        ErrorCode::NotFound
+    );
+    assert_eq!(image(&reopened).0.len(), 1);
+    assert_eq!(image(&reopened).1, before.1);
 }
 
 #[test]
@@ -178,7 +195,7 @@ fn expiry_uses_retained_instant_inclusive_boundary_and_durable_clock() {
 
 #[test]
 fn each_principal_field_matches_and_null_legacy_rows_match_every_caller() {
-    let (_dir, store, command) = setup();
+    let (dir, store, command) = setup();
     let id = command.command_id().to_owned();
     submit_on(&store, command, CLOCK).unwrap();
     let different = [
@@ -225,24 +242,34 @@ fn each_principal_field_matches_and_null_legacy_rows_match_every_caller() {
             ErrorCode::NotFound
         );
     }
-    store.run_sql_for_test(
-        "UPDATE commands SET principal_account=NULL,principal_member=NULL,actor_kind='agent'",
-    );
-    assert!(get(
-        &store,
-        CLOCK,
-        &id,
-        Some(Principal {
-            account: None,
-            member: None,
-            kind: "agent"
-        })
-    )
-    .is_ok());
+    store.run_sql_for_test("UPDATE commands SET principal_account=NULL,principal_member='01ARZ3NDEKTSV4RRFFQ69G5FAV',actor_kind='agent'");
+    let agent = Principal {
+        account: None,
+        member: Some(OWNER),
+        kind: "agent",
+    };
+    assert!(get(&store, CLOCK, &id, Some(agent)).is_ok());
     assert_eq!(
         get(&store, CLOCK, &id, Some(principal())).unwrap_err().code,
         ErrorCode::NotFound
     );
+    let before = image(&store);
+    drop(store);
+    let reopened = Store::open(
+        &dir.path().join("org.db"),
+        &Key::from_bytes([41; 32]),
+        Opening::Existing,
+        &SCHEMA,
+    )
+    .unwrap();
+    assert!(get(&reopened, CLOCK, &id, Some(agent)).is_ok());
+    assert_eq!(
+        get(&reopened, CLOCK, &id, Some(principal()))
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    assert_eq!(image(&reopened), before);
 }
 
 #[test]
@@ -348,13 +375,16 @@ fn reuse_checks_principal_and_hash_without_changing_existing_expiry_replay() {
         submit_on(&store, changed.clone(), CLOCK).unwrap_err().code,
         ErrorCode::OperationReused
     );
+    assert_eq!(image(&store), before);
     store.run_sql_for_test(
         "UPDATE commands SET principal_account=NULL,principal_member=NULL,actor_kind=NULL",
     );
+    let before_null_conflict = image(&store);
     assert_eq!(
         submit_on(&store, changed, CLOCK).unwrap_err().code,
         ErrorCode::OperationReused
     );
+    assert_eq!(image(&store), before_null_conflict);
 }
 
 #[test]
@@ -393,4 +423,22 @@ fn clock_corruption_and_missing_answers_fail_without_echoing_stored_content() {
         store.read(|db| lookup(db, CLOCK, &id, None)),
         Err(OfficeError::Storage(_))
     ));
+}
+
+#[test]
+fn replay_principal_mismatch_precedes_decoding_a_corrupt_answer() {
+    let (_dir, store, command) = setup();
+    submit_on(&store, command.clone(), CLOCK).unwrap();
+    store.run_sql_for_test("UPDATE commands SET principal_account='A1',principal_member='01ARZ3NDEKTSV4RRFFQ69G5FAV',actor_kind='human',result='SECRET'");
+    let before = image(&store);
+    let mismatch = Principal {
+        kind: "agent",
+        ..principal()
+    };
+    let rejected = store
+        .write(move |db| submit_as(db, CLOCK, &command, Some(mismatch)).map(|x| (x, None)))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(rejected.code, ErrorCode::OperationReused);
+    assert_eq!(image(&store), before);
 }
