@@ -276,6 +276,7 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
         );
         assert_header_wiped(true);
         assert!(control.transfer.is_none());
+        assert!(!control.failed_rights());
         control.emit(&ServerEvent::Discarded).unwrap();
         sender.join().unwrap();
         stdout_is_empty(output);
@@ -315,6 +316,7 @@ fn v2_and_empty_first_lines_keep_the_legacy_transport() {
         assert!(crate::zeroed::take_secret_wipes().is_empty());
         assert!(control.rendezvous.is_none());
         assert!(control.transfer.is_none());
+        assert!(!control.failed_rights());
         control.emit(&ServerEvent::Discarded).unwrap();
         output.rewind().unwrap();
         let mut output = BufReader::new(output);
@@ -339,6 +341,16 @@ fn handoff_fault_child() {
     let (mut control, output) =
         launch_with_fence(&first(&path, FirstLine::Create), Arc::clone(&fence));
     let expected_case = case.clone();
+    let (decoded, header_consumed) = std::sync::mpsc::sync_channel(0);
+    let (resume, marker_queued) = std::sync::mpsc::sync_channel(0);
+    if case == "poison_fence_marker" {
+        // Observe the actual post-header boundary, so the header receive cannot mask
+        // a replacement fence at the separate fd-bearing marker site.
+        control.before_marker = Some(Box::new(move || {
+            decoded.send(()).unwrap();
+            marker_queued.recv_timeout(WAIT).unwrap();
+        }));
+    }
     let sender = std::thread::spawn(move || {
         let (mut stream, _reader) = accept(listener);
         let (fd, _other) = UnixDatagram::pair().unwrap();
@@ -354,6 +366,17 @@ fn handoff_fault_child() {
                 });
                 let _ = stream.write_all(&header);
                 let _ = try_send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+            }
+            "poison_fence_marker" => {
+                stream.write_all(&header).unwrap();
+                header_consumed.recv_timeout(WAIT).unwrap();
+                #[cfg(target_os = "macos")]
+                let _ = std::panic::catch_unwind(|| {
+                    let _guard = fence.lock().unwrap();
+                    panic!("poison original caller fence only after complete header");
+                });
+                send_fds(&stream, v3::FD_MARKER, &[fd.as_raw_fd()]);
+                resume.send(()).unwrap();
             }
             "early_fd" => {
                 send_fds(&stream, header[0], &[fd.as_raw_fd()]);
@@ -431,6 +454,8 @@ fn handoff_fault_child() {
         }
     });
     let result = control.read(FirstLine::Create);
+    // Early fd/header-fence refusals observe Drop only: no secret bytes arrived.
+    // Every later case, including marker-fence refusal, observes an actual populated buffer.
     assert_header_wiped(!matches!(
         expected_case.as_str(),
         "early_fd" | "poison_fence"
@@ -441,6 +466,7 @@ fn handoff_fault_child() {
         matches!(
             expected_case.as_str(),
             "poison_fence"
+                | "poison_fence_marker"
                 | "early_fd"
                 | "ctrunc_header"
                 | "eof_header"
@@ -474,6 +500,8 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
     for case in [
         #[cfg(target_os = "macos")]
         "poison_fence",
+        #[cfg(target_os = "macos")]
+        "poison_fence_marker",
         "early_fd",
         "ctrunc_header",
         "eof_header",

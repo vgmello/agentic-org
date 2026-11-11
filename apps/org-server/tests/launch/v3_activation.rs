@@ -440,24 +440,47 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
 }
 
 #[test]
-fn malformed_v2_first_line_never_echoes_a_secret_field_name() {
+fn malformed_launch_json_never_echoes_input_bytes() {
+    let mut legacy = serde_json::to_value(create_message()).unwrap();
+    legacy["v"] = json!(2);
+    legacy["org_name"] = json!(314159265358979323u64);
     let world = World::new();
-    let mut run = world.spawn(&["--create"]);
-    let mut value = serde_json::to_value(create_message()).unwrap();
-    value
-        .as_object_mut()
+    let mut v3 = serde_json::to_value(create_line(&world.home.join("unused"))).unwrap();
+    v3["v"] = json!(3);
+    v3.as_object_mut()
         .unwrap()
         .insert("TEST-RECOVERY-SECRET".into(), json!(true));
-    writeln!(run.stdin.as_mut().unwrap(), "{value}").unwrap();
-    match run.event() {
-        ServerEvent::Failed { code, message } => {
-            assert_eq!(code, FailCode::InvalidRequest);
-            assert!(!message.contains("TEST-RECOVERY-SECRET"));
+    for (value, secret) in [(legacy, "314159265358979323"), (v3, "TEST-RECOVERY-SECRET")] {
+        let wire = format!("{value}\n");
+        // Prove this exact malformed input reaches a decoder error that quotes its secret.
+        let error = v3::read_first_line_any(
+            &mut std::io::Cursor::new(wire.as_bytes()),
+            FirstLine::Create,
+        )
+        .unwrap_err();
+        assert!(matches!(error, org_office_launch::LaunchError::Json(_)));
+        assert!(
+            error.to_string().contains(secret),
+            "fixture never reached a secret-bearing decoder error: {error}"
+        );
+        let mut run = world.spawn(&["--create"]);
+        run.stdin
+            .as_mut()
+            .unwrap()
+            .write_all(wire.as_bytes())
+            .unwrap();
+        match run.event() {
+            ServerEvent::Failed { code, message } => {
+                assert_eq!(code, FailCode::InvalidRequest);
+                assert_eq!(message, "invalid launch message");
+                assert!(!message.contains(secret));
+            }
+            other => panic!("unexpected event: {other:?}"),
         }
-        other => panic!("unexpected event: {other:?}"),
+        assert!(!run.wait().success());
+        assert!(!run.stderr().contains(secret));
+        assert!(!world.folder(OFFICE).exists());
     }
-    assert!(!run.wait().success());
-    assert!(!run.stderr().contains("TEST-RECOVERY-SECRET"));
 }
 
 #[test]

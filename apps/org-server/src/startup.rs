@@ -35,6 +35,8 @@ pub(super) struct Control {
     // Owned before the ACK; kept until shutdown, then serviced by 2a.4.
     transfer: Option<OwnedFd>,
     fence: Arc<Mutex<()>>,
+    #[cfg(test)]
+    before_marker: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl Control {
@@ -45,6 +47,8 @@ impl Control {
             receiver: None,
             transfer: None,
             fence,
+            #[cfg(test)]
+            before_marker: None,
         }
     }
 
@@ -92,6 +96,10 @@ impl Control {
                     return Err(LaunchError::Invalid("handoff op differs from first line"));
                 }
                 if !handoff.fds().is_empty() {
+                    #[cfg(test)]
+                    if let Some(before_marker) = self.before_marker.take() {
+                        before_marker();
+                    }
                     let mut fds = receive(stream, || {
                         receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &self.fence)
                     })?;
@@ -234,6 +242,7 @@ fn receive_with_poll<T>(
             Ok(value) => return Ok(value),
             Err(ReceiveError::WouldBlock) => match poll() {
                 Ok(_) => {}
+                // EINTR leaves the receive pending; it is not a protocol failure.
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(io_error(error)),
             },
