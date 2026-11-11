@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { quiet } from './collector';
+import { shot } from '../e2e/shot';
 
 const policy = "default-src 'none'; script-src 'report-sample' 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; report-uri /__csp-report";
 const routes = ['/', '/welcome', '/create', '/agents', '/org-chart', '/projects', '/projects/atlas', '/work', '/chat', '/processes', '/offices', '/sessions', '/activity', '/settings'];
 
-test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a toast', async ({ page }, info) => {
+test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a toast', async ({ page }) => {
 	await page.goto('/create');
 	await expect(page.locator('html')).toHaveAttribute('data-hydrated', 'true');
 	await page.getByLabel('Organization name').fill('CSP Smoke');
@@ -25,7 +26,8 @@ test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a t
 	const office = page.getByTestId('office-row').first().getByRole('button');
 	await office.press('Enter');
 	await expect(page.getByTestId('office-details')).toBeVisible();
-	await page.screenshot({ path: info.outputPath('csp-office-sheet.png'), fullPage: true });
+	await expect(page.getByTestId('office-details')).toContainText('Online');
+	await shot(page, 'csp-office-sheet', { context: page.getByTestId('office-details') });
 	await page.keyboard.press('Escape');
 	await expect(office).toBeFocused();
 	await page.goto('/projects/atlas');
@@ -36,10 +38,10 @@ test('B1-05 Part B: identical CSP permits every route, a dialog, a sheet and a t
 	await dialog.getByLabel('Title').fill('CSP smoke');
 	await dialog.getByLabel('What happened').fill('A test report under the production policy.');
 	await dialog.getByRole('radio', { name: /^Minor/ }).check();
-	await page.screenshot({ path: info.outputPath('csp-report-dialog.png'), fullPage: true });
+	await shot(page, 'csp-report-dialog', { context: dialog });
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
-	await page.screenshot({ path: info.outputPath('csp-reported-toast.png'), fullPage: true });
+	await shot(page, 'csp-reported-toast');
 	await quiet(); // WebKit can drop reports sent while a context is closing.
 });
