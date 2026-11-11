@@ -4,6 +4,8 @@ export interface NavItem {
 	name: string;
 	href: string;
 	icon: IconName;
+	/** Short visible text and its spoken meaning. */
+	badge?: { text: string; label: string };
 }
 
 /** The main navigation, in order. Sections without a page of their own show a placeholder. */
