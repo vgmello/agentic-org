@@ -685,7 +685,8 @@
 								{#if m.id === newAt}
 									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" aria-live="off" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
 								{/if}
-								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
+								<!-- The open Thread owns the live offer; its channel copy stays readable. -->
+								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''} aria-live={root && m.thread_root_id === root.id ? 'off' : undefined}>{@render rowFor(m)}</div>
 							{:else}
 								{#if conversation.auto?.type === 'general'}
 									<div class="mx-auto my-8 max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-5 text-center" data-testid="welcome-card">
