@@ -81,12 +81,14 @@ impl HostDb {
         init: &HostDbInit,
     ) -> Result<Self, Error> {
         let home = checked_home(home)?;
-        match fs::symlink_metadata(home.join(DB)) {
-            Ok(_) => return Err(Error::Exists),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-        for name in [TMP, "host-registry.db.tmp-journal"] {
+        absent(&home.join(DB), Error::Exists)?;
+        // Interrupted creates leave only temps; no installed registry needs rollback recovery.
+        for name in [
+            TMP,
+            "host-registry.db.tmp-journal",
+            "host-registry.db.tmp-wal",
+            "host-registry.db.tmp-shm",
+        ] {
             match fs::remove_file(home.join(name)) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -140,8 +142,16 @@ impl HostDb {
         }
         checkpoint(7)?; // A failure before COMMIT must roll back DDL and metadata together.
         tx.commit()?;
+        let mode: String = db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+        require_wal(&mode)?;
+        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
+        #[cfg(test)]
+        assert!(!db.db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)?);
         db.close().map_err(|(_, e)| Error::from(e))?;
         checkpoint(4)?;
+        for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
+            absent(&home.join(name), Error::Unsafe)?;
+        }
         file.sync_all()?;
         install(&path, &home.join(DB))?;
         File::open(&home)?.sync_all()?;
@@ -152,6 +162,7 @@ impl HostDb {
     }
     pub(crate) fn open(home: &Path, secrets: &dyn HostSecrets) -> Result<Self, Error> {
         let home = checked_home(home)?;
+        absent(&home.join("host-registry.db-journal"), Error::Unsafe)?;
         let path = home.join(DB);
         checked_file(&path, false)?.ok_or(Error::Empty)?;
         for path in [
@@ -181,6 +192,13 @@ impl HostDb {
     }
 }
 
+fn absent(path: &Path, present: Error) -> Result<(), Error> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(present),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
 fn require_wal(mode: &str) -> Result<(), Error> {
     // A VFS can return its unchanged mode instead of accepting WAL.
     if !mode.eq_ignore_ascii_case("wal") {

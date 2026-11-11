@@ -8,8 +8,14 @@ thread_local! {
     static FAIL: RefCell<Option<u8>> = const { RefCell::new(None) };
     static CRASH: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
     static SWAP: RefCell<Option<(PathBuf, PathBuf)>> = const { RefCell::new(None) };
+    static RESIDUAL: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 pub(super) fn checkpoint(step: u8) -> Result<(), Error> {
+    if step == 4 {
+        if let Some(path) = RESIDUAL.with(|r| r.borrow_mut().take()) {
+            fs::write(path, b"uncheckpointed temp").unwrap();
+        }
+    }
     if step == 8 {
         if let Some((path, target)) = SWAP.with(|s| s.borrow_mut().take()) {
             fs::rename(&path, path.with_extension("held")).unwrap();
@@ -759,6 +765,45 @@ fn sqlite_file_descriptors_are_close_on_exec() {
 }
 
 #[test]
+fn sqlite_drop_releases_locks_while_a_forked_child_retains_its_fds() {
+    use std::os::fd::AsRawFd;
+    let (home, secrets, db) = fixture();
+    let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
+    // SAFETY: the child calls only async-signal-safe close/read/_exit; it never uses SQLite.
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        // SAFETY: retain inherited SQLite fds until the parent's close/reopen/write attempt.
+        unsafe {
+            libc::close(release_fd);
+            let mut byte = 0u8;
+            let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
+            libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
+        }
+    }
+    assert!(pid > 0, "fork failed");
+    drop(wait);
+    drop(db);
+    let reopened = HostDb::open(home.path(), &secrets);
+    let written = reopened.as_ref().ok().map(|db| {
+        db.connection
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO org_owners VALUES ('fork','actor','owner')", [])
+    });
+    let released = std::io::Write::write_all(&mut release, &[1]);
+    drop(release);
+    let mut status = 0;
+    // SAFETY: reap exactly the child this test created, before asserting operation results.
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    released.unwrap();
+    assert_eq!(waited, pid);
+    assert_eq!(status, 0);
+    assert!(reopened.is_ok(), "{:?}", reopened.err());
+    assert_eq!(written.unwrap().unwrap(), 1);
+}
+
+#[test]
 fn sqlcipher_build_encrypts_and_a_plain_sqlite_build_refuses_creation() {
     let probe = Connection::open_in_memory().unwrap();
     let cipher: Option<String> = probe
@@ -897,6 +942,253 @@ fn schema_refusal_is_read_only_even_when_it_is_the_last_wal_connection() {
             assert_eq!(before.get(name), after.get(name), "{version}/{name}");
         }
     }
+}
+
+#[test]
+fn hot_rollback_journal_refusal_preserves_the_database_and_journal() {
+    const CHILD: &str = "SAGE_HOSTDB_HOT_JOURNAL";
+    const TEST: &str =
+        "hostdb::tests::hot_rollback_journal_refusal_preserves_the_database_and_journal";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let c = Connection::open(Path::new(&path)).unwrap();
+        c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", "12".repeat(32)))
+            .unwrap();
+        let version: i64 = std::env::var("SAGE_HOSTDB_HOT_VERSION")
+            .unwrap()
+            .parse()
+            .unwrap();
+        c.pragma_update(None, "user_version", version).unwrap();
+        c.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE t(x); WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<300) INSERT INTO t SELECT zeroblob(4000) FROM c;").unwrap();
+        c.execute_batch("PRAGMA cache_size=1; BEGIN IMMEDIATE; UPDATE t SET x=randomblob(4000);")
+            .unwrap();
+        // SAFETY: isolated child dies with a live transaction, without SQLite rollback/Drop.
+        unsafe { libc::_exit(172) };
+    }
+    for version in [1, 0, 2, -1] {
+        let home = home();
+        let path = home.path().canonicalize().unwrap().join(DB);
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env(CHILD, &path)
+            .env("SAGE_HOSTDB_HOT_VERSION", version.to_string())
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(172), "{result:?}");
+        let journal = path.with_extension("db-journal");
+        let before = fs::read(&path).unwrap();
+        let journal_before = fs::read(&journal).unwrap();
+        assert!(journal_before.len() > 512, "real spilled rollback journal");
+        let secrets = Secrets::default();
+        secrets
+            .put(
+                &Name::parse("registry").unwrap(),
+                &Value::new(vec![0x12; 32]).unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            HostDb::open(home.path(), &secrets),
+            Err(Error::Unsafe)
+        ));
+        assert!(
+            fs::read(&path).unwrap() == before,
+            "main changed on refusal"
+        );
+        assert!(
+            fs::read(&journal).unwrap() == journal_before,
+            "journal changed on refusal"
+        );
+    }
+}
+
+#[test]
+fn creation_publishes_wal_before_first_open_and_cleans_temp_sidecars() {
+    let home = home();
+    let secrets = Secrets::default();
+    FAIL.with(|f| *f.borrow_mut() = Some(5));
+    let result = HostDb::create(home.path(), &secrets, &init(false));
+    FAIL.with(|f| *f.borrow_mut() = None);
+    assert!(matches!(result, Err(Error::Io(io::ErrorKind::Interrupted))));
+    for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
+        assert!(!home.path().join(name).exists());
+    }
+    let key = secrets
+        .load(&Name::parse("registry").unwrap())
+        .unwrap()
+        .unwrap();
+    let path = home.path().canonicalize().unwrap().join(DB);
+    let before = fs::read(&path).unwrap();
+    assert!(!before.starts_with(b"SQLite format 3")); // Header bytes are encrypted too.
+    let c = Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .unwrap();
+    c.execute_batch(&format!("PRAGMA key=\"x'{}'\";", hex(key.expose())))
+        .unwrap();
+    assert_eq!(
+        c.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "wal"
+    );
+    drop(c);
+    assert!(fs::read(path).unwrap() == before);
+}
+
+#[test]
+fn retry_removes_both_temporary_wal_sidecars_before_sqlite() {
+    let home = home();
+    let names = ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"];
+    for name in names {
+        fs::write(home.path().join(name), b"crashed create").unwrap();
+    }
+    FAIL.with(|f| *f.borrow_mut() = Some(1));
+    let result = HostDb::create(home.path(), &Secrets::default(), &init(false));
+    FAIL.with(|f| *f.borrow_mut() = None);
+    assert!(matches!(result, Err(Error::Io(io::ErrorKind::Interrupted))));
+    for name in names {
+        assert!(!home.path().join(name).exists(), "{name}");
+    }
+}
+
+#[test]
+fn any_rollback_journal_is_refused_before_key_load_and_left_untouched() {
+    for kind in ["empty", "nonempty", "directory", "symlink", "dangling"] {
+        let (home, _, db) = fixture();
+        drop(db);
+        let path = home.path().join("host-registry.db-journal");
+        let target = home.path().join("precious");
+        fs::write(&target, b"untouched target").unwrap();
+        match kind {
+            "empty" => fs::write(&path, []).unwrap(),
+            "nonempty" => fs::write(&path, b"not even a valid journal").unwrap(),
+            "directory" => fs::create_dir(&path).unwrap(),
+            "symlink" => symlink(&target, &path).unwrap(),
+            "dangling" => symlink(home.path().join("absent"), &path).unwrap(),
+            _ => unreachable!(),
+        }
+        let before = fs::read(home.path().join(DB)).unwrap();
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        // No registry key: loading it before the journal guard would return KeyMissing.
+        assert!(
+            matches!(
+                HostDb::open(home.path(), &Secrets::default()),
+                Err(Error::Unsafe)
+            ),
+            "{kind}"
+        );
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), metadata.ino());
+        assert!(fs::read(home.path().join(DB)).unwrap() == before);
+        assert_eq!(fs::read(&target).unwrap(), b"untouched target");
+        if kind == "empty" || kind == "nonempty" {
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                if kind == "empty" {
+                    b"".as_slice()
+                } else {
+                    b"not even a valid journal".as_slice()
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn absent_guard_distinguishes_missing_present_dangling_and_io_error() {
+    let home = home();
+    let path = home.path().join("file");
+    assert_eq!(absent(&path, Error::Unsafe), Ok(()));
+    fs::write(&path, b"present").unwrap();
+    assert_eq!(absent(&path, Error::Exists), Err(Error::Exists));
+    assert_eq!(absent(&path, Error::Unsafe), Err(Error::Unsafe));
+    let alias = home.path().join("dangling");
+    symlink(home.path().join("missing"), &alias).unwrap();
+    assert_eq!(absent(&alias, Error::Unsafe), Err(Error::Unsafe));
+    assert_eq!(
+        absent(&path.join("child"), Error::Unsafe),
+        Err(Error::Io(io::ErrorKind::NotADirectory))
+    );
+}
+
+#[test]
+fn creation_refuses_to_publish_if_either_temp_sidecar_survives_close() {
+    for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
+        let home = home();
+        let secrets = Secrets::default();
+        RESIDUAL.with(|r| *r.borrow_mut() = Some(home.path().join(name)));
+        assert!(
+            matches!(
+                HostDb::create(home.path(), &secrets, &init(false)),
+                Err(Error::Unsafe)
+            ),
+            "{name}"
+        );
+        assert!(!home.path().join(DB).exists());
+        assert_eq!(
+            fs::read(home.path().join(name)).unwrap(),
+            b"uncheckpointed temp"
+        );
+        HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+        assert!(!home.path().join(name).exists());
+    }
+}
+
+#[test]
+fn committed_wal_recovers_after_real_process_death() {
+    const CHILD: &str = "SAGE_HOSTDB_WAL_CRASH";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let c = Connection::open(Path::new(&path)).unwrap();
+        c.execute_batch(&format!("PRAGMA key=\"x'{}'\";", "12".repeat(32)))
+            .unwrap();
+        c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+            .unwrap();
+        c.execute_batch(schema::DDL).unwrap();
+        c.pragma_update(None, "user_version", 1).unwrap();
+        c.execute(
+            "INSERT INTO org_owners VALUES ('org','committed','owner')",
+            [],
+        )
+        .unwrap();
+        // SAFETY: leave a committed WAL and no live connection, without a close checkpoint.
+        unsafe { libc::_exit(173) };
+    }
+    let home = home();
+    let path = home.path().canonicalize().unwrap().join(DB);
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostdb::tests::committed_wal_recovers_after_real_process_death",
+            "--nocapture",
+        ])
+        .env(CHILD, &path)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(173), "{result:?}");
+    assert!(!home.path().join("host-registry.db-journal").exists());
+    assert!(
+        fs::metadata(home.path().join("host-registry.db-wal"))
+            .unwrap()
+            .len()
+            > 0
+    );
+    let secrets = Secrets::default();
+    secrets
+        .put(
+            &Name::parse("registry").unwrap(),
+            &Value::new(vec![0x12; 32]).unwrap(),
+        )
+        .unwrap();
+    let db = HostDb::open(home.path(), &secrets).unwrap();
+    assert_eq!(
+        db.connection
+            .lock()
+            .unwrap()
+            .query_row("SELECT account FROM org_owners", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        "committed"
+    );
+    drop(db);
+    assert!(!home.path().join("host-registry.db-wal").exists());
 }
 
 #[test]
