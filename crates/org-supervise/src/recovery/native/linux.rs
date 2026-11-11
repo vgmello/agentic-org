@@ -476,12 +476,11 @@ fn credentials(directory: &File, deadline: Instant) -> io::Result<Credentials> {
 // AT_SECURE distinguishes a privileged exec even when the process has since
 // reset its UID/GID values. Unknown layouts or unreadable evidence fail closed.
 fn ordinary_exec(directory: &File, deadline: Instant) -> io::Result<bool> {
-    let bytes = match read_at(directory, c"auxv", PROC_RECORD_LIMIT, Some(deadline)) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::TimedOut => return Err(err),
-        Err(_) => return Ok(false),
-    };
-    Ok(auxv_ordinary(&bytes))
+    ordinary_exec_with(|| read_at(directory, c"auxv", PROC_RECORD_LIMIT, Some(deadline)))
+}
+
+fn ordinary_exec_with(read: impl FnOnce() -> io::Result<Vec<u8>>) -> io::Result<bool> {
+    evidence_or(read().map(|bytes| auxv_ordinary(&bytes)), false)
 }
 
 fn auxv_ordinary(bytes: &[u8]) -> bool {
@@ -510,6 +509,18 @@ fn read_mark(
     stat: Stat,
     deadline: Instant,
 ) -> io::Result<MarkEvidence> {
+    read_mark_with(
+        stat,
+        |length| read_at(directory, c"environ", length, Some(deadline)),
+        || read_stat(directory, pid, Some(deadline)),
+    )
+}
+
+fn read_mark_with(
+    stat: Stat,
+    read: impl FnOnce(usize) -> io::Result<Vec<u8>>,
+    current: impl FnOnce() -> io::Result<Stat>,
+) -> io::Result<MarkEvidence> {
     let (start, end) = stat.environment;
     let Some(length) = end
         .checked_sub(start)
@@ -518,22 +529,33 @@ fn read_mark(
         return Ok(MarkEvidence::Unreadable);
     };
     let capture: io::Result<MarkEvidence> = (|| {
-        let bytes = read_at(directory, c"environ", length as usize, Some(deadline))?;
+        let bytes = read(length as usize)?;
         // A hole in the target's memory can produce an early EOF even after a
         // complete NUL-terminated entry. Require the entire advertised range.
         if bytes.len() != length as usize {
             return Ok(MarkEvidence::Unreadable);
         }
-        let current = read_stat(directory, pid, Some(deadline))?;
+        let current = current()?;
         if !environment_unchanged(stat, current) {
             return Ok(MarkEvidence::Unreadable);
         }
         Ok(native_mark(&bytes))
     })();
+    evidence_or(capture, MarkEvidence::Unreadable)
+}
+
+fn evidence_or<T>(capture: io::Result<T>, unreadable: T) -> io::Result<T> {
     match capture {
-        Ok(mark) => Ok(mark),
-        Err(err) if err.kind() == io::ErrorKind::TimedOut => Err(err),
-        Err(_) => Ok(MarkEvidence::Unreadable),
+        Ok(evidence) => Ok(evidence),
+        Err(err)
+            if err.kind() == io::ErrorKind::TimedOut
+                || err
+                    .get_ref()
+                    .is_some_and(|source| source.is::<DescriptorExhaustion>()) =>
+        {
+            Err(err)
+        }
+        Err(_) => Ok(unreadable),
     }
 }
 
@@ -804,12 +826,24 @@ fn vanished(err: &io::Error) -> bool {
 
 fn descriptor_error(err: io::Error) -> io::Error {
     if matches!(err.raw_os_error(), Some(libc::EMFILE | libc::ENFILE)) {
-        io::Error::new(
-            err.kind(),
-            "doctor: Linux recovery exhausted file descriptors; increase RLIMIT_NOFILE or reduce the process count",
-        )
+        io::Error::new(err.kind(), DescriptorExhaustion(err))
     } else {
         err
+    }
+}
+
+#[derive(Debug)]
+struct DescriptorExhaustion(io::Error);
+
+impl std::fmt::Display for DescriptorExhaustion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("doctor: Linux recovery exhausted file descriptors; increase RLIMIT_NOFILE or reduce the process count")
+    }
+}
+
+impl std::error::Error for DescriptorExhaustion {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
     }
 }
 
@@ -937,6 +971,55 @@ mod tests {
         }
         let error = descriptor_error(io::Error::from_raw_os_error(libc::EPERM));
         assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+    }
+
+    #[test]
+    fn native_evidence_wiring_preserves_resource_failures() {
+        let mark = b"ORG_SESSION_MARK=guard-mark\0";
+        let stat = Stat {
+            environment: (4096, 4096 + mark.len() as u64),
+            ..ordinary_stat()
+        };
+        assert!(ordinary_exec_with(|| Ok(auxv(&[(libc::AT_SECURE as usize, 0), (0, 0)]))).unwrap());
+        assert_eq!(
+            read_mark_with(stat, |_| Ok(mark.to_vec()), || Ok(stat)).unwrap(),
+            MarkEvidence::Present("guard-mark".into())
+        );
+        for code in [libc::EMFILE, libc::ENFILE] {
+            let fault = || descriptor_error(io::Error::from_raw_os_error(code));
+            for error in [
+                ordinary_exec_with(|| Err(fault())).unwrap_err(),
+                read_mark_with(
+                    stat,
+                    |_| Err(fault()),
+                    || panic!("no stat read after environment failure"),
+                )
+                .unwrap_err(),
+                read_mark_with(stat, |_| Ok(mark.to_vec()), || Err(fault())).unwrap_err(),
+            ] {
+                assert!(error.to_string().contains("doctor:"), "{code}: {error}");
+                assert!(
+                    error.to_string().contains("RLIMIT_NOFILE"),
+                    "{code}: {error}"
+                );
+            }
+        }
+        assert!(!ordinary_exec_with(|| Err(io::Error::from_raw_os_error(libc::EPERM))).unwrap());
+        assert_eq!(
+            read_mark_with(
+                stat,
+                |_| Err(io::Error::from_raw_os_error(libc::EPERM)),
+                || panic!("no stat read")
+            )
+            .unwrap(),
+            MarkEvidence::Unreadable
+        );
+        assert_eq!(
+            ordinary_exec_with(|| Err(io::Error::from(io::ErrorKind::TimedOut)))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
     }
 
     #[test]
