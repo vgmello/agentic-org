@@ -325,6 +325,7 @@ fn card(
             .filter(|_| status_live)
             .and_then(|r| r.status_expires_at.clone()),
         current_task_id: live.as_ref().and_then(|r| r.current_task_id.clone()),
+        managed_home: None,
     }
 }
 

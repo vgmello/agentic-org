@@ -81,6 +81,30 @@ mod tests {
         assert_ne!(params_hash("ab", "c", &p), params_hash("a", "bc", &p),);
     }
 
+    /// X-02 §4.2: fingerprint values don't change. The shared vector pins a `task.create`
+    /// params hash over its decoded, re-encoded typed params.
+    #[test]
+    fn params_hash_matches_the_org_proto_v2_vectors() {
+        let doc: Value = serde_json::from_str(include_str!(
+            "../../org-proto/test-vectors/v2/proto-fingerprints.json"
+        ))
+        .unwrap();
+        for case in doc["work"].as_array().unwrap() {
+            assert_eq!(case["method"], "task.create");
+            let typed: org_proto::work::TaskCreateParams =
+                serde_json::from_value(case["params"].clone()).unwrap();
+            let params = serde_json::to_value(&typed).unwrap();
+            assert_eq!(canonical_json(&params), case["canonical"].as_str().unwrap());
+            let hash = params_hash(
+                case["method"].as_str().unwrap(),
+                case["member"].as_str().unwrap(),
+                &params,
+            );
+            let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(hex, case["params_hash"].as_str().unwrap());
+        }
+    }
+
     #[test]
     fn sha256_matches_a_known_vector() {
         let digest: [u8; 32] = Sha256::digest(b"abc").into();

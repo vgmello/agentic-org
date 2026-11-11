@@ -53,10 +53,10 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeInfo, OfficeList, Organization, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList, Position, Request, Response, ServerMessage,
-    Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
+    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
+    OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
+    ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
 };
 
 pub use error::ClientError;
@@ -587,7 +587,7 @@ impl Client {
 
     /// [`Client::hello`] with a timeout of your own.
     pub fn hello_with_timeout(&self, timeout: Duration) -> Result<HelloResult, ClientError> {
-        let hello = self.call_with_timeout::<Hello>(&Empty {}, timeout)?;
+        let hello = self.call_with_timeout::<Hello>(&HelloParams::default(), timeout)?;
         if hello.api_version != API_VERSION {
             return Err(ClientError::VersionMismatch {
                 client: API_VERSION,
@@ -1144,13 +1144,15 @@ mod tests {
         let client = Client::connect(&server.path).unwrap();
         let started = Instant::now();
         let stop_at = started + Duration::from_millis(200);
-        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(30), || {
-            Instant::now() >= stop_at
-        });
+        let outcome =
+            client.call_unless::<Hello>(&HelloParams::default(), Duration::from_secs(30), || {
+                Instant::now() >= stop_at
+            });
         assert!(outcome.is_none(), "{outcome:?}");
         let took = started.elapsed();
         assert!(took < Duration::from_secs(5), "{took:?}");
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(1));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(1));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
     }
 
@@ -1164,7 +1166,8 @@ mod tests {
             Response::ok::<Hello>(request.id, &hello).unwrap()
         });
         let client = Client::connect(&path).unwrap();
-        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(10), || false);
+        let outcome =
+            client.call_unless::<Hello>(&HelloParams::default(), Duration::from_secs(10), || false);
         assert_eq!(outcome.unwrap().unwrap().api_version, API_VERSION);
     }
 
@@ -1247,10 +1250,12 @@ mod tests {
             .next_id
             .store(MAX_REQUEST_ID, Ordering::SeqCst);
         // The last id is still usable (it times out: nobody answers)...
-        let last = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        let last =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(50));
         assert!(matches!(last, Err(ClientError::Timeout)), "{last:?}");
         // ...and the next call is refused rather than sent with an id the peer may misread.
-        let next = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        let next =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(50));
         assert!(matches!(next, Err(ClientError::Protocol(_))), "{next:?}");
     }
     // Script the kernel write's result and clock progress without threads or sleeps.

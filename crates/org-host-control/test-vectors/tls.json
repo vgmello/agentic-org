@@ -1,0 +1,1223 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 \u00a72, \u00a76.1-\u00a76.3 (rev 14). 'fetch': tls.fetch's tagged result, {ok:{mode:https,cert,key,origin,hsts}} | {ok:{mode:http_loopback,origin,hsts}} | {unavailable:ListenFailure}; 'expect' is the decoded form or 'refused'. https needs a non-empty cert and key; http_loopback refuses a cert or key of any value, null included. Accepted rows serialize back to the same JSON. 'listen_failure' is ListenFailure alone (status, doctor and unavailable): {reason:origin_invalid} | {reason:hsts_invalid} | {reason:tls_name_mismatch,uncovered:[canonical origins]}. 'refusals': the tls.set/bootstrap refusals with their wire forms and whether each op journals them (only tls.set's tls_key_mismatch; no bootstrap refusal is ever stored). After the journal lookup, tls.set and bootstrap.tls check in this order: origin_invalid, hsts_invalid, tls_invalid, tls_key_mismatch, tls_not_valid, tls_name_mismatch. 'bad_refusals' don't decode. 'listen_config': the invalid-configuration rule on a stored listen configuration; 'result' is 'valid', 'origin_invalid' (with the OriginError code, or with 'field' when a listener field, address, port or scheme, is missing or malformed: origin can't be checked against it) or 'hsts_invalid', which the host reports as that ListenFailure and bootstrap and tls.set refuse with as that code. A missing origin or hsts has no default. 'bootstrap': bootstrap's result, a HostOpResult that is never 'accepted' ({status:accepted} and any other status don't decode): completed {result:{session}} or rejected {refusal}, the refusal a TlsRefusal or {code:tls_required} / {code:tls_mismatch} / {code:already_bootstrapped} / {code:bootstrap_finished}; 'expect' is 'completed', the refusal's code, or 'refused'. No bootstrap refusal is ever stored. The host decides in this order, the journal lookup first as for every journaled op: on a non-empty registry, an operation_id other than the recorded bootstrap's (or a registry setup has no record of) is already_bootstrapped whatever else holds; the recorded one is bootstrap_finished once bootstrap has finished, and otherwise replays (sign-in, then fingerprint, then pair: another pair is tls_mismatch); on an empty registry, origin_invalid, hsts_invalid, tls_required, then tls.set's order (tls_invalid, tls_key_mismatch, tls_not_valid, tls_name_mismatch). 'timestamps': tls_not_valid's not_before and not_after, RFC 3339 in one profile, YYYY-MM-DDTHH:MM:SSZ (UTC, uppercase T and Z, no fractional seconds, no offset, a real date and time); 'valid' says whether it decodes. A refused one makes the whole refusal fail to decode.",
+  "fetch": [
+    {
+      "name": "https serves the stored pair with the snapshot's origin and hsts",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "https"
+    },
+    {
+      "name": "https on the default port",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local",
+          "hsts": "clear"
+        }
+      },
+      "expect": "https"
+    },
+    {
+      "name": "http_loopback carries no certificate fields",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "http_loopback"
+    },
+    {
+      "name": "http_loopback on ::1",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "origin": "http://[::1]:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "http_loopback"
+    },
+    {
+      "name": "unavailable: origin_invalid",
+      "wire": {
+        "unavailable": {
+          "reason": "origin_invalid"
+        }
+      },
+      "expect": "unavailable"
+    },
+    {
+      "name": "unavailable: hsts_invalid",
+      "wire": {
+        "unavailable": {
+          "reason": "hsts_invalid"
+        }
+      },
+      "expect": "unavailable"
+    },
+    {
+      "name": "unavailable: tls_name_mismatch names the snapshot's origin",
+      "wire": {
+        "unavailable": {
+          "reason": "tls_name_mismatch",
+          "uncovered": [
+            "https://mac.local:8443"
+          ]
+        }
+      },
+      "expect": "unavailable"
+    },
+    {
+      "name": "https without a key",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "https without a cert",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with a key",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with a cert",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with a null cert",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "cert": null,
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with a null key",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "key": null,
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with an empty cert",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "cert": "",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "http_loopback with a non-string key",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "key": 1,
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "https with a null cert",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": null,
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "https with a null key",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": null,
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "https with an empty cert",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "https with an empty key",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "",
+          "origin": "https://mac.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "no origin",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "no hsts",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "origin": "http://127.0.0.1:8080"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "a non-canonical origin",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://MAC.local:8443",
+          "hsts": "on"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "an hsts outside off, on and clear",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "maybe"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "hsts is lowercase",
+      "wire": {
+        "ok": {
+          "mode": "https",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nsecret-key-material\n-----END PRIVATE KEY-----\n",
+          "origin": "https://mac.local:8443",
+          "hsts": "On"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "an unknown mode",
+      "wire": {
+        "ok": {
+          "mode": "http",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "rev 13's untagged form",
+      "wire": {
+        "mode": "http_loopback"
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "unavailable carries exactly a ListenFailure: start_failed is status-only",
+      "wire": {
+        "unavailable": {
+          "reason": "start_failed"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "tls_name_mismatch without uncovered",
+      "wire": {
+        "unavailable": {
+          "reason": "tls_name_mismatch"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "uncovered is never empty",
+      "wire": {
+        "unavailable": {
+          "reason": "tls_name_mismatch",
+          "uncovered": []
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "uncovered lists canonical origins",
+      "wire": {
+        "unavailable": {
+          "reason": "tls_name_mismatch",
+          "uncovered": [
+            "https://mac.local:443"
+          ]
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "both ok and unavailable",
+      "wire": {
+        "ok": {
+          "mode": "http_loopback",
+          "origin": "http://127.0.0.1:8080",
+          "hsts": "off"
+        },
+        "unavailable": {
+          "reason": "origin_invalid"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "neither",
+      "wire": {},
+      "expect": "refused"
+    }
+  ],
+  "listen_failure": [
+    {
+      "wire": {
+        "reason": "origin_invalid"
+      },
+      "valid": true
+    },
+    {
+      "wire": {
+        "reason": "hsts_invalid"
+      },
+      "valid": true
+    },
+    {
+      "wire": {
+        "reason": "tls_name_mismatch",
+        "uncovered": [
+          "https://mac.local:8443"
+        ]
+      },
+      "valid": true
+    },
+    {
+      "wire": {
+        "reason": "start_failed"
+      },
+      "valid": false
+    },
+    {
+      "wire": {
+        "reason": "tls_name_mismatch",
+        "uncovered": []
+      },
+      "valid": false
+    },
+    {
+      "wire": {
+        "reason": "tls_name_mismatch"
+      },
+      "valid": false
+    },
+    {
+      "wire": {},
+      "valid": false
+    }
+  ],
+  "refusals": [
+    {
+      "name": "tls_name_mismatch with one uncovered origin",
+      "wire": {
+        "code": "tls_name_mismatch",
+        "uncovered": [
+          "https://mac.local:8443"
+        ]
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "tls_name_mismatch with the stored origin, then the running one",
+      "wire": {
+        "code": "tls_name_mismatch",
+        "uncovered": [
+          "https://new.example:8443",
+          "https://old.example:8443"
+        ]
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "tls_invalid: the certificate or key doesn't parse, so the pair has no fingerprint",
+      "wire": {
+        "code": "tls_invalid"
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "tls_key_mismatch depends on the pair alone: tls.set stores it",
+      "wire": {
+        "code": "tls_key_mismatch"
+      },
+      "stored": {
+        "tls.set": true,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "tls_not_valid depends on the clock",
+      "wire": {
+        "code": "tls_not_valid",
+        "not_before": "2026-12-01T00:00:00Z",
+        "not_after": "2027-12-01T00:00:00Z"
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "origin_invalid depends on the configuration",
+      "wire": {
+        "code": "origin_invalid"
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    },
+    {
+      "name": "hsts_invalid depends on the configuration",
+      "wire": {
+        "code": "hsts_invalid"
+      },
+      "stored": {
+        "tls.set": false,
+        "bootstrap": false
+      }
+    }
+  ],
+  "bad_refusals": [
+    {
+      "name": "tls_name_mismatch without uncovered",
+      "wire": {
+        "code": "tls_name_mismatch"
+      }
+    },
+    {
+      "name": "tls_name_mismatch with an empty uncovered",
+      "wire": {
+        "code": "tls_name_mismatch",
+        "uncovered": []
+      }
+    },
+    {
+      "name": "tls_name_mismatch with a duplicate",
+      "wire": {
+        "code": "tls_name_mismatch",
+        "uncovered": [
+          "https://mac.local:8443",
+          "https://mac.local:8443"
+        ]
+      }
+    },
+    {
+      "name": "tls_name_mismatch with a non-canonical origin",
+      "wire": {
+        "code": "tls_name_mismatch",
+        "uncovered": [
+          "https://mac.local:8443/x"
+        ]
+      }
+    },
+    {
+      "name": "tls_not_valid without not_after",
+      "wire": {
+        "code": "tls_not_valid",
+        "not_before": "2026-12-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "no code",
+      "wire": {
+        "uncovered": [
+          "https://mac.local:8443"
+        ]
+      }
+    },
+    {
+      "name": "tls_not_valid with an offset",
+      "wire": {
+        "code": "tls_not_valid",
+        "not_before": "2026-12-01T00:00:00+00:00",
+        "not_after": "2027-12-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "tls_not_valid with an impossible date",
+      "wire": {
+        "code": "tls_not_valid",
+        "not_before": "2026-12-01T00:00:00Z",
+        "not_after": "2027-13-01T00:00:00Z"
+      }
+    }
+  ],
+  "listen_config": [
+    {
+      "name": "https, valid",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "valid"
+    },
+    {
+      "name": "http_loopback, valid",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://127.0.0.1:8080",
+        "hsts": "off"
+      },
+      "result": "valid"
+    },
+    {
+      "name": "http_loopback on ::1 port 80, valid",
+      "stored": {
+        "address": "::1",
+        "port": 80,
+        "scheme": "http_loopback",
+        "origin": "http://[::1]",
+        "hsts": "clear"
+      },
+      "result": "valid"
+    },
+    {
+      "name": "a missing origin: no default",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "hsts": "off"
+      },
+      "result": "origin_invalid",
+      "origin_error": "missing"
+    },
+    {
+      "name": "a null origin",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": null,
+        "hsts": "off"
+      },
+      "result": "origin_invalid",
+      "origin_error": "missing"
+    },
+    {
+      "name": "a missing hsts: no default",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://127.0.0.1:8080"
+      },
+      "result": "hsts_invalid"
+    },
+    {
+      "name": "a null hsts",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://127.0.0.1:8080",
+        "hsts": null
+      },
+      "result": "hsts_invalid"
+    },
+    {
+      "name": "both missing: the origin is reported",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback"
+      },
+      "result": "origin_invalid",
+      "origin_error": "missing"
+    },
+    {
+      "name": "an hsts outside off, on and clear",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "maybe"
+      },
+      "result": "hsts_invalid"
+    },
+    {
+      "name": "an uppercase hsts",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "OFF"
+      },
+      "result": "hsts_invalid"
+    },
+    {
+      "name": "an hsts that isn't a string",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": true
+      },
+      "result": "hsts_invalid"
+    },
+    {
+      "name": "an origin that isn't a string",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": 8443,
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "origin_error": "not_a_string"
+    },
+    {
+      "name": "a non-canonical origin (parse)",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443/x",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "origin_error": "path"
+    },
+    {
+      "name": "an origin that doesn't fit (check)",
+      "stored": {
+        "address": "127.0.0.1",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://localhost:8080",
+        "hsts": "off"
+      },
+      "result": "origin_invalid",
+      "origin_error": "not_bound_literal"
+    },
+    {
+      "name": "an http_loopback bind on 127.0.0.2, even with a matching origin",
+      "stored": {
+        "address": "127.0.0.2",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://127.0.0.2:8080",
+        "hsts": "off"
+      },
+      "result": "origin_invalid",
+      "origin_error": "loopback_address"
+    },
+    {
+      "name": "an http_loopback bind on 0.0.0.0, even with a matching origin",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8080,
+        "scheme": "http_loopback",
+        "origin": "http://0.0.0.0:8080",
+        "hsts": "off"
+      },
+      "result": "origin_invalid",
+      "origin_error": "loopback_address"
+    },
+    {
+      "name": "a missing address",
+      "stored": {
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "address"
+    },
+    {
+      "name": "an address that isn't an IP literal",
+      "stored": {
+        "address": "mac.local",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "address"
+    },
+    {
+      "name": "an address that isn't a string",
+      "stored": {
+        "address": 3232235786,
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "address"
+    },
+    {
+      "name": "a missing port",
+      "stored": {
+        "address": "0.0.0.0",
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a port that isn't a number",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": "8443",
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a port out of range",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 65536,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a negative port",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": -1,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "port 0",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 0,
+        "scheme": "https",
+        "origin": "https://mac.local",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a missing scheme",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "scheme"
+    },
+    {
+      "name": "a scheme outside https and http_loopback",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "http",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "scheme"
+    },
+    {
+      "name": "a scheme that isn't a string",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": true,
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "scheme"
+    },
+    {
+      "name": "a null address",
+      "stored": {
+        "address": null,
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "address"
+    },
+    {
+      "name": "a null port",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": null,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a port that isn't an integer",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443.0,
+        "scheme": "https",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a null scheme",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": null,
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "scheme"
+    },
+    {
+      "name": "the listener fields in order: port before scheme",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": "8443",
+        "scheme": "http",
+        "origin": "https://mac.local:8443",
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "port"
+    },
+    {
+      "name": "a bad listener field is reported before a bad origin",
+      "stored": {
+        "address": "localhost",
+        "port": 8443,
+        "scheme": "https",
+        "origin": 8443,
+        "hsts": "on"
+      },
+      "result": "origin_invalid",
+      "field": "address"
+    },
+    {
+      "name": "both invalid: the origin is reported",
+      "stored": {
+        "address": "0.0.0.0",
+        "port": 8443,
+        "scheme": "https",
+        "origin": "https://mac.local:443",
+        "hsts": "maybe"
+      },
+      "result": "origin_invalid",
+      "origin_error": "default_port"
+    }
+  ],
+  "bootstrap": [
+    {
+      "name": "success is completed with a session",
+      "wire": {
+        "status": "completed",
+        "result": {
+          "session": "bootstrap-session-handle"
+        }
+      },
+      "expect": "completed"
+    },
+    {
+      "name": "tls_required: a first https bootstrap without tls",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_required"
+        }
+      },
+      "expect": "tls_required"
+    },
+    {
+      "name": "tls_mismatch: a replay with another pair",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_mismatch"
+        }
+      },
+      "expect": "tls_mismatch"
+    },
+    {
+      "name": "already_bootstrapped: a different operation_id on a non-empty registry, even after bootstrap has finished, or a registry setup has no record of",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "already_bootstrapped"
+        }
+      },
+      "expect": "already_bootstrapped"
+    },
+    {
+      "name": "bootstrap_finished: the recorded operation_id after bootstrap has finished, so setup goes on to step 5",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "bootstrap_finished"
+        }
+      },
+      "expect": "bootstrap_finished"
+    },
+    {
+      "name": "tls_name_mismatch: the pair doesn't cover the configured origin",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_name_mismatch",
+          "uncovered": [
+            "https://mac.local:8443"
+          ]
+        }
+      },
+      "expect": "tls_name_mismatch"
+    },
+    {
+      "name": "tls_invalid",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_invalid"
+        }
+      },
+      "expect": "tls_invalid"
+    },
+    {
+      "name": "tls_key_mismatch",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_key_mismatch"
+        }
+      },
+      "expect": "tls_key_mismatch"
+    },
+    {
+      "name": "tls_not_valid",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_not_valid",
+          "not_before": "2026-12-01T00:00:00Z",
+          "not_after": "2027-12-01T00:00:00Z"
+        }
+      },
+      "expect": "tls_not_valid"
+    },
+    {
+      "name": "tls_not_valid with fractional seconds doesn't decode",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_not_valid",
+          "not_before": "2026-12-01T00:00:00.000Z",
+          "not_after": "2027-12-01T00:00:00Z"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "origin_invalid, with or without tls",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "origin_invalid"
+        }
+      },
+      "expect": "origin_invalid"
+    },
+    {
+      "name": "hsts_invalid, with or without tls",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "hsts_invalid"
+        }
+      },
+      "expect": "hsts_invalid"
+    },
+    {
+      "name": "a refusal that doesn't decode",
+      "wire": {
+        "status": "rejected",
+        "refusal": {
+          "code": "tls_name_mismatch"
+        }
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "a completed result without a session",
+      "wire": {
+        "status": "completed",
+        "result": {}
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "accepted: bootstrap never answers it, so it doesn't decode",
+      "wire": {
+        "status": "accepted"
+      },
+      "expect": "refused"
+    },
+    {
+      "name": "a status bootstrap doesn't have",
+      "wire": {
+        "status": "abandoned"
+      },
+      "expect": "refused"
+    }
+  ],
+  "timestamps": [
+    {
+      "name": "the profile",
+      "text": "2026-12-01T00:00:00Z",
+      "valid": true
+    },
+    {
+      "name": "the last second of a year",
+      "text": "2027-12-31T23:59:59Z",
+      "valid": true
+    },
+    {
+      "name": "a leap day in a leap year",
+      "text": "2028-02-29T12:00:00Z",
+      "valid": true
+    },
+    {
+      "name": "2000 is a leap year (divisible by 400)",
+      "text": "2000-02-29T00:00:00Z",
+      "valid": true
+    },
+    {
+      "name": "an offset, even +00:00",
+      "text": "2026-12-01T00:00:00+00:00",
+      "valid": false
+    },
+    {
+      "name": "fractional seconds",
+      "text": "2026-12-01T00:00:00.000Z",
+      "valid": false
+    },
+    {
+      "name": "a lowercase z",
+      "text": "2026-12-01T00:00:00z",
+      "valid": false
+    },
+    {
+      "name": "a lowercase t",
+      "text": "2026-12-01t00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "a space for T",
+      "text": "2026-12-01 00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "month 13",
+      "text": "2026-13-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "month 0",
+      "text": "2026-00-01T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "day 0",
+      "text": "2026-12-00T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "day 32",
+      "text": "2026-12-32T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "day 31 in a 30-day month",
+      "text": "2026-11-31T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "a leap day outside a leap year",
+      "text": "2026-02-29T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "1900 isn't a leap year",
+      "text": "1900-02-29T00:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "hour 24",
+      "text": "2026-12-01T24:00:00Z",
+      "valid": false
+    },
+    {
+      "name": "minute 60",
+      "text": "2026-12-01T00:60:00Z",
+      "valid": false
+    },
+    {
+      "name": "a leap second",
+      "text": "2026-12-31T23:59:60Z",
+      "valid": false
+    },
+    {
+      "name": "no seconds",
+      "text": "2026-12-01T00:00Z",
+      "valid": false
+    },
+    {
+      "name": "a date only",
+      "text": "2026-12-01",
+      "valid": false
+    }
+  ]
+}
