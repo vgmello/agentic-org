@@ -35,9 +35,9 @@
 //! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the instance status
 //! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
-//! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`; this crate doesn't
-//! re-export it (X-02 §5.2 says it would), so that its only dependencies stay `org-proto` and
-//! serde (§11).
+//! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
+//! This crate doesn't re-export it, so that its only dependencies stay `org-proto` and serde
+//! (X-02 §5.2, §11): the gateway imports it from `org-office-launch`.
 
 #![deny(unsafe_code)]
 
@@ -78,7 +78,8 @@ pub mod event {
 /// `not_authorized`, `unavailable` and `storage_error` are never stored: they're plain error
 /// responses.
 ///
-/// A status this build doesn't know decodes as [`HostOpResult::Unknown`]. It is never sent.
+/// A status this build doesn't know decodes as [`HostOpResult::Unknown`]. It is never sent:
+/// serializing it fails.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -90,7 +91,7 @@ pub enum HostOpResult<T, R = org_proto::ApiError> {
     Rejected {
         refusal: R,
     },
-    #[serde(other)]
+    #[serde(other, skip_serializing)]
     Unknown,
 }
 

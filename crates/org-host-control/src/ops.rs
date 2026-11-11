@@ -444,7 +444,8 @@ impl Call for TlsSet {
 /// Why `tls.set` or `bootstrap` refused a TLS pair (X-02 §6.2, §6.3), with its wire form. These
 /// aren't §9 error codes, and none carries a message.
 ///
-/// A code this build doesn't know decodes as [`TlsRefusal::Unknown`]. It is never sent.
+/// A code this build doesn't know decodes as [`TlsRefusal::Unknown`]. It is never sent:
+/// serializing it fails.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -464,7 +465,7 @@ pub enum TlsRefusal {
     OriginInvalid,
     /// `{"code": "hsts_invalid"}`: the stored listen configuration's `hsts` is invalid.
     HstsInvalid,
-    #[serde(other)]
+    #[serde(other, skip_serializing)]
     Unknown,
 }
 
@@ -646,8 +647,9 @@ impl Call for Subscribe {
 /// another `login` changes the fingerprint, so it is `operation_reused`; that lets setup tell a
 /// typo from a different login.
 ///
-/// Its result is a [`HostOpResult`] that is **never `accepted`**: `completed` with
-/// [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order that type states.
+/// Its result is a [`BootstrapOutcome`] ([`HostOpResult`]'s wire form, **never `accepted`**):
+/// `completed` with [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order
+/// that type states.
 /// On an empty registry the host checks the stored listen configuration with or without `tls`
 /// (`origin_invalid`, `hsts_invalid`), and a first `tls` gets `tls.set`'s checks in `tls.set`'s
 /// order, all before it creates the registry. **No bootstrap refusal is ever stored**: a re-run
@@ -681,7 +683,18 @@ pub struct BootstrapResult {
 impl Call for Bootstrap {
     const METHOD: &'static str = "bootstrap";
     type Params = BootstrapParams;
-    type Result = HostOpResult<BootstrapResult, BootstrapRefusal>;
+    type Result = BootstrapOutcome;
+}
+
+/// `bootstrap`'s result (X-02 §6.3): [`HostOpResult`]'s wire form, tagged by `status`, without
+/// `accepted`, which bootstrap never answers. So `{"status": "accepted"}` doesn't decode, and
+/// neither does any other status: bootstrap's result shapes are fixed, so there is no `Unknown`.
+/// Not `Clone`: the session is a secret.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum BootstrapOutcome {
+    Completed { result: BootstrapResult },
+    Rejected { refusal: BootstrapRefusal },
 }
 
 /// Why `bootstrap` refused (X-02 §6.3, "Result shapes fixed by move 1"): a [`TlsRefusal`], or
@@ -704,7 +717,7 @@ impl Call for Bootstrap {
 ///    validity, coverage). Every refusal here but `tls_required` is a [`BootstrapRefusal::Tls`].
 ///
 /// It is one flat object tagged by `code`, like [`TlsRefusal`]. A code neither type knows decodes
-/// as `Tls(TlsRefusal::Unknown)`; it is never sent.
+/// as `Tls(TlsRefusal::Unknown)`; it is never sent: serializing it fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapRefusal {
     /// `{"code": "tls_required"}`: a first bootstrap under `https` without `tls`.

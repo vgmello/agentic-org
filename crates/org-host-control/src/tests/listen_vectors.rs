@@ -238,6 +238,10 @@ fn tls_refusal_vectors() {
     let later: TlsRefusal = serde_json::from_value(json!({"code": "tls_future"})).unwrap();
     assert_eq!(later, TlsRefusal::Unknown);
     assert!(!later.is_stored(TlsInstallOp::TlsSet));
+    // It is never sent: writing it fails, alone or as a refusal.
+    assert!(serde_json::to_value(&later).is_err());
+    let rejected: HostOpResult<Empty, TlsRefusal> = HostOpResult::Rejected { refusal: later };
+    assert!(serde_json::to_value(&rejected).is_err());
     assert_eq!(TlsInstallOp::TlsSet.method(), "tls.set");
     assert_eq!(TlsInstallOp::Bootstrap.method(), "bootstrap");
 }
@@ -288,6 +292,14 @@ fn listen_config_vectors() {
             (Ok(_), want) => panic!("{name}: valid, expected {want}"),
         }
     }
+    // A value that isn't a string is kept apart from an empty one, and is never written back.
+    let stored: StoredListenConfig = serde_json::from_value(json!({
+        "address": "0.0.0.0", "port": 8443, "scheme": "https", "origin": 8443, "hsts": ""
+    }))
+    .unwrap();
+    assert_eq!(stored.origin, Some(StoredText::NotAString));
+    assert_eq!(stored.hsts, Some(StoredText::Text(String::new())));
+    assert!(serde_json::to_value(&stored).is_err());
 }
 
 #[test]
@@ -299,12 +311,12 @@ fn bootstrap_result_vectors() {
         let decoded =
             serde_json::from_value::<<Bootstrap as org_proto::Call>::Result>(row["wire"].clone());
         let got = match &decoded {
-            Ok(HostOpResult::Completed { result }) => {
+            Ok(BootstrapOutcome::Completed { result }) => {
                 assert_eq!(result.session.expose(), "bootstrap-session-handle");
                 assert!(!format!("{result:?}").contains("bootstrap-session-handle"));
                 "completed".to_owned()
             }
-            Ok(HostOpResult::Rejected { refusal }) => {
+            Ok(BootstrapOutcome::Rejected { refusal }) => {
                 assert!(!refusal.is_stored(), "{name}");
                 assert_ne!(
                     refusal,
@@ -313,7 +325,6 @@ fn bootstrap_result_vectors() {
                 );
                 text(&row["wire"]["refusal"]["code"]).to_owned()
             }
-            Ok(other) => panic!("{name}: {other:?}"),
             Err(_) => "refused".to_owned(),
         };
         assert_eq!(got, text(&row["expect"]), "{name}");
@@ -341,6 +352,16 @@ fn bootstrap_result_vectors() {
     ] {
         assert!(seen.iter().any(|got| got == code), "no vector for {code}");
     }
+    // `accepted` is refused at decode, though a HostOpResult would take it.
+    let accepted = json!({"status": "accepted"});
+    assert!(rows(&doc, "bootstrap")
+        .iter()
+        .any(|row| row["wire"] == accepted && row["expect"] == "refused"));
+    assert!(serde_json::from_value::<BootstrapOutcome>(accepted.clone()).is_err());
+    assert_eq!(
+        serde_json::from_value::<HostOpResult<Empty>>(accepted).unwrap(),
+        HostOpResult::Accepted
+    );
     for (refusal, code) in [
         (BootstrapRefusal::TlsRequired, "tls_required"),
         (BootstrapRefusal::TlsMismatch, "tls_mismatch"),
@@ -364,4 +385,5 @@ fn bootstrap_result_vectors() {
     let later: BootstrapRefusal =
         serde_json::from_value(json!({"code": "bootstrap_future"})).unwrap();
     assert_eq!(later, BootstrapRefusal::Tls(TlsRefusal::Unknown));
+    assert!(serde_json::to_value(&later).is_err());
 }

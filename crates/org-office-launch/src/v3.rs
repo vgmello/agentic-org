@@ -20,8 +20,8 @@
 //! - **The transfer socket** (an `AF_UNIX SOCK_DGRAM` socket pair, host → server only) carries
 //!   [`TransferRecord`]s: a JSON header of at most [`TRANSFER_HEADER_MAX_BYTES`] plus zero or one
 //!   descriptor. This is the one definition, for the worker's transfer socket and the gateway's.
-//!   (X-02 §5.2 has `org-host-control` re-export it; it doesn't yet, to keep that crate's
-//!   dependencies to `org-proto` and serde, so the gateway reads it from here.)
+//!   `org-host-control` doesn't re-export it, which keeps that crate's dependencies to
+//!   `org-proto` and serde (X-02 §5.2, §11): the gateway imports it from here.
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a

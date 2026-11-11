@@ -606,6 +606,9 @@ fn changes_name_their_actor_when_known() {
 
     let unknown: Actor = serde_json::from_value(json!({"member": "m", "kind": "system"})).unwrap();
     assert_eq!(unknown.kind, ActorKind::Unknown);
+    // It is never sent: writing it fails rather than inventing a kind.
+    assert!(serde_json::to_value(ActorKind::Unknown).is_err());
+    assert!(serde_json::to_value(&unknown).is_err());
 }
 
 #[test]

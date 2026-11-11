@@ -134,6 +134,8 @@ fn host_op_results_have_three_states() {
     let later: HostOpResult<Empty> =
         serde_json::from_value(json!({"status": "abandoned"})).unwrap();
     assert_eq!(later, HostOpResult::Unknown);
+    // It is never sent: writing it fails rather than sending "unknown".
+    assert!(serde_json::to_value(&later).is_err());
     let restarted: HostOpResult<Empty> =
         serde_json::from_value(json!({"status": "completed", "result": {}})).unwrap();
     assert_eq!(restarted, HostOpResult::Completed { result: Empty {} });

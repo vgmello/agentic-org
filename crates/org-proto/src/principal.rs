@@ -290,7 +290,7 @@ pub enum ActorKind {
     Human,
     /// An agent acting on its bound connection (ADR-0003 `msg.bind`).
     Agent,
-    /// Not known to this build. Never sent.
-    #[serde(other)]
+    /// Not known to this build. Never sent: serializing it fails.
+    #[serde(other, skip_serializing)]
     Unknown,
 }
