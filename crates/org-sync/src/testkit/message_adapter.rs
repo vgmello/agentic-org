@@ -48,6 +48,7 @@ impl MessageTxn for Tx<'_> {
             org_id: c.org_id.clone(),
             office_id: c.local_office.clone(),
             epoch: c.highest_epoch,
+            hq_office_id: c.hq_office.clone(),
         })
     }
     fn supports_current_protocol(&mut self) -> Result<bool, StoreError> {
@@ -121,10 +122,10 @@ impl MessageTxn for Tx<'_> {
     }
     fn record_expired(&mut self, message: &Message) -> Result<(), StoreError> {
         self.message_io("record_expired")?;
-        self.data.expired_messages.insert(
-            (message.origin.clone(), message.id.clone()),
-            message.clone(),
-        );
+        self.data
+            .expired_messages
+            .entry((message.origin.clone(), message.id.clone()))
+            .or_insert_with(|| message.clone());
         Ok(())
     }
     fn record_received(&mut self, receipt: &Receipt) -> Result<(), StoreError> {
@@ -139,9 +140,16 @@ impl MessageTxn for Tx<'_> {
         self.message_io("save_queue")?;
         self.data.message_queue = queue.clone();
         if let Some(r) = receipt {
-            self.data
-                .outgoing_messages
-                .insert(r.message.id.clone(), r.clone());
+            if r.delivered {
+                self.data
+                    .outgoing_messages
+                    .insert(r.message.id.clone(), r.clone());
+            } else {
+                self.data
+                    .outgoing_messages
+                    .entry(r.message.id.clone())
+                    .or_insert_with(|| r.clone());
+            }
         }
         Ok(())
     }
@@ -209,6 +217,186 @@ mod tests {
         message.fingerprint = fingerprint(&message);
         (a, b, pa, pb, message)
     }
+    fn unbounded_deadline(sender: bool) {
+        let (a, b, pa, _, mut message) = offices();
+        message.deadline_ms = u64::MAX;
+        message.fingerprint = fingerprint(&message);
+        let office = if sender { &a } else { &b };
+        let before = state(office);
+        let result = if sender {
+            messages::enqueue(office, message, 10)
+        } else {
+            messages::receive(office, &pa, message, 10)
+        };
+        assert!(matches!(
+            result,
+            Err(SyncError::Refused(Refusal::InvalidInput))
+        ));
+        assert_eq!(state(office), before);
+        assert_eq!(state(&office.restart()), before);
+    }
+    #[test]
+    fn unbounded_deadline_is_refused_before_enqueue() {
+        unbounded_deadline(true);
+    }
+    #[test]
+    fn unbounded_deadline_is_refused_before_delivery() {
+        unbounded_deadline(false);
+    }
+
+    #[test]
+    fn fresh_deadline_is_bounded_by_thirty_day_cap() {
+        assert_eq!(messages::MAX_MESSAGE_TTL_MS, 30 * 24 * 60 * 60 * 1000);
+        for sender in [true, false] {
+            for delta in [
+                messages::MAX_MESSAGE_TTL_MS - 1,
+                messages::MAX_MESSAGE_TTL_MS,
+                messages::MAX_MESSAGE_TTL_MS + 1,
+            ] {
+                let (a, b, pa, _, mut message) = offices();
+                let office = if sender { &a } else { &b };
+                message.deadline_ms = 10 + delta;
+                message.fingerprint = fingerprint(&message);
+                let before = state(office);
+                let result = if sender {
+                    messages::enqueue(office, message.clone(), 10)
+                } else {
+                    messages::receive(office, &pa, message.clone(), 10)
+                };
+                if delta > messages::MAX_MESSAGE_TTL_MS {
+                    assert!(matches!(
+                        result,
+                        Err(SyncError::Refused(Refusal::InvalidInput))
+                    ));
+                    assert_eq!(state(office), before);
+                    assert_eq!(state(&office.restart()), before);
+                } else if sender {
+                    assert_eq!(
+                        result.unwrap(),
+                        MessageOutput::Queued {
+                            id: message.id.clone()
+                        }
+                    );
+                    assert_eq!(
+                        office.restart().data.borrow().message_queue.pending.front(),
+                        Some(&message)
+                    );
+                } else {
+                    let receipt = Receipt {
+                        message: message.clone(),
+                        delivered: true,
+                    };
+                    assert_eq!(result.unwrap(), MessageOutput::Receipt(receipt.clone()));
+                    assert_eq!(
+                        office
+                            .restart()
+                            .data
+                            .borrow()
+                            .received_messages
+                            .get(&(message.origin, message.id)),
+                        Some(&receipt)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deadline_bound_uses_effective_clock_and_does_not_overflow() {
+        for sender in [true, false] {
+            for (wall, high, deadline) in [
+                (10, 1000, 1000 + messages::MAX_MESSAGE_TTL_MS),
+                (1000, 10, 1000 + messages::MAX_MESSAGE_TTL_MS),
+                (u64::MAX - 50, 10, u64::MAX),
+                (10, 1000, 999),
+            ] {
+                let (a, b, pa, _, mut message) = offices();
+                let office = if sender { &a } else { &b };
+                office.data.borrow_mut().message_queue.clock_high_ms = high;
+                message.deadline_ms = deadline;
+                message.fingerprint = fingerprint(&message);
+                let result = if sender {
+                    messages::enqueue(office, message, wall)
+                } else {
+                    messages::receive(office, &pa, message, wall)
+                };
+                if deadline <= wall.max(high) {
+                    assert_eq!(result.unwrap(), MessageOutput::Refused(Refusal::Expired));
+                } else {
+                    assert!(result.is_ok(), "sender={sender} wall={wall} high={high}");
+                }
+                assert_eq!(
+                    office.restart().data.borrow().message_queue.clock_high_ms,
+                    wall.max(high)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn expiry_precedes_retained_or_pruned_dedup_proof_without_reapply() {
+        for pruned in [false, true] {
+            let (a, b, pa, _, message) = offices();
+            messages::enqueue(&a, message.clone(), 10).unwrap();
+            messages::receive(&b, &pa, message.clone(), 10).unwrap();
+            messages::next(&b, message.deadline_ms).unwrap();
+            if pruned {
+                b.data.borrow_mut().received_messages.clear();
+            }
+            let b = b.restart();
+            // Any proof read would fail: expiry must be classified first, including after prune.
+            b.inject(Fault::MessagePort("received", 0));
+            assert_eq!(
+                messages::receive(&b, &pa, message.clone(), 1).unwrap(),
+                MessageOutput::Refused(Refusal::Expired)
+            );
+            assert_eq!(
+                b.data.borrow().delivered_messages,
+                vec![message.payload.clone()]
+            );
+            assert_eq!(
+                b.restart().data.borrow().message_queue.clock_high_ms,
+                message.deadline_ms
+            );
+            a.inject(Fault::MessagePort("outgoing_receipt", 0));
+            assert_eq!(
+                messages::enqueue(&a, message.clone(), message.deadline_ms).unwrap(),
+                MessageOutput::Refused(Refusal::Expired)
+            );
+            assert_eq!(a.data.borrow().message_queue.pending.len(), 1);
+        }
+    }
+
+    #[test]
+    fn expiry_proof_writes_never_overwrite_earlier_immutable_identity() {
+        let (a, b, pa, pb, message) = offices();
+        messages::enqueue(&a, message.clone(), 10).unwrap();
+        let MessageOutput::Receipt(receipt) =
+            messages::receive(&b, &pa, message.clone(), 10).unwrap()
+        else {
+            panic!("receipt")
+        };
+        messages::acknowledge(&a, &pb, receipt.clone()).unwrap();
+        let mut changed = message.clone();
+        changed.payload = Arc::from(&b"changed"[..]);
+        changed.fingerprint = fingerprint(&changed);
+        assert_eq!(
+            messages::enqueue(&a, changed.clone(), message.deadline_ms).unwrap(),
+            MessageOutput::Refused(Refusal::Expired)
+        );
+        assert_eq!(a.data.borrow().outgoing_messages[&message.id], receipt);
+        messages::receive(&b, &pa, message.clone(), message.deadline_ms).unwrap();
+        messages::receive(&b, &pa, changed, message.deadline_ms).unwrap();
+        assert_eq!(
+            b.data.borrow().expired_messages[&(message.origin.clone(), message.id.clone())],
+            message
+        );
+        assert_eq!(
+            b.data.borrow().received_messages[&(message.origin.clone(), message.id.clone())],
+            receipt
+        );
+    }
+
     #[test]
     fn oversize_message_is_refused_before_enqueue() {
         let (a, _, _, _, mut message) = offices();
@@ -221,6 +409,155 @@ mod tests {
         ));
         assert_eq!(a.data.borrow().message_queue, before);
         assert!(a.data.borrow().outgoing_messages.is_empty());
+    }
+
+    #[test]
+    fn core_routes_refuse_foreign_delivery_and_ack_before_native_authorization() {
+        for receive in [true, false] {
+            for wrong in ["office", "role", "hq-role"] {
+                let (a, b, pa, pb, message) = offices();
+                let office = if receive { &b } else { &a };
+                let mut peer = if receive { pa.clone() } else { pb.clone() };
+                match wrong {
+                    "office" => {
+                        peer.0.office_id = OfficeId::new("FOREIGN").unwrap();
+                        peer.0.role = PeerRole::Satellite;
+                    }
+                    "role" => {
+                        peer.0.role = if receive {
+                            PeerRole::Satellite
+                        } else {
+                            PeerRole::Hq
+                        }
+                    }
+                    _ => {
+                        peer.0.office_id = OfficeId::new("FOREIGN").unwrap();
+                        peer.0.role = PeerRole::Hq;
+                    }
+                }
+                office.inject(Fault::MessagePort(
+                    if receive {
+                        "authorize_receive"
+                    } else {
+                        "authorize_receipt"
+                    },
+                    0,
+                ));
+                let before = state(office);
+                let result = if receive {
+                    messages::receive(office, &peer, message, 10)
+                } else {
+                    messages::acknowledge(
+                        office,
+                        &peer,
+                        Receipt {
+                            message,
+                            delivered: true,
+                        },
+                    )
+                };
+                refused(result, Refusal::NotAuthorized);
+                assert_eq!(state(office), before);
+            }
+        }
+    }
+
+    #[test]
+    fn hq_forwarding_and_direct_origin_delivery_have_pinned_routes() {
+        for via_hq in [false, true] {
+            let (_, b, hq, _, mut message) = offices();
+            message.origin = OfficeId::new("ORIGIN").unwrap();
+            message.fingerprint = fingerprint(&message);
+            let origin = MemoryPeer(PeerIdentity {
+                office_id: message.origin.clone(),
+                role: PeerRole::Satellite,
+                ..hq.0.clone()
+            });
+            let peer = if via_hq { &hq } else { &origin };
+            assert_eq!(
+                messages::receive(&b, peer, message.clone(), 10).unwrap(),
+                MessageOutput::Receipt(Receipt {
+                    message,
+                    delivered: true
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn verified_hq_may_forward_a_destination_receipt() {
+        let (a, b, hq, _, message) = offices();
+        messages::enqueue(&a, message.clone(), 10).unwrap();
+        let MessageOutput::Receipt(receipt) = messages::receive(&b, &hq, message, 10).unwrap()
+        else {
+            panic!("receipt")
+        };
+        assert_eq!(
+            messages::acknowledge(&a, &hq, receipt.clone()).unwrap(),
+            MessageOutput::Receipt(receipt)
+        );
+        assert!(a.restart().data.borrow().message_queue.pending.is_empty());
+    }
+
+    struct RetentionFixture {
+        office: MemoryOffice,
+        delivered: bool,
+    }
+    impl super::super::message_conformance::MessageRetentionHarness for RetentionFixture {
+        fn seed_identity(&mut self, message: &Message, delivered: bool) -> Result<(), StoreError> {
+            self.delivered = delivered;
+            if delivered {
+                self.office.data.borrow_mut().received_messages.insert(
+                    (message.origin.clone(), message.id.clone()),
+                    Receipt {
+                        message: message.clone(),
+                        delivered: true,
+                    },
+                );
+            } else {
+                self.office.data.borrow_mut().expired_messages.insert(
+                    (message.origin.clone(), message.id.clone()),
+                    message.clone(),
+                );
+            }
+            self.office = self.office.restart();
+            Ok(())
+        }
+        fn prune_and_reopen(&mut self, clock_ms: u64) -> Result<(), StoreError> {
+            let mut data = self.office.data.borrow_mut();
+            data.received_messages
+                .retain(|_, receipt| receipt.message.deadline_ms > clock_ms);
+            data.expired_messages
+                .retain(|_, message| message.deadline_ms > clock_ms);
+            drop(data);
+            self.office = self.office.restart();
+            Ok(())
+        }
+        fn retained_identity(&self, message: &Message) -> Result<Option<Message>, StoreError> {
+            let data = self.office.data.borrow();
+            let key = (message.origin.clone(), message.id.clone());
+            Ok(if self.delivered {
+                data.received_messages.get(&key).map(|r| r.message.clone())
+            } else {
+                data.expired_messages.get(&key).cloned()
+            })
+        }
+    }
+
+    #[test]
+    fn store_contract_preserves_both_identity_types_until_effective_deadline() {
+        for delivered in [false, true] {
+            let (_, b, _, _, message) = offices();
+            let mut fixture = RetentionFixture {
+                office: b,
+                delivered,
+            };
+            super::super::message_conformance::assert_message_retention(
+                &mut fixture,
+                &message,
+                delivered,
+            );
+        }
     }
 
     #[test]
@@ -240,7 +577,7 @@ mod tests {
         };
         let b = b.restart();
         assert_eq!(
-            messages::receive(&b, &pa, m.clone(), 2000).unwrap(),
+            messages::receive(&b, &pa, m.clone(), m.deadline_ms - 1).unwrap(),
             MessageOutput::Receipt(receipt.clone())
         );
         assert_eq!(b.data.borrow().delivered_messages.len(), 1);
@@ -446,7 +783,7 @@ mod tests {
         assert!(!expired.delivered);
         assert_eq!(
             messages::enqueue(&a, m.clone(), 10).unwrap(),
-            MessageOutput::Receipt(expired)
+            MessageOutput::Refused(Refusal::Expired)
         );
         assert_eq!(
             messages::acknowledge(&a, &pb, delivered.clone()).unwrap(),
@@ -867,7 +1204,9 @@ mod tests {
         };
         let b = b.restart();
         let before = state(&b);
-        let MessageOutput::Receipt(replay) = messages::receive(&b, &pa, m, 2000).unwrap() else {
+        let MessageOutput::Receipt(replay) =
+            messages::receive(&b, &pa, m.clone(), m.deadline_ms - 1).unwrap()
+        else {
             panic!("replayed receipt");
         };
         assert_eq!(replay, original);
@@ -1290,18 +1629,22 @@ mod tests {
                 }
                 changed.fingerprint = fingerprint(&changed);
                 let retry = if action == "enqueue" {
-                    messages::enqueue(&office, changed, original.deadline_ms + 1)
+                    messages::enqueue(&office, changed, original.deadline_ms)
                 } else {
-                    messages::receive(&office, &pa, changed, original.deadline_ms + 1)
+                    messages::receive(&office, &pa, changed, original.deadline_ms)
                 };
-                refused(
-                    retry,
-                    if action == "enqueue" {
-                        Refusal::OperationReused
-                    } else {
-                        Refusal::Divergence
-                    },
-                );
+                if field == "payload" {
+                    assert_eq!(retry.unwrap(), MessageOutput::Refused(Refusal::Expired));
+                } else {
+                    refused(
+                        retry,
+                        if action == "enqueue" {
+                            Refusal::OperationReused
+                        } else {
+                            Refusal::Divergence
+                        },
+                    );
+                }
                 assert_eq!(state(&office), before);
             }
         }
@@ -1323,21 +1666,11 @@ mod tests {
             };
             let before = state(&office);
             let replay = if action == "enqueue" {
-                messages::enqueue(&office, m.clone(), m.deadline_ms + 1)
+                messages::enqueue(&office, m.clone(), m.deadline_ms)
             } else {
-                messages::receive(&office, &pa, m.clone(), m.deadline_ms + 1)
+                messages::receive(&office, &pa, m.clone(), m.deadline_ms)
             };
-            assert_eq!(
-                replay.unwrap(),
-                if action == "enqueue" {
-                    MessageOutput::Receipt(Receipt {
-                        message: m.clone(),
-                        delivered: false,
-                    })
-                } else {
-                    MessageOutput::Refused(Refusal::Expired)
-                }
-            );
+            assert_eq!(replay.unwrap(), MessageOutput::Refused(Refusal::Expired));
             assert_eq!(state(&office), before);
             assert!(office.data.borrow().message_queue.pending.is_empty());
             assert!(office.data.borrow().received_messages.is_empty());
@@ -1348,7 +1681,7 @@ mod tests {
     #[test]
     fn expiry_identity_and_clock_commit_together_and_storage_errors_abort() {
         for fault in [
-            Fault::MessagePort("expired_identity", 0),
+            Fault::MessagePort("authority", 2),
             Fault::MessagePort("record_expired", 0),
             Fault::CommitUnavailable,
         ] {

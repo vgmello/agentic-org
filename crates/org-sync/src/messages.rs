@@ -3,13 +3,15 @@
 //! to the mailbox adapter. A transport receipt never acknowledges an uncommitted delivery.
 use crate::{
     error::{Refusal, StoreError, SyncError},
-    organization::{PeerIdentity, VerifiedPeer},
+    organization::{PeerIdentity, PeerRole, VerifiedPeer},
 };
 use org_sync_proto::{Digest, Epoch, OfficeId, OrgId};
 use std::{collections::VecDeque, sync::Arc};
 
 pub const MAX_PENDING: usize = 1024;
 pub const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+/// X-05 transport lifetime cap. deadline_ms already includes native skew grace.
+pub const MAX_MESSAGE_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 /// Reserve encoded-frame headroom for base64 and its bounded metadata envelope.
 pub const MAX_PAYLOAD_BYTES: usize = org_sync_proto::MAX_ENCODED_FRAME_BYTES / 2;
 const _: () = assert!(
@@ -26,6 +28,7 @@ pub struct Message {
     pub id: String,
     pub fingerprint: Digest,
     pub payload: Arc<[u8]>,
+    /// Effective transport expiry, including any native skew grace.
     pub deadline_ms: u64,
 }
 impl std::fmt::Debug for Message {
@@ -60,8 +63,8 @@ impl Message {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Receipt {
     pub message: Message,
-    /// Retained at least through the native mailbox's dedup deadline. The adapter must
-    /// preserve this identity until that deadline, including on snapshot installation.
+    /// Preserve immutable identity at least until message.deadline_ms, including
+    /// across restart, snapshot installation and native body pruning.
     pub delivered: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +123,7 @@ pub struct MessageAuthority {
     pub org_id: OrgId,
     pub office_id: OfficeId,
     pub epoch: Epoch,
+    pub hq_office_id: OfficeId,
 }
 
 pub trait MessageTxn {
@@ -151,8 +155,8 @@ pub trait MessageTxn {
         receipt: &Receipt,
     ) -> Result<(), SyncError>;
     fn apply_message(&mut self, message: &Message) -> Result<(), SyncError>;
-    /// Rejected identity shares the origin/ID uniqueness and native retention horizon
-    /// with received proofs, but never establishes delivery.
+    /// Insert the first immutable rejected identity; never replace an existing proof.
+    /// Retain it through deadline_ms (already including grace), like received proofs.
     fn expired_identity(
         &mut self,
         origin: &OfficeId,
@@ -160,6 +164,7 @@ pub trait MessageTxn {
     ) -> Result<Option<Message>, StoreError>;
     fn record_expired(&mut self, message: &Message) -> Result<(), StoreError>;
     fn record_received(&mut self, receipt: &Receipt) -> Result<(), StoreError>;
+    /// An expiry notice never overwrites existing identity; a delivered ACK may correct it.
     fn save_queue(&mut self, queue: &Queue, receipt: Option<&Receipt>) -> Result<(), StoreError>;
 }
 
@@ -198,6 +203,13 @@ fn ready(tx: &mut dyn MessageTxn) -> Result<(), SyncError> {
     Ok(())
 }
 
+fn expired(message: &Message, clock: u64) -> Result<bool, Refusal> {
+    if message.deadline_ms.saturating_sub(clock) > MAX_MESSAGE_TTL_MS {
+        return Err(Refusal::InvalidInput);
+    }
+    Ok(message.deadline_ms <= clock)
+}
+
 pub fn enqueue(
     store: &dyn MessageStore,
     message: Message,
@@ -211,6 +223,15 @@ pub fn enqueue(
             return Err(Refusal::NotAuthorized.into());
         }
         tx.authorize_send(&message)?;
+        queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
+        if expired(&message, queue.clock_high_ms)? {
+            let receipt = Receipt {
+                message: message.clone(),
+                delivered: false,
+            };
+            persist(tx, &queue, Some(&receipt))?;
+            return Ok(MessageOutput::Refused(Refusal::Expired));
+        }
         if let Some(receipt) = tx.outgoing_receipt(&message.id)? {
             if receipt.message != message {
                 return Err(Refusal::OperationReused.into());
@@ -225,15 +246,7 @@ pub fn enqueue(
                 id: message.id.clone(),
             });
         }
-        queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
-        if message.deadline_ms <= queue.clock_high_ms {
-            let receipt = Receipt {
-                message: message.clone(),
-                delivered: false,
-            };
-            persist(tx, &queue, Some(&receipt))?;
-            return Ok(MessageOutput::Refused(Refusal::Expired));
-        }
+
         if queue.pending.len() >= MAX_PENDING
             || queue.bytes().saturating_add(message.payload.len()) > MAX_PENDING_BYTES
         {
@@ -277,9 +290,18 @@ fn check_remote(
     peer: &PeerIdentity,
     org_id: &OrgId,
     local_endpoint: &OfficeId,
+    counterparty: &OfficeId,
 ) -> Result<(), SyncError> {
     let pinned = tx.authority()?;
-    if &pinned.org_id != org_id
+    let is_hq = peer.office_id == pinned.hq_office_id;
+    if peer.role
+        != if is_hq {
+            PeerRole::Hq
+        } else {
+            PeerRole::Satellite
+        }
+        || (!is_hq && &peer.office_id != counterparty)
+        || &pinned.org_id != org_id
         || peer.org_id != pinned.org_id
         || peer.authority != pinned.epoch
         || &pinned.office_id != local_endpoint
@@ -298,10 +320,22 @@ pub fn receive(
     let peer = peer.identity();
     store.transact(Arc::new(move |tx| {
         message.validate()?;
-        check_remote(tx, &peer, &message.org_id, &message.destination)?;
+        check_remote(
+            tx,
+            &peer,
+            &message.org_id,
+            &message.destination,
+            &message.origin,
+        )?;
         tx.authorize_receive(&peer, &message)?;
         ready(tx)?;
         let mut queue = load_queue(tx)?;
+        queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
+        if expired(&message, queue.clock_high_ms)? {
+            tx.record_expired(&message)?;
+            persist(tx, &queue, None)?;
+            return Ok(MessageOutput::Refused(Refusal::Expired));
+        }
         if let Some(old) = tx.received(&message.origin, &message.id)? {
             if !old.delivered {
                 return Err(Refusal::InvariantFailure.into());
@@ -317,12 +351,7 @@ pub fn receive(
             }
             return Ok(MessageOutput::Refused(Refusal::Expired));
         }
-        queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
-        if message.deadline_ms <= queue.clock_high_ms {
-            tx.record_expired(&message)?;
-            persist(tx, &queue, None)?;
-            return Ok(MessageOutput::Refused(Refusal::Expired));
-        }
+
         tx.apply_message(&message)?;
         let receipt = Receipt {
             message: message.clone(),
@@ -345,7 +374,13 @@ pub fn acknowledge(
         if !receipt.delivered {
             return Err(Refusal::NotAuthorized.into());
         }
-        check_remote(tx, &peer, &receipt.message.org_id, &receipt.message.origin)?;
+        check_remote(
+            tx,
+            &peer,
+            &receipt.message.org_id,
+            &receipt.message.origin,
+            &receipt.message.destination,
+        )?;
         tx.authorize_receipt(&peer, &receipt)?;
         ready(tx)?;
         let mut queue = load_queue(tx)?;
