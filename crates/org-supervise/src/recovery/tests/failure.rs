@@ -32,7 +32,7 @@ fn failure_classification_deadline_boundary_keeps_error_kind_and_message() {
 fn failure_classification_inventory_boundary_and_ancestry_disjunct() {
     validate_target_count(256).unwrap();
     let error = validate_target_count(257).unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(
         error.to_string(),
         "recovery inventory exceeds 256 identities"
@@ -46,7 +46,7 @@ fn failure_classification_inventory_boundary_and_ancestry_disjunct() {
     };
     validate_inventory(&[target(255)]).unwrap();
     let error = validate_inventory(&[target(256)]).unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(
         error.to_string(),
         "invalid or duplicate saved process identity"
@@ -77,6 +77,7 @@ fn failure_classification_never_infers_a_tag_from_text_or_io_kind() {
     );
     for kind in [
         io::ErrorKind::TimedOut,
+        io::ErrorKind::InvalidInput,
         io::ErrorKind::InvalidData,
         io::ErrorKind::Other,
     ] {
@@ -189,7 +190,7 @@ fn failure_classification_capture_overflow_reaches_the_caller_without_signals() 
     );
     assert_eq!(
         result.unresolved[0].1.error.kind(),
-        io::ErrorKind::InvalidData
+        io::ErrorKind::InvalidInput
     );
     assert_eq!(
         result.unresolved[0].1.error.to_string(),

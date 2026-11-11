@@ -153,7 +153,7 @@ pub struct CheckpointTarget {
 fn validate_target_count(count: usize) -> io::Result<()> {
     if count > MAX_RECOVERY_TARGETS {
         return Err(failure::tagged(
-            io::ErrorKind::InvalidData,
+            io::ErrorKind::InvalidInput,
             ScanFailureKind::InventoryOverflow,
             "recovery inventory exceeds 256 identities",
         ));
@@ -170,7 +170,7 @@ fn validate_inventory(inventory: &[CheckpointTarget]) -> io::Result<()> {
         }
         if target.ancestry.len() >= MAX_RECOVERY_TARGETS {
             return Err(failure::tagged(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::InvalidInput,
                 ScanFailureKind::InventoryOverflow,
                 "invalid or duplicate saved process identity",
             ));
