@@ -462,9 +462,14 @@ fn preconditions_a_malformed_later_hello_does_not_reset_the_lock() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
-    client
-        .call::<org_host_control::Hello>(&Default::default())
-        .unwrap();
+    let hello = client.raw(r#"{"id":9,"method":"hello","ignored":1e1000}"#);
+    assert_eq!(
+        hello
+            .into_result::<org_host_control::Hello>()
+            .unwrap()
+            .api_version,
+        1
+    );
     let response = client.raw(r#"{"id":1,"method":"hello","params":[]}"#);
     assert!(
         matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)

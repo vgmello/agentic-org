@@ -3,12 +3,13 @@ use std::collections::HashSet;
 use std::fmt;
 
 use org_proto::Request;
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 pub(super) fn decode(line: &[u8]) -> serde_json::Result<Request> {
-    object::<UniqueKeys>(line)?;
-    serde_json::from_slice(line)
+    serde_json::from_slice::<de::IgnoredAny>(line)?;
+    unique_keys(line)?;
+    object::<Request>(line)
 }
 
 pub(super) fn salvage_id(line: &[u8]) -> Option<u64> {
@@ -38,61 +39,141 @@ fn object<'de, T: Deserialize<'de>>(line: &'de [u8]) -> serde_json::Result<T> {
     Ok(value)
 }
 
-struct UniqueKeys;
-
-impl<'de> Deserialize<'de> for UniqueKeys {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(Self)
-    }
+enum Container {
+    Object {
+        keys: HashSet<String>,
+        wants_key: bool,
+    },
+    Array,
 }
 
-impl<'de> Visitor<'de> for UniqueKeys {
-    type Value = Self;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("JSON without duplicate object keys")
-    }
-
-    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self, M::Error> {
-        let mut keys = HashSet::new();
-        while let Some(key) = map.next_key::<String>()? {
-            // String decoding has already resolved JSON escapes. Never echo a key or value.
-            if !keys.insert(key) {
-                return Err(de::Error::custom("duplicate object key"));
+// IgnoredAny has validated the whole grammar without converting numbers. Walk structure
+// iteratively so ignored values retain their numeric range and nesting compatibility.
+fn unique_keys(bytes: &[u8]) -> serde_json::Result<()> {
+    let mut containers = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'{' => containers.push(Container::Object {
+                keys: HashSet::new(),
+                wants_key: true,
+            }),
+            b'[' => containers.push(Container::Array),
+            b'}' | b']' => {
+                containers.pop();
             }
-            map.next_value::<Self>()?;
+            b',' => {
+                if let Some(Container::Object { wants_key, .. }) = containers.last_mut() {
+                    *wants_key = true;
+                }
+            }
+            b'"' => {
+                match containers.last_mut() {
+                    Some(Container::Object { keys, wants_key }) if *wants_key => {
+                        let (key, consumed) = string_token::<String>(&bytes[offset..])?;
+                        if !keys.insert(key) {
+                            return Err(de::Error::custom("duplicate object key"));
+                        }
+                        *wants_key = false;
+                        offset += consumed;
+                    }
+                    _ => {
+                        let (_, consumed) = string_token::<de::IgnoredAny>(&bytes[offset..])?;
+                        offset += consumed;
+                    }
+                }
+                continue;
+            }
+            _ => {}
         }
-        Ok(Self)
+        offset += 1;
     }
+    Ok(())
+}
 
-    fn visit_seq<S: SeqAccess<'de>>(self, mut seq: S) -> Result<Self, S::Error> {
-        while seq.next_element::<Self>()?.is_some() {}
-        Ok(Self)
-    }
-
-    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self, E> {
-        Ok(Self)
-    }
-    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self, E> {
-        Ok(Self)
-    }
-    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self, E> {
-        Ok(Self)
-    }
-    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self, E> {
-        Ok(Self)
-    }
-    fn visit_str<E: de::Error>(self, _: &str) -> Result<Self, E> {
-        Ok(Self)
-    }
-    fn visit_unit<E: de::Error>(self) -> Result<Self, E> {
-        Ok(Self)
-    }
+// Let serde_json decode/skip a self-delimited string, including all escaping rules.
+fn string_token<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<(T, usize)> {
+    let mut stream = serde_json::Deserializer::from_slice(bytes).into_iter::<T>();
+    let value = stream
+        .next()
+        .ok_or_else(|| <serde_json::Error as de::Error>::custom("missing JSON string"))??;
+    Ok((value, stream.byte_offset()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{decode, salvage_id};
+
+    #[test]
+    fn ignored_envelope_numbers_keep_the_existing_request_contract() {
+        for value in [
+            "1e1000",
+            "-1e1000",
+            "1e-1000",
+            "1234567890123456789012345678901234567890",
+            "[1e1000]",
+            r#"{"x":1e1000}"#,
+        ] {
+            let line = format!(r#"{{"id":7,"method":"hello","ignored":{value}}}"#);
+            assert!(serde_json::from_str::<org_proto::Request>(&line).is_ok());
+            assert!(decode(line.as_bytes()).is_ok(), "{line}");
+        }
+    }
+
+    #[test]
+    fn ignored_values_keep_deep_nesting_and_string_contents() {
+        let nested = format!("{}0{}", r#"{"x":"#.repeat(512), "}".repeat(512));
+        let line = format!(r#"{{"id":1,"method":"hello","ignored":{nested}}}"#);
+        assert!(serde_json::from_str::<org_proto::Request>(&line).is_ok());
+        assert!(decode(line.as_bytes()).is_ok());
+        let duplicate = format!(
+            "{}{}{}",
+            r#"{"x":"#.repeat(512),
+            r#"{"a":1,"a":2}"#,
+            "}".repeat(512)
+        );
+        let line = format!(r#"{{"id":1,"method":"hello","ignored":{duplicate}}}"#);
+        assert!(decode(line.as_bytes()).is_err());
+        let line = serde_json::json!({"id":1,"method":"hello","ignored":{"x":"x", "items":["items", "x", "\"\\,[{}]:"]}}).to_string();
+        assert!(decode(line.as_bytes()).is_ok());
+        assert!(decode(br#"{"id":1,"method":"hello","params":{"future":1e1000}}"#).is_err());
+    }
+
+    #[test]
+    fn key_scopes_survive_arrays_and_large_ignored_numbers() {
+        for value in [
+            r#"{"a":[],"b":[],"x":1,"x":2}"#,
+            r#"{"large":1e1000,"x":1,"\u0078":2}"#,
+            r#"{"":1,"":2}"#,
+            r#"[{"x":1,"x":2}]"#,
+        ] {
+            let line = format!(r#"{{"id":1,"method":"hello","ignored":{value}}}"#);
+            assert!(decode(line.as_bytes()).is_err(), "{line}");
+        }
+    }
+
+    #[test]
+    fn depth_bounds_match_the_existing_decoder_for_each_field_category() {
+        for (field, depth, accepted) in [
+            ("ignored", 127, true),
+            ("ignored", 129, true),
+            ("params", 127, true),
+            ("params", 129, false),
+        ] {
+            let value = format!("{}null{}", "[".repeat(depth - 1), "]".repeat(depth - 1));
+            let line = format!(r#"{{"id":1,"method":"hello","{field}":{value}}}"#);
+            assert_eq!(
+                serde_json::from_str::<org_proto::Request>(&line).is_ok(),
+                accepted,
+                "base {field}/{depth}"
+            );
+            assert_eq!(
+                decode(line.as_bytes()).is_ok(),
+                accepted,
+                "host {field}/{depth}"
+            );
+        }
+    }
 
     #[test]
     fn nonobject_frames_have_no_trustworthy_request_id() {
