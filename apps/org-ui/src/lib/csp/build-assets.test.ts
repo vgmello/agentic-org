@@ -55,10 +55,21 @@ describe('B1-05 production build data-URI gate', () => {
 		});
 	}
 	it('accepts external assets and the SSE data prefix', async () => {
-		const root = await fixture({ 'app.css': 'body{background:url(/image.svg)}', 'app.js': 'const isSse=(line)=>line.startsWith("data:");', 'font.woff2': '"data:font/woff2;base64,AA"' });
+		const root = await fixture({ 'app.css': 'body{background:url(/image.svg)}', 'app.js': 'const isSse=(line)=>line.startsWith("data:");', 'font.woff2': '"data:font/woff2;base64,AA"', 'index.html': '<p>production</p>' });
 		const result = check(root);
 		expect(result.status).toBe(0);
 		expect(result.output).toContain('1 CSS and 1 JS');
+	});
+	it.each([
+		['index.html', 'report-uri'], ['nested/app.js', 'report-sample'],
+		['nested/app.mjs', '/__csp-report'], ['app.js', '/__csp-status'],
+		['app.js', '/__csp-clear'], ['index.html', 'org-test-csp-policy'],
+		['app.css', 'e2e-csp/vite-policy'], ['app.js', 'REPORT-URI']
+	])('refuses test CSP tooling leaking into production %s: %s', async (file, marker) => {
+		const root = await fixture({ [file]: `/* ${marker} */` });
+		const result = check(root);
+		expect(result.status).toBe(1);
+		expect(result.output).toContain(`${file}: test CSP tooling`);
 	});
 	it('keeps a tiny asset external using the actual application build settings', async () => {
 		const config = await loadConfigFromFile({ command: 'build', mode: 'production' }, fileURLToPath(new URL('../../../vite.config.ts', import.meta.url)));
