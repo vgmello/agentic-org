@@ -10,6 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::OfficeError;
 
+pub(crate) mod assembly;
 mod call;
 mod metadata;
 pub(crate) use metadata::create_tables as create_v5_tables;
