@@ -216,7 +216,7 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	await expect(hq).toContainText(/It stopped unexpectedly\. Restarting in \d+ s/);
 	// The screen-reader label keeps where it runs, puts the reason after the status, and never ticks (spec §6.1).
 	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
-	expect(label).toContain('This Mac');
+	expect(label).toContain("the office's machine");
 	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
 	expect(label).not.toMatch(/\d+ s\b/);
 });
