@@ -111,8 +111,10 @@ fn invalid_names_are_refused_before_anything_starts() {
         let err = create(&mut client, name).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidName, "{name:?}");
     }
-    let wrong_params = Client::connect(host.socket_path())
-        .raw(r#"{"id":99,"method":"organization.create","params":{}}"#);
+    let mut wire = Client::connect(host.socket_path());
+    wire.call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
+    let wrong_params = wire.raw(r#"{"id":99,"method":"organization.create","params":{}}"#);
     assert!(matches!(
         wrong_params.outcome,
         org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized

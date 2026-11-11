@@ -12,13 +12,7 @@ use super::{
 
 /// A fresh, crate-issued pass request. Only the supervisor can issue requests, after
 /// the appropriate leader/group kill stage. Callers cannot invent completion evidence.
-///
-/// ```compile_fail
-/// use org_supervise::recovery::ScanRequest;
-/// let request = ScanRequest { mark: "forged".into(), nonce: [0; 32],
-///     deadline: std::time::Instant::now(), excluded: None, tool_sessions: vec![] };
-/// ```
-pub struct ScanRequest<'a> {
+pub(crate) struct ScanRequest<'a> {
     mark: String,
     nonce: [u8; 32],
     deadline: Instant,
@@ -27,26 +21,14 @@ pub struct ScanRequest<'a> {
     inventory: &'a mut dyn TargetCheckpoint,
 }
 
+#[cfg(test)]
 impl ScanRequest<'_> {
-    /// Non-secret mark to scan for.
-    pub fn mark(&self) -> &str {
-        &self.mark
-    }
-    /// Fresh pass nonce, to be echoed only by the pass consuming this request.
-    pub fn nonce(&self) -> &[u8; 32] {
+    pub(super) fn nonce(&self) -> &[u8; 32] {
         &self.nonce
     }
-    /// Absolute deadline for this pass.
-    pub fn deadline(&self) -> Instant {
+
+    pub(super) fn deadline(&self) -> Instant {
         self.deadline
-    }
-    /// Exact owned unreaped leader to skip, if supplied by probe cleanup.
-    pub fn excluded(&self) -> Option<&ProcessIdentity> {
-        self.excluded.as_ref()
-    }
-    /// Hints only; full mark enumeration is mandatory even when these are present.
-    pub fn tool_sessions(&self) -> &[u32] {
-        &self.tool_sessions
     }
 }
 
@@ -121,34 +103,20 @@ fn entropy(bytes: &mut [u8; 32]) -> io::Result<()> {
 }
 
 /// Evidence from exactly one pass, bound to its request's mark and nonce.
-///
-/// ```compile_fail
-/// use org_supervise::recovery::{ScanPass, RecoveryReport};
-/// let pass = ScanPass { mark: "forged".into(), nonce: [0; 32],
-///     report: RecoveryReport::default() };
-/// ```
 #[derive(Debug)]
-pub struct ScanPass {
+pub(crate) struct ScanPass {
     mark: String,
     nonce: [u8; 32],
     report: RecoveryReport,
 }
 
 impl ScanPass {
-    /// Echo of the consumed request's mark.
-    pub fn mark(&self) -> &str {
-        &self.mark
-    }
-    /// Echo of the consumed request's nonce.
-    pub fn nonce(&self) -> &[u8; 32] {
-        &self.nonce
-    }
-    /// Live eligible processes found by this pass, before signals.
-    pub fn found_live(&self) -> usize {
+    pub(super) fn found_live(&self) -> usize {
         self.report.found_live
     }
-    /// Includes unreadable-environment warnings, without environment bodies.
-    pub fn report(&self) -> &RecoveryReport {
+
+    #[cfg(test)]
+    pub(super) fn report(&self) -> &RecoveryReport {
         &self.report
     }
 }
@@ -179,16 +147,7 @@ impl std::error::Error for ScanFailure {}
 /// One pass per call. The coordinator owns retries and issues fresh requests.
 /// Process operations are an explicit parameter so scan and leader recovery share
 /// one adapter and its pinned identity state, without shared mutable global state.
-///
-/// ```compile_fail,E0277
-/// use org_supervise::recovery::*;
-/// struct Forged;
-/// impl ScanPort for Forged {
-///     fn scan_pass(&mut self, _: ScanRequest, _: &mut dyn RecoveryProcesses)
-///         -> Result<ScanPass, ScanFailure> { unimplemented!() }
-/// }
-/// ```
-pub trait ScanPort: super::sealed::Scan {
+pub(crate) trait ScanPort: super::sealed::Scan {
     /// Consume exactly one request, returning its evidence or an incomplete failure.
     fn scan_pass(
         &mut self,

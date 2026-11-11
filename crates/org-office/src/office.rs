@@ -538,6 +538,16 @@ impl Office {
         Ok(answer)
     }
 
+    /// Looks up a retained org command for today's implicit owner connection.
+    /// The read does not change the command, its expiry or the durable clock.
+    pub fn org_operation_get(
+        &self,
+        id: &str,
+    ) -> Result<Result<org_proto::OperationOutcome, ApiError>, OfficeError> {
+        self.org
+            .read(|db| org_db::operation_get(db, time::now_ms(), id))
+    }
+
     /// The position of the last log entry, from one consistent read.
     pub fn org_head(&self) -> Result<Position, OfficeError> {
         self.org.read(org_db::head)
