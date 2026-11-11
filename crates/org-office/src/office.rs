@@ -148,6 +148,7 @@ impl OrgStore for Office {
                 ..
             } | OrgOutput::Published(_)
                 | OrgOutput::SnapshotInstalled
+                | OrgOutput::AuthorityAccepted { .. }
         ) {
             self.wake_followers();
         }
@@ -281,6 +282,7 @@ impl Office {
                 "the databases belong to another office",
             ));
         }
+        org_db::sweep_snapshot_scratch(&folder)?;
         Ok(Self {
             folder,
             info,

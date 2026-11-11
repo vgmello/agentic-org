@@ -14,6 +14,8 @@ pub enum OfficeError {
     InUse,
     /// `Office::open` found no office in the folder: no `office.json`. Opening never creates one.
     NotFound,
+    /// Enrollment has not installed the organization's first materialized snapshot yet.
+    SnapshotPending,
     /// `Office::create` found an office (an `office.json`, databases or a workspace) already in
     /// the folder, or `Office::discard` found one that is finished or holds an organization.
     OfficeExists,
@@ -41,6 +43,7 @@ impl fmt::Display for OfficeError {
             Self::Invalid(why) => write!(f, "invalid: {why}"),
             Self::InUse => f.write_str("the office is already running"),
             Self::NotFound => f.write_str("the office does not exist"),
+            Self::SnapshotPending => f.write_str("organization snapshot is not available yet"),
             Self::OfficeExists => f.write_str("the office already exists"),
             Self::KeyMissing => f.write_str("the key given does not open the office's databases"),
             Self::Storage(_) => f.write_str("the office could not read or write its storage"),
