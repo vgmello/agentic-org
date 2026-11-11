@@ -248,6 +248,8 @@ version = "0.0.0"
 dependencies = [
  "org-mailbox",
  "org-proto",
+ "org-sync",
+ "org-sync-proto",
  "rusqlite",
  "serde",
  "serde_json",
@@ -336,6 +338,21 @@ dependencies = [
  "libc",
  "org-runtime",
  "tempfile",
+]
+
+[[package]]
+name = "org-sync"
+version = "0.0.0"
+dependencies = [
+ "org-sync-proto",
+]
+
+[[package]]
+name = "org-sync-proto"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
