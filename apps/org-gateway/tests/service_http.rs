@@ -227,8 +227,12 @@ impl Wire {
     }
 
     fn assert_error_headers(&self, status: u16) {
+        self.assert_error_headers_version(status, "HTTP/1.1");
+    }
+
+    fn assert_error_headers_version(&self, status: u16, version: &str) {
         assert!(
-            self.status.starts_with(&format!("HTTP/1.1 {status} ")),
+            self.status.starts_with(&format!("{version} {status} ")),
             "{}",
             self.status
         );
@@ -269,6 +273,68 @@ fn exchange(address: SocketAddr, path: &str, body: &[u8]) -> Wire {
     write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
     stream.write_all(body).unwrap();
     Wire::read(stream)
+}
+
+#[test]
+fn b105_http_1_1_only_refuses_http_1_0_before_native_admission() {
+    let server = Running::start(ApiLimits::default());
+    for connection in ["close", "keep-alive"] {
+        let mut stream = connect(server.address);
+        write!(stream, "POST /api/v1/test/read HTTP/1.0\r\nHost: {}\r\nConnection: {connection}\r\nContent-Length: 2\r\n\r\n{{}}", server.address).unwrap();
+        let response = Wire::read(stream);
+        response.assert_error_headers_version(400, "HTTP/1.0");
+        assert_eq!(server.executed.load(Ordering::Acquire), 0);
+    }
+}
+
+#[test]
+fn rowan_b105_literal_fragment_uses_the_same_effective_api_target() {
+    let server = Running::start(ApiLimits::default());
+    let mut normal = server.request("/api/v1/test/read", b"{}");
+    let mut raw = server.request("/api/v1/test/read#/%2f/%zz/..", b"{}");
+    assert_eq!(raw.status, "HTTP/1.1 200 OK");
+    assert_eq!(raw.status, normal.status);
+    assert_eq!(raw.body, normal.body);
+    normal.headers.remove("date");
+    raw.headers.remove("date");
+    assert_eq!(raw.headers, normal.headers);
+    assert_eq!(server.executed.load(Ordering::Acquire), 2);
+    // The retained prefix still undergoes the existing raw-path validation.
+    server
+        .request("/api/v1/test/%zz#ignored", b"{}")
+        .assert_error_headers(400);
+    assert_eq!(server.executed.load(Ordering::Acquire), 2);
+}
+
+#[test]
+fn rowan_b105_hashes_in_chunked_business_data_remain_ordinary_data() {
+    let server = Running::start(ApiLimits::default());
+    let mut stream = connect(server.address);
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n", server.address).unwrap();
+    // A body chunk can look exactly like a request line. It is not a request target.
+    for chunk in ["{\"value\":\"", "GET /# HTTP/1.1", "\"}"] {
+        write!(stream, "{:x}\r\n{chunk}\r\n", chunk.len()).unwrap();
+    }
+    stream.write_all(b"0\r\n\r\n").unwrap();
+    let response = Wire::read(stream);
+    assert_eq!(response.status, "HTTP/1.1 200 OK");
+    assert_eq!(server.executed.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn rowan_b105_next_keepalive_target_uses_the_same_effective_path() {
+    let server = Running::start(ApiLimits::default());
+    let mut stream = connect(server.address);
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", server.address, server.address).unwrap();
+    let mut response = String::new();
+    if let Err(error) = stream.read_to_string(&mut response) {
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+    }
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert_eq!(response.matches("HTTP/1.1 200 OK\r\n").count(), 2);
+    assert_eq!(response.matches("{\"result\":{}}").count(), 2);
+    assert!(!response.contains("text/html"));
+    assert_eq!(server.executed.load(Ordering::Acquire), 2);
 }
 
 #[test]

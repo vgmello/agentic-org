@@ -112,6 +112,35 @@ fn example_cli_serves_the_reviewed_html_headers_on_its_configured_loopback_port(
         "application/json; charset=utf-8",
         r#"{"error":{"code":"unavailable","message":"Service unavailable."}}"#,
     );
+    // Rowan's B1-05 ruling: http truncates literal fragments before dispatch.
+    // Pin the complete API refusal; the discarded bytes cannot select a static file.
+    let raw_wire = get(address, "/api/v1/capabilities#/%2f/%zz/..");
+    assert_response(
+        &raw_wire,
+        "503 Service Unavailable",
+        "default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+        "no-store",
+        "application/json; charset=utf-8",
+        r#"{"error":{"code":"unavailable","message":"Service unavailable."}}"#,
+    );
+    assert_eq!(
+        normalized_response(&raw_wire),
+        normalized_response(&api_wire)
+    );
+}
+
+fn normalized_response(wire: &str) -> (String, BTreeMap<String, String>, String) {
+    let (head, body) = wire.split_once("\r\n\r\n").unwrap();
+    let mut lines = head.split("\r\n");
+    let status = lines.next().unwrap().to_owned();
+    let mut headers = BTreeMap::new();
+    for line in lines {
+        let (key, value) = line.split_once(':').unwrap();
+        headers.insert(key.to_ascii_lowercase(), value.trim().to_owned());
+    }
+    // Date measures each response's time; every policy and representation header stays.
+    assert!(headers.remove("date").is_some());
+    (status, headers, body.to_owned())
 }
 
 fn get(address: std::net::SocketAddr, path: &str) -> String {

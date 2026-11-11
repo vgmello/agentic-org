@@ -154,6 +154,18 @@ Clients segment-encode IDs and treat an ID separator as a client bug. A raw segm
 such as `%252f` represents a literal percent escape; decode at most once, never a
 second time into a separator. The leading root slash is not itself a segment.
 
+B1-05 accepted parser limitation (D-B59; Rowan, 2026-11-11): these rules apply
+to the target presented by pinned Hyper `=1.12.0` and lockfile `http` `1.5.0`.
+[RFC 9110 §7.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.1) excludes
+fragments from a request's target URI; [RFC 9112 §3.2.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.1)
+defines origin-form using only path and query. A client-sent literal `#` is
+malformed, but `http` truncates it and everything after it before routing.
+The gateway accepts this parser behavior: validation and authorization use the
+same retained path, and discarded bytes do not select routes or static files
+or appear in responses. A raw wire regression pins status, body and policy
+headers to those of the equivalent effective API target. No parser fork or
+additional framing layer is used; this limitation is recorded as a LOW for review.
+
 Hidden resources and missing resources have the same not_found response. A visible
 resource the caller cannot change is 403 not_authorized; there is no new permission
 code. A confirmed submit not_found is a rejected attempt with nothing applied.

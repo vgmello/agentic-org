@@ -73,6 +73,10 @@ impl TlsCertificates {
         .with_cert_resolver(resolver.clone());
         config.alpn_protocols = vec![b"http/1.1".to_vec()];
         config.max_early_data_size = 0;
+        // Every new connection must authenticate the current certificate. A
+        // resumed session can otherwise retain the identity replaced by renew.
+        config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
+        config.send_tls13_tickets = 0;
         Ok(Self {
             resolver,
             config: Arc::new(config),

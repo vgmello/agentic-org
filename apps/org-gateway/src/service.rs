@@ -226,19 +226,36 @@ impl<B: ApiBackend> Gateway<B> {
     {
         let (parts, body) = request.into_parts();
         let head = parts.method == Method::HEAD;
-        let mut response = match RequestPath::parse(parts.uri.path()) {
-            Err(_) => ApiReply::error(
+        let unsupported_version = parts.version != hyper::Version::HTTP_11;
+        let mut response = if unsupported_version {
+            ApiReply::error(
                 StatusCode::BAD_REQUEST,
                 GatewayErrorCode::InvalidRequest,
-                "Invalid request path.",
+                "HTTP/1.1 is required.",
             )
-            .into_http(head),
-            Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                self.api_response(&parts, path, body).await.into_http(head)
+            .into_http(head)
+        } else {
+            match RequestPath::parse(parts.uri.path()) {
+                Err(_) => ApiReply::error(
+                    StatusCode::BAD_REQUEST,
+                    GatewayErrorCode::InvalidRequest,
+                    "Invalid request path.",
+                )
+                .into_http(head),
+                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
+                    self.api_response(&parts, path, body).await.into_http(head)
+                }
+                Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
             }
-            Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
         };
         self.ui.finish_response(&parts.headers, &mut response);
+        if unsupported_version {
+            *response.version_mut() = parts.version;
+            response.headers_mut().insert(
+                hyper::header::CONNECTION,
+                hyper::header::HeaderValue::from_static("close"),
+            );
+        }
         response
     }
 

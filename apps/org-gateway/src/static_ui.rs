@@ -554,6 +554,25 @@ mod tests {
         }
         assert!(!hsts_eligible(false, "gateway.test:8443"));
         assert!(hsts_eligible(true, "gateway.test:8443"));
+        for origin in [
+            "http://gateway.test:8443",
+            "https://localhost:8443",
+            "https://x.localhost:8443",
+            "https://127.0.0.1:8443",
+            "https://[::1]:8443",
+            "https://192.168.1.10:8443",
+        ] {
+            let ui = ui(origin, Hsts::On);
+            let response = ui.serve(&request(
+                Method::GET,
+                "/api/missing",
+                &[("host", ui.origin.authority())],
+            ));
+            assert!(
+                !response.headers().contains_key(STRICT_TRANSPORT_SECURITY),
+                "{origin}"
+            );
+        }
         for (mode, expected) in [
             (Hsts::Off, None),
             (Hsts::On, Some("max-age=31536000")),

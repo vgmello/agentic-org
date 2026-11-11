@@ -200,6 +200,27 @@ fn malformed_and_oversize_headers_close_with_bodyless_errors_before_a_handler() 
 }
 
 #[test]
+fn b105_header_field_count_is_enforced_independently_of_header_bytes() {
+    let server = Running::start(
+        ListenMode::HttpLoopback,
+        HttpLimits {
+            header_count: 2,
+            ..HttpLimits::default()
+        },
+    );
+    assert!(server.request(REQUEST).starts_with(b"HTTP/1.1 200"));
+    let response = server.protocol_refusal(
+        b"GET / HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nX-Third: x\r\n\r\n",
+    );
+    assert!(response.starts_with(b"HTTP/1.1 431"));
+    assert!(body(&response).is_empty());
+    let head = String::from_utf8(response).unwrap().to_ascii_lowercase();
+    assert!(!head.contains("content-security-policy"));
+    assert!(!head.contains("content-type"));
+    assert_eq!(server.calls.load(Ordering::Acquire), 1);
+}
+
+#[test]
 fn initial_and_keep_alive_idleness_close_at_the_injected_header_deadline() {
     let limits = HttpLimits {
         header_timeout: Duration::from_millis(100),
@@ -236,6 +257,126 @@ fn key(which: u8) -> rustls::pki_types::PrivateKeyDer<'static> {
         include_bytes!("../../../tests/fixtures/test-key-b.der")
     };
     PrivatePkcs8KeyDer::from(bytes.to_vec()).into()
+}
+
+fn resuming_client() -> tokio_rustls::TlsConnector {
+    resuming_client_for(&[&rustls::version::TLS13, &rustls::version::TLS12])
+}
+
+fn resuming_client_for(
+    versions: &[&'static rustls::SupportedProtocolVersion],
+) -> tokio_rustls::TlsConnector {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert(b'a').remove(0)).unwrap();
+    roots.add(cert(b'b').remove(0)).unwrap();
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(versions)
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    tokio_rustls::TlsConnector::from(Arc::new(config))
+}
+
+#[test]
+fn x02_s6_1_new_tls_handshakes_cannot_resume_a_replaced_identity() {
+    for version in [&rustls::version::TLS13, &rustls::version::TLS12] {
+        let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+        let server = Running::start(
+            ListenMode::Https(certificates.clone()),
+            HttpLimits::default(),
+        );
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let client = resuming_client_for(&[version]);
+                for expected in *b"ab" {
+                    let tcp = tokio::net::TcpStream::connect(server.address)
+                        .await
+                        .unwrap();
+                    let mut tls = time::timeout(
+                        GUARD,
+                        client.connect(ServerName::try_from("gateway.test").unwrap(), tcp),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap();
+                    assert_eq!(tls.get_ref().1.peer_certificates().unwrap(), cert(expected));
+                    assert_eq!(
+                        tls.get_ref().1.handshake_kind(),
+                        Some(rustls::HandshakeKind::Full)
+                    );
+                    tls.write_all(REQUEST).await.unwrap();
+                    let mut response = Vec::new();
+                    time::timeout(GUARD, tls.read_to_end(&mut response))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert!(response.starts_with(b"HTTP/1.1 200"));
+                    if expected == b'a' {
+                        certificates.replace(cert(b'b'), key(b'b')).unwrap();
+                    }
+                }
+            });
+    }
+}
+
+#[test]
+fn b105_positive_connection_budget_precedes_tls_handshakes_and_releases_capacity() {
+    let certificates = Arc::new(TlsCertificates::new(cert(b'a'), key(b'a')).unwrap());
+    let server = Running::start(
+        ListenMode::Https(certificates),
+        HttpLimits {
+            connections: 1,
+            ..HttpLimits::default()
+        },
+    );
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let client = resuming_client();
+            let first = time::timeout(
+                GUARD,
+                client.connect(
+                    ServerName::try_from("gateway.test").unwrap(),
+                    tokio::net::TcpStream::connect(server.address)
+                        .await
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            // A completed first handshake proves its connection owns the only permit.
+            let second_tcp = tokio::net::TcpStream::connect(server.address)
+                .await
+                .unwrap();
+            let second = client.connect(ServerName::try_from("gateway.test").unwrap(), second_tcp);
+            let mut second = pin!(second);
+            assert!(time::timeout(Duration::from_millis(100), &mut second)
+                .await
+                .is_err());
+            assert_eq!(server.calls.load(Ordering::Acquire), 0);
+            drop(first);
+            // The same waiting handshake must complete once the permit is released.
+            let mut second = time::timeout(GUARD, second).await.unwrap().unwrap();
+            second.write_all(REQUEST).await.unwrap();
+            let mut response = Vec::new();
+            time::timeout(GUARD, second.read_to_end(&mut response))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 200"));
+            assert_eq!(server.calls.load(Ordering::Acquire), 1);
+        });
 }
 
 fn tls_request(address: SocketAddr, expected: u8) {
