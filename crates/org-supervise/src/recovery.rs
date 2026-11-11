@@ -492,6 +492,15 @@ fn wait_until_with(
     }
 }
 
+fn signal_mark_matches(target: &VerifiedTarget, mark: &MarkEvidence) -> bool {
+    let direct = matches!(
+        target.evidence(),
+        TargetEvidence::Marked | TargetEvidence::RecordedLeader
+    );
+    *mark != MarkEvidence::Unreadable
+        && (!direct || *mark == MarkEvidence::Present(target.mark().into()))
+}
+
 fn native_mark(bytes: &[u8]) -> MarkEvidence {
     if !bytes.is_empty() && bytes.last() != Some(&0) {
         return MarkEvidence::Unreadable;

@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     native_mark, sealed, valid_pid, MarkEvidence, ProcessIdentity, ProcessObservation,
-    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, TargetEvidence,
-    VerifiedTarget,
+    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, VerifiedTarget,
 };
 
 const PROC_RECORD_LIMIT: usize = 64 * 1024;
@@ -33,7 +32,7 @@ impl NativeRecovery {
     /// Open the native adapter, checking the procfs namespace and kernel pidfd support.
     pub fn new() -> io::Result<Self> {
         crate::platform::validate()?;
-        let procfs = File::open("/proc")?;
+        let procfs = File::open("/proc").map_err(descriptor_error)?;
         let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
         // SAFETY: an open file descriptor and correctly sized output slot.
         if unsafe { libc::fstatfs(procfs.as_raw_fd(), filesystem.as_mut_ptr()) } < 0 {
@@ -51,12 +50,7 @@ impl NativeRecovery {
         let info_path = CString::new(format!("self/fdinfo/{}", fd.as_raw_fd())).unwrap();
         let info = read_at(&procfs, &info_path, PROC_RECORD_LIMIT, Some(deadline))?;
         let info = std::str::from_utf8(&info).map_err(|_| invalid("invalid pidfd metadata"))?;
-        if field(info, "Pid:")?.trim().parse::<u32>() != Ok(pid)
-            || !field(info, "NSpid:")?
-                .split_ascii_whitespace()
-                .map(str::parse::<u32>)
-                .eq([Ok(pid)])
-        {
+        if !pidfd_namespace_matches(info, pid)? {
             return Err(invalid(
                 "procfs does not match the supervisor PID namespace",
             ));
@@ -81,10 +75,10 @@ impl NativeRecovery {
     }
 
     fn sample(&self, pid: u32, deadline: Instant) -> io::Result<Option<(ProcessObservation, Pin)>> {
-        let Some(pin) = self.pin(pid, Some(deadline))? else {
+        let Some((pin, directory)) = self.pin(pid, Some(deadline))? else {
             return Ok(None);
         };
-        let credentials = match credentials(&pin.directory, deadline) {
+        let credentials = match credentials(&directory, deadline) {
             Ok(credentials) => credentials,
             Err(err) if vanished(&err) && exited(&pin.fd, None)? => return Ok(None),
             Err(err) => return Err(err),
@@ -93,12 +87,12 @@ impl NativeRecovery {
             return Ok(None);
         }
         let credentials_safe = credentials.safe(self.context.uid)
-            && pin.directory.metadata()?.uid() == self.context.uid
-            && ordinary_exec(&pin.directory, deadline)?;
-        let mark = if pin.stat.zombie || !credentials_safe || pid == self.context.pid {
-            MarkEvidence::Unreadable
+            && directory.metadata()?.uid() == self.context.uid
+            && ordinary_exec(&directory, deadline)?;
+        let mark = if sample_mark_allowed(pin.stat, credentials_safe, pid, self.context.pid) {
+            read_mark(&directory, pid, pin.stat, deadline)?
         } else {
-            read_mark(&pin.directory, pid, pin.stat, deadline)?
+            MarkEvidence::Unreadable
         };
         // A zombie thread-group leader can still have live workers. Only the
         // process pidfd certifies exit of the whole group.
@@ -122,7 +116,7 @@ impl NativeRecovery {
         )))
     }
 
-    fn pin(&self, pid: u32, deadline: Option<Instant>) -> io::Result<Option<Pin>> {
+    fn pin(&self, pid: u32, deadline: Option<Instant>) -> io::Result<Option<(Pin, File)>> {
         let name = CString::new(pid.to_string()).unwrap();
         for _ in 0..2 {
             if let Some(deadline) = deadline {
@@ -148,11 +142,7 @@ impl NativeRecovery {
             });
             match capture {
                 Ok((directory, stat)) => {
-                    return Ok(Some(Pin {
-                        fd,
-                        directory,
-                        stat,
-                    }));
+                    return Ok(Some((Pin { fd, stat }, directory)));
                 }
                 // Retry a vanished lookup. A hidden procfs row alone is never
                 // proof of exit while a pidfd lookup succeeds.
@@ -164,6 +154,30 @@ impl NativeRecovery {
             io::ErrorKind::WouldBlock,
             "process identity could not be pinned to its procfs directory",
         ))
+    }
+    fn reopen(&self, pid: u32, pin: &Pin, deadline: Instant) -> io::Result<Option<(File, Stat)>> {
+        check_time(deadline)?;
+        let name = CString::new(pid.to_string()).unwrap();
+        let capture = open_at(
+            &self.procfs,
+            &name,
+            libc::O_DIRECTORY,
+            libc::RESOLVE_NO_XDEV,
+        )
+        .and_then(|directory| {
+            let stat = read_stat(&directory, pid, Some(deadline))?;
+            Ok((directory, stat))
+        });
+        // A live held pidfd excludes PID recycling while this directory was read.
+        // An exited pin authorizes no evidence from a numeric replacement.
+        if exited(&pin.fd, None)? {
+            return Ok(None);
+        }
+        let (directory, stat) = capture?;
+        if stat.started != pin.stat.started {
+            return Err(invalid("reopened procfs identity differs from its pidfd"));
+        }
+        Ok(Some((directory, stat)))
     }
 }
 
@@ -203,10 +217,8 @@ impl RecoveryProcesses for NativeRecovery {
             }
             // Read PPID after both descriptors were acquired. A live parent fd at
             // the end excludes reuse during the observation of the child's PPID.
-            let current = match read_stat(&child.directory, row.pid, Some(deadline)) {
-                Ok(stat) => stat,
-                Err(err) if vanished(&err) && exited(&child.fd, None)? => continue,
-                Err(err) => return Err(err),
+            let Some((_directory, current)) = self.reopen(row.pid, child, deadline)? else {
+                continue;
             };
             if current.started == child.stat.started
                 && current.parent == child.stat.parent
@@ -242,33 +254,23 @@ impl RecoveryProcesses for NativeRecovery {
             .get(&identity.pid)
             .filter(|p| p.stat.started.to_string() == identity.started)
             .ok_or_else(|| invalid("signal target is not pinned by the current snapshot"))?;
+        let current = self.reopen(identity.pid, pin, deadline);
+        check_time(deadline)?;
+        let Some((directory, stat)) = current? else {
+            return Ok(SignalOutcome::Gone);
+        };
         let verified = (|| {
-            let stat = read_stat(&pin.directory, identity.pid, Some(deadline))?;
-            if stat.started != pin.stat.started {
-                return Err(invalid("pinned process start identity changed"));
-            }
-            if stat.zombie {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "recovery cannot verify credentials and mark for an exited thread-group leader",
-                ));
-            }
-            let mark = read_mark(&pin.directory, identity.pid, stat, deadline)?;
-            let direct = matches!(
-                target.evidence(),
-                TargetEvidence::Marked | TargetEvidence::RecordedLeader
-            );
-            if mark == MarkEvidence::Unreadable
-                || (direct && mark != MarkEvidence::Present(target.mark().into()))
-            {
+            verify_signal_stat(stat, target)?;
+            let mark = read_mark(&directory, identity.pid, stat, deadline)?;
+            if !super::signal_mark_matches(target, &mark) {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "recovery mark changed or is unreadable",
                 ));
             }
-            if !credentials(&pin.directory, deadline)?.safe(self.context.uid)
-                || pin.directory.metadata()?.uid() != self.context.uid
-                || !ordinary_exec(&pin.directory, deadline)?
+            if !credentials(&directory, deadline)?.safe(self.context.uid)
+                || directory.metadata()?.uid() != self.context.uid
+                || !ordinary_exec(&directory, deadline)?
             {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
@@ -320,9 +322,10 @@ impl RecoveryProcesses for NativeRecovery {
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Ok(false);
         }
-        let Some(pin) = pin else {
+        let Some((pin, directory)) = pin else {
             return Ok(true);
         };
+        drop(directory);
         if pin.stat.started.to_string() != identity.started {
             return Ok(true);
         }
@@ -340,7 +343,6 @@ impl RecoveryProcesses for NativeRecovery {
 
 struct Pin {
     fd: OwnedFd,
-    directory: File,
     stat: Stat,
 }
 
@@ -479,23 +481,27 @@ fn ordinary_exec(directory: &File, deadline: Instant) -> io::Result<bool> {
         Err(err) if err.kind() == io::ErrorKind::TimedOut => return Err(err),
         Err(_) => return Ok(false),
     };
+    Ok(auxv_ordinary(&bytes))
+}
+
+fn auxv_ordinary(bytes: &[u8]) -> bool {
     let word = std::mem::size_of::<usize>();
     let mut entries = bytes.chunks_exact(2 * word);
     if !entries.remainder().is_empty() {
-        return Ok(false);
+        return false;
     }
     let mut ordinary = None;
     for entry in &mut entries {
         let kind = usize::from_ne_bytes(entry[..word].try_into().unwrap());
         let value = usize::from_ne_bytes(entry[word..].try_into().unwrap());
         if kind == libc::AT_NULL as usize {
-            return Ok(value == 0 && entries.len() == 0 && ordinary == Some(true));
+            return value == 0 && entries.len() == 0 && ordinary == Some(true);
         }
         if kind == libc::AT_SECURE as usize && ordinary.replace(value == 0).is_some() {
-            return Ok(false);
+            return false;
         }
     }
-    Ok(false)
+    false
 }
 
 fn read_mark(
@@ -519,10 +525,7 @@ fn read_mark(
             return Ok(MarkEvidence::Unreadable);
         }
         let current = read_stat(directory, pid, Some(deadline))?;
-        if current.started != stat.started
-            || current.zombie
-            || current.environment != stat.environment
-        {
+        if !environment_unchanged(stat, current) {
             return Ok(MarkEvidence::Unreadable);
         }
         Ok(native_mark(&bytes))
@@ -549,6 +552,39 @@ fn field<'a>(info: &'a str, key: &str) -> io::Result<&'a str> {
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn pidfd_namespace_matches(info: &str, pid: u32) -> io::Result<bool> {
+    Ok(field(info, "Pid:")?.trim().parse::<u32>() == Ok(pid)
+        && field(info, "NSpid:")?
+            .split_ascii_whitespace()
+            .map(str::parse::<u32>)
+            .eq([Ok(pid)]))
+}
+
+fn boot_bind_ok(root: &[u8], source_dev: u64, procfs_dev: u64) -> bool {
+    root == b"/sys" && source_dev == procfs_dev
+}
+
+fn sample_mark_allowed(stat: Stat, credentials_safe: bool, pid: u32, supervisor: u32) -> bool {
+    !stat.zombie && credentials_safe && pid != supervisor
+}
+
+fn verify_signal_stat(stat: Stat, target: &VerifiedTarget) -> io::Result<()> {
+    if stat.started.to_string() != target.identity().started {
+        return Err(invalid("pinned process start identity changed"));
+    }
+    if stat.zombie {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "recovery cannot verify credentials and mark for an exited thread-group leader",
+        ));
+    }
+    Ok(())
+}
+
+fn environment_unchanged(before: Stat, after: Stat) -> bool {
+    after.started == before.started && !after.zombie && after.environment == before.environment
 }
 
 fn mount_id(file: &File) -> io::Result<u64> {
@@ -628,7 +664,7 @@ fn boot_identity(procfs: &File, deadline: Instant) -> io::Result<String> {
             let sys = open_at(procfs, c"sys", libc::O_DIRECTORY, libc::RESOLVE_NO_SYMLINKS)?;
             let mountinfo = read_at(procfs, c"self/mountinfo", MOUNTINFO_LIMIT, Some(deadline))?;
             let (root, _) = proc_mount_record(&mountinfo, mount_id(&sys)?)?;
-            if root != b"/sys" || sys.metadata()?.dev() != procfs.metadata()?.dev() {
+            if !boot_bind_ok(root, sys.metadata()?.dev(), procfs.metadata()?.dev()) {
                 return Err(invalid("boot identity is outside the held procfs instance"));
             }
             open_at(&sys, c"kernel/random/boot_id", 0, resolve)?
@@ -657,7 +693,8 @@ impl ProcDirectory {
         let directory = open_at(procfs, c".", libc::O_DIRECTORY, libc::RESOLVE_NO_XDEV)?;
         // SAFETY: valid, separately opened directory fd. fdopendir takes it on success.
         let stream = unsafe { libc::fdopendir(directory.as_raw_fd()) };
-        let stream = std::ptr::NonNull::new(stream).ok_or_else(io::Error::last_os_error)?;
+        let stream = std::ptr::NonNull::new(stream)
+            .ok_or_else(|| descriptor_error(io::Error::last_os_error()))?;
         let _ = directory.into_raw_fd();
         Ok(Self(stream))
     }
@@ -718,7 +755,7 @@ fn open_at(directory: &File, name: &CStr, flags: libc::c_int, resolve: u64) -> i
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error());
+        return Err(descriptor_error(io::Error::last_os_error()));
     }
     // SAFETY: openat2 returned a new descriptor.
     Ok(unsafe { File::from_raw_fd(fd as libc::c_int) })
@@ -765,6 +802,17 @@ fn vanished(err: &io::Error) -> bool {
     matches!(err.raw_os_error(), Some(libc::ENOENT | libc::ESRCH))
 }
 
+fn descriptor_error(err: io::Error) -> io::Error {
+    if matches!(err.raw_os_error(), Some(libc::EMFILE | libc::ENFILE)) {
+        io::Error::new(
+            err.kind(),
+            "doctor: Linux recovery exhausted file descriptors; increase RLIMIT_NOFILE or reduce the process count",
+        )
+    } else {
+        err
+    }
+}
+
 fn pidfd_startup_error(err: io::Error) -> io::Error {
     match err.raw_os_error() {
         Some(libc::ENOSYS | libc::EPERM) => io::Error::new(
@@ -779,7 +827,7 @@ fn pidfd(pid: u32) -> io::Result<OwnedFd> {
     // SAFETY: validated PID in the caller's namespace, no flags or pointers.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
     if fd < 0 {
-        return Err(io::Error::last_os_error());
+        return Err(descriptor_error(io::Error::last_os_error()));
     }
     // SAFETY: successful pidfd_open returned a new close-on-exec descriptor.
     Ok(unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
@@ -850,10 +898,420 @@ fn poll_until(
 
 #[cfg(test)]
 mod tests {
-    use super::{credentials, open_at, parse_stat, poll_until, validate_mountinfo, Stat};
+    use super::*;
     use std::cell::Cell;
     use std::fs::File;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn native_guards_require_the_exact_pid_namespace() {
+        assert!(pidfd_namespace_matches("Pid:\t42\nNSpid:\t42\n", 42).unwrap());
+        for info in [
+            "Pid:\t43\nNSpid:\t42\n",
+            "Pid:\t42\nNSpid:\t43\n",
+            "Pid:\t42\nNSpid:\t42 1\n",
+            "Pid:\t42\nNSpid:\t\n",
+            "Pid:\t42\nNSpid:\tbad\n",
+            "Pid:\t42\n",
+        ] {
+            assert!(
+                !pidfd_namespace_matches(info, 42).unwrap_or(false),
+                "{info}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_guards_require_the_boot_bind_root_and_device() {
+        assert!(boot_bind_ok(b"/sys", 21, 21));
+        assert!(!boot_bind_ok(b"/", 21, 21));
+        assert!(!boot_bind_ok(b"/sys", 22, 21));
+    }
+
+    #[test]
+    fn descriptor_exhaustion_explains_the_recovery_limit() {
+        for code in [libc::EMFILE, libc::ENFILE] {
+            let error = descriptor_error(io::Error::from_raw_os_error(code));
+            assert!(error.to_string().contains("doctor:"));
+            assert!(error.to_string().contains("RLIMIT_NOFILE"));
+        }
+        let error = descriptor_error(io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+    }
+
+    #[test]
+    fn native_guards_reject_privileged_credentials() {
+        let ordinary = || Credentials {
+            uid: [501; 4],
+            gid: [20; 4],
+            capabilities: 0,
+        };
+        assert!(ordinary().safe(501));
+        assert!(!ordinary().safe(0));
+        assert!(!Credentials {
+            uid: [0; 4],
+            gid: [20; 4],
+            capabilities: 0
+        }
+        .safe(0));
+        for index in 0..4 {
+            let mut changed = ordinary();
+            changed.uid[index] = 0;
+            assert!(!changed.safe(501), "uid index {index}");
+            let mut changed = ordinary();
+            changed.gid[index] = 0;
+            assert!(!changed.safe(501), "gid index {index}");
+        }
+        let mut changed = ordinary();
+        changed.capabilities = 1;
+        assert!(!changed.safe(501));
+    }
+
+    fn ordinary_stat() -> Stat {
+        parse_stat(&stat_row(b"42 (tool) S 13 41 44"), 42).unwrap()
+    }
+
+    fn target() -> VerifiedTarget {
+        VerifiedTarget {
+            identity: ProcessIdentity {
+                pid: 42,
+                started: "789".into(),
+                boot: "boot".into(),
+            },
+            mark: "guard-mark".into(),
+            evidence: crate::recovery::TargetEvidence::Marked,
+        }
+    }
+
+    #[test]
+    fn native_guards_quarantine_unsafe_or_zombie_samples() {
+        let stat = ordinary_stat();
+        assert!(sample_mark_allowed(stat, true, 42, 54));
+        assert!(!sample_mark_allowed(stat, false, 42, 54));
+        assert!(!sample_mark_allowed(
+            Stat {
+                zombie: true,
+                ..stat
+            },
+            true,
+            42,
+            54
+        ));
+        assert!(!sample_mark_allowed(stat, true, 42, 42));
+    }
+
+    #[test]
+    fn native_guards_refuse_reused_or_zombie_signal_targets() {
+        let stat = ordinary_stat();
+        assert!(verify_signal_stat(stat, &target()).is_ok());
+        assert!(verify_signal_stat(
+            Stat {
+                started: 790,
+                ..stat
+            },
+            &target()
+        )
+        .is_err());
+        assert_eq!(
+            verify_signal_stat(
+                Stat {
+                    zombie: true,
+                    ..stat
+                },
+                &target()
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn native_guards_require_an_unchanged_environment_capture() {
+        let before = ordinary_stat();
+        assert!(environment_unchanged(before, before));
+        for after in [
+            Stat {
+                started: 790,
+                ..before
+            },
+            Stat {
+                zombie: true,
+                ..before
+            },
+            Stat {
+                environment: (4095, 4128),
+                ..before
+            },
+            Stat {
+                environment: (4096, 4129),
+                ..before
+            },
+        ] {
+            assert!(!environment_unchanged(before, after), "{after:?}");
+        }
+    }
+
+    fn auxv(entries: &[(usize, usize)]) -> Vec<u8> {
+        entries
+            .iter()
+            .flat_map(|(kind, value)| [kind.to_ne_bytes(), value.to_ne_bytes()].concat())
+            .collect()
+    }
+
+    #[test]
+    fn native_guards_require_one_nonsecure_auxv_entry_and_a_complete_terminator() {
+        let secure = libc::AT_SECURE as usize;
+        let valid = auxv(&[(secure, 0), (0, 0)]);
+        assert!(auxv_ordinary(&valid));
+        for bytes in [
+            auxv(&[(secure, 1), (0, 0)]),
+            auxv(&[(0, 0)]),
+            auxv(&[(secure, 0), (secure, 0), (0, 0)]),
+            auxv(&[(secure, 0)]),
+            auxv(&[(secure, 0), (0, 1)]),
+            auxv(&[(secure, 0), (0, 0), (0, 0)]),
+            valid[..valid.len() - 1].to_vec(),
+        ] {
+            assert!(!auxv_ordinary(&bytes), "{bytes:?}");
+        }
+    }
+
+    struct ProcessFixture {
+        root: tempfile::TempDir,
+        child: crate::OwnedChild,
+    }
+
+    impl ProcessFixture {
+        fn new() -> Self {
+            use crate::{Environment, PreparedSpawn, SearchPath, SessionMark, SpawnSpec};
+            let root = tempfile::tempdir().unwrap();
+            let search = SearchPath::new(
+                std::path::Path::new("/usr/bin"),
+                "/usr/bin:/bin".as_ref(),
+                &[root.path().to_owned()],
+            )
+            .unwrap();
+            let mut random = [0; 16];
+            File::open("/dev/urandom")
+                .unwrap()
+                .read_exact(&mut random)
+                .unwrap();
+            let spawned = PreparedSpawn::new(
+                SpawnSpec {
+                    program: "/bin/sleep".into(),
+                    args: vec!["20".into()],
+                    cwd: root.path().to_owned(),
+                    environment: Environment::new(search, &[]).unwrap(),
+                },
+                SessionMark::new(format!("guard-{:032x}", u128::from_ne_bytes(random))).unwrap(),
+            )
+            .unwrap()
+            .record_mark(|_| Ok(()))
+            .unwrap()
+            .spawn()
+            .unwrap()
+            .record_identity(|_| Ok(()))
+            .unwrap();
+            Self {
+                root,
+                child: spawned.child,
+            }
+        }
+
+        fn directory(&self) -> std::path::PathBuf {
+            self.root.path().join(self.child.identity().pid.to_string())
+        }
+
+        fn reset(&self) {
+            let directory = self.directory();
+            std::fs::create_dir_all(&directory).unwrap();
+            self.stat(b'S', 789);
+            self.status(0);
+            let environment = b"ORG_SESSION_MARK=guard-mark\0";
+            std::fs::write(directory.join("environ"), environment).unwrap();
+            std::fs::write(
+                directory.join("auxv"),
+                auxv(&[(libc::AT_SECURE as usize, 0), (0, 0)]),
+            )
+            .unwrap();
+        }
+
+        fn stat(&self, state: u8, started: u64) {
+            let prefix = format!(
+                "{} (tool) {} 1 41 44",
+                self.child.identity().pid,
+                char::from(state)
+            );
+            let bytes = String::from_utf8(stat_row(prefix.as_bytes()))
+                .unwrap()
+                .replace(" 789 ", &format!(" {started} "))
+                .replace("4096 4128", "4096 4124");
+            std::fs::write(self.directory().join("stat"), bytes).unwrap();
+        }
+
+        fn status(&self, caps: u64) {
+            // SAFETY: getuid has no pointer arguments or side effects.
+            let uid = unsafe { libc::getuid() };
+            std::fs::write(self.directory().join("status"), format!("Uid:\t{uid} {uid} {uid} {uid}\nGid:\t20 20 20 20\nCapPrm:\t{caps:x}\nCapEff:\t0\n")).unwrap();
+        }
+
+        fn native(&self) -> NativeRecovery {
+            NativeRecovery {
+                procfs: File::open(self.root.path()).unwrap(),
+                procfs_mount_id: 0,
+                // SAFETY: simple process and user identity getters.
+                context: RecoveryContext {
+                    uid: unsafe { libc::getuid() },
+                    pid: unsafe { libc::getpid() as u32 },
+                    boot: "boot".into(),
+                },
+                pins: BTreeMap::new(),
+            }
+        }
+    }
+
+    #[test]
+    fn native_sample_wiring_quarantines_unsafe_or_zombie_processes() {
+        let fixture = ProcessFixture::new();
+        fixture.reset();
+        let native = fixture.native();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let row = native
+            .sample(fixture.child.identity().pid, deadline)
+            .unwrap()
+            .unwrap()
+            .0;
+        assert_eq!(row.mark, MarkEvidence::Present("guard-mark".into()));
+        fixture.status(1);
+        let row = native
+            .sample(fixture.child.identity().pid, deadline)
+            .unwrap()
+            .unwrap()
+            .0;
+        assert!(!row.credentials_safe);
+        assert_eq!(row.mark, MarkEvidence::Unreadable);
+        fixture.reset();
+        fixture.stat(b'Z', 789);
+        let row = native
+            .sample(fixture.child.identity().pid, deadline)
+            .unwrap()
+            .unwrap()
+            .0;
+        assert_eq!(row.mark, MarkEvidence::Unreadable);
+        fixture.reset();
+        std::fs::write(
+            fixture.directory().join("auxv"),
+            auxv(&[(libc::AT_SECURE as usize, 1), (0, 0)]),
+        )
+        .unwrap();
+        let row = native
+            .sample(fixture.child.identity().pid, deadline)
+            .unwrap()
+            .unwrap()
+            .0;
+        assert!(!row.credentials_safe);
+        assert_eq!(row.mark, MarkEvidence::Unreadable);
+    }
+
+    #[test]
+    fn native_signal_wiring_refuses_changes_after_the_snapshot() {
+        let fixture = ProcessFixture::new();
+        let mut target = target();
+        target.identity.pid = fixture.child.identity().pid;
+        for mutation in ["mark", "capabilities", "secure-exec", "zombie"] {
+            fixture.reset();
+            let mut native = fixture.native();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let (_, pin) = native
+                .sample(fixture.child.identity().pid, deadline)
+                .unwrap()
+                .unwrap();
+            native.pins.insert(fixture.child.identity().pid, pin);
+            match mutation {
+                "mark" => {
+                    std::fs::write(
+                        fixture.directory().join("environ"),
+                        b"ORG_SESSION_MARK=wrong-mark\0",
+                    )
+                    .unwrap();
+                }
+                "capabilities" => fixture.status(1),
+                "secure-exec" => {
+                    std::fs::write(
+                        fixture.directory().join("auxv"),
+                        auxv(&[(libc::AT_SECURE as usize, 1), (0, 0)]),
+                    )
+                    .unwrap();
+                }
+                _ => fixture.stat(b'Z', 789),
+            }
+            let error = native
+                .signal_checked(&target, RecoverySignal::Terminate, deadline)
+                .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::PermissionDenied,
+                "{mutation}: {error}"
+            );
+            if mutation == "zombie" {
+                assert!(error.to_string().contains("exited thread-group leader"));
+            }
+            assert!(!native
+                .wait_exited(target.identity(), Instant::now())
+                .unwrap());
+        }
+    }
+
+    #[test]
+    fn native_mark_wiring_rechecks_the_environment_identity() {
+        let fixture = ProcessFixture::new();
+        fixture.reset();
+        let directory = File::open(fixture.directory()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let before = read_stat(&directory, fixture.child.identity().pid, Some(deadline)).unwrap();
+        assert_eq!(
+            read_mark(&directory, fixture.child.identity().pid, before, deadline).unwrap(),
+            MarkEvidence::Present("guard-mark".into())
+        );
+        fixture.stat(b'S', 790);
+        assert_eq!(
+            read_mark(&directory, fixture.child.identity().pid, before, deadline).unwrap(),
+            MarkEvidence::Unreadable
+        );
+    }
+
+    #[test]
+    fn reopened_proc_directory_must_still_match_the_live_pidfd() {
+        let fixture = ProcessFixture::new();
+        fixture.reset();
+        let native = fixture.native();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let (pin, _) = native
+            .pin(fixture.child.identity().pid, Some(deadline))
+            .unwrap()
+            .unwrap();
+        assert!(native
+            .reopen(fixture.child.identity().pid, &pin, deadline)
+            .unwrap()
+            .is_some());
+        fixture.stat(b'S', 790);
+        let error = native
+            .reopen(fixture.child.identity().pid, &pin, deadline)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        // SAFETY: the fixture still owns this unreaped child and its individual PID.
+        assert_eq!(
+            unsafe { libc::kill(fixture.child.identity().pid as libc::pid_t, libc::SIGKILL) },
+            0
+        );
+        assert!(exited(&pin.fd, Some(deadline)).unwrap());
+        assert!(native
+            .reopen(fixture.child.identity().pid, &pin, deadline)
+            .unwrap()
+            .is_none());
+    }
 
     #[test]
     fn proc_status_accepts_the_kernel_group_limit() {

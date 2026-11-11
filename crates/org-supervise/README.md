@@ -142,8 +142,10 @@ continues to use the same policy and checkpoint contract.
 On Linux, the adapter checks the procfs PID namespace and requires an unfiltered
 procfs mount. It binds each pidfd to an open procfs process directory before
 reading identity and rejects mount crossings when opening process records.
-It verifies that the environment read covers the entire procfs address range. It retains the pidfds
-through a scan, rechecks credentials and mark evidence before signaling, and uses
+It verifies that the environment read covers the entire procfs address range. Each
+process retains one pidfd through a scan. Process directories are reopened as needed
+and checked against that live pidfd before use. Descriptor exhaustion reports a
+doctor error naming `RLIMIT_NOFILE`. It rechecks credentials and mark evidence before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd
 operations fail recovery. A recorded or checkpointed zombie group leader with
 live worker threads remains unresolved if its mark is unreadable. A mark-only

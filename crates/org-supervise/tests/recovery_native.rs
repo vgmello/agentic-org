@@ -105,7 +105,11 @@ fn fixture(
         let _ = io::copy(&mut reader, &mut io::sink());
     });
     let ready = receiver
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(if mode.starts_with("fd-") {
+            15
+        } else {
+            5
+        }))
         .expect("fixture readiness deadline")
         .unwrap();
     let mut fields = ready.split_ascii_whitespace().skip(1);
@@ -122,6 +126,10 @@ fn hold_fixture() {
     let Ok(mode) = std::env::var("ORG_TEST_CASE") else {
         return;
     };
+    #[cfg(target_os = "linux")]
+    if mode == "fd-limit" || mode == "fd-exhausted" {
+        capture_under_low_fd_limit(mode == "fd-exhausted");
+    }
     #[cfg(target_os = "linux")]
     if mode.starts_with("partial-environ:") {
         hold_partial_environment();
@@ -225,6 +233,84 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
     assert!(row.0.inventory().iter().any(|entry| entry.identity == tool));
     assert!(native.wait_exited(&tool, Instant::now()).unwrap());
     assert!(owner.try_exit().unwrap().is_some());
+}
+
+#[cfg(target_os = "linux")]
+fn capture_under_low_fd_limit(exhaust: bool) {
+    struct Children(Vec<libc::pid_t>);
+    impl Drop for Children {
+        fn drop(&mut self) {
+            for pid in &self.0 {
+                // SAFETY: the fixture owns these unreaped children.
+                unsafe {
+                    libc::kill(*pid, libc::SIGKILL);
+                    while libc::waitpid(*pid, std::ptr::null_mut(), 0) < 0 {
+                        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut children = Children(Vec::new());
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    // SAFETY: getrlimit writes the complete output record.
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) },
+        0
+    );
+    let mut limit = unsafe { limit.assume_init() };
+    limit.rlim_cur = limit.rlim_cur.min(if exhaust { 64 } else { 1024 });
+    // SAFETY: reduce only this disposable fixture's soft limit.
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+    let count = limit.rlim_cur as usize * if exhaust { 6 } else { 3 } / 5;
+    for _ in 0..count {
+        // SAFETY: after fork the child uses only async-signal-safe libc calls.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            // SAFETY: bound this synthetic child's lifetime without Rust runtime activity.
+            unsafe {
+                libc::sleep(20);
+                libc::_exit(0);
+            }
+        }
+        children.0.push(pid);
+    }
+    let mark = unique_mark();
+    let mut row = Row(RecoveryRecord::new(mark, None, vec![]).unwrap());
+    let mut native = NativeRecovery::new().unwrap();
+    if exhaust {
+        let error = native
+            .snapshot(Instant::now() + Duration::from_secs(5))
+            .unwrap_err();
+        assert!(error.to_string().contains("doctor:"), "{error}");
+        assert!(error.to_string().contains("RLIMIT_NOFILE"), "{error}");
+        return;
+    }
+    let gone = recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(10),
+    )
+    .expect("recovery must fit one retained descriptor per process");
+    assert_eq!(gone.report().signals, 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_recovery_fits_one_descriptor_per_process() {
+    let root = tempfile::tempdir().unwrap();
+    let (_child, _) = fixture(root.path(), &unique_mark(), "fd-limit");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_recovery_explains_descriptor_exhaustion() {
+    let root = tempfile::tempdir().unwrap();
+    let (_child, _) = fixture(root.path(), &unique_mark(), "fd-exhausted");
 }
 
 #[cfg(target_os = "linux")]

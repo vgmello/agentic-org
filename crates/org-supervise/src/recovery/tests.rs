@@ -8,6 +8,51 @@ use super::*;
 
 const MARK: &str = "recovery-fake-session";
 
+#[test]
+fn native_guards_recheck_the_exact_mark_before_direct_signals() {
+    for evidence in [
+        TargetEvidence::Marked,
+        TargetEvidence::RecordedLeader,
+        TargetEvidence::Descendant(vec![]),
+        TargetEvidence::CheckpointDescendant(vec![]),
+        TargetEvidence::Checkpoint(vec![]),
+    ] {
+        let direct = matches!(
+            evidence,
+            TargetEvidence::Marked | TargetEvidence::RecordedLeader
+        );
+        let target = VerifiedTarget {
+            identity: ProcessIdentity {
+                pid: 42,
+                started: "start".into(),
+                boot: "boot".into(),
+            },
+            mark: MARK.into(),
+            evidence,
+        };
+        assert!(signal_mark_matches(
+            &target,
+            &MarkEvidence::Present(MARK.into())
+        ));
+        assert!(!signal_mark_matches(&target, &MarkEvidence::Unreadable));
+        for changed in [MarkEvidence::Absent, MarkEvidence::Present("other".into())] {
+            assert_eq!(signal_mark_matches(&target, &changed), !direct);
+        }
+    }
+}
+
+#[test]
+fn native_guards_quarantine_conflicting_duplicate_marks() {
+    assert_eq!(
+        native_mark(b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0"),
+        MarkEvidence::Unreadable
+    );
+    assert_eq!(
+        native_mark(b"ORG_SESSION_MARK=a\0"),
+        MarkEvidence::Present("a".into())
+    );
+}
+
 fn process(pid: u32, parent: u32, mark: MarkEvidence) -> ProcessObservation {
     ProcessObservation {
         pid,

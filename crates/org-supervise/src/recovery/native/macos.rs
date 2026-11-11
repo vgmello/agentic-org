@@ -6,8 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     native_mark, sealed, valid_pid, MarkEvidence, ProcessIdentity, ProcessObservation,
-    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, TargetEvidence,
-    VerifiedTarget,
+    RecoveryContext, RecoveryProcesses, RecoverySignal, SignalOutcome, VerifiedTarget,
 };
 
 // SDK sys/proc_info.h.
@@ -322,61 +321,32 @@ impl RecoveryProcesses for NativeRecovery {
                 "signal target is not in the current native capture",
             ));
         }
-        let before = bsd_info(identity.pid);
-        check_time(deadline)?;
-        let Some(before) = before? else {
-            return Ok(SignalOutcome::Gone);
-        };
-        if !live_matches(&before, identity) {
-            return Ok(SignalOutcome::Gone);
-        }
-        if !safe_credentials(&before, self.context.uid) {
-            return Err(unsafe_target());
-        }
-        let mark = self.mark(&before, deadline)?;
-        let after = bsd_info(identity.pid);
-        check_time(deadline)?;
-        let Some(after) = after? else {
-            return Ok(SignalOutcome::Gone);
-        };
-        if !live_matches(&after, identity) {
-            return Ok(SignalOutcome::Gone);
-        }
-        if !safe_credentials(&after, self.context.uid) {
-            return Err(unsafe_target());
-        }
-        let direct = matches!(
-            target.evidence(),
-            TargetEvidence::Marked | TargetEvidence::RecordedLeader
-        );
-        if mark == MarkEvidence::Unreadable
-            || (direct && mark != MarkEvidence::Present(target.mark().into()))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "recovery mark changed or is unreadable",
-            ));
-        }
-        check_time(deadline)?;
-        let signal = match signal {
-            RecoverySignal::Terminate => libc::SIGTERM,
-            RecoverySignal::Kill => libc::SIGKILL,
-        };
-        // SAFETY: this positive individual PID was just checked against the authorized
-        // identity and credentials. For a non-child, reuse in this remaining interval
-        // is a documented limit of macOS's numeric signal interface.
-        let result = if unsafe { libc::kill(identity.pid as libc::pid_t, signal) } == 0 {
-            Ok(SignalOutcome::Signalled)
-        } else {
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::ESRCH) {
-                Ok(SignalOutcome::Gone)
-            } else {
-                Err(err)
-            }
-        };
-        check_time(deadline)?;
-        result
+        signal_with(
+            target,
+            deadline,
+            self.context.uid,
+            || bsd_info(identity.pid),
+            |before| self.mark(before, deadline),
+            || {
+                let signal = match signal {
+                    RecoverySignal::Terminate => libc::SIGTERM,
+                    RecoverySignal::Kill => libc::SIGKILL,
+                };
+                // SAFETY: this positive individual PID was just checked against the authorized
+                // identity and credentials. For a non-child, reuse in this remaining interval
+                // is a documented limit of macOS's numeric signal interface.
+                if unsafe { libc::kill(identity.pid as libc::pid_t, signal) } == 0 {
+                    Ok(SignalOutcome::Signalled)
+                } else {
+                    let err = io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::ESRCH) {
+                        Ok(SignalOutcome::Gone)
+                    } else {
+                        Err(err)
+                    }
+                }
+            },
+        )
     }
 
     fn wait_exited(&mut self, identity: &ProcessIdentity, deadline: Instant) -> io::Result<bool> {
@@ -543,6 +513,62 @@ fn same_identity(first: &libc::proc_bsdinfo, second: &libc::proc_bsdinfo) -> boo
         && first.pbi_start_tvusec == second.pbi_start_tvusec
 }
 
+// Keep the read-mark-read-check-signal ordering testable without a racing process.
+fn signal_with(
+    target: &VerifiedTarget,
+    deadline: Instant,
+    uid: u32,
+    mut info: impl FnMut() -> io::Result<Option<libc::proc_bsdinfo>>,
+    mark: impl FnOnce(&libc::proc_bsdinfo) -> io::Result<MarkEvidence>,
+    send: impl FnOnce() -> io::Result<SignalOutcome>,
+) -> io::Result<SignalOutcome> {
+    let before = info();
+    check_time(deadline)?;
+    let Some(before) = before? else {
+        return Ok(SignalOutcome::Gone);
+    };
+    if !live_matches(&before, target.identity()) {
+        return Ok(SignalOutcome::Gone);
+    }
+    if !safe_credentials(&before, uid) {
+        return Err(unsafe_target());
+    }
+    let mark = mark(&before)?;
+    let after = info();
+    check_time(deadline)?;
+    if !recheck_after_mark(target, after?.as_ref(), &mark, uid)? {
+        return Ok(SignalOutcome::Gone);
+    }
+    check_time(deadline)?;
+    let result = send();
+    check_time(deadline)?;
+    result
+}
+
+fn recheck_after_mark(
+    target: &VerifiedTarget,
+    after: Option<&libc::proc_bsdinfo>,
+    mark: &MarkEvidence,
+    uid: u32,
+) -> io::Result<bool> {
+    let Some(after) = after else {
+        return Ok(false);
+    };
+    if !live_matches(after, target.identity()) {
+        return Ok(false);
+    }
+    if !safe_credentials(after, uid) {
+        return Err(unsafe_target());
+    }
+    if !super::signal_mark_matches(target, mark) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "recovery mark changed or is unreadable",
+        ));
+    }
+    Ok(true)
+}
+
 fn observed_parent_pid(initial: &libc::proc_bsdinfo, current: &libc::proc_bsdinfo) -> Option<u32> {
     // XNU temporarily reports an attaching debugger as the tracee's parent.
     // Both observations must show ordinary process ancestry.
@@ -604,6 +630,10 @@ fn unrestricted(pid: libc::pid_t) -> bool {
             std::mem::size_of_val(&flags),
         )
     };
+    code_signing_allows(status, flags)
+}
+
+fn code_signing_allows(status: libc::c_int, flags: u32) -> bool {
     status == 0 && flags & CS_RESTRICT == 0
 }
 
@@ -661,6 +691,195 @@ mod tests {
     use crate::recovery::MarkEvidence;
     use std::cell::Cell;
     use std::time::{Duration, Instant};
+
+    fn ordinary_info() -> libc::proc_bsdinfo {
+        // SAFETY: proc_bsdinfo is a C record of integer fields and arrays.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        info.pbi_pid = 42;
+        info.pbi_start_tvsec = 12;
+        info.pbi_start_tvusec = 34;
+        info.pbi_uid = 501;
+        info.pbi_ruid = 501;
+        info.pbi_svuid = 501;
+        info.pbi_gid = 20;
+        info.pbi_rgid = 20;
+        info.pbi_svgid = 20;
+        info
+    }
+
+    #[test]
+    fn native_guards_recheck_identity_credentials_and_mark_after_reading_it() {
+        use crate::recovery::{ProcessIdentity, TargetEvidence, VerifiedTarget};
+        let info = ordinary_info();
+        let target = VerifiedTarget {
+            identity: ProcessIdentity {
+                pid: 42,
+                started: super::start(&info),
+                boot: "boot".into(),
+            },
+            mark: "guard-mark".into(),
+            evidence: TargetEvidence::Marked,
+        };
+        let mark = MarkEvidence::Present("guard-mark".into());
+        assert!(super::recheck_after_mark(&target, Some(&info), &mark, 501).unwrap());
+        assert!(!super::recheck_after_mark(&target, None, &mark, 501).unwrap());
+        for changed in [
+            libc::proc_bsdinfo {
+                pbi_pid: 43,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_start_tvsec: 13,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_start_tvusec: 35,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_status: libc::SZOMB,
+                ..info
+            },
+        ] {
+            assert!(!super::recheck_after_mark(&target, Some(&changed), &mark, 501).unwrap());
+        }
+        for mark in [
+            MarkEvidence::Absent,
+            MarkEvidence::Unreadable,
+            MarkEvidence::Present("other".into()),
+        ] {
+            assert!(super::recheck_after_mark(&target, Some(&info), &mark, 501).is_err());
+        }
+        for changed in [
+            libc::proc_bsdinfo { pbi_uid: 0, ..info },
+            libc::proc_bsdinfo {
+                pbi_ruid: 0,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_svuid: 0,
+                ..info
+            },
+            libc::proc_bsdinfo { pbi_gid: 0, ..info },
+            libc::proc_bsdinfo {
+                pbi_rgid: 0,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_svgid: 0,
+                ..info
+            },
+            libc::proc_bsdinfo {
+                pbi_flags: super::PROC_FLAG_PSUGID,
+                ..info
+            },
+        ] {
+            assert_eq!(
+                super::recheck_after_mark(&target, Some(&changed), &mark, 501)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+    }
+
+    #[test]
+    fn native_guards_reject_restricted_or_unknown_code_signing_status() {
+        assert!(super::code_signing_allows(0, 0));
+        assert!(!super::code_signing_allows(-1, 0));
+        assert!(!super::code_signing_allows(0, super::CS_RESTRICT));
+    }
+
+    #[test]
+    fn native_signal_wiring_refuses_changes_during_the_mark_read() {
+        use crate::recovery::{ProcessIdentity, SignalOutcome, TargetEvidence, VerifiedTarget};
+        let before = ordinary_info();
+        let target = VerifiedTarget {
+            identity: ProcessIdentity {
+                pid: 42,
+                started: super::start(&before),
+                boot: "boot".into(),
+            },
+            mark: "guard-mark".into(),
+            evidence: TargetEvidence::Marked,
+        };
+        let exact = MarkEvidence::Present(target.mark.clone());
+        let cases = [
+            (Some(before), exact.clone(), "signal"),
+            (None, exact.clone(), "gone"),
+            (
+                Some(libc::proc_bsdinfo {
+                    pbi_start_tvsec: 13,
+                    ..before
+                }),
+                exact.clone(),
+                "gone",
+            ),
+            (
+                Some(libc::proc_bsdinfo {
+                    pbi_uid: 0,
+                    ..before
+                }),
+                exact.clone(),
+                "refuse",
+            ),
+            (
+                Some(libc::proc_bsdinfo {
+                    pbi_flags: super::PROC_FLAG_PSUGID,
+                    ..before
+                }),
+                exact,
+                "refuse",
+            ),
+            (
+                Some(before),
+                MarkEvidence::Present("changed".into()),
+                "refuse",
+            ),
+            (Some(before), MarkEvidence::Unreadable, "refuse"),
+        ];
+        for (after, mark, expected) in cases {
+            let queries = Cell::new(0);
+            let marked = Cell::new(false);
+            let sent = Cell::new(false);
+            let outcome = super::signal_with(
+                &target,
+                Instant::now() + Duration::from_secs(1),
+                501,
+                || {
+                    queries.set(queries.get() + 1);
+                    if queries.get() == 1 {
+                        assert!(!marked.get());
+                        Ok(Some(before))
+                    } else {
+                        assert!(marked.get());
+                        Ok(after)
+                    }
+                },
+                |_| {
+                    assert_eq!(queries.get(), 1);
+                    marked.set(true);
+                    Ok(mark)
+                },
+                || {
+                    assert_eq!(queries.get(), 2);
+                    sent.set(true);
+                    Ok(SignalOutcome::Signalled)
+                },
+            );
+            assert_eq!(queries.get(), 2);
+            assert!(marked.get());
+            match expected {
+                "signal" => assert_eq!(outcome.unwrap(), SignalOutcome::Signalled),
+                "gone" => assert_eq!(outcome.unwrap(), SignalOutcome::Gone),
+                _ => assert_eq!(
+                    outcome.unwrap_err().kind(),
+                    std::io::ErrorKind::PermissionDenied
+                ),
+            }
+            assert_eq!(sent.get(), expected == "signal");
+        }
+    }
 
     #[test]
     fn denied_libproc_query_preserves_an_unreadable_same_uid_row() {
