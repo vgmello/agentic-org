@@ -98,3 +98,29 @@ including across body pruning, snapshot installation and restart. Run
 the contract test rejects pruning either identity type before its deadline. These are
 minimum identity retention rules; compact native conversation headers may live longer.
 `Ok(Refused(Expired))` commits identity/clock state; `Err(SyncError::Refused(_))` rolls back.
+
+## Local Work append
+
+`work::queue_local` runs inside the native append savepoint, after the native mutation
+and source sequence allocation. Propagate every error to roll back domain versions,
+feed rows, counter, queue and clock together. Return its source key only after COMMIT;
+retry the entire native operation, never only the queue append. The core allocates no
+sequence or clock and knows no native tables or event schema.
+
+The native codec supplies frozen per-version event bytes, not a current-record snapshot.
+Core and codec share `work_record_digest_v1` and `work_source_digest_v1`. The core recomputes
+both before saving and for every retained row. Record identity/version/codec/body define
+the source-independent record digest; source identity, Org prerequisite and creation time
+define the source digest. Record generation and version must be positive. The required
+Org position must be applied at the same epoch; an earlier sequence is allowed.
+
+`LocalWorkTxn` exposes only context, local outbox, native codec support and save. A shared
+load/save validator checks the pinned origin, organization, contiguous source positions,
+shape, immutable digests and bounded count/bytes. Restore fences and the published protocol
+profile gate new appends. A raw payload is at most half the encoded frame budget, leaving
+base64 and envelope space. Debug never prints native event bytes or record IDs.
+
+Native adapters can run `testkit::work_conformance::local_work_adapter` with two disposable
+offices. It checks failed COMMIT rollback, gap-free retry, frozen bytes after reopen,
+restore fencing, quota refusal and isolation using the adapter's own codec/savepoint.
+HQ ingestion, ACK processing, delivery scopes and recovery are separate slices.
