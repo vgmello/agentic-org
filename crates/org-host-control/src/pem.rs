@@ -8,9 +8,12 @@
 //! fingerprint, and the host answers that pair with `tls_invalid`, unstored, on every path,
 //! the journal lookup included ([`crate::ops::TlsRefusal::TlsInvalid`]).
 //!
-//! Lines end with LF, CRLF or a lone CR (RFC 7468 §3's `eol`), in any mix. It is stricter than
-//! RFC 7468's lax parsers in one way: the BEGIN marker's line must end right after the marker, so
-//! trailing whitespace there (`preeb *WSP eol`) is refused, and such a pair is `tls_invalid`.
+//! It reads the whole text line by line ([`blocks`]); lines end with LF, CRLF or a lone CR
+//! (RFC 7468 §3's `eol`), in any mix. Every block must be well formed, whatever its label, and a
+//! marker that is misplaced, mistyped, unmatched or nested fails the whole text rather than being
+//! skipped. It is stricter than RFC 7468's lax parsers in one way: the BEGIN marker's line must
+//! end right after the marker, so trailing whitespace there (`preeb *WSP eol`) is refused, and
+//! such a pair is `tls_invalid`.
 
 use std::fmt;
 
@@ -44,7 +47,7 @@ impl Drop for Der {
     }
 }
 
-/// A text with no block of the wanted labels, or one whose body isn't strict base64. It never
+/// A text with a block that isn't well formed, or with no block of the wanted labels. It never
 /// quotes the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidPem;
@@ -57,96 +60,125 @@ impl fmt::Display for InvalidPem {
 
 impl std::error::Error for InvalidPem {}
 
-/// The DER of the first block in `text` whose label is one of `labels`: the bytes between a
-/// `-----BEGIN <label>-----` line and the next `-----END <label>-----`, each at the start of a
-/// line (RFC 7468), base64-decoded. A line ends with LF, CRLF or a lone CR. Text before the block
-/// and other blocks around it are ignored; only that block's body is decoded.
+/// The DER of the first block in `text` whose label is one of `labels`. The whole text is read
+/// first ([`blocks`]): every block in it must be well formed, whatever its label, and a text
+/// with no wanted block fails.
 pub fn first_block(text: &str, labels: &[&str]) -> Result<Der, InvalidPem> {
-    refuse_misplaced_begin(text)?;
-    block_from(text, labels, 0)?
-        .map(|(der, _)| der)
+    blocks(text)?
+        .into_iter()
+        .find(|(label, _)| labels.contains(label))
+        .map(|(_, der)| der)
         .ok_or(InvalidPem)
 }
 
-/// The DER of every block in `text` whose label is one of `labels`, in order, framed as
-/// [`first_block`] frames one: for a certificate chain, `all_blocks(cert, CERTIFICATE)`, whose
-/// first item is `first_block`'s. Text between the blocks is ignored. A wanted block that doesn't
-/// frame or decode fails the whole text, and so does a text with none.
+/// The DER of every block in `text` whose label is one of `labels`, in order, read as
+/// [`first_block`] reads them: for a certificate chain, `all_blocks(cert, CERTIFICATE)`, whose
+/// first item is `first_block`'s. A text with a block that isn't well formed fails, and so does a
+/// text with no wanted block.
 pub fn all_blocks(text: &str, labels: &[&str]) -> Result<Vec<Der>, InvalidPem> {
-    refuse_misplaced_begin(text)?;
-    let mut blocks = Vec::new();
-    let mut from = 0;
-    while let Some((der, next)) = block_from(text, labels, from)? {
-        blocks.push(der);
-        from = next;
-    }
-    if blocks.is_empty() {
+    let wanted: Vec<Der> = blocks(text)?
+        .into_iter()
+        .filter(|(label, _)| labels.contains(label))
+        .map(|(_, der)| der)
+        .collect();
+    if wanted.is_empty() {
         return Err(InvalidPem);
     }
-    Ok(blocks)
+    Ok(wanted)
 }
 
-/// The first block at or after `from` whose label is one of `labels`, with the offset just past
-/// its END marker; `None` when no such block begins there.
-fn block_from(
-    text: &str,
-    labels: &[&str],
-    from: usize,
-) -> Result<Option<(Der, usize)>, InvalidPem> {
-    let Some((begin_at, label)) = labels
-        .iter()
-        .filter_map(|label| {
-            line_start_find(text, &format!("-----BEGIN {label}-----"), from).map(|at| (at, *label))
-        })
-        .min_by_key(|&(at, _)| at)
-    else {
-        return Ok(None);
-    };
-    let body_at = begin_at + format!("-----BEGIN {label}-----").len();
-    // RFC 7468: the body starts on the line after BEGIN. CRLF before a lone CR, so a CRLF is one
-    // line end.
-    let rest = &text[body_at..];
-    let body_at = if rest.starts_with("\r\n") {
-        body_at + 2
-    } else if rest.starts_with(['\n', '\r']) {
-        body_at + 1
-    } else {
-        return Err(InvalidPem);
-    };
-    let end_marker = format!("-----END {label}-----");
-    let end_at = line_start_find(text, &end_marker, body_at).ok_or(InvalidPem)?;
-    // RFC 7468: only spaces or tabs, then a line end or the end of the text, after END.
-    let after = end_at + end_marker.len();
-    let tail = text[after..].trim_start_matches([' ', '\t']);
-    if !(tail.is_empty() || tail.starts_with(['\n', '\r'])) {
+/// Every block in `text`, in order, with its label: a line-oriented state machine over the lines
+/// of the text (each ending with LF, CRLF or a lone CR).
+///
+/// **Outside a block**, a line starting with `-----BEGIN ` must be exactly
+/// `-----BEGIN <label>-----`, with nothing after it, not even whitespace, and opens a block. A
+/// line starting with `-----END `, or any other line with `-----BEGIN ` or `-----END ` anywhere
+/// in it, fails the text. Every other line is explanatory text and is skipped.
+///
+/// **Inside a block**, a line starting with `-----END ` must be exactly `-----END <label>-----`
+/// with the BEGIN line's label, optionally followed by spaces or tabs, and closes the block. Any
+/// other line with `-----BEGIN ` (no nesting) or `-----END ` anywhere in it fails the text. Every
+/// other line is body: strict base64, in which spaces and tabs are skipped. An empty body fails.
+///
+/// A text that ends inside a block fails. So nothing in the text is silently skipped: a mistyped
+/// or misplaced marker can't cut a chain short.
+fn blocks(text: &str) -> Result<Vec<(&str, Der)>, InvalidPem> {
+    const BEGIN: &str = "-----BEGIN ";
+    const END: &str = "-----END ";
+    const DASHES: &str = "-----";
+    let mut found = Vec::new();
+    // Inside a block: its label and the offset where its body starts (just past the BEGIN line).
+    let mut open: Option<(&str, usize)> = None;
+    for (at, line) in lines(text) {
+        match open {
+            None => {
+                if let Some(rest) = line.strip_prefix(BEGIN) {
+                    let label = rest.strip_suffix(DASHES).ok_or(InvalidPem)?;
+                    if !is_label(label) {
+                        return Err(InvalidPem);
+                    }
+                    open = Some((label, at + line.len()));
+                } else if line.contains(BEGIN) || line.contains(END) {
+                    // A stray END, or a marker that doesn't start its line.
+                    return Err(InvalidPem);
+                }
+            }
+            Some((label, body_at)) => {
+                if let Some(rest) = line.strip_prefix(END) {
+                    let tail = rest
+                        .strip_prefix(label)
+                        .and_then(|rest| rest.strip_prefix(DASHES))
+                        .ok_or(InvalidPem)?;
+                    if !tail.bytes().all(|b| matches!(b, b' ' | b'\t')) {
+                        return Err(InvalidPem);
+                    }
+                    // The body is every line between the two markers; their line ends are
+                    // skipped by the decoder like spaces and tabs.
+                    found.push((label, decode_base64(&text[body_at..at])?));
+                    open = None;
+                } else if line.contains(BEGIN) || line.contains(END) {
+                    // A nested block, or an END that doesn't start its line.
+                    return Err(InvalidPem);
+                }
+            }
+        }
+    }
+    if open.is_some() {
         return Err(InvalidPem);
     }
-    let der = decode_base64(&text[body_at..end_at])?;
-    Ok(Some((der, after)))
+    Ok(found)
 }
 
-/// Refuse rather than skip: any `-----BEGIN ` that doesn't start a line (an indented block, or text
-/// before it on its line), or a stray `-----END ` without its BEGIN, fails the whole text, so a
-/// chain is never silently cut short.
-fn refuse_misplaced_begin(text: &str) -> Result<(), InvalidPem> {
-    let misplaced = text
-        .match_indices("-----BEGIN ")
-        .any(|(at, _)| at != 0 && !matches!(text.as_bytes()[at - 1], b'\n' | b'\r'));
-    let unpaired = text.matches("-----BEGIN ").count() != text.matches("-----END ").count();
-    if misplaced || unpaired {
-        Err(InvalidPem)
-    } else {
-        Ok(())
-    }
+/// RFC 7468's label: printable ASCII other than `-`, with single hyphens or spaces between those
+/// characters. So it is never empty, and never holds a marker's five dashes.
+fn is_label(label: &str) -> bool {
+    label.split([' ', '-']).all(|word| {
+        !word.is_empty()
+            && word
+                .bytes()
+                .all(|b| (0x21..=0x7e).contains(&b) && b != b'-')
+    })
 }
 
-/// The first `marker` in `text` at or after `from` that starts a line: the text's start, or
-/// right after an LF or a CR (the end of an LF, CRLF or lone CR line).
-fn line_start_find(text: &str, marker: &str, from: usize) -> Option<usize> {
-    text[from..]
-        .match_indices(marker)
-        .map(|(at, _)| from + at)
-        .find(|&at| at == 0 || matches!(text.as_bytes()[at - 1], b'\n' | b'\r'))
+/// The lines of `text` with the offset each starts at, without their line ends: LF, CRLF or a
+/// lone CR (RFC 7468 §3's `eol`), in any mix. A text ending with a line end has no empty last
+/// line.
+fn lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        if at >= text.len() {
+            return None;
+        }
+        let start = at;
+        let rest = &text[start..];
+        let (len, eol) = match rest.find(['\r', '\n']) {
+            Some(i) if rest[i..].starts_with("\r\n") => (i, 2),
+            Some(i) => (i, 1),
+            None => (rest.len(), 0),
+        };
+        at = start + len + eol;
+        Some((start, &rest[..len]))
+    })
 }
 
 /// Strict standard base64 (RFC 4648 §4): the alphabet `A-Z a-z 0-9 + /`, whole 4-character
@@ -332,5 +364,78 @@ mod tests {
         // Debug shows no key bytes.
         let der = first_block(mixed, PRIVATE_KEY).unwrap();
         assert_eq!(format!("{der:?}"), "Der(<4 bytes>)");
+    }
+
+    /// Each rule of the reader's state machine ([`blocks`]), outside a block and inside one.
+    #[test]
+    fn every_block_must_be_well_formed_whatever_its_label() {
+        let cert = |text: &str| all_blocks(text, CERTIFICATE).map(|b| b.len());
+        // Explanatory text outside a block is skipped; a block of another label is read and
+        // checked, then left out.
+        let ok = "subject=CN=x\n-----BEGIN FOO BAR-----\nTQ==\n-----END FOO BAR-----\n\
+                  issuer: y\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n";
+        assert_eq!(cert(ok), Ok(1));
+        // END: spaces and tabs may follow the marker; spaces and tabs in the body are skipped.
+        for ok in [
+            "-----BEGIN CERTIFICATE-----\nTW Fu\n-----END CERTIFICATE----- \t \n",
+            "-----BEGIN CERTIFICATE-----\n\tTWFu\n-----END CERTIFICATE-----\t",
+        ] {
+            assert_eq!(cert(ok), Ok(1), "{ok:?}");
+        }
+        for (why, bad) in [
+            // Outside: a BEGIN line must be exactly the marker, with nothing after it.
+            ("whitespace after BEGIN", "-----BEGIN CERTIFICATE----- \nTWFu\n-----END CERTIFICATE-----\n"),
+            ("a tab after BEGIN", "-----BEGIN CERTIFICATE-----\t\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("BEGIN without its dashes", "-----BEGIN CERTIFICATE\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("an empty label", "-----BEGIN -----\nTWFu\n-----END -----\n"),
+            ("a label with a double space", "-----BEGIN A  B-----\nTWFu\n-----END A  B-----\n"),
+            ("a label with dashes", "-----BEGIN A-----B-----\nTWFu\n-----END A-----B-----\n"),
+            // Outside: a stray END.
+            ("a stray END", "-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("a stray END after a block", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----END CERTIFICATE-----\n"),
+            // Outside: a marker that doesn't start its line.
+            ("an indented BEGIN", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n  -----BEGIN CERTIFICATE-----\nTQ==\n-----END CERTIFICATE-----\n"),
+            ("text before BEGIN", "x-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("text before a stray END", "x -----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
+            // Inside: END with another label, including a mistyped one on either marker.
+            ("BEGIN X, END Y", "-----BEGIN X-----\nTWFu\n-----END Y-----\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("a mistyped intermediate", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATF-----\nTQ==\n-----END CERTIFICATE-----\n"),
+            ("an unmatched BEGIN FOO, then a stray END", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----BEGIN FOO-----\nTQ==\n-----END CERTIFICATE-----\n"),
+            // Inside: END followed by anything but spaces and tabs.
+            ("text after END", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----x\n"),
+            ("END without its dashes", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE\n"),
+            // Inside: no nesting.
+            ("a block nested in another", "-----BEGIN FOO-----\nTWFu\n-----BEGIN CERTIFICATE-----\nTQ==\n-----END CERTIFICATE-----\n-----END FOO-----\n"),
+            ("a BEGIN inside a body line", "-----BEGIN CERTIFICATE-----\nTWFu -----BEGIN X-----\n-----END CERTIFICATE-----\n"),
+            // Inside: an END that doesn't start its line.
+            ("an END after body text", "-----BEGIN CERTIFICATE-----\nTWFu-----END CERTIFICATE-----\n"),
+            ("an indented END", "-----BEGIN CERTIFICATE-----\nTWFu\n -----END CERTIFICATE-----\n"),
+            // Inside: the body is strict base64 and not empty, in a block of any label.
+            ("an empty body", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"),
+            ("a blank body", "-----BEGIN CERTIFICATE-----\n \t\n-----END CERTIFICATE-----\n"),
+            ("a header line in the body", "-----BEGIN CERTIFICATE-----\nProc-Type: 4,ENCRYPTED\nTWFu\n-----END CERTIFICATE-----\n"),
+            ("a bad body in an unwanted block", "-----BEGIN FOO-----\nTQ=\n-----END FOO-----\n-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n"),
+            // The text ends inside a block.
+            ("no END", "-----BEGIN CERTIFICATE-----\nTWFu\n"),
+            ("no END after a block", "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n-----BEGIN FOO-----\nTQ==\n"),
+            // No wanted block.
+            ("no block", "TWFu\n"),
+            ("an empty text", ""),
+            ("only another label", "-----BEGIN FOO-----\nTWFu\n-----END FOO-----\n"),
+        ] {
+            assert_eq!(cert(bad), Err(InvalidPem), "{why}");
+            assert!(first_block(bad, CERTIFICATE).is_err(), "{why}");
+        }
+    }
+
+    #[test]
+    fn lines_end_with_lf_crlf_or_a_lone_cr() {
+        let lines: Vec<(usize, &str)> = lines("a\nb\r\nc\rd\n\ne").collect();
+        assert_eq!(
+            lines,
+            [(0, "a"), (2, "b"), (5, "c"), (7, "d"), (9, ""), (10, "e")]
+        );
+        assert_eq!(super::lines("").count(), 0);
+        assert_eq!(super::lines("a\r\n").collect::<Vec<_>>(), [(0, "a")]);
     }
 }

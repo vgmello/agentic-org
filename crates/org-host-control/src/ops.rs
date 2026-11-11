@@ -464,7 +464,8 @@ impl Call for TlsFetch {
 ///    ([`TlsRefusal::TlsNameMismatch`]; Certificate coverage).
 ///
 /// It never changes the scheme. Its journal fingerprint fields are the pair's
-/// [`TlsPairFingerprint`] (SHA-256 of the certificate DER and SHA-256 of the key DER), computed
+/// [`TlsPairFingerprint`] (SHA-256 of the whole certificate chain, every `CERTIFICATE` block's DER
+/// with a u32 big-endian length prefix, in order, and SHA-256 of the key DER), computed
 /// from the secret type (`TlsSetParams`'s [`crate::journal::Journaled`] implementation); the
 /// stored result echoes neither.
 ///

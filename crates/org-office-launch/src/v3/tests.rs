@@ -200,13 +200,23 @@ fn first_lines_check_their_rules_both_ways() {
         json!({"v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
                "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
                "role": "hq"}),
+        // A field the line doesn't define, a v2 key above all: the first line holds no secret.
+        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
+               "rendezvous": RENDEZVOUS, "db_key": "01".repeat(32)}),
+        json!({"v": 3, "op": "discard", "instance_id": INSTANCE, "office_id": OFFICE,
+               "rendezvous": RENDEZVOUS, "db_key": null}),
+        json!({"v": 3, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
+               "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
+               "role": "hq", "owner_member_id": OWNER, "db_key": "01".repeat(32)}),
+        json!({"v": 3, "op": "start", "instance_id": INSTANCE, "office_id": OFFICE,
+               "rendezvous": RENDEZVOUS, "extra": 1}),
     ] {
         let mut line = serde_json::to_vec(&wire).unwrap();
         line.push(b'\n');
-        let flag = if wire["op"] == "create" {
-            FirstLine::Create
-        } else {
-            FirstLine::Start
+        let flag = match wire["op"].as_str() {
+            Some("create") => FirstLine::Create,
+            Some("discard") => FirstLine::Discard,
+            _ => FirstLine::Start,
         };
         assert!(
             read_first_line(&mut Cursor::new(line), flag).is_err(),
@@ -427,6 +437,14 @@ fn a_handoff_carries_exactly_the_keys_of_its_op() {
         format!(r#"{{"v":3,"op":"discard","db_key":null,"grant_key":"{k}","fds":[]}}"#),
         format!(r#"{{"v":3,"op":"start","db_key":null,"grant_key":"{k}","fds":["transfer"]}}"#),
         format!(r#"{{"v":3,"op":"join","db_key":"{k}","fds":[]}}"#),
+        // A field the handoff doesn't define, a v2 key above all.
+        format!(
+            r#"{{"v":3,"op":"start","db_key":"{k}","grant_key":"{k}","fds":["transfer"],"app_token":"{k}"}}"#
+        ),
+        format!(r#"{{"v":3,"op":"discard","db_key":null,"fds":[],"app_token":"{k}"}}"#),
+        format!(
+            r#"{{"v":3,"op":"create","db_key":"{k}","grant_key":"{k}","recovery_code":"c","fds":["transfer"],"extra":1}}"#
+        ),
     ] {
         let error = decode_handoff(line.as_bytes()).unwrap_err().to_string();
         assert!(!error.contains("0101"), "{error}");

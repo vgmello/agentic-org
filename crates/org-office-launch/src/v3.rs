@@ -21,7 +21,8 @@
 //!   [`TransferRecord`]s: a JSON header of at most [`TRANSFER_HEADER_MAX_BYTES`] plus zero or one
 //!   descriptor. This is the one definition, for the worker's transfer socket and the gateway's.
 //!   `org-host-control` doesn't re-export it, which keeps that crate's dependencies to
-//!   `org-proto` and serde (X-02 §5.2, §11): the gateway imports it from here.
+//!   `org-proto`, serde, `serde_json` and `sha2` (X-02 §5.2, §11): the gateway imports it from
+//!   here.
 //!
 //! The "first line only, then drain unparsed" rule of v2 stays for the pipe. A v3 line is
 //! `{"v": 3, ...}`; a v2 build refuses it as another version, and [`read_first_line`] refuses a
@@ -32,6 +33,7 @@ use std::io::{BufRead, Write};
 
 use org_proto::frame::{self, FrameError};
 use org_proto::{GrantKey, OfficeRole};
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
@@ -87,8 +89,13 @@ pub struct OfficeLine {
     pub rendezvous: String,
 }
 
+/// A first line refuses a field it doesn't define (a v2 key such as `db_key` included); `v` is the
+/// line's own, checked before the decode.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawOfficeLine {
+    #[serde(default, rename = "v")]
+    _version: Option<IgnoredAny>,
     instance_id: String,
     office_id: String,
     rendezvous: String,
@@ -137,8 +144,12 @@ pub struct CreateLine {
     pub owner_member_id: String,
 }
 
+/// As [`RawOfficeLine`]: no field the line doesn't define.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawCreateLine {
+    #[serde(default, rename = "v")]
+    _version: Option<IgnoredAny>,
     instance_id: String,
     office_id: String,
     rendezvous: String,
@@ -461,9 +472,13 @@ enum HandoffOp {
     Discard,
 }
 
-/// A handoff as read: every field at the top level, each secret decoded in place.
+/// A handoff as read: every field at the top level, each secret decoded in place. A field it
+/// doesn't define (a v2 `app_token` included) is refused; `v` is checked before the decode.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawHandoff {
+    #[serde(default, rename = "v")]
+    _version: Option<IgnoredAny>,
     op: HandoffOp,
     #[serde(default, deserialize_with = "present")]
     db_key: Option<Option<DbKey>>,

@@ -45,9 +45,9 @@
 //! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
-//! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde and
-//! `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set` and `bootstrap`,
-//! [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
+//! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde,
+//! `serde_json` and `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set` and
+//! `bootstrap`, [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
 
 #![forbid(unsafe_code)]
 

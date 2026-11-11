@@ -207,8 +207,9 @@ impl Journaled for TlsSetParams {
     }
 
     /// The pair's [`TlsPairFingerprint`], serialized: `{"cert_chain_sha256", "key_der_sha256"}`
-    /// (X-02 §6.2), the SHA-256, as lowercase hex, of the DER of `cert`'s first `CERTIFICATE`
-    /// block and of `key`'s first `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block.
+    /// (X-02 §6.2), the SHA-256, as lowercase hex, of `cert`'s whole chain (every `CERTIFICATE`
+    /// block's DER, each with a u32 big-endian length prefix, in order) and of the DER of `key`'s
+    /// first `PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY` block.
     /// Never the pair itself, so the journal holds no key and the stored result echoes neither.
     /// It is the same implementation as [`crate::ops::TlsPair::fingerprint`], so a pair
     /// fingerprints the same in `tls.set` and `bootstrap`.
