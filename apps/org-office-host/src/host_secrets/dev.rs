@@ -21,6 +21,15 @@ pub(crate) struct DevSecrets {
     gate: Mutex<File>,
 }
 
+impl Drop for DevSecrets {
+    fn drop(&mut self) {
+        // Forked descriptors may outlive this owner; close alone cannot release the lock.
+        let file = self.gate.get_mut().unwrap_or_else(|e| e.into_inner());
+        // Drop cannot report unlock errors; the File still closes afterward.
+        let _ = file.unlock();
+    }
+}
+
 impl DevSecrets {
     /// `base` already exists, is owner-only, and is the shared development-key base.
     #[cfg_attr(not(test), expect(dead_code, reason = "hostdb staging"))]
@@ -144,6 +153,7 @@ impl HostSecrets for DevSecrets {
         let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
         self.item(name.as_str())?;
         let temporary = format!(".put.{}", crate::ids::generate()?);
+        // O_EXCL is defence in depth against a random temporary-name collision.
         let mut file = at(
             &self.directory,
             &temporary,

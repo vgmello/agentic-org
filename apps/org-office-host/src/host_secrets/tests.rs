@@ -328,6 +328,47 @@ mod development {
         assert_eq!(fs::read(f.dir(A).join("unrelated")).unwrap(), b"preserve");
     }
     #[test]
+    fn drop_unlocks_even_while_a_forked_child_holds_the_descriptor() {
+        use std::os::fd::AsRawFd;
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        // Standard-library sockets retain CLOEXEC; a byte releases the child even if
+        // another fork briefly inherits a socket, so the test never depends on EOF.
+        let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
+        // SAFETY: the child only uses async-signal-safe close/read/_exit before exiting.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: close the parent's socket, then retain the inherited custody fd
+            // until the parent has attempted its post-drop reopen and sends one byte.
+            unsafe {
+                libc::close(release_fd);
+                let mut byte = 0u8;
+                let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
+                libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
+            }
+        }
+        assert!(pid > 0, "fork failed");
+        drop(wait);
+        drop(store);
+        let reopened = f.open(A);
+        let released = std::io::Write::write_all(&mut release, &[1]);
+        drop(release);
+        // Reap before assertions so the regression failure never leaves a child behind.
+        let mut status = 0;
+        // SAFETY: wait only for the child this test created.
+        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        released.unwrap();
+        assert_eq!(waited, pid);
+        assert_eq!(status, 0);
+        assert!(
+            reopened.is_ok(),
+            "parent drop must release custody lock even with an inherited fd: {:?}",
+            reopened.err()
+        );
+    }
+
+    #[test]
     fn replacements_are_atomic_to_readers() {
         let f = Fixture::new();
         let s = std::sync::Arc::new(f.open(A).unwrap());
@@ -592,7 +633,7 @@ mod development {
     }
 
     #[test]
-    fn office_home_case_aliases_are_refused_by_identity() {
+    fn office_home_case_aliases_are_refused_after_canonicalization() {
         let f = Fixture::new();
         fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
         assert!(matches!(
