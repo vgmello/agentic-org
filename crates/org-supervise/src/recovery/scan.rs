@@ -205,7 +205,8 @@ impl ScanPort for MarkedScan {
 
 /// Scan once: snapshot all eligible marked roots and their descendants before any
 /// signals, then kill/wait each verified identity individually. Unreadable environments
-/// are counted/skipped. Zombies and the exact excluded leader are skipped first.
+/// are counted and need saved or fresh recorded-job authority. Zombies and the exact
+/// excluded leader are skipped first.
 pub(crate) fn scan_one_pass(
     request: ScanRequest,
     ops: &mut dyn RecoveryProcesses,
@@ -227,6 +228,7 @@ pub(crate) fn scan_one_pass(
                 mark: &request.mark,
                 excluded: request.excluded.as_ref(),
                 saved: request.inventory.saved(),
+                leader: request.inventory.leader(),
             },
             &snapshot,
             &context,

@@ -33,6 +33,7 @@ pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<
              org_epoch INTEGER NOT NULL CHECK (org_epoch >= 0),
              org_seq INTEGER NOT NULL CHECK (org_seq >= 0),
              committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms >= 0),
+             UNIQUE (target_id, generation, version),
              PRIMARY KEY (origin_office_id, origin_incarnation, origin_seq)
          ) STRICT, WITHOUT ROWID;
          CREATE INDEX idx_work_origin_stream ON work_origin_log(origin_incarnation, origin_seq);
@@ -41,8 +42,8 @@ pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<
 }
 
 /// This office.db's incarnation: a ULID made the first time it is asked for and kept in `meta`.
-/// A message's origin is (office, incarnation, origin_seq). The value lives inside the file, so a
-/// restore from a backup brings the old one back: whoever restores must make a new one (that
+/// Message and work origins both use (office, incarnation, origin_seq). The value lives inside
+/// the file, so a restore brings the old one back: whoever restores must make a new one (that
 /// is the restore tool's job, not this function's). Runs on the writer.
 pub(crate) fn incarnation(db: &Connection) -> Result<String, OfficeError> {
     let existing: Option<String> = db
