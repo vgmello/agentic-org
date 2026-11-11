@@ -1,9 +1,8 @@
 //! Crash recovery policy over explicit process and record ports.
 //!
-//! This module does not implement native process discovery or open a database. Native
-//! adapters must pin/revalidate identities as documented on [`RecoveryProcesses`]; a
-//! successful fake run is not permission to use real runtimes. The caller serializes
-//! recovery against spawning with the same mark and retains the session lock. It commits
+//! [`NativeRecovery`] discovers processes on macOS and Linux and checks identities
+//! as documented on [`RecoveryProcesses`]. The caller implements the record port,
+//! serializes recovery against spawning with the same mark, and retains the session lock. It commits
 //! the probe/session outcome before retiring the matching persisted owned-process row.
 //! `RecoveryGone` proves completion of this policy, subject to S0's explicit limitation:
 //! unreadable environments are reported and skipped, and an environment-clearing double
@@ -15,6 +14,13 @@
 //! ```
 
 mod capture;
+#[cfg(target_os = "linux")]
+#[path = "recovery/native/linux.rs"]
+mod native;
+#[cfg(target_os = "macos")]
+#[path = "recovery/native/macos.rs"]
+mod native;
+pub use native::NativeRecovery;
 mod checkpoint;
 mod scan;
 mod startup;
@@ -25,7 +31,7 @@ pub use startup::{recover_record, recover_startup, RecoveryBatch, RecoveryGone};
 
 use std::collections::BTreeSet;
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{invalid, ChildIdentity, SessionMark};
 
@@ -451,3 +457,70 @@ fn safe_identity<'a>(
 
 #[cfg(test)]
 mod tests;
+
+fn native_wait_until(deadline: Instant) -> io::Result<()> {
+    wait_until_with(deadline, Instant::now, |remaining| {
+        let timeout = libc::timespec {
+            tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_nsec: remaining.subsec_nanos() as _,
+        };
+        // SAFETY: a valid finite interval. An interrupted call is retried only
+        // after recomputing the absolute budget, so no remaining-time output is needed.
+        if unsafe { libc::nanosleep(&timeout, std::ptr::null_mut()) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    })
+}
+
+fn wait_until_with(
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration) -> io::Result<()>,
+) -> io::Result<()> {
+    loop {
+        let remaining = deadline.saturating_duration_since(now());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        match sleep(remaining) {
+            Ok(()) => continue,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn signal_mark_matches(target: &VerifiedTarget, mark: &MarkEvidence) -> bool {
+    let direct = matches!(
+        target.evidence(),
+        TargetEvidence::Marked | TargetEvidence::RecordedLeader
+    );
+    *mark != MarkEvidence::Unreadable
+        && (!direct || *mark == MarkEvidence::Present(target.mark().into()))
+}
+
+fn native_mark(bytes: &[u8]) -> MarkEvidence {
+    if !bytes.is_empty() && bytes.last() != Some(&0) {
+        return MarkEvidence::Unreadable;
+    }
+    let mut marks = bytes
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| entry.strip_prefix(b"ORG_SESSION_MARK="));
+    let Some(value) = marks.next() else {
+        return MarkEvidence::Absent;
+    };
+    // Identical entries are valid mark evidence on macOS. Conflicting values
+    // are ambiguous, and Linux continues to reject duplicate entries.
+    if marks.any(|duplicate| cfg!(target_os = "linux") || duplicate != value) {
+        return MarkEvidence::Unreadable;
+    }
+    let Ok(value) = std::str::from_utf8(value) else {
+        return MarkEvidence::Unreadable;
+    };
+    if SessionMark::new(value.into()).is_err() {
+        return MarkEvidence::Unreadable;
+    }
+    MarkEvidence::Present(value.into())
+}

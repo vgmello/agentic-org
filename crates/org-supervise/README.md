@@ -5,10 +5,10 @@ only dependencies are `libc` and the `org-runtime` contract. The generic API kno
 no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
-probe preparation are implemented. Recovery policy over fake operations is implemented;
-native orphan discovery adapters and PTYs follow in separate deliveries.
-Do not run real Claude until native orphan discovery is available: its tools
-can leave its process group.
+probe preparation are implemented. Native orphan discovery is available through
+the recovery API on macOS and Linux. PTYs follow in a separate delivery.
+Integrate native recovery before launching real Claude. Its tools can leave its
+process group.
 
 The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
 setuid/setgid executable launches are refused. Missing/restricted process APIs
@@ -135,13 +135,38 @@ pass before issuing `RecoveryGone`. That sealed proof is keyed by mark; the cons
 binds it to its owned-process reference and commits its probe outcome before retiring
 the reference. A signal/wait/deadline/scan failure retains incomplete evidence.
 
-Process and scan traits are sealed. Startup uses only the internal scanner; callers
-cannot supply an empty fake snapshot to obtain a real proof. This slice provides
-only crate-local fake process operations and fake persistence tests. Slice 4b supplies
-Linux pidfd + /proc and macOS verified identity + KERN_PROCARGS2 implementations and
-real synthetic-process tests. Linux must refuse unavailable/restricted pidfds rather
-than fall back to raw PIDs; macOS's residual non-child PID race remains explicit.
-Processes clearing their environment and double-forking remain a containment limit.
+Process and scan traits are sealed. `recovery::NativeRecovery::new` supplies the
+process operations for startup and live record recovery. The one-pass scanner
+continues to use the same policy and checkpoint contract.
+
+On Linux, the adapter checks the procfs PID namespace and requires an unfiltered
+procfs mount. It binds each pidfd to an open procfs process directory before
+reading identity and rejects mount crossings when opening process records.
+It verifies that the environment read covers the entire procfs address range. Each
+process retains one pidfd through a scan. Process directories are reopened as needed
+and checked against that live pidfd before use. Descriptor exhaustion reports a
+doctor error naming `RLIMIT_NOFILE`. It rechecks credentials and mark evidence before signaling, and uses
+`pidfd_send_signal` for the individual process. Unsupported or denied pidfd
+operations fail recovery. A recorded or checkpointed zombie group leader with
+live worker threads remains unresolved if its mark is unreadable. A mark-only
+record can complete with an S0 warning when no saved identity associates the
+workers with the record. The pidfd reports whole-thread-group exit and leaves
+status available to the owner.
+
+On macOS, the adapter enumerates same-real-UID processes through
+`KERN_PROC_RUID`, reads start identity and credentials through libproc, and
+reads the mark from a bounded `KERN_PROCARGS2` record. Restricted or incomplete
+records are unreadable under S0. Identical duplicate marks count as one mark.
+Parent links compare both identities around the PPID observation. Individual
+signals follow an immediate identity and credential check, with a direct mark
+check for directly marked targets. XNU combines the saved argument count with
+current stack strings. Recovery assumes cooperating same-UID processes. A
+process that already knows the exact mark can deliberately rewrite its argv
+bytes to make an argument appear in the environment region.
+An unowned process can still exit and have its PID reused between that final check
+and `kill`. Kqueue wakes exit observation, and the adapter confirms the identity
+again without reaping. Processes that clear their environment and double-fork
+remain a containment limit.
 
 Existing owned stop/cleanup is unchanged and does not call this recovery policy yet.
 The later probe cleanup integration uses the shared coordinator after successful

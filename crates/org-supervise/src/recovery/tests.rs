@@ -8,6 +8,51 @@ use super::*;
 
 const MARK: &str = "recovery-fake-session";
 
+#[test]
+fn native_guards_recheck_the_exact_mark_before_direct_signals() {
+    for evidence in [
+        TargetEvidence::Marked,
+        TargetEvidence::RecordedLeader,
+        TargetEvidence::Descendant(vec![]),
+        TargetEvidence::CheckpointDescendant(vec![]),
+        TargetEvidence::Checkpoint(vec![]),
+    ] {
+        let direct = matches!(
+            evidence,
+            TargetEvidence::Marked | TargetEvidence::RecordedLeader
+        );
+        let target = VerifiedTarget {
+            identity: ProcessIdentity {
+                pid: 42,
+                started: "start".into(),
+                boot: "boot".into(),
+            },
+            mark: MARK.into(),
+            evidence,
+        };
+        assert!(signal_mark_matches(
+            &target,
+            &MarkEvidence::Present(MARK.into())
+        ));
+        assert!(!signal_mark_matches(&target, &MarkEvidence::Unreadable));
+        for changed in [MarkEvidence::Absent, MarkEvidence::Present("other".into())] {
+            assert_eq!(signal_mark_matches(&target, &changed), !direct);
+        }
+    }
+}
+
+#[test]
+fn native_guards_quarantine_conflicting_duplicate_marks() {
+    assert_eq!(
+        native_mark(b"ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0"),
+        MarkEvidence::Unreadable
+    );
+    assert_eq!(
+        native_mark(b"ORG_SESSION_MARK=a\0"),
+        MarkEvidence::Present("a".into())
+    );
+}
+
 fn process(pid: u32, parent: u32, mark: MarkEvidence) -> ProcessObservation {
     ProcessObservation {
         pid,
@@ -1419,4 +1464,49 @@ fn recovery_live_worker_missing_or_unreadable_record_cannot_authorize_signals() 
         assert_eq!(store.checkpoints, 0);
         assert!(ops.actions.is_empty());
     }
+}
+
+#[test]
+fn recovery_native_sleep_recomputes_the_budget_after_interrupts() {
+    use std::cell::Cell;
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(100);
+    let clock = Cell::new(start);
+    let mut calls = 0;
+    wait_until_with(
+        deadline,
+        || clock.get(),
+        |remaining| {
+            calls += 1;
+            match calls {
+                1 => {
+                    assert_eq!(remaining, Duration::from_millis(100));
+                    clock.set(start + Duration::from_millis(70));
+                    Err(io::Error::from(io::ErrorKind::Interrupted))
+                }
+                2 => {
+                    assert_eq!(remaining, Duration::from_millis(30));
+                    clock.set(deadline);
+                    Ok(())
+                }
+                _ => panic!("wait retried after its absolute deadline"),
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+
+    clock.set(start);
+    calls = 0;
+    wait_until_with(
+        deadline,
+        || clock.get(),
+        |_| {
+            calls += 1;
+            clock.set(deadline + Duration::from_millis(1));
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 1);
 }

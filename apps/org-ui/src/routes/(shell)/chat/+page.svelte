@@ -486,8 +486,7 @@
 		await send({ method: 'chat.accept_handoff', message_id: m.id });
 		await load();
 	}
-	function openThread(m: ChatMessage) {
-		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+	function openThread(m: ChatMessage, opener: HTMLElement) {
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
 		}
@@ -643,7 +642,7 @@
 						{#each bar.needsYou as m (m.id)}
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							<div class="space-y-1">
-								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
+								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={(opener) => openThread(m, opener)} />
 								<button type="button" class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => openMessage(m)}>Open in conversation</button>
 							</div>
 						{:else}
@@ -663,7 +662,7 @@
 					<ul class="mx-auto max-w-3xl space-y-2" data-testid="threads-list">
 						{#each bar.threads as t (t.root.id)}
 							<li>
-								<button type="button" class="w-full rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left hover:bg-white/5" onclick={() => openThread(t.root)}>
+								<button type="button" class="w-full rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left hover:bg-white/5" onclick={(event) => openThread(t.root, event.currentTarget)}>
 									<span class="block text-xs/5 text-gray-400">{titleOf(t.conversation, ctx, ctx.owner)} · {nameOf(ctx, t.root.from)}</span>
 									<span class="mt-0.5 block truncate text-sm/6 text-white">{t.root.body.split('\n')[0]}</span>
 									<span class="mt-1 block text-xs/5 text-indigo-300">{t.replies} {t.replies === 1 ? 'reply' : 'replies'}{#if t.new_replies}{' · ' + t.new_replies + ' new'}{/if}</span>
