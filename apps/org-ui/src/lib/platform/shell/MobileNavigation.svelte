@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { beforeNavigate, goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
 	import MenuIcon from '@lucide/svelte/icons/menu';
@@ -59,7 +60,8 @@
 		if (traversal?.from === oldURL && traversal.delta < 0) {
 			returnFromBack(oldURL, traversal.delta);
 		} else if (!window.navigation && oldURL.includes('#') && !newURL.includes('#')) {
-			// A native hash addition always has a #. This handles Back to the unfragmented page.
+			// On browsers without the Navigation API, fragment support is scoped to Back
+			// to the unfragmented page. A native hash addition always has a #.
 			returnFromBack(oldURL, -1);
 		}
 	}
@@ -69,14 +71,24 @@
 			const url = restoreFocusAt;
 			restoreFocusAt = undefined;
 			if (url !== window.location.href) return;
-			// The browser can restore document focus as it returns to the original entry.
-			requestAnimationFrame(() => {
-				if (!open && trigger?.isConnected) focusNavigationControl();
-			});
+			requestAnimationFrame(() => { void restoreReturnedPage(url); });
 		} else if (open && event.state === null && traversal && traversal.delta < 0) {
 			// A native fragment entry can lack SvelteKit state, even on a previous route.
 			returnFromBack(traversal.from, traversal.delta);
 		}
+	}
+
+	async function restoreReturnedPage(url: string) {
+		if (open || !trigger?.isConnected || window.location.href !== url) return;
+		if (page.url.pathname !== window.location.pathname || page.url.search !== window.location.search) {
+			// A native entry can update page.url without updating SvelteKit's history position.
+			try {
+				await goto(url, { replaceState: true, keepFocus: true, noScroll: true, state: page.state });
+			} catch {
+				// SvelteKit owns route errors. The browser has already returned to the original entry.
+			}
+		}
+		if (!open && trigger?.isConnected && window.location.href === url) focusNavigationControl();
 	}
 
 	function menuOpenChanged(value: boolean) {

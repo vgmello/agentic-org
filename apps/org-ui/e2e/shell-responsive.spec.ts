@@ -176,6 +176,8 @@ test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ p
 	await shot(page, 'shell-menu-keeps-forward-history');
 });
 
+// Older browsers cover Back from a fragment to the unfragmented URL.
+// Back across native fragment chains uses the Navigation API.
 for (const legacy of [false, true]) {
 	test(`BUG-59: Back dismisses Menu before fragment history${legacy ? ' without the Navigation API' : ''}`, async ({ page }) => {
 		if (legacy) await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
@@ -262,6 +264,7 @@ test('BUG-59: Back dismisses Menu before a native fragment entry on a previous r
 	await expect(page).toHaveURL(/\/offices$/);
 	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
 	await expect(menu).toBeFocused();
+	await expect(page.getByRole('heading', { level: 1, name: 'Offices', exact: true })).toBeVisible();
 	await shot(page, 'shell-menu-back-to-previous-route-fragment');
 });
 
