@@ -209,7 +209,7 @@ impl Offices {
     /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
     /// caller's code signature is checked before this.
     #[cfg_attr(
-        not(debug_assertions),
+        not(all(feature = "test-support", debug_assertions)),
         expect(dead_code, reason = "activated by 2b.3 CLI")
     )]
     pub(crate) fn app_token<R>(
@@ -244,7 +244,7 @@ impl Offices {
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
     #[cfg_attr(
-        not(any(test, debug_assertions)),
+        not(any(test, all(feature = "test-support", debug_assertions))),
         expect(dead_code, reason = "activated by 2b.3 CLI")
     )]
     pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
@@ -339,7 +339,7 @@ impl Offices {
     /// success, `respond` queues the answer, inside the critical section that adds the
     /// organization (see [`Offices::add_created`]).
     #[cfg_attr(
-        not(any(test, debug_assertions)),
+        not(any(test, all(feature = "test-support", debug_assertions))),
         expect(dead_code, reason = "activated by 2b.3 CLI")
     )]
     pub(crate) fn create_organization(
