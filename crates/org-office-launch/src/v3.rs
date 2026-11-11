@@ -369,11 +369,58 @@ pub fn read_server_event(r: &mut impl BufRead) -> Result<Option<ServerEvent>, La
         return Ok(None);
     };
     check_v3(&line)?;
-    let event: ServerEvent = serde_json::from_slice(&line).map_err(LaunchError::Json)?;
+    let event = serde_json::from_slice::<RawServerEvent>(&line)
+        .map_err(LaunchError::Json)?
+        .into_event();
     if let ServerEvent::Created { office } = &event {
         office.to_vec()?;
     }
     Ok(Some(event))
+}
+
+/// A v3 worker event as it arrives: [`ServerEvent`]'s variants plus `v`, refusing any field the
+/// event doesn't define, like every other v3 line. (v2's stdout events keep their lenient reader.)
+/// The `office` in `created` is an `office.json` body and keeps that file's own rule: fields this
+/// build doesn't know are kept, not refused. An event name this build doesn't know is
+/// [`ServerEvent::Unknown`], whatever its fields.
+#[derive(Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
+enum RawServerEvent {
+    Created {
+        #[allow(dead_code)]
+        v: u32,
+        office: crate::OfficeFile,
+    },
+    Ready {
+        #[allow(dead_code)]
+        v: u32,
+        socket: String,
+        pid: u32,
+    },
+    Discarded {
+        #[allow(dead_code)]
+        v: u32,
+    },
+    Failed {
+        #[allow(dead_code)]
+        v: u32,
+        code: crate::FailCode,
+        message: String,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+impl RawServerEvent {
+    fn into_event(self) -> ServerEvent {
+        match self {
+            Self::Created { office, .. } => ServerEvent::Created { office },
+            Self::Ready { socket, pid, .. } => ServerEvent::Ready { socket, pid },
+            Self::Discarded { .. } => ServerEvent::Discarded,
+            Self::Failed { code, message, .. } => ServerEvent::Failed { code, message },
+            Self::Unknown => ServerEvent::Unknown,
+        }
+    }
 }
 
 /// The server's first line on the rendezvous connection: `{"v": 3, "event":

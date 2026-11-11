@@ -545,6 +545,66 @@ fn worker_events_on_the_rendezvous_are_v3_lines() {
 }
 
 #[test]
+fn worker_events_refuse_unknown_fields() {
+    let read = |v: serde_json::Value| {
+        let mut line = serde_json::to_vec(&v).unwrap();
+        line.push(b'\n');
+        read_server_event(&mut Cursor::new(line))
+    };
+    for (good, field) in [
+        (
+            json!({"v": 3, "event": "ready", "socket": "/s", "pid": 1}),
+            "db_key",
+        ),
+        (json!({"v": 3, "event": "discarded"}), "extra"),
+        (
+            json!({"v": 3, "event": "failed", "code": "invalid_request", "message": "m"}),
+            "extra",
+        ),
+    ] {
+        assert!(read(good.clone()).unwrap().is_some(), "{good}");
+        let mut bad = good;
+        bad[field] = json!("x");
+        assert!(
+            matches!(read(bad.clone()), Err(LaunchError::Json(_))),
+            "{bad}"
+        );
+    }
+    // `created`: refused with an extra field on the line; the nested `office` keeps
+    // `office.json`'s own rule, so a field this build doesn't know there is kept.
+    let created = ServerEvent::Created {
+        office: crate::OfficeFile::new(
+            "01M6WGY1WJCC503RXF2NS0SH84",
+            "HQ",
+            crate::OfficeRole::Hq,
+            "01M6WGY1WJCC503RXF2NS0SH83",
+            "Acme",
+            "2026-11-08T02:10:00.000Z",
+        ),
+    };
+    let mut out = Vec::new();
+    write_server_event(&mut out, &created).unwrap();
+    let good = line_value(&out);
+    assert_eq!(read(good.clone()).unwrap(), Some(created));
+    let mut bad = good.clone();
+    bad["db_key"] = json!("x");
+    assert!(matches!(read(bad), Err(LaunchError::Json(_))));
+    let mut newer = good;
+    newer["office"]["later"] = json!(1);
+    assert!(matches!(
+        read(newer).unwrap(),
+        Some(ServerEvent::Created { .. })
+    ));
+    // An unknown event name is still ignorable, whatever it carries.
+    assert_eq!(
+        read(json!({"v": 3, "event": "later", "anything": 1})).unwrap(),
+        Some(ServerEvent::Unknown)
+    );
+    // `v` is required on a v3 line.
+    assert!(read(json!({"event": "discarded"})).is_err());
+}
+
+#[test]
 fn the_v3_reader_refuses_any_v2_line_as_a_version() {
     // Whatever its op or shape, a v2 line is a version mismatch, not a bad request.
     for line in [
