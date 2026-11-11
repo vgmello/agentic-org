@@ -222,6 +222,62 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
 }
 
 #[test]
+fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
+    let world = World::new();
+    let mut first = create(&world);
+    assert!(first.host_goes_away().success());
+    let source = org_office::Office::create(
+        world.folder("SOURCE"),
+        &org_office::NewOffice {
+            office_id: "SOURCE".into(),
+            office_name: "Source".into(),
+            role: org_office::OfficeRole::Hq,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+        },
+        org_office::Key::from_db_key(org_proto::DbKey::from_bytes([0xB3; 32])),
+    )
+    .unwrap();
+    source
+        .bind_replication_hq(Default::default(), 1024 * 1024)
+        .unwrap();
+    let pin = source.replication_checkpoint().unwrap();
+    drop(source);
+    let office = org_office::Office::open(
+        world.folder(OFFICE),
+        org_office::Key::from_db_key(org_proto::DbKey::from_bytes([0xB3; 32])),
+    )
+    .unwrap();
+    office
+        .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
+        .unwrap();
+    drop(office);
+
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send(&start_message());
+    assert!(matches!(run.event(), ServerEvent::Ready { .. }));
+    let client = Client::connect(socket(&world)).unwrap();
+    assert_eq!(
+        api_code(
+            client
+                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+                .unwrap_err()
+        ),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    bind(&client, token()).unwrap();
+    assert_eq!(
+        api_code(
+            client
+                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+                .unwrap_err()
+        ),
+        org_proto::ErrorCode::Unavailable
+    );
+    assert!(run.host_goes_away().success());
+}
+
+#[test]
 fn a_restart_with_the_same_key_serves_the_same_office() {
     let world = World::new();
     let mut first = create(&world);
