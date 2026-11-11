@@ -421,3 +421,39 @@ for (const text of [1, 2]) {
 		await shot(page, `oc1-people-readable-fit-${text}`, { context: frame });
 	});
 }
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps collapse-control text readable without leads at ${text * 100}% text`, async ({ page }) => {
+		await openChart(page, 320, text);
+		const response = await page.request.get('/e2e/fakes/org-api.ts');
+		expect(response.ok()).toBe(true);
+		const module = await response.text();
+		await page.route('**/e2e/fakes/org-api.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: module + `
+			const oc1View = orgApi.view.bind(orgApi);
+			orgApi.view = async (...args) => {
+				const view = await oc1View(...args), snapshot = view.snapshot;
+				const person = snapshot.members.find((member) => member.kind === 'person' && !member.owner);
+				return { ...view, snapshot: { ...snapshot,
+					teams: snapshot.teams.map((team) => ({ ...team, lead_member_id: undefined })),
+					members: [...snapshot.members.filter((member) => member.owner), ...snapshot.teams.map((team) => ({ ...person, id: 'oc1-person-' + team.id, name: 'Person for ' + team.name }))],
+					memberships: snapshot.teams.map((team) => ({ id: 'oc1-membership-' + team.id, team_id: team.id, member_id: 'oc1-person-' + team.id, version: 1 }))
+				} };
+			};` }));
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(5);
+		await expect(chart.getByText('No people', { exact: true })).toHaveCount(0);
+		await expect(chart.getByText(/^Lead:/)).toHaveCount(0);
+		await expect(chart.getByText(/^\+\d+ teams?$/)).toHaveCount(0);
+		const controls = chart.getByRole('button', { name: /teams?: (collapse|expand) the teams under/ });
+		await expect(controls).toHaveCount(1);
+		await expect.poll(() => controls.evaluateAll((elements) => Math.min(...elements.map((e) => parseFloat(getComputedStyle(e).fontSize) * new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a)))).toBeGreaterThanOrEqual(12);
+		await expect(controls.first()).toHaveAttribute('data-fit-text', '');
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
+		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
+		await shot(page, `oc1-collapse-control-readable-${text}`);
+	});
+}

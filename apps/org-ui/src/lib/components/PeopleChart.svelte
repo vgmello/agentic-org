@@ -96,6 +96,7 @@
 		</div>
 		{#if node.children.length > 0}
 			<button
+				data-fit-text
 				type="button"
 				onclick={() => toggle(node.team.id)}
 				aria-expanded={open}
