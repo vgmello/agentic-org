@@ -475,6 +475,7 @@ dependencies = [
  "hyper-util",
  "org-proto",
  "scraper",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

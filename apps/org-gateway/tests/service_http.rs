@@ -39,6 +39,8 @@ struct TestBackend {
     release: Mutex<mpsc::Receiver<()>>,
     started: mpsc::Sender<()>,
     executed: Arc<AtomicUsize>,
+    routed: Arc<AtomicUsize>,
+    prepared: Arc<AtomicUsize>,
 }
 
 impl ApiBackend for TestBackend {
@@ -46,6 +48,7 @@ impl ApiBackend for TestBackend {
     type Call = Call;
 
     fn route(&self, request: &Parts, path: &RequestPath) -> Result<Route, ApiReply> {
+        self.routed.fetch_add(1, Ordering::AcqRel);
         match (
             request.method.clone(),
             path.segments()
@@ -65,6 +68,7 @@ impl ApiBackend for TestBackend {
     }
 
     fn prepare(&self, route: Route, body: BusinessBody) -> Result<PreparedCall<Call>, ApiReply> {
+        self.prepared.fetch_add(1, Ordering::AcqRel);
         let value: Value = serde_json::from_slice(body.as_bytes()).map_err(|_| {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
@@ -100,6 +104,8 @@ struct Running {
     release: mpsc::Sender<()>,
     started: mpsc::Receiver<()>,
     executed: Arc<AtomicUsize>,
+    routed: Arc<AtomicUsize>,
+    prepared: Arc<AtomicUsize>,
     stop: Option<oneshot::Sender<()>>,
     done: mpsc::Receiver<std::io::Result<()>>,
     thread: Option<thread::JoinHandle<()>>,
@@ -136,10 +142,14 @@ impl Running {
         let (release, gate) = mpsc::channel();
         let (started, observed) = mpsc::channel();
         let executed = Arc::new(AtomicUsize::new(0));
+        let routed = Arc::new(AtomicUsize::new(0));
+        let prepared = Arc::new(AtomicUsize::new(0));
         let backend = TestBackend {
             release: Mutex::new(gate),
             started,
             executed: Arc::clone(&executed),
+            routed: Arc::clone(&routed),
+            prepared: Arc::clone(&prepared),
         };
         let (stop, stopped) = oneshot::channel();
         let (ready, initialized) = mpsc::channel();
@@ -170,6 +180,8 @@ impl Running {
             release,
             started: observed,
             executed,
+            routed,
+            prepared,
             stop: Some(stop),
             done: completed,
             thread: Some(thread),
@@ -270,7 +282,7 @@ fn connect(address: SocketAddr) -> TcpStream {
 
 fn exchange(address: SocketAddr, path: &str, body: &[u8]) -> Wire {
     let mut stream = connect(address);
-    write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+    write!(stream, "POST {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
     stream.write_all(body).unwrap();
     Wire::read(stream)
 }
@@ -310,7 +322,7 @@ fn rowan_b105_literal_fragment_uses_the_same_effective_api_target() {
 fn rowan_b105_hashes_in_chunked_business_data_remain_ordinary_data() {
     let server = Running::start(ApiLimits::default());
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n", server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n", address = server.address).unwrap();
     // A body chunk can look exactly like a request line. It is not a request target.
     for chunk in ["{\"value\":\"", "GET /# HTTP/1.1", "\"}"] {
         write!(stream, "{:x}\r\n{chunk}\r\n", chunk.len()).unwrap();
@@ -325,7 +337,7 @@ fn rowan_b105_hashes_in_chunked_business_data_remain_ordinary_data() {
 fn rowan_b105_next_keepalive_target_uses_the_same_effective_path() {
     let server = Running::start(ApiLimits::default());
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", server.address, server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 2\r\n\r\n{{}}POST /api/v1/test/read#fragment HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}", address = server.address).unwrap();
     let mut response = String::new();
     if let Err(error) = stream.read_to_string(&mut response) {
         assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
@@ -354,10 +366,10 @@ fn path_json_and_body_refusals_use_the_shared_response_policy_before_dispatch() 
         .request("/api/v1/test/read", &[b'x'; 17])
         .assert_error_headers(413);
     let mut malformed = connect(server.address);
-    write!(malformed, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\ninvalid\r\n", server.address).unwrap();
+    write!(malformed, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\ninvalid\r\n", address = server.address).unwrap();
     Wire::read(malformed).assert_error_headers(400);
     let mut stream = connect(server.address);
-    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: 10\r\n\r\n{{", server.address).unwrap();
+    write!(stream, "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: close\r\nContent-Length: 10\r\n\r\n{{", address = server.address).unwrap();
     Wire::read(stream).assert_error_headers(503);
     assert_eq!(server.executed.load(Ordering::Acquire), 0);
     let valid = server.request("/api/v1/test/read", b"{}");
@@ -506,11 +518,131 @@ fn an_incomplete_keepalive_body_is_closed_after_its_ingress_deadline() {
         .unwrap();
     write!(
         stream,
-        "POST /api/v1/test/read HTTP/1.1\r\nHost: {}\r\nContent-Length: 10\r\n\r\n{{",
-        server.address
+        "POST /api/v1/test/read HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nContent-Length: 10\r\n\r\n{{",
+        address = server.address
     )
     .unwrap();
     let response = Wire::read(stream);
     assert!(response.status.starts_with("HTTP/1.1 503 "));
     assert_eq!(server.executed.load(Ordering::Acquire), 0);
+}
+
+fn ingress_exchange(
+    server: &Running,
+    method: &str,
+    target: &str,
+    headers: &str,
+    body: &[u8],
+) -> Wire {
+    let mut stream = connect(server.address);
+    write!(
+        stream,
+        "{method} {target} HTTP/1.1\r\n{headers}Connection: close\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    stream.write_all(body).unwrap();
+    Wire::read(stream)
+}
+
+#[test]
+fn b106_duplicate_json_never_reaches_prepare() {
+    let bodies = [
+        r#"{"operation_id":"first","operation_id":"second"}"#,
+        r#"{"scope":{"instance_id":"a","instance_id":"b"}}"#,
+        r#"{"kind":"org","kind":"work"}"#,
+        r#"{"params":{"name":"first","name":"second"}}"#,
+        r#"{"params":{"profile":{"role":"first","role":"second"}}}"#,
+        r#"{"params":[{"a":1,"\u0061":2}]}"#,
+        r#"{"params":[{"nested":[{"secret":"PRIVATE_INPUT","secret":"OTHER"}]}]}"#,
+    ];
+    let server = Running::start(ApiLimits::default());
+    let headers = format!(
+        "Host: {}\r\nOrigin: http://{}\r\n",
+        server.address, server.address
+    );
+    for body in bodies {
+        let response = ingress_exchange(
+            &server,
+            "POST",
+            "/api/v1/test/read",
+            &headers,
+            body.as_bytes(),
+        );
+        response.assert_error_headers(400);
+        assert_eq!(response.body["error"]["code"], "invalid_request");
+        assert!(!response.body.to_string().contains("PRIVATE_INPUT"));
+        assert_eq!(server.prepared.load(Ordering::Acquire), 0);
+        assert_eq!(server.executed.load(Ordering::Acquire), 0);
+    }
+    // Identical names in separate sibling objects are independent scopes.
+    let valid = ingress_exchange(
+        &server,
+        "POST",
+        "/api/v1/test/read",
+        &headers,
+        br#"{"params":[{"a":1},{"a":2}],"value":"a:a"}"#,
+    );
+    assert_eq!(valid.status, "HTTP/1.1 200 OK");
+    assert_eq!(server.prepared.load(Ordering::Acquire), 1);
+    assert_eq!(server.executed.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn b106_wrong_host_or_origin_never_reaches_route() {
+    let server = Running::start(ApiLimits::default());
+    for (headers, status) in [
+        (
+            format!(
+                "Host: attacker.test\r\nOrigin: http://{}\r\n",
+                server.address
+            ),
+            400,
+        ),
+        (
+            format!(
+                "Host: {}\r\nOrigin: https://attacker.test\r\n",
+                server.address
+            ),
+            403,
+        ),
+        (format!("Host: {}\r\nOrigin: null\r\n", server.address), 403),
+        (format!("Host: {}\r\n", server.address), 403),
+    ] {
+        let response = ingress_exchange(&server, "POST", "/api/v1/test/read", &headers, b"{}");
+        response.assert_error_headers(status);
+        assert_eq!(server.routed.load(Ordering::Acquire), 0);
+        assert_eq!(server.prepared.load(Ordering::Acquire), 0);
+        assert_eq!(server.executed.load(Ordering::Acquire), 0);
+    }
+}
+
+#[test]
+fn b106_nesting_above_64_is_invalid_before_prepare() {
+    let server = Running::start(ApiLimits::default());
+    let headers = format!(
+        "Host: {}\r\nOrigin: http://{}\r\n",
+        server.address, server.address
+    );
+    let body = format!("{}0{}", "[".repeat(65), "]".repeat(65));
+    let response = ingress_exchange(
+        &server,
+        "POST",
+        "/api/v1/test/read",
+        &headers,
+        body.as_bytes(),
+    );
+    response.assert_error_headers(400);
+    assert_eq!(server.prepared.load(Ordering::Acquire), 0);
+    assert_eq!(server.executed.load(Ordering::Acquire), 0);
+    let body = format!("{}0{}", "[".repeat(64), "]".repeat(64));
+    let valid = ingress_exchange(
+        &server,
+        "POST",
+        "/api/v1/test/read",
+        &headers,
+        body.as_bytes(),
+    );
+    assert_eq!(valid.status, "HTTP/1.1 200 OK");
+    assert_eq!(server.executed.load(Ordering::Acquire), 1);
 }

@@ -21,6 +21,7 @@ use crate::blocking::BlockingPool;
 use crate::body::{
     read_business_body, BodyError, BusinessBody, BODY_READ_TIMEOUT, MAX_BUSINESS_BODY_BYTES,
 };
+use crate::ingress::RequestAdmission;
 use crate::path::RequestPath;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
@@ -206,16 +207,23 @@ struct Gateway<B> {
     backend: Arc<B>,
     workers: BlockingPool,
     limits: ApiLimits,
+    admission: RequestAdmission,
 }
 
 impl<B: ApiBackend> Gateway<B> {
-    fn new(ui: StaticUi, backend: B, limits: ApiLimits) -> io::Result<Self> {
+    fn new(
+        ui: StaticUi,
+        backend: B,
+        limits: ApiLimits,
+        origin: ConfiguredOrigin,
+    ) -> io::Result<Self> {
         limits.validate()?;
         Ok(Self {
             ui,
             backend: Arc::new(backend),
             workers: BlockingPool::new(limits.workers, limits.waiting_jobs, limits.waiting_bytes)?,
             limits,
+            admission: RequestAdmission::new(origin),
         })
     }
 
@@ -227,7 +235,14 @@ impl<B: ApiBackend> Gateway<B> {
         let (parts, body) = request.into_parts();
         let head = parts.method == Method::HEAD;
         let unsupported_version = parts.version != hyper::Version::HTTP_11;
-        let mut response = if unsupported_version {
+        let mut response = if !self.admission.accepts_target_and_host(&parts) {
+            ApiReply::error(
+                StatusCode::BAD_REQUEST,
+                GatewayErrorCode::InvalidRequest,
+                "Invalid request authority.",
+            )
+            .into_http(head)
+        } else if unsupported_version {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
                 GatewayErrorCode::InvalidRequest,
@@ -242,6 +257,20 @@ impl<B: ApiBackend> Gateway<B> {
                     "Invalid request path.",
                 )
                 .into_http(head),
+                Ok(path)
+                    if path
+                        .segments()
+                        .first()
+                        .is_some_and(|segment| segment == "api")
+                        && !self.admission.accepts_api_origin(&parts) =>
+                {
+                    ApiReply::error(
+                        StatusCode::FORBIDDEN,
+                        GatewayErrorCode::NotAuthorized,
+                        "Request origin is not authorized.",
+                    )
+                    .into_http(head)
+                }
                 Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
                     self.api_response(&parts, path, body).await.into_http(head)
                 }
@@ -297,6 +326,13 @@ impl<B: ApiBackend> Gateway<B> {
                 }
             }
         };
+        if crate::strict_json::validate(body.as_bytes()).is_err() {
+            return ApiReply::error(
+                StatusCode::BAD_REQUEST,
+                GatewayErrorCode::InvalidRequest,
+                "Invalid JSON body.",
+            );
+        }
         let bytes = body.as_bytes().len();
         let prepared = match self.backend.prepare(route, body) {
             Ok(prepared) => prepared,
@@ -363,8 +399,8 @@ where
         config.http,
         move || {
             let (backend, shutdown) = initialize()?;
-            let ui = StaticUi::new(files, config.origin, config.hsts);
-            let service = Arc::new(Gateway::new(ui, backend, config.api)?);
+            let ui = StaticUi::new(files, config.origin.clone(), config.hsts);
+            let service = Arc::new(Gateway::new(ui, backend, config.api, config.origin)?);
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);
                 async move { Ok::<_, Infallible>(service.respond(request).await) }
