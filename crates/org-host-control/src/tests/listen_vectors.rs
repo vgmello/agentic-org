@@ -266,6 +266,30 @@ fn tls_refusal_vectors() {
 }
 
 #[test]
+fn timestamp_vectors() {
+    let doc = doc(include_str!("../../test-vectors/tls.json"));
+    let refusal = |text: &str| json!({"code": "tls_not_valid", "not_before": text, "not_after": "2027-12-01T00:00:00Z"});
+    for row in rows(&doc, "timestamps") {
+        let name = text(&row["name"]);
+        let input = text(&row["text"]);
+        let valid = row["valid"].as_bool().unwrap();
+        let parsed = UtcTimestamp::parse(input);
+        assert_eq!(parsed.is_ok(), valid, "{name}");
+        let decoded = serde_json::from_value::<TlsRefusal>(refusal(input));
+        assert_eq!(decoded.is_ok(), valid, "{name}");
+        if let Ok(stamp) = parsed {
+            // Never rewritten: it serializes back as given.
+            assert_eq!(stamp.as_str(), input);
+            assert_eq!(serde_json::to_value(&stamp).unwrap(), json!(input));
+            assert_eq!(
+                serde_json::to_value(decoded.unwrap()).unwrap(),
+                refusal(input)
+            );
+        }
+    }
+}
+
+#[test]
 fn listen_config_vectors() {
     let doc = doc(include_str!("../../test-vectors/tls.json"));
     for row in rows(&doc, "listen_config") {

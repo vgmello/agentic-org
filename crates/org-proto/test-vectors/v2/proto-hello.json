@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "comment": "X-02 \u00a73 version negotiation: every cell of the \u00a73 table, per connection and phase, and the client's instance_id check. hello without api means {1,1}. A server answers the highest version in both its range and the offered one, or unsupported_version and closes; a repeated hello answers the negotiated version if the offered range includes it, and otherwise unsupported_version and close. A first request that isn't hello proceeds as v1 only where v1_without_hello is true. v2 results always carry instance_id; a client refuses a v2 result whose instance_id is absent or isn't the selected instance's, and any api_version outside the range it offered.",
+  "comment": "X-02 \u00a73 version negotiation: every cell of the \u00a73 table, per connection and phase, and the client's instance_id check. hello without api means {1,1}. A server answers the highest version in both its range and the offered one, or unsupported_version and closes; a repeated hello answers the negotiated version if the offered range includes it, and otherwise unsupported_version and close. A first request that isn't hello proceeds as v1 only where v1_without_hello is true. v2 results always carry instance_id; a client refuses a v2 result whose instance_id is absent or isn't the selected instance's, and any api_version outside the range it offered. \"api\": null is an absent api, a v1 hello. A malformed api (anything but null or an object with exactly the keys min and max, 1 <= min <= max <= 2^32-1) fails hello's decode: the server answers invalid_request, without negotiating or closing.",
   "instance_id": "01M72N8MG00000000000000I01",
   "connections": {
     "office_socket_move2": {
@@ -38,6 +38,28 @@
             "id": 1,
             "method": "hello",
             "params": {}
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api null: the same as no api",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": null
+            }
           },
           "expect": {
             "result": {
@@ -211,7 +233,7 @@
       ]
     },
     {
-      "name": "api {2,1}: a reversed range shares nothing",
+      "name": "api {2,1}: a reversed range is malformed",
       "connection": "office_socket_move2",
       "steps": [
         {
@@ -226,8 +248,139 @@
             }
           },
           "expect": {
-            "error": "unsupported_version",
-            "close": true
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {0,1}: there is no version 0",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 0,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api with a negative min is malformed",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": -1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api with an extra key is malformed",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2,
+                "x": 0
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api as an array is malformed",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": [
+                1,
+                2
+              ]
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api with max above 2^32-1 is malformed",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 4294967296
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1, 2^32-1}: the widest range",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 4294967295
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
           }
         }
       ]
@@ -331,7 +484,7 @@
       ]
     },
     {
-      "name": "api {2,1}: a reversed range shares nothing",
+      "name": "api {2,1}: a reversed range is malformed",
       "connection": "office_socket_move3",
       "steps": [
         {
@@ -346,8 +499,28 @@
             }
           },
           "expect": {
-            "error": "unsupported_version",
-            "close": true
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {0,1}: there is no version 0",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 0,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
           }
         }
       ]
@@ -451,7 +624,7 @@
       ]
     },
     {
-      "name": "api {2,1}: a reversed range shares nothing",
+      "name": "api {2,1}: a reversed range is malformed",
       "connection": "host_made_channel",
       "steps": [
         {
@@ -466,8 +639,28 @@
             }
           },
           "expect": {
-            "error": "unsupported_version",
-            "close": true
+            "error": "invalid_request"
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {0,1}: there is no version 0",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 0,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "invalid_request"
           }
         }
       ]

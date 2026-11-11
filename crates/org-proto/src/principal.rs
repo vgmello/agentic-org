@@ -195,13 +195,13 @@ impl<'de> Deserialize<'de> for Principal {
 
 /// Decodes `T` from a map only. Every other JSON type is refused with a fixed message that never
 /// quotes the value (serde's default "invalid type" error would print a string or a number).
-struct ObjectOnly<T> {
+pub(crate) struct ObjectOnly<T> {
     expecting: &'static str,
     marker: std::marker::PhantomData<T>,
 }
 
 impl<T> ObjectOnly<T> {
-    fn new(expecting: &'static str) -> Self {
+    pub(crate) fn new(expecting: &'static str) -> Self {
         Self {
             expecting,
             marker: std::marker::PhantomData,

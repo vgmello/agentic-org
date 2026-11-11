@@ -10,6 +10,8 @@
 //!   allowed the op; `not_found` for an organization or office the session isn't linked to;
 //!   `unavailable` when the sign-in pool is full; `operation_reused` per [`crate::journal`].
 
+use std::fmt;
+
 use org_proto::{Call, Empty, Grant, ListOfficesResult};
 use serde::{Deserialize, Serialize};
 
@@ -464,10 +466,10 @@ pub enum TlsRefusal {
     /// `{"code": "tls_key_mismatch"}`: the key doesn't match the certificate.
     TlsKeyMismatch,
     /// `{"code": "tls_not_valid", "not_before", "not_after"}`: the certificate isn't valid now.
-    /// Both are the certificate's validity bounds, RFC 3339 UTC.
+    /// Both are the certificate's validity bounds, as [`UtcTimestamp`]s.
     TlsNotValid {
-        not_before: String,
-        not_after: String,
+        not_before: UtcTimestamp,
+        not_after: UtcTimestamp,
     },
     /// `{"code": "origin_invalid"}`: the stored listen configuration's `origin` is invalid, or an
     /// `address`, `port` or `scheme` it is checked against is missing or malformed.
@@ -477,6 +479,92 @@ pub enum TlsRefusal {
     #[serde(other, skip_serializing)]
     Unknown,
 }
+
+/// A certificate validity bound, as `tls_not_valid` carries it: RFC 3339 in one profile,
+/// `YYYY-MM-DDTHH:MM:SSZ`. UTC with an uppercase `T` and `Z`, no fractional seconds and no offset
+/// (`+00:00` is refused), and a real date and time: month 1-12, a day that exists in that month
+/// (leap years by the Gregorian rule), hour 0-23, minute and second 0-59 (no leap second).
+/// Decoding refuses any other form; it is never rewritten.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct UtcTimestamp(String);
+
+impl UtcTimestamp {
+    /// Accept `text` only in the profile above.
+    pub fn parse(text: &str) -> Result<UtcTimestamp, InvalidTimestamp> {
+        let b = text.as_bytes();
+        if b.len() != 20 {
+            return Err(InvalidTimestamp);
+        }
+        for (i, want) in [
+            (4, b'-'),
+            (7, b'-'),
+            (10, b'T'),
+            (13, b':'),
+            (16, b':'),
+            (19, b'Z'),
+        ] {
+            if b[i] != want {
+                return Err(InvalidTimestamp);
+            }
+        }
+        let number = |from: usize, to: usize| -> Result<u32, InvalidTimestamp> {
+            b[from..to].iter().try_fold(0u32, |n, &c| {
+                if c.is_ascii_digit() {
+                    Ok(n * 10 + u32::from(c - b'0'))
+                } else {
+                    Err(InvalidTimestamp)
+                }
+            })
+        };
+        let year = number(0, 4)?;
+        let month = number(5, 7)?;
+        let day = number(8, 10)?;
+        let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let days = match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if leap => 29,
+            2 => 28,
+            _ => return Err(InvalidTimestamp),
+        };
+        if !(1..=days).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+            return Err(InvalidTimestamp);
+        }
+        Ok(UtcTimestamp(text.to_owned()))
+    }
+
+    /// The timestamp, as it is on the wire.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UtcTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for UtcTimestamp {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        UtcTimestamp::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A timestamp outside [`UtcTimestamp`]'s profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTimestamp;
+
+impl fmt::Display for InvalidTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a timestamp must be a real UTC time as YYYY-MM-DDTHH:MM:SSZ")
+    }
+}
+
+impl std::error::Error for InvalidTimestamp {}
 
 impl TlsRefusal {
     /// Whether the host journals this refusal from `op`, so a retry with the same `operation_id`
@@ -649,8 +737,9 @@ impl Call for Subscribe {
 
 /// `bootstrap` (bootstrap-mode host only, on its connection to setup's listener): create the
 /// registry and the first account, and answer with a session for it. The host stores
-/// `operation_id` and `hq_operation_id`; the same `operation_id` on a non-empty registry replays
-/// with a fresh session, and a different one is refused with `already_bootstrapped`. Under
+/// `operation_id` and `hq_operation_id`; on a non-empty registry a different `operation_id` is
+/// refused with `already_bootstrapped`, and the same one replays with a fresh session until
+/// bootstrap has finished, then gets `bootstrap_finished`. Under
 /// `https` a first bootstrap needs `tls`; a replay may omit it and compares a given pair by
 /// fingerprint.
 ///
@@ -716,16 +805,18 @@ pub enum BootstrapOutcome {
 /// ([`BootstrapRefusal::is_stored`]).
 ///
 /// **The host decides in this order**, and answers the first that applies:
-/// 1. the registry records that bootstrap has finished: [`BootstrapRefusal::BootstrapFinished`],
-///    whatever the `operation_id`;
-/// 2. on a non-empty registry, the same `operation_id` replays (the password checked as a
-///    sign-in, so a wrong one is the plain error `not_authorized`; another `login` changes the
-///    fingerprint, so it is the plain error `operation_reused`; a pair other than the stored one
-///    is [`BootstrapRefusal::TlsMismatch`]), and any other `operation_id` is
-///    [`BootstrapRefusal::AlreadyBootstrapped`]. A replay doesn't re-check the listen
+/// 1. on a non-empty registry, an `operation_id` other than the recorded bootstrap's (or a
+///    registry setup has no record of) is [`BootstrapRefusal::AlreadyBootstrapped`], whatever
+///    else holds, even after bootstrap has finished;
+/// 2. the recorded `operation_id` gets [`BootstrapRefusal::BootstrapFinished`] once bootstrap has
+///    finished;
+/// 3. otherwise the recorded `operation_id` replays, checked in this order: the password as a
+///    sign-in (a wrong one is the plain error `not_authorized`), then the fingerprint (another
+///    `login` is the plain error `operation_reused`), then the pair (one other than the stored
+///    one is [`BootstrapRefusal::TlsMismatch`]). A replay doesn't re-check the listen
 ///    configuration. Bootstrap's fingerprint fields are move 2b's; replays must also match the
 ///    stored `hq_operation_id` (X-02 §6.2);
-/// 3. on an empty registry: the stored listener fields and `origin`
+/// 4. on an empty registry: the stored listener fields and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
 ///    ([`TlsRefusal::HstsInvalid`]), then
 ///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (parse, key match,
@@ -741,13 +832,15 @@ pub enum BootstrapRefusal {
     /// fingerprint). Setup tells the operator to re-run `setup --resume` with the original pair,
     /// or without `tls` and then `agentic-org tls renew`.
     TlsMismatch,
-    /// `{"code": "already_bootstrapped"}`: a different `operation_id` on a non-empty registry, or
-    /// a registry setup has no record of. Setup aborts and tells the operator to resume by signing
-    /// in (`agentic-org setup --resume`) or to repair or uninstall.
+    /// `{"code": "already_bootstrapped"}`: a different `operation_id` on a non-empty registry
+    /// (whether or not bootstrap has finished), or a registry setup has no record of. Setup
+    /// aborts and tells the operator to resume by signing in (`agentic-org setup --resume`) or to
+    /// repair or uninstall.
     AlreadyBootstrapped,
-    /// `{"code": "bootstrap_finished"}`: the registry records that bootstrap has finished (setup's
-    /// `exit` followed the HQ link), so bootstrap mode is refused. A distinct result, not an
-    /// abort: setup goes on to start the service host (X-02 §6.2 step 5).
+    /// `{"code": "bootstrap_finished"}`: the recorded bootstrap's own `operation_id`, after the
+    /// registry records that bootstrap has finished (setup's `exit` followed the HQ link), so
+    /// bootstrap mode is refused. A distinct result, not an abort: setup goes on to start the
+    /// service host (X-02 §6.2 step 5).
     BootstrapFinished,
     /// The listen configuration or the pair failed one of `tls.set`'s checks.
     Tls(TlsRefusal),

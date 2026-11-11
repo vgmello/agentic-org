@@ -30,6 +30,9 @@ enum Step {
     Answer(u32),
     Refuse,
     ProceedsAs(u32),
+    /// `invalid_request`: the params didn't decode. Nothing is negotiated, and the connection
+    /// stays open.
+    Invalid,
 }
 
 fn oracle(accepts: ApiRange, v1_without_hello: bool, steps: &[Request]) -> Vec<Step> {
@@ -37,7 +40,11 @@ fn oracle(accepts: ApiRange, v1_without_hello: bool, steps: &[Request]) -> Vec<S
     let mut out = Vec::new();
     for request in steps {
         let step = if request.is::<Hello>() {
-            let offered = request.params::<Hello>().unwrap().api_range();
+            let Ok(params) = request.params::<Hello>() else {
+                out.push(Step::Invalid);
+                continue;
+            };
+            let offered = params.api_range();
             match negotiated {
                 Some(n) if offered.contains(n) => Step::Answer(n),
                 Some(_) => Step::Refuse,
@@ -96,6 +103,10 @@ fn negotiation_vectors_cover_every_cell_and_follow_the_rules() {
                     Step::Answer(hello.api_version)
                 } else if let Some(code) = e.get("error") {
                     let code: ErrorCode = serde_json::from_value(code.clone()).unwrap();
+                    if code == ErrorCode::InvalidRequest {
+                        assert!(e.get("close").is_none(), "{name}");
+                        return Step::Invalid;
+                    }
                     assert_eq!(code, ErrorCode::UnsupportedVersion, "{name}");
                     assert_eq!(e["close"], true, "{name}");
                     Step::Refuse
@@ -118,7 +129,10 @@ fn negotiation_vectors_cover_every_cell_and_follow_the_rules() {
             "repeated hello"
         } else if !first.is::<Hello>() {
             "first request not hello"
-        } else if first.params::<Hello>().unwrap().api.is_none() {
+        } else if first
+            .params::<Hello>()
+            .is_ok_and(|params| params.api.is_none())
+        {
             "v1 hello"
         } else {
             "hello {api}"
@@ -166,6 +180,45 @@ fn hello_params_default_to_v1_and_stay_compatible() {
     assert!(SUPPORTED_API.contains(1) && SUPPORTED_API.contains(2) && !SUPPORTED_API.contains(3));
     assert!(!ApiRange { min: 2, max: 1 }.contains(1));
     assert!(!ApiRange { min: 2, max: 1 }.contains(2));
+    // A malformed range doesn't decode, so hello's params don't either (invalid_request).
+    for bad in [
+        json!({"min": 0, "max": 1}),
+        json!({"min": 0, "max": 0}),
+        json!({"min": 2, "max": 1}),
+        json!({"min": 1}),
+        json!({"min": "1", "max": 2}),
+        json!({"min": -1, "max": 2}),
+        json!({"min": 1.5, "max": 2}),
+        json!({"min": 1, "max": 2, "x": 0}),
+        json!({"min": 1, "max": 4_294_967_296u64}),
+        json!([1, 2]),
+        json!(2),
+    ] {
+        assert!(
+            serde_json::from_value::<ApiRange>(bad.clone()).is_err(),
+            "{bad}"
+        );
+        assert!(serde_json::from_value::<HelloParams>(json!({ "api": bad })).is_err());
+    }
+    // `"api": null` is an absent api: a v1 hello. A null range on its own isn't a range.
+    assert!(serde_json::from_value::<ApiRange>(json!(null)).is_err());
+    let null_api: HelloParams = serde_json::from_value(json!({"api": null})).unwrap();
+    assert_eq!(null_api.api_range(), ApiRange::V1);
+    // A non-string client, null included, is malformed too; an absent field is still v1.
+    for bad in [json!({"client": 7}), json!({"client": null})] {
+        assert!(
+            serde_json::from_value::<HelloParams>(bad.clone()).is_err(),
+            "{bad}"
+        );
+    }
+    for good in [
+        json!({"min": 1, "max": 1}),
+        json!({"min": 2, "max": 5}),
+        json!({"min": 1, "max": u32::MAX}),
+    ] {
+        let range: ApiRange = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(serde_json::to_value(range).unwrap(), good);
+    }
 }
 
 #[test]

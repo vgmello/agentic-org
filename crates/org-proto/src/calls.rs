@@ -35,12 +35,39 @@ pub struct Hello;
 
 /// A range of `org-proto` API versions, both ends included: `{"min": 1, "max": 2}`.
 ///
-/// Decoding doesn't check that `min <= max`: a reversed range shares no version with any
-/// server, so it gets `unsupported_version`, like any other range a server doesn't speak.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Decoding refuses a malformed range: anything but an object with exactly the keys `min` and
+/// `max`, integers with `1 <= min <= max <= 2^32 - 1` (so an array, an extra or missing key, a
+/// negative, fractional or too large number, `min = 0` or `min > max` is refused). So a `hello`
+/// carrying one fails to decode and the server answers `invalid_request` (X-02 §3), never
+/// `unsupported_version`. A well-formed range the server doesn't speak gets
+/// `unsupported_version`. The fields are public, so a range built in code isn't checked: only
+/// decoding enforces this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct ApiRange {
     pub min: u32,
     pub max: u32,
+}
+
+impl<'de> Deserialize<'de> for ApiRange {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            min: u32,
+            max: u32,
+        }
+        let Raw { min, max } =
+            d.deserialize_any(crate::principal::ObjectOnly::new("an api range object"))?;
+        if min == 0 {
+            return Err(serde::de::Error::custom("an api range starts at version 1"));
+        }
+        if min > max {
+            return Err(serde::de::Error::custom(
+                "an api range's min is above its max",
+            ));
+        }
+        Ok(ApiRange { min, max })
+    }
 }
 
 impl ApiRange {
@@ -60,13 +87,27 @@ impl ApiRange {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct HelloParams {
-    /// The versions the client speaks. Absent means [`ApiRange::V1`].
+    /// The versions the client speaks. Absent or `null` means [`ApiRange::V1`] (X-02 §3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<ApiRange>,
     /// The client, for logs only, e.g. `"org-gateway 0.1.0"`. Never authority, and untrusted
-    /// text: a server escapes control characters and caps its length before logging it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// text: a server escapes control characters and caps its length before logging it. A value
+    /// that isn't a string, `null` included, is malformed.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub client: Option<String>,
+}
+
+/// A field that is present must be a `T`: unlike a plain `Option`, `null` is refused (X-02 §3's
+/// strict `hello`: a `null` `client` isn't a string). An absent field is `None` through
+/// `default`.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 impl HelloParams {
