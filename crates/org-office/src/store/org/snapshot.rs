@@ -537,7 +537,13 @@ fn check_projection_continuity(
     } else {
         check_protected_members(db, &incoming.rows[0])?;
     }
-    check_retained_outcomes(db, &incoming.rows[ENTITY_TABLES], local, federation_advance)?;
+    check_retained_outcomes(
+        db,
+        &incoming.rows[ENTITY_TABLES],
+        local,
+        native_advance,
+        federation_advance,
+    )?;
     Ok(preserve_native)
 }
 
@@ -568,6 +574,7 @@ fn check_retained_outcomes(
     db: &Connection,
     incoming: &[Vec<Cell>],
     local: org_proto::org::Position,
+    native_advance: u64,
     federation_advance: u64,
 ) -> Result<(), SyncError> {
     let mut incoming_by_id: HashMap<_, _> = incoming.iter().map(|row| (&row[0], row)).collect();
@@ -584,14 +591,23 @@ fn check_retained_outcomes(
             return Err(Refusal::Divergence.into());
         }
     }
-    if incoming_by_id.len() as u64 > federation_advance {
+    // After a materialized anchor, every federation event keeps a command outcome.
+    // Only successful commands advance the native feed.
+    if incoming_by_id.len() as u64 != federation_advance {
         return Err(Refusal::Divergence.into());
     }
+    let mut committed = 0;
     for added in incoming_by_id.into_values() {
         let (epoch, seq) = command_position(added)?;
-        if epoch != 0 && (epoch != local.epoch || seq <= local.seq) {
-            return Err(Refusal::Divergence.into());
+        if epoch != 0 {
+            if epoch != local.epoch || seq <= local.seq {
+                return Err(Refusal::Divergence.into());
+            }
+            committed += 1;
         }
+    }
+    if committed != native_advance {
+        return Err(Refusal::Divergence.into());
     }
     Ok(())
 }

@@ -2195,6 +2195,18 @@ mod tests {
         hq.org_store().run_sql_for_test(
             "DELETE FROM commands WHERE command_id = '01ARZ3NDEKTSV4RRFFQ69G5FAX'",
         );
+        hq.org_store().run_sql_for_test(
+            "CREATE TEMP TABLE last_outcome AS SELECT * FROM commands
+            WHERE rowid = (SELECT max(rowid) FROM commands WHERE epoch = 0);
+            DELETE FROM commands WHERE command_id = (SELECT command_id FROM last_outcome);",
+        );
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(
+            "INSERT INTO commands SELECT * FROM last_outcome; DROP TABLE last_outcome;",
+        );
         let pending = stage_latest().unwrap();
         assert_eq!(
             organization::install_snapshot(&satellite, pending).unwrap(),
