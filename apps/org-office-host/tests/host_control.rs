@@ -7,6 +7,83 @@ use org_proto::{ErrorCode, Outcome};
 use support::{Client, TestHome};
 
 #[test]
+fn preconditions_hello_must_precede_each_connections_other_requests() {
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+    for (method, params) in [
+        ("instance.status", "{}"),
+        ("instance.status", "[]"),
+        ("organization.create", r#"{"name":"Blocked"}"#),
+        ("future.method", "{}"),
+    ] {
+        let response = client.raw(&format!(
+            r#"{{"id":1,"method":"{method}","params":{params}}}"#
+        ));
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest),
+            "{method}"
+        );
+    }
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
+    client
+        .call::<org_host_control::InstanceStatus>(&Default::default())
+        .unwrap();
+    let mut other = Client::connect(host.socket_path());
+    let response = other.raw(r#"{"id":1,"method":"instance.status"}"#);
+    assert!(
+        matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+    );
+    assert!(home.office_folders().is_empty());
+    assert!(home.key_ids().is_empty());
+    host.shutdown();
+}
+
+#[test]
+fn preconditions_duplicate_keys_are_refused_recursively_after_unescaping() {
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+    // A duplicate in an otherwise valid hello must not establish the handshake.
+    let response =
+        client.raw(r#"{"id":1,"method":"hello","params":{"api":{"min":1,"min":1,"max":1}}}"#);
+    assert!(
+        matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+    );
+    let response = client.raw(r#"{"id":2,"method":"instance.status"}"#);
+    assert!(
+        matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+    );
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
+    for params in [
+        r#"{"x":1,"x":2}"#,
+        r#"{"outer":{"x":null,"x":false}}"#,
+        r#"{"outer":[0,{"x":[],"x":{}}]}"#,
+        r#"{"x":1,"\u0078":2}"#,
+        r#"{"outer":{"\u0061":1,"a":2}}"#,
+        r#"[{"x":1,"x":2}]"#,
+    ] {
+        let response = client.raw(&format!(
+            r#"{{"id":3,"method":"future.method","params":{params}}}"#
+        ));
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest),
+            "{params}"
+        );
+    }
+    let response = client
+        .raw(r#"{"id":4,"method":"hello","params":{"future":[{"x":1},{"x":2}],"other":{"x":3}}}"#);
+    assert!(matches!(response.outcome, Outcome::Result(_)));
+    assert!(home.office_folders().is_empty());
+    assert!(home.key_ids().is_empty());
+    host.shutdown();
+}
+
+#[test]
 fn unsupported_host_control_offer_is_refused() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
@@ -23,6 +100,9 @@ fn sessionless_create_is_not_authorized_before_params_are_interpreted() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
     let response = client.raw(r#"{"id":2,"method":"organization.create","params":{"name":42}}"#);
     assert!(
         matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::NotAuthorized)
@@ -41,6 +121,7 @@ fn an_unregistered_host_refuses_hello_status_and_create_without_effects() {
         ("hello", "{}"),
         ("hello", "[]"),
         ("hello", r#"{"api":{"min":2,"max":2}}"#),
+        ("instance.status", "{}"),
         ("instance.status", "[]"),
         ("organization.create", r#"{"name":"Blocked"}"#),
         ("future.method", "{}"),
@@ -101,6 +182,9 @@ fn every_non_open_operation_is_refused_before_valid_or_invalid_params() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
     for method in [
         "organization.create",
         "organization.list",
@@ -200,6 +284,9 @@ fn status_counts_observed_office_states_without_revealing_ids() {
             .any(|office| office.id == C && office.status == org_proto::OfficeStatus::Unavailable)
     });
     let mut client = Client::connect(host.socket_path());
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
     let result = client
         .call::<InstanceStatus>(&InstanceStatusParams::default())
         .unwrap();
@@ -238,6 +325,10 @@ fn hello_shape_errors_precede_version_refusal_and_do_not_close() {
         let response = client.raw(&format!(r#"{{"id":8,"method":"hello","params":{params}}}"#));
         assert!(
             matches!(response.outcome,Outcome::Error(error) if error.code==ErrorCode::InvalidRequest)
+        );
+        let response = client.raw(r#"{"id":10,"method":"instance.status"}"#);
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
         );
     }
     let response = client.raw(r#"{"id":9,"method":"hello","params":{"future":true,"api":null}}"#);
@@ -293,5 +384,106 @@ fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
     );
     assert_eq!(home.pids(A), before);
     assert_eq!(home.key_ids(), keys);
+    host.shutdown();
+}
+
+#[test]
+fn preconditions_pipelined_status_is_refused_before_a_later_hello() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut out = UnixStream::connect(host.socket_path()).unwrap();
+    out.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .unwrap();
+    out.write_all(b"{\"id\":1,\"method\":\"instance.status\"}\n{\"id\":2,\"method\":\"hello\"}\n{\"id\":3,\"method\":\"instance.status\"}\n").unwrap();
+    let mut reader = BufReader::new(out);
+    for id in 1..=3 {
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        let response: org_proto::Response = serde_json::from_str(&line).unwrap();
+        assert_eq!(response.id, id);
+        if id == 1 {
+            assert!(
+                matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+            );
+        } else {
+            assert!(matches!(response.outcome, Outcome::Result(_)));
+        }
+    }
+    assert!(home.office_folders().is_empty());
+    assert!(home.key_ids().is_empty());
+    host.shutdown();
+}
+
+#[test]
+fn preconditions_ambiguous_ids_use_zero_and_do_not_establish_hello() {
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+    for frame in [r#"[7]"#, r#"[7,"hello",null,{}]"#] {
+        let response = client.raw(frame);
+        assert_eq!(response.id, org_proto::UNREADABLE_REQUEST_ID);
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+        );
+    }
+    for fields in [
+        r#""id":1,"id":2"#,
+        r#""id":1,"\u0069d":1"#,
+        r#""id":null,"id":2"#,
+    ] {
+        let response = client.raw(&format!(r#"{{{fields},"method":"hello"}}"#));
+        assert_eq!(response.id, org_proto::UNREADABLE_REQUEST_ID);
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+        );
+        let response = client.raw(r#"{"id":3,"method":"instance.status"}"#);
+        assert!(
+            matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+        );
+    }
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
+    let response = client.raw(r#"{"id":4,"id":5,"method":"instance.status"}"#);
+    assert_eq!(response.id, org_proto::UNREADABLE_REQUEST_ID);
+    assert!(
+        matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+    );
+    client
+        .call::<org_host_control::InstanceStatus>(&Default::default())
+        .unwrap();
+    host.shutdown();
+}
+
+#[test]
+fn preconditions_a_malformed_later_hello_does_not_reset_the_lock() {
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+    let hello = client.raw(r#"{"id":9,"method":"hello","ignored":1e1000}"#);
+    assert_eq!(
+        hello
+            .into_result::<org_host_control::Hello>()
+            .unwrap()
+            .api_version,
+        1
+    );
+    let response = client.raw(r#"{"id":1,"method":"hello","params":[]}"#);
+    assert!(
+        matches!(response.outcome, Outcome::Error(error) if error.code == ErrorCode::InvalidRequest)
+    );
+    client
+        .call::<org_host_control::InstanceStatus>(&Default::default())
+        .unwrap();
+    let response = client.raw(r#"{"id":2,"method":"hello","params":null}"#);
+    assert_eq!(
+        response
+            .into_result::<org_host_control::Hello>()
+            .unwrap()
+            .api_version,
+        1
+    );
     host.shutdown();
 }

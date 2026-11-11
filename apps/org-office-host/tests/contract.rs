@@ -2,10 +2,9 @@
 //! `next_restart_at`, `office.status_changed`, the give-up rule, and the app-only
 //! `office.app_token` and `office.restart`, against the fake office server.
 //!
-//! The app-only calls are made by this test process, accepted through the debug-build
-//! development fallback (its own executable as the allowed path), so the tests that need it run
-//! in debug builds only (`cargo test` without `--release`). The code-signature path needs a signed
-//! app and is covered by `app_auth`'s unit tests.
+//! Retired wire calls are refused under every peer configuration. Native token/restart
+//! lifecycle checks use the temporary in-process fixture; these gate tests do not establish
+//! signed-peer authorization. Real app_auth wire coverage returns with verified sessions in2b.3.
 
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only. Many
@@ -32,7 +31,7 @@ const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
 const T: &str = "2026-11-08T00:00:00.000Z";
 
-/// A config whose app-only calls accept this test process (the debug-build fallback).
+/// A matching development peer policy; retired wire calls remain refused.
 #[cfg(debug_assertions)]
 fn app_config(home: &TestHome) -> Config {
     let mut config = home.config();
@@ -40,7 +39,7 @@ fn app_config(home: &TestHome) -> Config {
     config
 }
 
-/// A client that has read `hello`'s answer, as an app-only call requires (the client rule).
+/// A negotiated client used to test refusal of retired wire calls.
 fn app_client(socket: &Path) -> Client {
     let mut client = Client::connect(socket);
     client
@@ -109,7 +108,7 @@ fn native_fixture_gets_the_token_its_office_was_started_with() {
 }
 
 #[test]
-fn a_caller_that_isnt_the_app_is_refused() {
+fn retired_calls_are_refused_under_each_non_app_policy() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     // No development app and no team id: nobody. Debug builds also try another executable as the
@@ -453,15 +452,11 @@ fn a_status_change_publishes_the_whole_office_record() {
     host.shutdown();
 }
 
-/// The caller is compared with the process the host accepted, not with whoever sends the call: a
-/// child process (this test binary again, the allowed development app) that writes an app-only
-/// call on a connection this test process opened is refused, though it would pass the
-/// development fallback on its own (the kernel reports the last writer as the peer). The exec
-/// swap itself can't be staged here (it needs a signed app to `exec` into, at the right moment);
-/// this exercises the same check: another process on an accepted connection.
+/// The retired token method remains refused when a second process writes an accepted socket.
+/// This gate test does not establish app_auth's process-identity enforcement.
 #[cfg(debug_assertions)]
 #[test]
-fn a_call_written_by_another_process_on_an_accepted_connection_is_refused() {
+fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     use std::io::{BufRead, BufReader, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
@@ -521,11 +516,11 @@ fn a_call_written_by_another_process_on_an_accepted_connection_is_refused() {
     host.shutdown();
 }
 
-/// Set for the child of `a_call_written_by_another_process_on_an_accepted_connection_is_refused`.
+/// Set for the child of `retired_calls_stay_refused_when_another_process_writes_the_connection`.
 const WRITE_ON_FD3: &str = "ORG_HOST_TEST_WRITE_ON_FD3";
 
 /// Not a test on its own: in the child process of
-/// `a_call_written_by_another_process_on_an_accepted_connection_is_refused`, writes the request
+/// `retired_calls_stay_refused_when_another_process_writes_the_connection`, writes the request
 /// line it's given on fd 3 (the parent's connection), then lingers so the host sees it alive.
 #[cfg(debug_assertions)]
 #[test]
@@ -544,12 +539,11 @@ fn write_on_fd3_when_asked() {
     thread::sleep(Duration::from_secs(1));
 }
 
-/// After an app-only call the client sends nothing until its answer (the client rule): an extra
-/// line, or even one byte, that arrived right after the call gets it refused. Each is sent in
-/// the same write as the call, so it's there when the host checks.
+/// Retired token calls remain refused with any buffered suffix. Actual app_auth timing
+/// enforcement is tested separately and needs session wire coverage again in2b.3.
 #[cfg(debug_assertions)]
 #[test]
-fn an_app_only_call_with_anything_right_after_it_is_refused() {
+fn retired_calls_stay_refused_with_a_buffered_suffix() {
     use std::io::{BufRead, BufReader, Write};
 
     let home = TestHome::registered();
@@ -585,7 +579,7 @@ fn an_app_only_call_with_anything_right_after_it_is_refused() {
             }
         }
     }
-    // The same call alone, after hello's answer, is accepted.
+    // The native fixture still reaches the token backend; no wire call was authorized.
     assert!(app_token(&host, A).is_ok());
     host.shutdown();
 }
