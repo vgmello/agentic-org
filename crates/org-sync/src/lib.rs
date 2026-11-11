@@ -3,6 +3,7 @@
 #![deny(unsafe_code)]
 
 pub mod error;
+pub mod messages;
 mod ordering;
 pub mod organization;
 pub mod versions;
