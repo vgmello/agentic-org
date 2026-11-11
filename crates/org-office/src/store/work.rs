@@ -10,6 +10,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::OfficeError;
 
+mod call;
+
 pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(
         "CREATE TABLE work_items (
