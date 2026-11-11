@@ -28,8 +28,10 @@ mod sync;
 pub(crate) mod work;
 
 use std::any::Any;
+use std::cell::Cell;
 use std::error::Error;
 use std::fmt;
+use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -92,6 +94,34 @@ pub(crate) struct Store {
     readers: Mutex<Vec<Connection>>,
     db_path: PathBuf,
     key: Key,
+}
+
+/// An org.db reader pinned for one work attempt. Failed or unwinding readers are discarded.
+#[cfg_attr(not(test), expect(dead_code, reason = "wired by work RPC slice C"))]
+pub(crate) struct ReaderSnapshot<'a> {
+    store: &'a Store,
+    db: Option<Connection>,
+    failed: Cell<bool>,
+}
+
+impl Deref for ReaderSnapshot<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.db.as_ref().expect("a live snapshot owns its reader")
+    }
+}
+
+impl Drop for ReaderSnapshot<'_> {
+    fn drop(&mut self) {
+        let db = self.db.take().expect("a snapshot is dropped once");
+        let rolled_back = db.execute_batch("ROLLBACK").is_ok();
+        if rolled_back && !self.failed.get() && !std::thread::panicking() {
+            let mut idle = self.store.idle_readers();
+            if idle.len() < MAX_IDLE_READERS {
+                idle.push(db);
+            }
+        }
+    }
 }
 
 impl Store {
@@ -253,6 +283,32 @@ impl Store {
             }
         }
         result
+    }
+
+    /// Checks out an org.db reader and pins a deferred WAL snapshot with a table read.
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired by work RPC slice C"))]
+    pub(crate) fn read_snapshot(&self) -> Result<ReaderSnapshot<'_>, OfficeError> {
+        let idle = self.idle_readers().pop();
+        let db = match idle {
+            Some(db) => db,
+            None => {
+                let db = connect(&self.db_path, &self.key, false, true)?;
+                db.pragma_update(None, "query_only", true)
+                    .map_err(OfficeError::storage)?;
+                db
+            }
+        };
+        let snapshot = ReaderSnapshot {
+            store: self,
+            db: Some(db),
+            failed: Cell::new(true),
+        };
+        snapshot
+            .execute_batch("BEGIN")
+            .map_err(OfficeError::storage)?;
+        org::last_position(&snapshot)?;
+        snapshot.failed.set(false);
+        Ok(snapshot)
     }
 
     /// One row of the database's `meta` table, if it has it.
