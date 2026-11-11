@@ -162,6 +162,13 @@ pub struct ScanFailure {
     pub report: RecoveryReport,
 }
 
+impl ScanFailure {
+    /// Read the source's typed classification without interpreting messages.
+    pub fn kind(&self) -> super::ScanFailureKind {
+        super::failure::classify(&self.error)
+    }
+}
+
 impl fmt::Display for ScanFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error.fmt(f)

@@ -219,3 +219,26 @@ fn job_proof_errors_absence_and_expired_observations_are_s0() {
         assert_eq!(reads.get(), expected_reads, "{case}");
     }
 }
+
+#[test]
+fn job_deadline_failure_classification_preserves_io() {
+    use crate::recovery::{RecoveryReport, ScanFailure, ScanFailureKind};
+    let now = Instant::now();
+    super::check_budget(now, now + Duration::from_nanos(1)).unwrap();
+    for deadline in [now, now - Duration::from_nanos(1)] {
+        let error = super::check_budget(now, deadline).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            io::Error::from(io::ErrorKind::TimedOut).to_string()
+        );
+        assert_eq!(
+            ScanFailure {
+                error,
+                report: RecoveryReport::default()
+            }
+            .kind(),
+            ScanFailureKind::DeadlineElapsed
+        );
+    }
+}

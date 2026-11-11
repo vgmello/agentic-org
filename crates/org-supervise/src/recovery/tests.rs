@@ -8,6 +8,8 @@ use super::*;
 
 const MARK: &str = "recovery-fake-session";
 
+mod failure;
+
 #[test]
 fn native_mark_identical_duplicates_count_once_on_each_platform() {
     for bytes in [
@@ -202,6 +204,7 @@ struct Processes {
     signal_failure: Option<u32>,
     wait_failure: bool,
     snapshot_failure: bool,
+    snapshot_deadline: bool,
     hidden_from_snapshot: Option<u32>,
     reused_on_signal: Option<u32>,
     job_reuse: bool,
@@ -230,6 +233,7 @@ impl Processes {
             signal_failure: None,
             wait_failure: false,
             snapshot_failure: false,
+            snapshot_deadline: false,
             hidden_from_snapshot: None,
             reused_on_signal: None,
             job_reuse: false,
@@ -267,6 +271,13 @@ impl RecoveryProcesses for Processes {
     }
     fn snapshot(&mut self, _: Instant) -> io::Result<Vec<ProcessObservation>> {
         self.actions.push(Action::Snapshot);
+        if self.snapshot_deadline {
+            return Err(super::failure::tagged(
+                io::ErrorKind::TimedOut,
+                ScanFailureKind::DeadlineElapsed,
+                "native recovery deadline elapsed",
+            ));
+        }
         if self.snapshot_failure {
             return Err(io::Error::other("enumeration failed"));
         }
