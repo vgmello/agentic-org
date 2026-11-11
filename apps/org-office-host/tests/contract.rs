@@ -44,7 +44,7 @@ fn app_config(home: &TestHome) -> Config {
 fn app_client(socket: &Path) -> Client {
     let mut client = Client::connect(socket);
     client
-        .call::<org_proto::Hello>(&org_proto::Empty {})
+        .call::<org_proto::Hello>(&org_proto::HelloParams::default())
         .unwrap();
     client
 }

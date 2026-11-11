@@ -42,6 +42,7 @@ macro_rules! identity {
 }
 identity!(OrgId);
 identity!(OfficeId);
+identity!(OriginIncarnation);
 
 macro_rules! sequence {
     ($name:ident) => {
@@ -61,6 +62,7 @@ macro_rules! sequence {
     };
 }
 sequence!(Epoch);
+sequence!(SourceSeq);
 
 /// Sequence zero represents a checkpoint before the first event in an epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -116,14 +118,19 @@ mod tests {
         for good in ["A", "01ORG123", &"a".repeat(64)] {
             OrgId::new(good).unwrap();
             OfficeId::new(good).unwrap();
+            OriginIncarnation::new(good).unwrap();
         }
         for bad in ["", "../x", "é", "a/b", "a b", &"x".repeat(65)] {
             assert!(OrgId::new(bad).is_err());
             assert!(OfficeId::new(bad).is_err());
+            assert!(OriginIncarnation::new(bad).is_err());
         }
         assert!(Epoch::new(0).is_err());
         assert!(Epoch::new(u64::MAX).unwrap().checked_next().is_none());
         assert_eq!(Epoch::new(1).unwrap().checked_next().unwrap().get(), 2);
+        assert!(SourceSeq::new(0).is_err());
+        assert!(SourceSeq::new(u64::MAX).unwrap().checked_next().is_none());
+        assert_eq!(SourceSeq::new(1).unwrap().checked_next().unwrap().get(), 2);
     }
     #[test]
     fn codec_identity_is_bounded_and_versioned() {

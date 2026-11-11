@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/org-proto",
+  "crates/org-host-control",
   "crates/org-client",
   "crates/org-office",
   "crates/org-office-launch",
@@ -22,6 +23,7 @@ members = [
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
   "crates/org-proto",
+  "crates/org-host-control",
   "crates/org-client",
   "crates/org-office",
   "crates/org-office-launch",

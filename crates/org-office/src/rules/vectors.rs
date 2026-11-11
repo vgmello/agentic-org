@@ -46,6 +46,7 @@ fn command(step: &Value, n: usize) -> Option<OrgCommand> {
         id: n as u64 + 1,
         method: step["method"].as_str().unwrap().into(),
         params,
+        principal: None,
     })
     .unwrap()
 }

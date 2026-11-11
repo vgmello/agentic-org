@@ -586,6 +586,17 @@ fn serve_connection_with_poll(
                 subscribed = false;
                 held.cancel_all();
             }
+            if request.is::<Hello>() {
+                let response = hello_response(&request, shared);
+                let unsupported = matches!(
+                    &response.outcome,
+                    org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
+                );
+                if !send(&out, request.id, &response, shared.timing) || unsupported {
+                    break;
+                }
+                continue;
+            }
             if request.is::<MsgBind>() {
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
@@ -752,6 +763,29 @@ fn send(out: &Mutex<UnixStream>, id: u64, response: &Response, timing: Timing) -
     }
 }
 
+/// X-02 §3, B1-07.1: this office socket supports only v1 until instance-aware
+/// launch is available. Every call therefore stays at v1, including legacy-first
+/// calls and repeated hellos; the wider SUPPORTED_API is not active here yet.
+fn hello_response(request: &Request, shared: &Shared) -> Response {
+    match request.params::<Hello>() {
+        Ok(params) if params.api_range().contains(org_proto::ApiRange::V1.min) => {
+            Response::ok::<Hello>(request.id, &shared.hello)
+                .unwrap_or_else(|_| internal(request.id))
+        }
+        Ok(_) => Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::UnsupportedVersion,
+                "the office supports only API version 1",
+            ),
+        ),
+        Err(_) => Response::error(
+            request.id,
+            ApiError::new(ErrorCode::InvalidRequest, "invalid hello parameters"),
+        ),
+    }
+}
+
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     if request.is::<OrgSnapshotCall>() {
         // The whole organization: for a bound connection (the app; agents bind with messaging),
@@ -783,10 +817,6 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     }
     if request.is::<StatusSet>() {
         return status_set(request, shared, binding);
-    }
-    if request.is::<Hello>() {
-        return Response::ok::<Hello>(request.id, &shared.hello)
-            .unwrap_or_else(|_| internal(request.id));
     }
     if request.is::<MsgBind>() {
         return bind_connection(request, shared, binding);
@@ -1330,6 +1360,220 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn hello_cannot_bypass_a_removed_members_per_call_revocation() {
+        use org_mailbox::testkit::fixture::POSITION;
+        // X-02 §3 leaves v1 binding revocation intact. No watcher runs here:
+        // the hello call itself must discover the missing member and close.
+        let (mailbox, directory) = messaging();
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.mailbox = mailbox;
+        ports.directory = directory.clone();
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused-test-socket"),
+            ports,
+            token(),
+        );
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        frame::write_message(
+            &mut peer,
+            &Request::new::<MsgBind>(
+                1,
+                &MsgBindParams {
+                    member: Some("ada".into()),
+                    app_token: None,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let stopping = AtomicBool::new(false);
+        let mut polls = 0;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &stopping,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                if polls == 2 {
+                    directory.remove(ADA_ID, POSITION);
+                    frame::write_message(
+                        &mut peer,
+                        &Request::new::<Hello>(2, &Default::default()).unwrap(),
+                    )
+                    .unwrap();
+                } else if polls > 2 {
+                    // Bound a broken implementation too, then inspect its actual reply.
+                    stopping.store(true, Ordering::SeqCst);
+                    return Ok(false);
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        let mut responses = BufReader::new(peer);
+        let bound = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bound.id, 1);
+        assert!(matches!(bound.outcome, org_proto::Outcome::Result(_)));
+        let hello = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hello.id, 2);
+        assert_eq!(code_of(hello.outcome), ErrorCode::NotBound);
+        assert!(frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .is_none());
+        assert_eq!(polls, 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn hello_cannot_bypass_a_failed_lookup_reset_and_cancellation() {
+        // X-02 §3 preserves legacy binding failure handling before hello.
+        // Drive the real connection directly, without the background watcher.
+        let (mailbox, memory) = messaging();
+        let directory = Arc::new(FlakyDirectory {
+            inner: memory,
+            failing: AtomicBool::new(false),
+        });
+        let feed = Arc::new(FakeFeed::default());
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.mailbox = mailbox.clone();
+        ports.directory = directory.clone();
+        ports.feed = Box::new(feed.clone());
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused-test-socket"),
+            ports,
+            token(),
+        );
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        frame::write_message(
+            &mut peer,
+            &Request::new::<MsgBind>(
+                1,
+                &MsgBindParams {
+                    member: Some("pat".into()),
+                    app_token: Some(token()),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let stopping = AtomicBool::new(false);
+        let mut polls = 0;
+        let mut control = None;
+        let mut before = 0;
+        let mut ready = false;
+        let mut observed = None;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &stopping,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                match polls {
+                    2 => frame::write_message(
+                        &mut peer,
+                        &Request::new::<org_proto::Subscribe>(2, &Default::default()).unwrap(),
+                    )
+                    .unwrap(),
+                    3 => frame::write_message(
+                        &mut peer,
+                        &Request::new::<org_proto::msg::MsgWait>(3, &wait_params()).unwrap(),
+                    )
+                    .unwrap(),
+                    4 => {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                        while std::time::Instant::now() < deadline {
+                            if mailbox.held_waits() == 1 && feed.waiting.load(Ordering::SeqCst) == 1
+                            {
+                                ready = true;
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        let Some(current) = shared
+                            .bound
+                            .lock()
+                            .unwrap()
+                            .get(&1)
+                            .map(|(_, control)| Arc::clone(control))
+                        else {
+                            stopping.store(true, Ordering::SeqCst);
+                            return Ok(false);
+                        };
+                        before = current.generation.load(Ordering::SeqCst);
+                        control = Some(current);
+                        directory.failing.store(true, Ordering::SeqCst);
+                        frame::write_message(
+                            &mut peer,
+                            &Request::new::<Hello>(4, &Default::default()).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    5 => {
+                        let current = control.as_ref().unwrap();
+                        observed = Some((
+                            current.generation.load(Ordering::SeqCst),
+                            shared.bound.lock().unwrap().get(&1).is_none(),
+                            current.held.next.lock().unwrap().1.is_empty(),
+                        ));
+                        // Restore lookup before the next call: otherwise that call
+                        // could mask a hello that failed to clear the old binding.
+                        directory.failing.store(false, Ordering::SeqCst);
+                        frame::write_message(
+                            &mut peer,
+                            &Request::new::<Who>(5, &Default::default()).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    6.. => {
+                        stopping.store(true, Ordering::SeqCst);
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        let mut reader = BufReader::new(peer);
+        let mut responses = Vec::new();
+        while let Some(response) = frame::read_message::<Response>(&mut reader).unwrap() {
+            responses.push(response);
+        }
+        responses.sort_by_key(|response| response.id);
+        assert_eq!(responses.len(), 5);
+        for id in [1, 2, 4] {
+            assert_eq!(responses[id - 1].id, id as u64);
+            assert!(matches!(
+                responses[id - 1].outcome,
+                org_proto::Outcome::Result(_)
+            ));
+        }
+        assert!(
+            ready,
+            "subscription and held wait must be active before hello"
+        );
+        assert_eq!(
+            observed,
+            Some((before + 1, true, true)),
+            "hello must reset the generation, registration and held calls before the next request"
+        );
+        assert_eq!(code_of(responses[2].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(responses[4].id, 5);
+        assert_eq!(code_of(responses[4].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(mailbox.held_waits(), 0);
+    }
+
     fn shared(path: &Path) -> Arc<Shared> {
         Arc::new(Shared::new(
             &test_info(),
@@ -1435,6 +1679,7 @@ mod tests {
                     position: org_proto::org::Position { epoch: 1, seq },
                     command_id,
                     changes: Vec::new(),
+                    actor: None,
                 });
             *self.token.lock().unwrap() += 1;
             self.woken.notify_all();
@@ -1494,7 +1739,7 @@ mod tests {
     /// (a full workspace run) can take seconds to schedule 64 connection threads; a connection
     /// the server refuses is closed at once, so that case does not wait for it.
     fn hello_ok(stream: &mut UnixStream) -> bool {
-        let request = Request::new::<Hello>(1, &org_proto::Empty {}).unwrap();
+        let request = Request::new::<Hello>(1, &org_proto::HelloParams::default()).unwrap();
         if frame::write_message(&mut *stream, &request).is_err() {
             return false;
         }
@@ -1684,7 +1929,7 @@ mod tests {
             "{answer:?}"
         );
         // And the connection still works.
-        let hello = Request::new::<Hello>(2, &org_proto::Empty {}).unwrap();
+        let hello = Request::new::<Hello>(2, &org_proto::HelloParams::default()).unwrap();
         frame::write_message(&mut &client, &hello).unwrap();
         let next = frame::read_message::<Response>(&mut reader)
             .unwrap()
@@ -1882,6 +2127,7 @@ mod tests {
             id,
             method: "team.create".to_owned(),
             params: serde_json::json!({"nope": 1}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::NotAuthorized);
         // A method this office does not know is still just unknown.
@@ -1889,6 +2135,7 @@ mod tests {
             id,
             method: "team.fly".to_owned(),
             params: serde_json::json!({}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(unknown)), ErrorCode::UnknownMethod);
 
@@ -1967,6 +2214,7 @@ mod tests {
             id,
             method: "msg.bind".to_owned(),
             params: serde_json::json!({"app_token": "not hex"}),
+            principal: None,
         };
         assert_eq!(code_of(client.bind(None, None)), ErrorCode::InvalidRequest);
         client.bind(None, Some(token()));
@@ -2056,11 +2304,13 @@ mod tests {
             id,
             method: "team.create".to_owned(),
             params: serde_json::json!({"nope": 1}),
+            principal: None,
         };
         let unknown = |id| Request {
             id,
             method: "team.fly".to_owned(),
             params: serde_json::json!({}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::InvalidRequest);
         assert_eq!(code_of(client.ask(unknown)), ErrorCode::UnknownMethod);
@@ -2110,6 +2360,7 @@ mod tests {
                 id,
                 method: method.to_owned(),
                 params: serde_json::json!({}),
+                principal: None,
             };
             assert_eq!(
                 code_of(client.ask(request)),
@@ -2155,7 +2406,7 @@ mod tests {
         assert_eq!(code_of(client.ask(snapshot)), ErrorCode::NotAuthorized);
         // Hello stays open: a client learns what it is talking to before it binds.
         assert!(matches!(
-            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::HelloParams::default()).unwrap()),
             org_proto::Outcome::Result(_)
         ));
         client.bind(None, Some(token()));
@@ -2224,6 +2475,7 @@ mod tests {
             id,
             method: "subscribe".to_owned(),
             params: serde_json::json!({"from_position": "nope"}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::NotAuthorized);
         feed.push(2);
@@ -2253,7 +2505,7 @@ mod tests {
         assert_eq!(event_of(&client.next_message()), (2, 4, "cmd-4".into()));
         // The connection still answers, between events.
         assert!(matches!(
-            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::HelloParams::default()).unwrap()),
             org_proto::Outcome::Result(_)
         ));
         stop.store(true, Ordering::SeqCst);
@@ -2660,6 +2912,7 @@ mod tests {
             id,
             method: "who".to_owned(),
             params,
+            principal: None,
         })
     }
 
@@ -3106,6 +3359,7 @@ mod tests {
                 "id": msg_id(2), "to": "remy", "kind": "msg", "body": "x",
                 "from": "pat", "from_member_id": PAT_ID
             }),
+            principal: None,
         };
         let sent = ada.ask(|id| Request { id, ..forged });
         let mut remy = Client::bound_as(&path, "remy");
@@ -3168,6 +3422,7 @@ mod tests {
                 "id": msg_id(4), "to": "remy", "kind": "msg", "body": "x",
                 "priority": "SECRET-BODY"
             }),
+            principal: None,
         }) else {
             panic!("a refusal")
         };
@@ -3410,6 +3665,7 @@ mod tests {
             id,
             method: "status.set".to_owned(),
             params: serde_json::json!({"text": "Hijack", "member": PAT_ID, "member_id": PAT_ID}),
+            principal: None,
         });
         let _ = forged;
         let seen: Vec<String> = log.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
@@ -3443,6 +3699,7 @@ mod tests {
                 id,
                 method: "status.set".to_owned(),
                 params: serde_json::json!({"text": ["not a string"]}),
+                principal: None,
             }))
         };
         let mut client = Client::connect(&path);
@@ -3470,6 +3727,7 @@ mod tests {
             id,
             method: "status.set".to_owned(),
             params: serde_json::json!({"text": ["SECRET-STATUS"]}),
+            principal: None,
         }) else {
             panic!("a refusal")
         };
@@ -3979,7 +4237,7 @@ mod tests {
             ErrorCode::NotBound
         );
         assert!(matches!(
-            lookup_failure.call::<Hello>(&org_proto::Empty {}),
+            lookup_failure.call::<Hello>(&org_proto::HelloParams::default()),
             org_proto::Outcome::Result(_)
         ));
 

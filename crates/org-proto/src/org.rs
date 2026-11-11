@@ -417,6 +417,59 @@ pub struct AgentProfile {
     pub offboarded_at: Option<String>,
 }
 
+/// An agent's profile as a client sends it in `member.add_agent` (X-02 §4.2, §4.3): an
+/// [`AgentProfile`] without `home`, which the office manages.
+///
+/// **It serializes byte-identically to [`AgentProfile`]** for every input it accepts: the same
+/// fields in the same order, with the same `skip_serializing_if` rules, and `home` is never
+/// written. HQ's command fingerprint hashes the serialized params, so a command stored before the
+/// switch keeps its fingerprint. A present `home`, any value, `null` included, is refused while
+/// it decodes ([`crate::retired::home`]), so a server answers `invalid_request`.
+///
+/// The field docs and limits are [`AgentProfile`]'s.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfileInput {
+    pub role: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    #[serde(default)]
+    pub runtime: AgentRuntime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_mode: Option<RunMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<Schedule>,
+    /// Retired: the office manages the home. Always `None`.
+    #[serde(default, skip_serializing, deserialize_with = "crate::retired::home")]
+    pub home: Option<crate::retired::Retired>,
+    pub messaging_name: String,
+    #[serde(default)]
+    pub status: AgentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offboarded_at: Option<String>,
+}
+
+impl From<AgentProfileInput> for AgentProfile {
+    /// The profile HQ stores for this input: `home` is absent.
+    fn from(input: AgentProfileInput) -> Self {
+        AgentProfile {
+            role: input.role,
+            title: input.title,
+            focus: input.focus,
+            runtime: input.runtime,
+            model: input.model,
+            run_mode: input.run_mode,
+            schedule: input.schedule,
+            home: None,
+            messaging_name: input.messaging_name,
+            status: input.status,
+            offboarded_at: input.offboarded_at,
+        }
+    }
+}
+
 /// A member of the organization: an agent or a person. The owner is a person with
 /// `owner: true`: in no team, full rights everywhere, always reachable by agents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1237,6 +1290,9 @@ pub struct OrgChangedData {
     /// commit.
     pub command_id: String,
     pub changes: Vec<OrgChange>,
+    /// Who sent the command (X-02 §4.2). Absent from servers that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<crate::principal::Actor>,
 }
 
 /// `org.changed`: sent to subscribers for every committed organization command.

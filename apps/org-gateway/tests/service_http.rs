@@ -15,7 +15,8 @@ use org_gateway::service::{
     run_gateway, ApiBackend, ApiLimits, ApiReply, GatewayConfig, PreparedCall,
 };
 use org_gateway::transport::{HttpLimits, ListenMode};
-use org_gateway::{ConfiguredOrigin, Hsts};
+use org_gateway::Hsts;
+use org_host_control::listen::ListenOrigin;
 use org_proto::gateway::{GatewayErrorCode, OperationId};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
@@ -114,9 +115,9 @@ impl Running {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let origin = if tls {
-            ConfiguredOrigin::parse(&format!("https://gateway.test:{}", address.port())).unwrap()
+            ListenOrigin::parse(&format!("https://gateway.test:{}", address.port())).unwrap()
         } else {
-            ConfiguredOrigin::parse(&format!("http://{address}")).unwrap()
+            ListenOrigin::parse(&format!("http://{address}")).unwrap()
         };
         let mode = if tls {
             use org_gateway::tls::TlsCertificates;
@@ -415,7 +416,7 @@ fn invalid_api_limits_fail_before_application_initialization() {
     use org_gateway::service::UnavailableApi;
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin =
-        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        ListenOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     let error = run_gateway::<UnavailableApi, std::future::Ready<()>>(

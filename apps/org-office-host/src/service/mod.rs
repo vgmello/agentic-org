@@ -268,7 +268,8 @@ mod tests {
     use std::path::Path;
 
     use org_proto::{
-        Empty, OfficeAppTokenParams, OfficeList, OfficeRestartParams, OrganizationCreateParams,
+        Empty, HelloParams, OfficeAppTokenParams, OfficeList, OfficeRestartParams,
+        OrganizationCreateParams,
     };
 
     use crate::catalog::Catalog;
@@ -322,7 +323,7 @@ mod tests {
             assert!(service.inline(request), "{}", request.method);
         }
         let threaded = [
-            Request::new::<Hello>(1, &Empty {}).unwrap(),
+            Request::new::<Hello>(1, &HelloParams::default()).unwrap(),
             Request::new::<OfficeList>(1, &Empty {}).unwrap(),
             Request::new::<OrganizationCreate>(
                 1,

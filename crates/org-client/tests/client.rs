@@ -13,10 +13,11 @@ use org_client::{Client, ClientError};
 use org_proto::frame;
 use org_proto::msg::{MsgBind, MsgBindResult};
 use org_proto::{
-    ApiError, AppToken, Call, Empty, ErrorCode, Event, Hello, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus, Organization,
-    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
-    Position, Request, Response, API_VERSION, APP_TOKEN_BYTES, MAX_FRAME_BYTES,
+    ApiError, AppToken, Call, Empty, ErrorCode, Event, Hello, HelloParams, HelloResult,
+    ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus,
+    Organization, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
+    OrganizationList, Outcome, Position, Request, Response, API_VERSION, APP_TOKEN_BYTES,
+    MAX_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -146,6 +147,8 @@ fn hello_returns_the_servers_answer_and_ids_start_at_one() {
     let server = fake(|mut peer| {
         let request = peer.next_request().unwrap();
         assert_eq!((request.id, request.method.as_str()), (1, "hello"));
+        // A v1 client offers nothing: its hello's params are exactly `{}`.
+        assert_eq!(request.params, serde_json::json!({}));
         peer.reply::<Hello>(request.id, &hello_result(API_VERSION));
         let second = peer.next_request().unwrap();
         assert_eq!(second.id, 2);
@@ -267,7 +270,8 @@ fn a_call_that_gets_no_answer_times_out_and_a_late_answer_is_ignored() {
     let client = server.client();
 
     let started = Instant::now();
-    let result = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(200));
+    let result =
+        client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(200));
     assert!(matches!(result, Err(ClientError::Timeout)));
     assert!(started.elapsed() < Duration::from_secs(5));
 
@@ -288,7 +292,7 @@ fn the_server_hanging_up_fails_the_waiting_call_at_once() {
     let client = server.client();
 
     let started = Instant::now();
-    let result = client.call::<Hello>(&Empty {});
+    let result = client.call::<Hello>(&HelloParams::default());
 
     assert!(
         matches!(result, Err(ClientError::Disconnected)),
@@ -300,7 +304,7 @@ fn the_server_hanging_up_fails_the_waiting_call_at_once() {
     );
     // And a call on the dead connection fails at once too, not after the timeout.
     let started = Instant::now();
-    assert!(client.call::<Hello>(&Empty {}).is_err());
+    assert!(client.call::<Hello>(&HelloParams::default()).is_err());
     assert!(started.elapsed() < Duration::from_secs(5));
     drop(client);
     server.finish();
@@ -318,7 +322,7 @@ fn a_call_on_a_half_closed_connection_fails_at_once_instead_of_timing_out() {
     std::thread::sleep(Duration::from_millis(300)); // let the client's reader see the end
 
     let started = Instant::now();
-    let result = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(5));
+    let result = client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(5));
 
     assert!(
         matches!(result, Err(ClientError::Disconnected)),
@@ -416,7 +420,7 @@ fn a_garbled_answer_fails_only_its_own_call() {
     });
     let client = server.client();
 
-    let garbled = client.call::<Hello>(&Empty {});
+    let garbled = client.call::<Hello>(&HelloParams::default());
     assert!(
         matches!(garbled, Err(ClientError::Protocol(_))),
         "{garbled:?}"
@@ -443,7 +447,7 @@ fn a_result_of_the_wrong_shape_is_a_protocol_error() {
     });
     let client = server.client();
 
-    let result = client.call::<Hello>(&Empty {});
+    let result = client.call::<Hello>(&HelloParams::default());
 
     assert!(
         matches!(result, Err(ClientError::Protocol(_))),
@@ -640,7 +644,7 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
             let client = std::sync::Arc::clone(&client);
             timed(Box::new(move || {
                 client
-                    .call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(600))
+                    .call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(600))
                     .map(|_| ())
             }))
         };
@@ -668,7 +672,8 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
         );
         // The half-written request left the stream out of step: the connection was given up.
         let started = Instant::now();
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(3));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(3));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
         assert!(started.elapsed() < Duration::from_secs(1));
         release.send(()).unwrap();
@@ -780,7 +785,8 @@ fn a_flood_of_events_nobody_reads_closes_the_connection_instead_of_filling_memor
             received > 0 && received <= 256,
             "buffered {received} events"
         );
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(2));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(2));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
         finish.send(()).unwrap();
         drop(client);
@@ -843,7 +849,7 @@ fn when_the_reader_gives_up_the_socket_is_closed_so_the_server_is_told() {
     });
     let client = server.client();
 
-    let result = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(5));
+    let result = client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(5));
 
     assert!(
         matches!(result, Err(ClientError::Disconnected)),
@@ -925,7 +931,8 @@ fn a_server_that_reads_a_few_bytes_at_a_time_cannot_stretch_the_timeout() {
         // The half-sent request put half a frame on the wire: the connection must have been
         // given up, not left limping. (Not just "the caller stopped waiting".)
         let started = Instant::now();
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(2));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(2));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
         assert!(
             started.elapsed() < Duration::from_millis(500),
@@ -1100,10 +1107,10 @@ fn zero_and_enormous_timeouts_behave_and_a_call_that_ran_out_of_time_is_never_se
     });
     let client = server.client();
 
-    let zero = client.call_with_timeout::<Hello>(&Empty {}, Duration::ZERO);
+    let zero = client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::ZERO);
     assert!(matches!(zero, Err(ClientError::Timeout)), "{zero:?}");
     // A timeout too big to add to a clock reading must not panic or fail early.
-    let answered = client.call_with_timeout::<Hello>(&Empty {}, Duration::MAX);
+    let answered = client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::MAX);
     assert!(answered.is_ok(), "{answered:?}");
     drop(client);
     server.finish();
@@ -1151,7 +1158,7 @@ fn tiny_timeouts_against_a_healthy_server_never_close_the_connection() {
                     for i in 0..300u64 {
                         let timeout = Duration::from_micros(20 + (i * 7 + n * 13) % 400);
                         if let Err(ClientError::Disconnected) =
-                            client.call_with_timeout::<Hello>(&Empty {}, timeout)
+                            client.call_with_timeout::<Hello>(&HelloParams::default(), timeout)
                         {
                             disconnected += 1;
                         }
@@ -1293,7 +1300,8 @@ fn a_subscribe_that_gets_no_answer_closes_the_connection_but_one_that_was_never_
             matches!(timed_out, Err(ClientError::Timeout)),
             "{timed_out:?}"
         );
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(2));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(2));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
         release.send(()).unwrap();
         drop(client);
@@ -1330,7 +1338,8 @@ fn a_subscribe_that_gets_no_answer_closes_the_connection_but_one_that_was_never_
         let waiting = client.subscribe_from_with_timeout(None, Duration::from_millis(300));
         assert!(matches!(waiting, Err(ClientError::Timeout)), "{waiting:?}");
         // The stuck write is still going, and the subscribe did not kill the connection.
-        let still_open = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(200));
+        let still_open =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(200));
         assert!(
             matches!(still_open, Err(ClientError::Timeout)),
             "{still_open:?}"
@@ -1378,7 +1387,10 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
                 std::thread::Builder::new()
                     .stack_size(256 * 1024)
                     .spawn(move || {
-                        client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(600))
+                        client.call_with_timeout::<Hello>(
+                            &HelloParams::default(),
+                            Duration::from_millis(600),
+                        )
                     })
                     .unwrap()
             })
@@ -1456,7 +1468,7 @@ fn a_server_that_answers_before_it_has_read_the_whole_request_cannot_wedge_the_c
     assert!(answered.is_ok(), "{answered:?}");
 
     let started = Instant::now();
-    let later = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(20));
+    let later = client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(20));
     assert!(
         matches!(later, Err(ClientError::Disconnected)),
         "{later:?} after {:?}",

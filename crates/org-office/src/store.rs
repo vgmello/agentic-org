@@ -24,6 +24,14 @@ pub(crate) mod org;
 pub(crate) mod origin;
 pub(crate) mod status;
 mod sync;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "A1 item/event kernel is wired by the later native WorkTxn slice"
+    )
+)]
+pub(crate) mod work;
 
 use std::any::Any;
 use std::error::Error;

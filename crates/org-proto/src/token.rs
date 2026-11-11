@@ -1,5 +1,6 @@
 //! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1),
-//! and [`DbKey`], an office's database key.
+//! [`DbKey`], an office's database key, and the grant secrets of X-02 §4.1 ([`GrantMac`] and
+//! [`GrantKey`]), which share the same guards.
 //!
 //! The host makes a fresh token for each office every time it starts and keeps it only in
 //! memory. It passes it to the office's server over the startup pipe and gives it to the app over
@@ -250,8 +251,129 @@ impl Secret for DbKey {
     }
 }
 
-/// What [`AppToken`] and [`DbKey`] share, so they decode through one visitor. Each type zeroes
-/// itself on drop.
+/// A grant's MAC length in bytes: an HMAC-SHA256 tag (64 hex digits on the wire).
+pub const GRANT_MAC_BYTES: usize = SECRET_BYTES;
+
+/// A per-worker grant key's length in bytes (64 hex digits on the wire).
+pub const GRANT_KEY_BYTES: usize = SECRET_BYTES;
+
+/// A grant's MAC: `HMAC-SHA256(grant_key, grant_mac_input(claims))` (X-02 §4.1; see
+/// [`crate::grant_mac_input`]). The host computes it and the worker checks it; this crate does
+/// no cryptography.
+///
+/// On the wire it is exactly 64 lowercase hex digits; anything else is refused, and decode
+/// errors never echo the input. It has the guards of [`DbKey`]: `Debug` prints
+/// `GrantMac(<redacted>)`, there is no `Display`, equality is constant-time (compare a computed
+/// tag with `==`), the bytes are zeroed on drop, and it isn't `Clone`:
+///
+/// ```compile_fail,E0599
+/// let mac = org_proto::GrantMac::from_bytes([0; org_proto::GRANT_MAC_BYTES]);
+/// let _copy = mac.clone();
+/// ```
+pub struct GrantMac(Box<[u8; GRANT_MAC_BYTES]>);
+
+impl GrantMac {
+    /// Wrap a computed tag. The caller zeroes its own array afterwards.
+    pub fn from_bytes(bytes: [u8; GRANT_MAC_BYTES]) -> Self {
+        GrantMac(Box::new(bytes))
+    }
+}
+
+/// The key a worker checks grants with (X-02 §4.1). The host makes a new one from a secure
+/// random source at every worker start and sends it over the rendezvous connection, never on the
+/// launch pipe; a new key invalidates every older grant.
+///
+/// It has the guards of [`DbKey`]: 64 lowercase hex digits on the wire, decode errors that never
+/// echo the input, `Debug` printing `GrantKey(<redacted>)`, no `Display`, constant-time equality,
+/// zeroed on drop, and no `Clone`:
+///
+/// ```compile_fail,E0599
+/// let key = org_proto::GrantKey::from_bytes([0; org_proto::GRANT_KEY_BYTES]);
+/// let _copy = key.clone();
+/// ```
+pub struct GrantKey(Box<[u8; GRANT_KEY_BYTES]>);
+
+impl GrantKey {
+    /// Wrap 32 random bytes. The caller makes them with a secure random source and zeroes its
+    /// own array afterwards. This crate does no I/O.
+    pub fn from_bytes(bytes: [u8; GRANT_KEY_BYTES]) -> Self {
+        GrantKey(Box::new(bytes))
+    }
+
+    /// The raw key, only to key the HMAC. Borrow it for that one call; any copy is the caller's
+    /// to zero. Never log or format it.
+    pub fn expose_bytes(&self) -> &[u8; GRANT_KEY_BYTES] {
+        &self.0
+    }
+}
+
+/// The guards [`GrantMac`] and [`GrantKey`] share with [`DbKey`]: constant-time equality,
+/// zeroing on drop, a redacted `Debug`, hex encoding and the one decoding visitor.
+macro_rules! hex_secret {
+    ($ty:ident, $expecting:literal, $bad:literal) => {
+        impl PartialEq for $ty {
+            /// Constant-time: how long a comparison takes doesn't depend on where they differ.
+            fn eq(&self, other: &Self) -> bool {
+                constant_time_eq(&self.0, &other.0)
+            }
+        }
+
+        impl Eq for $ty {}
+
+        impl Drop for $ty {
+            fn drop(&mut self) {
+                #[cfg(test)]
+                tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
+                zero(&mut *self.0);
+            }
+        }
+
+        impl fmt::Debug for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(concat!(stringify!($ty), "(<redacted>)"))
+            }
+        }
+
+        impl Serialize for $ty {
+            fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                serialize_hex(&self.0, s)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $ty {
+            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                // `deserialize_any`, for the reason given on `AppToken`'s decoder.
+                d.deserialize_any(SecretVisitor::<$ty>(PhantomData))
+            }
+        }
+
+        impl Secret for $ty {
+            const EXPECTING: &'static str = $expecting;
+            const BAD: &'static str = $bad;
+
+            fn zeroed() -> Self {
+                $ty(Box::new([0u8; SECRET_BYTES]))
+            }
+            fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
+                &mut self.0
+            }
+        }
+    };
+}
+
+hex_secret!(
+    GrantMac,
+    "a grant mac",
+    "a grant mac must be 64 lowercase hex digits"
+);
+hex_secret!(
+    GrantKey,
+    "a grant key",
+    "a grant key must be 64 lowercase hex digits"
+);
+
+/// What every fixed-size secret here ([`AppToken`], [`DbKey`], [`GrantMac`], [`GrantKey`]) shares,
+/// so they decode through one visitor. Each type zeroes itself on drop.
 trait Secret: Sized {
     /// What the visitor expects, for serde's messages.
     const EXPECTING: &'static str;
@@ -348,12 +470,13 @@ fn nibble(c: u8) -> Option<u8> {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`DbKey`].
+/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`DbKey`],
+/// and re-exported as [`crate::zero_bytes`] for other crates' secret buffers.
 // The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
 // volatile write. `write_volatile` through an exclusive reference is sound.
 #[allow(unsafe_code)]
-pub(crate) fn zero(bytes: &mut [u8]) {
+pub fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
         unsafe { std::ptr::write_volatile(b, 0) };
@@ -384,6 +507,23 @@ mod tests {
         let moved = key;
         assert_eq!(wipes(), before + 2);
         drop(moved);
+        assert_eq!(wipes(), before + 3);
+    }
+
+    /// The grant secrets wipe like the others, once each, and moving them copies nothing.
+    #[test]
+    fn dropping_a_grant_mac_or_key_wipes_it() {
+        let wipes = || WIPES.with(std::cell::Cell::get);
+        let before = wipes();
+        drop(GrantMac::from_bytes([0xa5; GRANT_MAC_BYTES]));
+        assert_eq!(wipes(), before + 1);
+        let key = GrantKey::from_bytes([0x5a; GRANT_KEY_BYTES]);
+        let moved = key;
+        assert_eq!(wipes(), before + 1);
+        drop(moved);
+        assert_eq!(wipes(), before + 2);
+        // A decode that fails part-way wipes the bytes it built.
+        assert!(serde_json::from_str::<GrantKey>(&format!("\"{}zz\"", "00".repeat(31))).is_err());
         assert_eq!(wipes(), before + 3);
     }
 
