@@ -34,7 +34,7 @@
 		draft?: DraftText;
 		onanswer: (answer: { option_id?: string; text?: string }) => Promise<void> | void;
 		onaccept: () => Promise<void> | void;
-		onreplyinthread?: () => void;
+		onreplyinthread?: (opener: HTMLElement) => void;
 	} = $props();
 
 	let expanded = $state(false);
@@ -143,7 +143,7 @@
 	{:else}
 		<div class="mt-3 flex flex-wrap items-center gap-2">
 			{#if canAccept}<Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => go(onaccept)}>Accept</Button>{/if}
-			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" onclick={onreplyinthread}>Reply…</Button>{/if}
+			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" onclick={(event) => onreplyinthread?.(event.currentTarget)}>Reply…</Button>{/if}
 			{#if message.linked_ref}<div><Rich body={`Linked to ${message.linked_ref}`} /></div>{/if}
 		</div>
 	{/if}
