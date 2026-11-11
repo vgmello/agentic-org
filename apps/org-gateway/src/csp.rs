@@ -129,6 +129,13 @@ mod tests {
         ] {
             assert_eq!(html_policy(html), Err(BuildError::JavascriptUrl));
         }
-        assert_eq!(html_policy("<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'\"><script>bootstrap()</script>"), Err(BuildError::CspMetaTag));
+        for spelling in [
+            "Content-Security-Policy",
+            "content-security-policy",
+            "CONTENT-security-POLICY",
+        ] {
+            let html = format!("<meta http-equiv='{spelling}' content=\"default-src 'none'\"><script>bootstrap()</script>");
+            assert_eq!(html_policy(&html), Err(BuildError::CspMetaTag));
+        }
     }
 }

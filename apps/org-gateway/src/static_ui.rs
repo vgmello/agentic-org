@@ -519,6 +519,27 @@ mod tests {
     }
 
     #[test]
+    fn raw_path_refusals_have_the_complete_json_error_header_set() {
+        let ui = ui("http://127.0.0.1:4321", Hsts::Off);
+        for path in ["/bad%zz", "/bad//path", "/bad/%2e"] {
+            let response = ui.serve(&request(
+                Method::GET,
+                path,
+                &[("sec-fetch-mode", "navigate")],
+            ));
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            class_headers(
+                response.headers(),
+                ASSET_CSP,
+                "no-store",
+                "application/json; charset=utf-8",
+            );
+            assert_eq!(response.headers().len(), 10);
+            assert_eq!(bytes(response).as_ref(), INVALID_PATH);
+        }
+    }
+
+    #[test]
     fn hsts_requires_https_an_eligible_name_and_an_exact_single_host() {
         for authority in [
             "localhost",
