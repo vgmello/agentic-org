@@ -45,24 +45,36 @@ it('stops on a failed Cargo build even if stdout contains an executable artifact
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 	it(`forwards ${signal} to its exact server child and waits for that child to stop`, async () => {
+		const stopBy = performance.now() + 9_000; // Leave cleanup time inside the existing 10 s test limit.
 		const root = await directory();
 		const pidFile = join(root, 'child.pid');
+		const readyFile = join(root, 'child.ready');
 		const doneFile = join(root, 'child.done');
 		const binary = join(root, 'server');
-		await executable(binary, `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>{fs.writeFileSync(${JSON.stringify(doneFile)},s);process.exit(0)});setInterval(()=>{},1000);`);
-		const parent = spawn('bun', [runner, 'serve'], { env: { ...process.env, CSP_GW_PORT: '4273', CSP_GW_EXECUTABLE: binary }, stdio: 'ignore' });
+		await executable(binary, `const fs=require('node:fs');
+for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>{fs.writeFileSync(${JSON.stringify(doneFile)},s);process.exit(0)});
+const publishPid=()=>{fs.writeFileSync(${JSON.stringify(readyFile)},JSON.stringify({pid:process.pid,ppid:process.ppid,SIGTERM:process.listenerCount('SIGTERM'),SIGINT:process.listenerCount('SIGINT')}));fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid))};
+publishPid();setInterval(()=>{},1000);`);
+		const parent = spawn('bun', [runner, 'serve'], { detached: true, env: { ...process.env, CSP_GW_PORT: '4273', CSP_GW_EXECUTABLE: binary }, stdio: 'ignore' });
 		const finished = new Promise<number | null>((resolve, reject) => { parent.once('error', reject); parent.once('close', resolve); });
 		let child: number | undefined;
+		let stopTimer: ReturnType<typeof setTimeout> | undefined;
 		try {
 			await expect.poll(() => readFile(pidFile, 'utf8').catch(() => ''), { timeout: 5_000 }).toMatch(/^\d+$/);
 			child = Number(await readFile(pidFile, 'utf8'));
-			parent.kill(signal);
-			expect(await finished).toBe(0);
+			parent.kill(signal); // Signal immediately after publication; readiness must already hold.
+			expect(JSON.parse(await readFile(readyFile, 'utf8'))).toEqual({ pid: child, ppid: parent.pid, SIGTERM: 1, SIGINT: 1 });
+			const stopped = await Promise.race([finished, new Promise<never>((_, reject) => {
+				stopTimer = setTimeout(() => reject(new Error(`Fixture parent did not stop after ${signal}`)), Math.max(1, stopBy - performance.now()));
+			})]);
+			expect(stopped).toBe(0);
 			expect(await readFile(doneFile, 'utf8')).toBe(signal);
 		} finally {
+			clearTimeout(stopTimer);
 			// The fixture never exits on its own; a failed forwarding mutant must not leave it alive.
 			if (child && !await readFile(doneFile, 'utf8').catch(() => '')) try { process.kill(child, 'SIGKILL'); } catch { /* already stopped */ }
 			if (parent.exitCode === null && parent.signalCode === null) parent.kill('SIGKILL');
+			await finished.catch(() => undefined);
 		}
 	}, 10_000);
 }

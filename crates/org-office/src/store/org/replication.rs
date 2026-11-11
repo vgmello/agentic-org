@@ -1410,7 +1410,11 @@ mod tests {
         let original = office.org_snapshot().unwrap();
         office.org_store().run_sql_for_test(
             "DROP TABLE org_snapshot_install; DROP TABLE org_snapshot_stage; DROP TABLE org_replica_events;
-             DROP TABLE org_replica_base; DROP TABLE org_replica; PRAGMA user_version = 1;",
+             DROP TABLE org_replica_base; DROP TABLE org_replica;
+             ALTER TABLE commands DROP COLUMN principal_account;
+             ALTER TABLE commands DROP COLUMN principal_member;
+             ALTER TABLE commands DROP COLUMN actor_kind;
+             PRAGMA user_version = 1;",
         );
         drop(office);
 
@@ -2407,7 +2411,7 @@ mod tests {
         };
         hq.org_store().run_sql_for_test(
             "UPDATE org_replica SET native_seq = 5;
-                INSERT INTO commands VALUES
+                INSERT INTO commands (command_id, epoch, seq, expires_at, result) VALUES
                 ('01ARZ3NDEKTSV4RRFFQ69G5FAX', 1, 4, '2016-08-29T00:00:00.000Z', NULL),
                 ('01ARZ3NDEKTSV4RRFFQ69G5FAY', 1, 5, '2016-08-29T00:00:00.000Z', NULL);",
         );
@@ -2443,7 +2447,7 @@ mod tests {
             INSERT INTO commands SELECT * FROM saved_outcome; DROP TABLE saved_outcome;",
         );
         hq.org_store().run_sql_for_test(
-            "INSERT INTO commands VALUES
+            "INSERT INTO commands (command_id, epoch, seq, expires_at, result) VALUES
             ('01ARZ3NDEKTSV4RRFFQ69G5FAX', 1, 1, '2016-08-29T00:00:00.000Z', NULL)",
         );
         assert!(matches!(

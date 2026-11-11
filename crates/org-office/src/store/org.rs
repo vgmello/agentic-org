@@ -38,6 +38,8 @@ pub(crate) use replication::{
     bind_replication, replication_checkpoint, replication_events_after, transact_replication,
     ReplicationBootstrap,
 };
+#[cfg(test)]
+mod principal_schema_tests;
 mod snapshot;
 pub(crate) use snapshot::{
     export_replication_snapshot, stage_replication_snapshot, sweep_snapshot_scratch,
@@ -48,12 +50,12 @@ pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest, Sna
 const EPOCH: u64 = 1;
 
 pub(crate) const SCHEMA: Schema = Schema {
-    version: 2,
+    version: 3,
     upgrade: |tx, from| {
         if from < 2 {
             replication::create_tables(tx)?;
         }
-        Ok(())
+        add_principal_columns(tx)
     },
     create: |tx| {
         tx.execute_batch(
@@ -98,9 +100,20 @@ pub(crate) const SCHEMA: Schema = Schema {
                  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL
              ) STRICT;",
         )?;
-        replication::create_tables(tx)
+        replication::create_tables(tx)?;
+        add_principal_columns(tx)
     },
 };
+
+// Existing write/import paths omit these columns and retain NULL. Bound-principal
+// writes require the separately negotiated replication codec/profile activation.
+fn add_principal_columns(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE commands ADD COLUMN principal_account TEXT;
+         ALTER TABLE commands ADD COLUMN principal_member TEXT;
+         ALTER TABLE commands ADD COLUMN actor_kind TEXT;",
+    )
+}
 
 /// The rules' read view over the current transaction. `OrgView` has no error channel, so a
 /// failing query panics and is reported as a storage failure at the transaction boundary.
