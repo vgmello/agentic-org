@@ -806,14 +806,7 @@ impl Drop for ProcDirectory {
 }
 
 fn check_time(deadline: Instant) -> io::Result<()> {
-    if Instant::now() >= deadline {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "native recovery deadline elapsed",
-        ))
-    } else {
-        Ok(())
-    }
+    super::failure::check_deadline(Instant::now(), deadline, "native recovery deadline elapsed")
 }
 
 fn open_at(directory: &File, name: &CStr, flags: libc::c_int, resolve: u64) -> io::Result<File> {
@@ -1618,5 +1611,27 @@ mod tests {
             }
         );
         assert!(parse_stat(&bytes, 43).is_err());
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use crate::recovery::{RecoveryReport, ScanFailure, ScanFailureKind};
+
+    #[test]
+    fn native_deadline_failure_classification_preserves_io() {
+        check_time(Instant::now() + std::time::Duration::from_secs(3600)).unwrap();
+        let error = check_time(Instant::now() - std::time::Duration::from_nanos(1)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "native recovery deadline elapsed");
+        assert_eq!(
+            ScanFailure {
+                error,
+                report: RecoveryReport::default()
+            }
+            .kind(),
+            ScanFailureKind::DeadlineElapsed
+        );
     }
 }
