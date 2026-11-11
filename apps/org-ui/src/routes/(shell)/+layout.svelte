@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
+	import ShellTopbar from '$lib/platform/shell/ShellTopbar.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -110,11 +111,9 @@
 		<Sidebar connection={data.connection} />
 	</div>
 	<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72">
-		<!-- Persistent page heading. -->
-		<div data-shell-header class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-3 border-b border-white/5 bg-gray-800 px-4 min-[640px]:h-16 min-[640px]:px-8">
+		<ShellTopbar heading={navFor(page.url.pathname)?.name}>
 			<MobileNavigation connection={data.connection} onWiden={focusDesktopNavigation} />
-			<h1 id="shell-page-title" tabindex="-1" class="min-w-0 text-base/7 font-semibold text-white focus:outline-none">{navFor(page.url.pathname)?.name}</h1>
-		</div>
+		</ShellTopbar>
 		{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
 		{@render children()}
 	</main>
