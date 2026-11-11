@@ -159,7 +159,7 @@ fn issue_name(issue: Option<OrgReplyIssue>) -> Option<&'static str> {
 fn shared_native_replies_preserve_commit_uncertainty_and_authority_boundaries() {
     let vectors = fixture(
         include_str!("../../../test-vectors/v2/gateway/org-mutation-replies.json"),
-        27,
+        38,
     );
     for case in vectors["cases"].as_array().unwrap() {
         assert_eq!(case["native_reader"], "Rust");

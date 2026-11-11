@@ -486,8 +486,7 @@
 		await send({ method: 'chat.accept_handoff', message_id: m.id });
 		await load();
 	}
-	function openThread(m: ChatMessage) {
-		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+	function openThread(m: ChatMessage, opener: HTMLElement) {
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
 		}
@@ -643,7 +642,7 @@
 						{#each bar.needsYou as m (m.id)}
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							<div class="space-y-1">
-								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
+								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={(opener) => openThread(m, opener)} />
 								<button type="button" class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => openMessage(m)}>Open in conversation</button>
 							</div>
 						{:else}
@@ -663,7 +662,7 @@
 					<ul class="mx-auto max-w-3xl space-y-2" data-testid="threads-list">
 						{#each bar.threads as t (t.root.id)}
 							<li>
-								<button type="button" class="w-full rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left hover:bg-white/5" onclick={() => openThread(t.root)}>
+								<button type="button" class="w-full rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left hover:bg-white/5" onclick={(event) => openThread(t.root, event.currentTarget)}>
 									<span class="block text-xs/5 text-gray-400">{titleOf(t.conversation, ctx, ctx.owner)} · {nameOf(ctx, t.root.from)}</span>
 									<span class="mt-0.5 block truncate text-sm/6 text-white">{t.root.body.split('\n')[0]}</span>
 									<span class="mt-1 block text-xs/5 text-indigo-300">{t.replies} {t.replies === 1 ? 'reply' : 'replies'}{#if t.new_replies}{' · ' + t.new_replies + ' new'}{/if}</span>
@@ -675,16 +674,16 @@
 					</ul>
 				{:else if conversation && convView}
 					{#key conversation.id}
-						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
+						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions">
 							{#if !conversation.members.includes(ctx.owner)}
 								<p class="mb-2 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="reading-as-owner">You're reading as the owner. You can reply here.</p>
 							{/if}
 							{#each convView.shown as m, i (m.id)}
 								{#if dayChange(convView.shown, i)}
-									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400" aria-live="off"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
 								{/if}
 								{#if m.id === newAt}
-									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" aria-live="off" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
 								{/if}
 								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
 							{:else}
@@ -713,9 +712,9 @@
 									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
 								</div>
 							{/if}
-							{@render undeliveredRows(pendingHere)}
 						</div>
 					{/key}
+					{@render undeliveredRows(pendingHere)}
 				{/if}
 			</div>
 
