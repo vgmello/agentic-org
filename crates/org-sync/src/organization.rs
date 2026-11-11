@@ -2,11 +2,19 @@
 use crate::{
     error::{Refusal, StoreError, SyncError},
     ordering::{self, ApplyOrder, Checkpoint, EventHead},
+    versions,
 };
 use org_sync_proto::{event_digest_v1, Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use std::sync::Arc;
 
-pub const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
+/// X-05 caps the encoded frame at 1 MiB. A 512 KiB raw body expands to about
+/// 683 KiB in base64, leaving bounded headroom for codec and frame metadata.
+pub const MAX_PAYLOAD_BYTES: usize = org_sync_proto::MAX_ENCODED_FRAME_BYTES / 2;
+// Base64 expansion must leave at least a quarter of the frame for its bounded envelope.
+const _: () = assert!(
+    MAX_PAYLOAD_BYTES.div_ceil(3) * 4 + org_sync_proto::MAX_ENCODED_FRAME_BYTES / 4
+        <= org_sync_proto::MAX_ENCODED_FRAME_BYTES
+);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrgEvent {
@@ -110,13 +118,18 @@ pub struct AuthorityRecord {
     pub signature: Arc<[u8]>,
 }
 /// Pure deterministic signature verification over immutable injected CA material.
+/// Verify exactly org_sync_proto::authority_record_preimage_v1(org_id, hq_office,
+/// ca, epoch, restored_position, restored_digest). Every field, including the restore
+/// position and digest, is authenticated; signature bytes themselves are excluded.
 /// Certificate/revocation I/O and wall-clock reads happen before the replayable attempt.
 pub trait AuthorityVerifier: Send + Sync {
     fn verify(&self, record: &AuthorityRecord) -> Result<(), Refusal>;
 }
 
 /// Issued by the trusted staging/codec adapter after manifest, data, schema, encryption and
-/// user-visible restore-warning checks. Not a peer-provided filesystem path or raw frame.
+/// user-visible restore-warning checks. For initial materialization its base comes from
+/// the verified authority/enrollment record, never the replica's placeholder cursor.
+/// Not a peer-provided filesystem path or raw frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedSnapshot {
     pub org_id: OrgId,
@@ -222,7 +235,7 @@ pub fn apply(
         }
         event.validate()?;
         if !tx.supports_protocol(current.protocol_level)?
-            || event.codec.version() > current.protocol_level
+            || !versions::codec_supported(current.protocol_level, &event.codec)
             || !tx.supports_codec(&event.codec)?
         {
             return Err(Refusal::UnsupportedVersion.into());
@@ -302,7 +315,7 @@ pub fn append_hq(
         return Err(Refusal::RecoveryRequired.into());
     }
     if !tx.supports_protocol(current.protocol_level)?
-        || codec.version() > current.protocol_level
+        || !versions::codec_supported(current.protocol_level, &codec)
         || !tx.supports_codec(&codec)?
     {
         return Err(Refusal::UnsupportedVersion.into());
@@ -394,6 +407,7 @@ pub fn install_snapshot(
     store.transact(Arc::new(move |tx| {
         let mut current = tx.checkpoint()?;
         current.validate()?;
+        let initial_snapshot = tx.requires_initial_snapshot()?;
         if snapshot.org_id != current.org_id
             || snapshot.authority != current.highest_epoch
             || snapshot.position.epoch != snapshot.authority
@@ -406,7 +420,7 @@ pub fn install_snapshot(
         }
         if snapshot.protocol_level == 0
             || !tx.supports_protocol(snapshot.protocol_level)?
-            || snapshot.codec.version() > snapshot.protocol_level
+            || !versions::codec_supported(snapshot.protocol_level, &snapshot.codec)
             || (!current.restore_pending && snapshot.protocol_level < current.protocol_level)
             || !tx.supports_codec(&snapshot.codec)?
         {
@@ -419,7 +433,8 @@ pub fn install_snapshot(
         {
             return Err(Refusal::Divergence.into());
         }
-        if !current.restore_pending
+        if !initial_snapshot
+            && !current.restore_pending
             && (snapshot.position.seq < current.position.seq
                 || (snapshot.position.seq == current.position.seq
                     && snapshot.digest != current.digest))

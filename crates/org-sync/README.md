@@ -6,7 +6,7 @@ payload meaning, durable storage, and snapshot validation. The connection adapte
 immutable authenticated peer facts. Neither replication crate performs filesystem or network I/O.
 
 `org-sync-proto` owns the validated organization identifiers, epoch, position, codec, and
-event digest. Reproduce the independent digest vectors from the workspace root with
+event digest and canonical authority signing preimage. Reproduce the independent digest vectors from the workspace root with
 `python3 crates/org-sync-proto/test-vectors/generate.py`.
 
 ## Writer contract
@@ -31,9 +31,15 @@ flag in the same transaction, preserving office-local state. Ordinary snapshots 
 rewind the cursor or lower the protocol level. A restore at sequence zero must match
 the stored signed base.
 
+Authority verifiers sign exactly `authority_record_preimage_v1`, including the restored
+epoch, sequence and digest. The raw organization payload cap derives from the encoded
+frame limit and leaves room for base64 and metadata.
+
 Protocol negotiation uses the replicated organization level. Raising that level requires
 the current registry, including HQ, and support from every office active in the last
-30 days. An older returning office must upgrade before it can resume.
+30 days. An older returning office must upgrade before it can resume. The published profile table
+fixes each level's wire/schema and codec bounds. Production has only level 1, wire/schema
+1, and the two native v1 codecs; injected level 2 is confined to test fixtures.
 
 ## Adapter conformance
 
