@@ -147,12 +147,12 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined, why?: string): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, _here: boolean, status: DisplayStatus | undefined, why?: string): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
 	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
-	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
+	parts.push(status === 'unreachable' ? "Can't reach this office" : repairLocation(o.host));
 	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
@@ -203,20 +203,20 @@ export function whyForLabel(o: OfficeStop, now: Date): string | undefined {
 	if (text === undefined) return undefined;
 	const lower = text.charAt(0).toLowerCase() + text.slice(1);
 	const n = secondsUntil(o.next_restart_at, now);
-	if (n === undefined || n === 0) return lower;
+	if (n === undefined) return lower;
 	// A restart a minute or more away is read as a clock time, which does not tick; a nearer one as "shortly".
 	if (n < 60) return `${lower}, restarting shortly`;
 	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 	return `${lower}, restarting at ${at}`;
 }
 
-/** Seconds from `now` until `next_restart_at`, rounded up; never negative. Nothing when it is absent or unreadable. */
+/** Seconds from `now` until `next_restart_at`, rounded down; never negative. Nothing when it is absent or unreadable. */
 export function secondsUntil(nextRestartAt: string | undefined, now: Date): number | undefined {
 	if (!nextRestartAt) return undefined;
 	// RFC 3339 with a time zone only: Date.parse alone accepts junk like "5".
 	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt)) return undefined;
 	const t = Date.parse(nextRestartAt);
-	return Number.isNaN(t) ? undefined : Math.max(0, Math.ceil((t - now.getTime()) / 1000));
+	return Number.isNaN(t) ? undefined : Math.max(0, Math.floor((t - now.getTime()) / 1000));
 }
 
 /**
@@ -230,9 +230,10 @@ export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 		return `The release components on ${repairLocation(o.host)} don't match. Run diagnostics and repair the selected instance there.`;
 	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
-	// A restart whose time has come is not announced as "in 0 s": the next status will say what happened.
-	if (n === undefined || n === 0) return base;
-	return o.status_reason === 'in_use' ? `${base}. Trying again in ${n} s` : `${base}. Restarting in ${n} s`;
+	if (n === undefined) return base;
+	const action = o.status_reason === 'in_use' ? 'Trying again' : 'Restarting';
+	const countdown = n < 10 ? 'shortly' : `in ${Math.floor(n / 10) * 10} s`;
+	return `${base}. ${action} ${countdown}`;
 }
 
 /** What "Copy details" puts on the clipboard (spec §3.3): the office, its status and reason, the time and the app version. Never keys or tokens. */
