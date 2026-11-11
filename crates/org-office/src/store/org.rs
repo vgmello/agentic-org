@@ -419,6 +419,10 @@ const MAX_AGE_MS: u64 = 29 * DAY_MS;
 const MAX_AHEAD_MS: u64 = 5 * 60_000;
 /// How long an answer is kept: from the id's own time, so no clock can reopen the window.
 const KEEP_MS: u64 = 30 * DAY_MS;
+
+fn command_expiry_ms(made_ms: u64) -> u64 {
+    made_ms.saturating_add(KEEP_MS)
+}
 /// `meta` row: the highest clock reading HQ has used, so a clock that steps back cannot reopen
 /// the window.
 const CLOCK_HIGH_KEY: &str = "clock_high_ms";
@@ -576,7 +580,7 @@ pub(crate) fn submit(
                 command_id,
                 position.epoch as i64,
                 position.seq as i64,
-                time::format_epoch_ms(made_ms.saturating_add(KEEP_MS)),
+                time::format_epoch_ms(command_expiry_ms(made_ms)),
                 json(&Answer {
                     params_hash: params_hash.clone(),
                     refusal,

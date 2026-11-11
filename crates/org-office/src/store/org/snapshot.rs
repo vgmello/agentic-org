@@ -19,7 +19,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
 use super::replication::{int, NativeAnswer, OrganizationTxn, PROTOCOL};
-use super::SCHEMA;
+use super::{command_expiry_ms, SCHEMA};
 use crate::error::OfficeError;
 use crate::key::Key;
 use crate::organization::{is_offboarded, valid_owner};
@@ -598,6 +598,13 @@ fn check_retained_outcomes(
     }
     let mut committed = 0;
     for added in incoming_by_id.into_values() {
+        let [Cell::Text(id), _, _, Cell::Text(expires), Cell::Text(_)] = added.as_slice() else {
+            return Err(Refusal::Divergence.into());
+        };
+        let expected_expiry = ulid::time_ms(id).map(command_expiry_ms);
+        if crate::time::parse_rfc3339_ms(expires) != expected_expiry {
+            return Err(Refusal::Divergence.into());
+        }
         let (epoch, seq) = command_position(added)?;
         if epoch != 0 {
             if epoch != local.epoch || seq <= local.seq {
@@ -730,14 +737,23 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         return Err(Refusal::IntegrityFailure);
     }
     let mut committed_positions = HashSet::new();
+    let mut current_commits = 0;
     for command in commands {
         let (epoch, seq) = command_position(command)?;
         if epoch > value.header.epoch
             || (epoch == value.header.epoch && seq > value.native_seq)
+            || (epoch == super::EPOCH && seq == 1)
             || (epoch != 0 && !committed_positions.insert((epoch, seq)))
         {
             return Err(Refusal::IntegrityFailure);
         }
+        current_commits += u64::from(epoch == value.header.epoch);
+    }
+    // Epoch-one genesis has no command receipt. Every other current-epoch
+    // native position has one, including after restoration at sequence zero.
+    let genesis = u64::from(value.header.epoch == super::EPOCH);
+    if value.native_seq.checked_sub(genesis) != Some(current_commits) {
+        return Err(Refusal::IntegrityFailure);
     }
     Ok(())
 }

@@ -18,7 +18,7 @@ use crate::store::sync::{storage_error, sync_error};
 use crate::store::Store;
 use crate::{time, ulid};
 
-use super::{apply_changes, json, snapshot, Answer, KEEP_MS};
+use super::{apply_changes, command_expiry_ms, json, snapshot, Answer};
 
 const CODEC: &str = "org.native.changes";
 // X-05 limits the encoded JSON frame to 1 MiB. Reserve 1 KiB for its envelope,
@@ -610,7 +610,9 @@ impl NativeEvent {
                 {
                     return Err(Refusal::IntegrityFailure.into());
                 }
-                Some(ulid::time_ms(&self.command_id).ok_or(Refusal::IntegrityFailure)? + KEEP_MS)
+                Some(command_expiry_ms(
+                    ulid::time_ms(&self.command_id).ok_or(Refusal::IntegrityFailure)?,
+                ))
             }
             None if self.command_id == "genesis"
                 && position.epoch.get() == 1
@@ -1266,6 +1268,28 @@ mod tests {
             ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
+
+        hq.org_store().run_sql_for_test(
+            "CREATE TEMP TABLE seed_outcome AS SELECT * FROM commands;
+            DELETE FROM commands;",
+        );
+        let missing = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &missing.manifest,
+                &transport_key,
+                missing.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            ),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store().run_sql_for_test(
+            "INSERT INTO commands SELECT * FROM seed_outcome; DROP TABLE seed_outcome;",
+        );
 
         let staged = satellite
             .stage_replication_snapshot(
@@ -2140,13 +2164,18 @@ mod tests {
                 SnapshotStageMode::Normal,
             )
         };
-        hq.org_store()
-            .run_sql_for_test("UPDATE org_replica SET native_seq = 5");
+        hq.org_store().run_sql_for_test(
+            "UPDATE org_replica SET native_seq = 5;
+                INSERT INTO commands VALUES
+                ('01ARZ3NDEKTSV4RRFFQ69G5FAX', 1, 4, '2016-08-29T00:00:00.000Z', NULL),
+                ('01ARZ3NDEKTSV4RRFFQ69G5FAY', 1, 5, '2016-08-29T00:00:00.000Z', NULL);",
+        );
         assert!(matches!(
             stage_latest(),
             Err(SyncError::Refused(Refusal::Divergence))
         ));
         hq.org_store().run_sql_for_test(r#"UPDATE org_replica SET native_seq = 3;
+            DELETE FROM commands WHERE seq IN (4, 5);
             INSERT INTO teams VALUES ('extra', NULL, 'extra', NULL, '{"id":"extra","name":"extra","version":1}');"#);
         assert!(matches!(
             stage_latest(),
@@ -2160,7 +2189,7 @@ mod tests {
         );
         assert!(matches!(
             stage_latest(),
-            Err(SyncError::Refused(Refusal::Divergence))
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         hq.org_store().run_sql_for_test("INSERT INTO commands SELECT * FROM saved_outcome;
             UPDATE commands SET result = json_set(result, '$.params_hash', lower(hex(zeroblob(32)))) WHERE seq = 2;");
@@ -2178,7 +2207,7 @@ mod tests {
         );
         assert!(matches!(
             stage_latest(),
-            Err(SyncError::Refused(Refusal::Divergence))
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         hq.org_store().run_sql_for_test(
             "UPDATE commands SET seq = 2 WHERE command_id = '01ARZ3NDEKTSV4RRFFQ69G5FAX'",
@@ -2204,8 +2233,24 @@ mod tests {
             stage_latest(),
             Err(SyncError::Refused(Refusal::Divergence))
         ));
+        hq.org_store().run_sql_for_test("INSERT INTO commands SELECT * FROM last_outcome;
+            UPDATE commands SET result = NULL WHERE command_id = (SELECT command_id FROM last_outcome);");
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
         hq.org_store().run_sql_for_test(
-            "INSERT INTO commands SELECT * FROM last_outcome; DROP TABLE last_outcome;",
+            "UPDATE commands SET
+            result = (SELECT result FROM last_outcome), expires_at = '2000-01-01T00:00:00.000Z'
+            WHERE command_id = (SELECT command_id FROM last_outcome);",
+        );
+        assert!(matches!(
+            stage_latest(),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        hq.org_store().run_sql_for_test(
+            "DELETE FROM commands WHERE command_id = (SELECT command_id FROM last_outcome);
+            INSERT INTO commands SELECT * FROM last_outcome; DROP TABLE last_outcome;",
         );
         let pending = stage_latest().unwrap();
         assert_eq!(
