@@ -18,5 +18,6 @@ sha2.workspace = true
 
 [dev-dependencies]
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
+org-sync = { path = "../org-sync", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true

@@ -2,6 +2,9 @@
 
 mod relationships;
 
+#[cfg(test)]
+mod conformance;
+
 use std::sync::Arc;
 
 use org_proto::org::OrgChange;
@@ -143,24 +146,29 @@ pub(crate) fn bind_replication(
 }
 
 pub(crate) fn replication_checkpoint(store: &Store) -> Result<OrgCheckpoint, SyncError> {
-    read_checkpoint(store, false)
+    read_checkpoint(store, false).map(|(checkpoint, _)| checkpoint)
 }
 
-pub(super) fn staging_checkpoint(store: &Store) -> Result<OrgCheckpoint, SyncError> {
+pub(super) fn staging_checkpoint(store: &Store) -> Result<(OrgCheckpoint, bool), SyncError> {
     read_checkpoint(store, true)
 }
 
-fn read_checkpoint(store: &Store, allow_unmaterialized: bool) -> Result<OrgCheckpoint, SyncError> {
+fn read_checkpoint(
+    store: &Store,
+    allow_unmaterialized: bool,
+) -> Result<(OrgCheckpoint, bool), SyncError> {
     store
         .read(|db| {
             let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
-            if !allow_unmaterialized && awaiting_snapshot(&tx).map_err(OfficeError::storage)? {
+            let initial = awaiting_snapshot(&tx).map_err(OfficeError::storage)?;
+            if !allow_unmaterialized && initial {
                 return Err(OfficeError::storage(SyncError::from(
                     Refusal::RecoveryRequired,
                 )));
             }
             OrganizationTxn(&tx)
                 .checkpoint()
+                .map(|checkpoint| (checkpoint, initial))
                 .map_err(OfficeError::storage)
         })
         .map_err(sync_error)
@@ -344,7 +352,7 @@ pub(super) fn publish_command(
     };
     let payload = serde_json::to_vec(&record).map_err(OfficeError::storage)?;
     let codec = Codec::new(CODEC, 1).map_err(OfficeError::storage)?;
-    if payload.len() > MAX_LIVE_PAYLOAD_BYTES {
+    if payload.len() > MAX_LIVE_PAYLOAD_BYTES || payload.len() > organization::MAX_PAYLOAD_BYTES {
         publish_snapshot_checkpoint(db, record, &codec, &payload).map_err(OfficeError::storage)?;
     } else {
         organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
@@ -777,6 +785,223 @@ mod tests {
                 "answer": {"params_hash": "12".repeat(32)},
             })).unwrap(),
         ).unwrap()
+    }
+
+    #[test]
+    fn initial_snapshot_replaces_the_placeholder_at_a_restored_epoch_base() {
+        const LIMIT: u64 = 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, LIMIT).unwrap();
+        let original = hq.replication_checkpoint().unwrap();
+        let authority = Epoch::new(2).unwrap();
+        organization::accept_authority(
+            &hq,
+            AuthorityRecord {
+                org_id: original.org_id,
+                hq_office: original.hq_office,
+                ca: original.ca,
+                epoch: authority,
+                restored_position: original.position,
+                restored_digest: original.digest,
+                signature: Arc::from([1]),
+            },
+            Arc::new(VerifiedSignature),
+        )
+        .unwrap();
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                Digest::ZERO,
+                authority,
+                Digest::ZERO,
+            )
+            .unwrap();
+        let transport = Key::from_bytes([8; 32]);
+        let exported = hq.export_replication_snapshot(&transport, LIMIT).unwrap();
+        assert_eq!(
+            exported.manifest.position,
+            Position {
+                epoch: authority,
+                seq: 0
+            }
+        );
+        assert_ne!(exported.manifest.digest, Digest::ZERO);
+        let staged = satellite
+            .stage_replication_snapshot(
+                &HqAt(authority),
+                &exported.manifest,
+                &transport,
+                &*exported.ciphertext,
+                LIMIT,
+                SnapshotStageMode::Normal,
+            )
+            .unwrap();
+        organization::install_snapshot(&satellite, staged).unwrap();
+        assert_eq!(
+            satellite.org_snapshot().unwrap(),
+            hq.org_snapshot().unwrap()
+        );
+        drop(satellite);
+        let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
+        assert_eq!(
+            satellite.replication_checkpoint().unwrap().digest,
+            exported.manifest.digest
+        );
+        let mut conflicting = exported.manifest.clone();
+        conflicting.digest = Digest::from_bytes([6; 32]);
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &HqAt(authority),
+                &conflicting,
+                &transport,
+                &*exported.ciphertext,
+                LIMIT,
+                SnapshotStageMode::Normal,
+            ),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+    }
+
+    #[test]
+    fn local_commands_require_unfenced_hq_authority() {
+        use crate::rules::OrgCommand;
+        use org_proto::org::TeamCreateParams;
+        let dir = TempDir::new().unwrap();
+        let satellite = bound_office(&dir, "SAT");
+        let hq = bound_office(&dir, "HQ");
+        hq.org_store()
+            .run_sql_for_test("UPDATE org_replica SET restore_pending = 1");
+        for office in [satellite, hq] {
+            let before = office.org_snapshot().unwrap();
+            let checkpoint = office.replication_checkpoint().unwrap();
+            let refused = office
+                .submit_org(OrgCommand::TeamCreate(TeamCreateParams {
+                    command_id: ulid::generate().unwrap(),
+                    team_id: "local".into(),
+                    name: "Local".into(),
+                    owner_team_id: None,
+                }))
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(refused.code, org_proto::ErrorCode::Unavailable);
+            assert_eq!(office.org_snapshot().unwrap(), before);
+            assert_eq!(office.replication_checkpoint().unwrap(), checkpoint);
+        }
+    }
+
+    #[test]
+    fn replicated_owner_demotion_rolls_back_without_an_ack() {
+        let (_dir, satellite) = replica();
+        let before = satellite.org_snapshot().unwrap();
+        let checkpoint = satellite.replication_checkpoint().unwrap();
+        let mut owner = before
+            .members
+            .iter()
+            .find(|member| member.owner)
+            .unwrap()
+            .clone();
+        owner.owner = false;
+        let event = OrgEvent::new(
+            checkpoint.org_id.clone(),
+            Position {
+                epoch: checkpoint.position.epoch,
+                seq: checkpoint.position.seq + 1,
+            },
+            checkpoint.digest,
+            Codec::new(CODEC, 1).unwrap(),
+            serde_json::to_vec(&NativeEvent {
+                command_id: COMMAND.into(),
+                at: "2026-11-08T12:00:00.000Z".into(),
+                changes: vec![OrgChange::MemberUpserted { member: owner }],
+                answer: Some(NativeAnswer {
+                    params_hash: "12".repeat(32),
+                    refusal: None,
+                }),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, event),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        assert_eq!(satellite.org_snapshot().unwrap(), before);
+        assert_eq!(satellite.replication_checkpoint().unwrap(), checkpoint);
+    }
+
+    #[test]
+    fn reused_command_identity_cannot_advance_the_replica_or_apply_new_changes() {
+        let (_dir, satellite) = replica();
+        let first = event(2, Digest::ZERO, COMMAND, "first");
+        organization::apply(&satellite, &Hq, first.clone()).unwrap();
+        let before = satellite.org_snapshot().unwrap();
+        let checkpoint = satellite.replication_checkpoint().unwrap();
+        let reused = event(3, first.digest, COMMAND, "second");
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, reused),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        assert_eq!(satellite.org_snapshot().unwrap(), before);
+        assert_eq!(satellite.replication_checkpoint().unwrap(), checkpoint);
+    }
+
+    #[test]
+    fn encrypted_snapshot_rejects_index_columns_that_disagree_with_the_body() {
+        use crate::rules::OrgCommand;
+        use org_proto::org::TeamCreateParams;
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        hq.submit_org(OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: ulid::generate().unwrap(),
+            team_id: "team".into(),
+            name: "Team".into(),
+            owner_team_id: None,
+        }))
+        .unwrap()
+        .unwrap();
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                Digest::ZERO,
+                Epoch::new(1).unwrap(),
+                Digest::ZERO,
+            )
+            .unwrap();
+        let transport = Key::from_bytes([8; 32]);
+        let stage = || {
+            let exported = hq
+                .export_replication_snapshot(&transport, MAX_BYTES)
+                .unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &exported.manifest,
+                &transport,
+                exported.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        hq.org_store()
+            .run_sql_for_test("UPDATE teams SET name_key = 'contradiction' WHERE id = 'team'");
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store()
+            .run_sql_for_test("UPDATE teams SET name_key = 'team' WHERE id = 'team'");
+        assert_eq!(
+            organization::install_snapshot(&satellite, stage().unwrap()).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(
+            satellite.org_snapshot().unwrap(),
+            hq.org_snapshot().unwrap()
+        );
     }
 
     #[test]
@@ -1823,6 +2048,13 @@ mod tests {
 
     #[test]
     fn oversized_native_change_commits_and_requires_a_federation_snapshot() {
+        // Exercise the raw payload cap independently of the larger JSON frame budget.
+        for dependents in [600, 875] {
+            oversized_change_requires_snapshot(dependents);
+        }
+    }
+
+    fn oversized_change_requires_snapshot(dependents: usize) {
         use crate::rules::OrgCommand;
         use org_proto::org::{Member, MemberKind, MemberRemoveParams, TeamCreateParams};
         const MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -1832,7 +2064,7 @@ mod tests {
         hq.org_store()
             .write(move |db| {
                 let mut changes = Vec::new();
-                for index in 0..=875 {
+                for index in 0..=dependents {
                     let member = Member {
                         id: if index == 0 {
                             manager.to_owned()
@@ -1857,12 +2089,19 @@ mod tests {
             .unwrap();
         hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
         let before = hq.replication_checkpoint().unwrap();
+        let native_before = hq.org_head().unwrap();
         let command = OrgCommand::MemberRemove(MemberRemoveParams {
             command_id: ulid::generate().unwrap(),
             member_id: manager.to_owned(),
             expected_version: 1,
         });
         let answer = hq.submit_org(command.clone()).unwrap().unwrap();
+        let changes = hq.org_changes_after(native_before, 1).unwrap();
+        let change_bytes = serde_json::to_vec(&changes[0].changes).unwrap().len();
+        assert!(change_bytes > organization::MAX_PAYLOAD_BYTES);
+        if dependents == 600 {
+            assert!(change_bytes + 1024 < MAX_LIVE_PAYLOAD_BYTES);
+        }
         assert_eq!(answer.position.unwrap().seq, before.position.seq + 1);
         assert_eq!(hq.submit_org(command).unwrap().unwrap(), answer);
         let after = hq.replication_checkpoint().unwrap();

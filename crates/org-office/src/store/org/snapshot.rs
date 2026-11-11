@@ -339,8 +339,15 @@ pub(crate) fn stage_replication_snapshot(
     {
         return Err(Refusal::NotAuthorized.into());
     }
-    let checkpoint = super::replication::staging_checkpoint(store)?;
-    check_stage(&checkpoint, &peer, mode, manifest.position, manifest.digest)?;
+    let (checkpoint, initial) = super::replication::staging_checkpoint(store)?;
+    check_stage(
+        &checkpoint,
+        initial,
+        &peer,
+        mode,
+        manifest.position,
+        manifest.digest,
+    )?;
     if manifest.schema != SCHEMA.version || manifest.protocol_level != PROTOCOL {
         return Err(Refusal::UnsupportedVersion.into());
     }
@@ -423,7 +430,8 @@ pub(crate) fn stage_replication_snapshot(
     let digest = staged.digest;
     staged.staging_id = store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
-        check_stage(&current, &peer, mode, position, digest)?;
+        let initial = super::replication::awaiting_snapshot(db)?;
+        check_stage(&current, initial, &peer, mode, position, digest)?;
         check_projection_continuity(db, &current, &projection)?;
         let epoch = int(position.epoch.get())?;
         let seq = int(position.seq)?;
@@ -466,6 +474,7 @@ pub(crate) fn stage_replication_snapshot(
 
 fn check_stage(
     current: &OrgCheckpoint,
+    initial: bool,
     peer: &PeerIdentity,
     mode: SnapshotStageMode,
     position: Position,
@@ -480,8 +489,11 @@ fn check_stage(
     }
     match (current.restore_pending, mode) {
         (false, SnapshotStageMode::Normal) => {
-            if position.seq < current.position.seq
-                || (position == current.position && digest != current.digest)
+            // Enrollment's unmaterialized sequence-zero digest is a placeholder,
+            // not a committed anchor. Recheck its durable flag inside the writer.
+            if !(initial && current.position.seq == 0)
+                && (position.seq < current.position.seq
+                    || (position == current.position && digest != current.digest))
             {
                 return Err(Refusal::Divergence);
             }
