@@ -1360,6 +1360,220 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn hello_cannot_bypass_a_removed_members_per_call_revocation() {
+        use org_mailbox::testkit::fixture::POSITION;
+        // X-02 §3 leaves v1 binding revocation intact. No watcher runs here:
+        // the hello call itself must discover the missing member and close.
+        let (mailbox, directory) = messaging();
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.mailbox = mailbox;
+        ports.directory = directory.clone();
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused-test-socket"),
+            ports,
+            token(),
+        );
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        frame::write_message(
+            &mut peer,
+            &Request::new::<MsgBind>(
+                1,
+                &MsgBindParams {
+                    member: Some("ada".into()),
+                    app_token: None,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let stopping = AtomicBool::new(false);
+        let mut polls = 0;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &stopping,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                if polls == 2 {
+                    directory.remove(ADA_ID, POSITION);
+                    frame::write_message(
+                        &mut peer,
+                        &Request::new::<Hello>(2, &Default::default()).unwrap(),
+                    )
+                    .unwrap();
+                } else if polls > 2 {
+                    // Bound a broken implementation too, then inspect its actual reply.
+                    stopping.store(true, Ordering::SeqCst);
+                    return Ok(false);
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        let mut responses = BufReader::new(peer);
+        let bound = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bound.id, 1);
+        assert!(matches!(bound.outcome, org_proto::Outcome::Result(_)));
+        let hello = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hello.id, 2);
+        assert_eq!(code_of(hello.outcome), ErrorCode::NotBound);
+        assert!(frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .is_none());
+        assert_eq!(polls, 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn hello_cannot_bypass_a_failed_lookup_reset_and_cancellation() {
+        // X-02 §3 preserves legacy binding failure handling before hello.
+        // Drive the real connection directly, without the background watcher.
+        let (mailbox, memory) = messaging();
+        let directory = Arc::new(FlakyDirectory {
+            inner: memory,
+            failing: AtomicBool::new(false),
+        });
+        let feed = Arc::new(FakeFeed::default());
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.mailbox = mailbox.clone();
+        ports.directory = directory.clone();
+        ports.feed = Box::new(feed.clone());
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused-test-socket"),
+            ports,
+            token(),
+        );
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        frame::write_message(
+            &mut peer,
+            &Request::new::<MsgBind>(
+                1,
+                &MsgBindParams {
+                    member: Some("pat".into()),
+                    app_token: Some(token()),
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let stopping = AtomicBool::new(false);
+        let mut polls = 0;
+        let mut control = None;
+        let mut before = 0;
+        let mut ready = false;
+        let mut observed = None;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &stopping,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                match polls {
+                    2 => frame::write_message(
+                        &mut peer,
+                        &Request::new::<org_proto::Subscribe>(2, &Default::default()).unwrap(),
+                    )
+                    .unwrap(),
+                    3 => frame::write_message(
+                        &mut peer,
+                        &Request::new::<org_proto::msg::MsgWait>(3, &wait_params()).unwrap(),
+                    )
+                    .unwrap(),
+                    4 => {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                        while std::time::Instant::now() < deadline {
+                            if mailbox.held_waits() == 1 && feed.waiting.load(Ordering::SeqCst) == 1
+                            {
+                                ready = true;
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        let Some(current) = shared
+                            .bound
+                            .lock()
+                            .unwrap()
+                            .get(&1)
+                            .map(|(_, control)| Arc::clone(control))
+                        else {
+                            stopping.store(true, Ordering::SeqCst);
+                            return Ok(false);
+                        };
+                        before = current.generation.load(Ordering::SeqCst);
+                        control = Some(current);
+                        directory.failing.store(true, Ordering::SeqCst);
+                        frame::write_message(
+                            &mut peer,
+                            &Request::new::<Hello>(4, &Default::default()).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    5 => {
+                        let current = control.as_ref().unwrap();
+                        observed = Some((
+                            current.generation.load(Ordering::SeqCst),
+                            shared.bound.lock().unwrap().get(&1).is_none(),
+                            current.held.next.lock().unwrap().1.is_empty(),
+                        ));
+                        // Restore lookup before the next call: otherwise that call
+                        // could mask a hello that failed to clear the old binding.
+                        directory.failing.store(false, Ordering::SeqCst);
+                        frame::write_message(
+                            &mut peer,
+                            &Request::new::<Who>(5, &Default::default()).unwrap(),
+                        )
+                        .unwrap();
+                    }
+                    6.. => {
+                        stopping.store(true, Ordering::SeqCst);
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        let mut reader = BufReader::new(peer);
+        let mut responses = Vec::new();
+        while let Some(response) = frame::read_message::<Response>(&mut reader).unwrap() {
+            responses.push(response);
+        }
+        responses.sort_by_key(|response| response.id);
+        assert_eq!(responses.len(), 5);
+        for id in [1, 2, 4] {
+            assert_eq!(responses[id - 1].id, id as u64);
+            assert!(matches!(
+                responses[id - 1].outcome,
+                org_proto::Outcome::Result(_)
+            ));
+        }
+        assert!(
+            ready,
+            "subscription and held wait must be active before hello"
+        );
+        assert_eq!(
+            observed,
+            Some((before + 1, true, true)),
+            "hello must reset the generation, registration and held calls before the next request"
+        );
+        assert_eq!(code_of(responses[2].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(responses[4].id, 5);
+        assert_eq!(code_of(responses[4].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(mailbox.held_waits(), 0);
+    }
+
     fn shared(path: &Path) -> Arc<Shared> {
         Arc::new(Shared::new(
             &test_info(),
