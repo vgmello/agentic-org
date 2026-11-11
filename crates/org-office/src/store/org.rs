@@ -33,6 +33,7 @@ use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
+mod operation;
 mod replication;
 pub(crate) use replication::{
     bind_replication, replication_checkpoint, replication_events_after, transact_replication,
@@ -477,7 +478,7 @@ fn fingerprint(command: &OrgCommand) -> String {
 /// 1. **Lookup first.** A `command_id` HQ already answered gets that answer without deciding
 ///    again: the commit's position, or the same refusal (**rejections are remembered too**; to
 ///    retry a refused command the client uses a new id). The same id with other params is
-///    `invalid_request`.
+///    `operation_reused`.
 /// 2. The id must be a ULID (`invalid_request`), dated no more than 29 days back (`expired`) and
 ///    no more than 5 minutes ahead (`clock_skew`) of HQ's clock, which never goes back
 ///    (`clock_ms` is the clock's reading; the highest one used is kept). These are not stored.
@@ -498,6 +499,15 @@ pub(crate) fn submit(
     clock_ms: u64,
     command: &OrgCommand,
 ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+    submit_as(db, clock_ms, command, None)
+}
+
+fn submit_as(
+    db: &Connection,
+    clock_ms: u64,
+    command: &OrgCommand,
+    principal: Option<operation::Principal<'_>>,
+) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
     let replicated = match replication::native_binding(db)? {
         None => false,
         Some((true, false)) => true,
@@ -510,33 +520,14 @@ pub(crate) fn submit(
     };
     let command_id = command.command_id();
     let params_hash = fingerprint(command);
-    let seen = db
-        .query_row(
-            "SELECT epoch, seq, result FROM commands WHERE command_id = ?1",
-            [command_id],
-            |row| {
-                Ok((
-                    Position {
-                        epoch: row.get::<_, i64>(0)? as u64,
-                        seq: row.get::<_, i64>(1)? as u64,
-                    },
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(OfficeError::storage)?;
-    if let Some((position, answer)) = seen {
-        let answer: Answer = answer
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .ok_or(OfficeError::Invalid(
-                "a stored command answer is not readable",
-            ))?;
+    if let Some(stored) = operation::retained(db, command_id, principal.is_some())? {
+        if !stored.matches(principal) {
+            return Ok(Err(operation::reused()));
+        }
+        let position = stored.position;
+        let answer = stored.answer()?;
         return Ok(if answer.params_hash != params_hash {
-            Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "command id reused with different params",
-            ))
+            Err(operation::reused())
         } else if let Some(refusal) = answer.refusal {
             Err(refusal)
         } else {
@@ -551,20 +542,7 @@ pub(crate) fn submit(
         )));
     };
     // Absent until the first command; an unreadable mark is an error, not "no mark".
-    let high = match db
-        .query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            [CLOCK_HIGH_KEY],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(OfficeError::storage)?
-    {
-        None => 0,
-        Some(value) => value
-            .parse::<u64>()
-            .map_err(|_| OfficeError::Invalid("the clock high-water mark is not readable"))?,
-    };
+    let high = operation::clock_high(db)?;
     let now_ms = clock_ms.max(high);
     if now_ms > high {
         db.execute(
@@ -637,6 +615,14 @@ pub(crate) fn submit(
     let position = append_event(db, command_id, &now, &changes)?;
     remember(position, None)?;
     Ok(Ok(committed(position)))
+}
+
+pub(crate) fn operation_get(
+    db: &Connection,
+    clock_ms: u64,
+    id: &str,
+) -> Result<Result<org_proto::OperationOutcome, ApiError>, OfficeError> {
+    operation::lookup(db, clock_ms, id, None)
 }
 
 fn committed(position: Position) -> CommandAccepted {
