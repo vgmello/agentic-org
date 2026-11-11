@@ -339,14 +339,31 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
     }
 }
 
+/// A vector's pair, as `bootstrap` carries it.
+fn tls_pair(cert: &Value, key: &Value) -> TlsPair {
+    serde_json::from_value(json!({"cert": cert, "key": key})).unwrap()
+}
+
+/// A refusal's wire `code`.
+fn code<T: serde::Serialize>(refusal: &T) -> String {
+    serde_json::to_value(refusal).unwrap()["code"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 /// X-02 §6.3: `bootstrap`'s fingerprint is `login` and `hq_operation_id`; a replay checks the
-/// sign-in first, then the fingerprint, then the pair.
+/// sign-in first, then the fingerprint, then the pair by [`TlsPair::fingerprint`]: another pair
+/// is `tls_mismatch`, and one with no fingerprint is `tls_invalid`, unstored.
 #[test]
 fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
     let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
     let vectors = &doc["bootstrap"];
     let stored_params = &vectors["stored"];
     let (stored_id, stored) = journaled::<BootstrapParams>("bootstrap", stored_params);
+    let stored_pair = tls_pair(&stored_params["tls"]["cert"], &stored_params["tls"]["key"])
+        .fingerprint()
+        .unwrap();
     assert_eq!(
         String::from_utf8(stored.clone()).unwrap(),
         vectors["fingerprint_input"].as_str().unwrap()
@@ -359,7 +376,7 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
         assert_eq!(retry_id, stored_id, "{name}");
         // Never the password, the pair or the operation id.
         let text = String::from_utf8(fingerprint.clone()).unwrap();
-        for secret in ["password", "key-secret", "CERTIFICATE", &retry_id] {
+        for secret in ["password", "MIG", "CERTIFICATE", &retry_id] {
             assert!(!text.contains(secret), "{name}: {text}");
         }
         let same = fingerprint == stored;
@@ -367,23 +384,34 @@ fn bootstrap_vectors_fingerprint_login_and_hq_operation_id_only() {
         // The replay's order: sign-in, fingerprint, pair.
         let signs_in = params["login"] == stored_params["login"]
             && params["password"] == stored_params["password"];
-        let pair = params.get("tls");
+        let pair = params
+            .get("tls")
+            .map(|pair| tls_pair(&pair["cert"], &pair["key"]).fingerprint());
         let outcome = if !signs_in {
-            "not_authorized"
+            "not_authorized".to_owned()
         } else if !same {
-            "operation_reused"
-        } else if pair.is_some_and(|pair| pair != &stored_params["tls"]) {
-            "tls_mismatch"
+            "operation_reused".to_owned()
         } else {
-            "replay"
+            match pair {
+                // No fingerprint: tls_invalid, never stored.
+                Some(Err(invalid)) => {
+                    let refusal = BootstrapRefusal::Tls(TlsRefusal::from(invalid));
+                    assert!(!refusal.is_stored(), "{name}");
+                    code(&refusal)
+                }
+                Some(Ok(pair)) if pair != stored_pair => code(&BootstrapRefusal::TlsMismatch),
+                _ => "replay".to_owned(),
+            }
         };
         assert_eq!(outcome, retry["expect"], "{name}");
         seen.push((retry["same_fingerprint"].as_bool().unwrap(), outcome));
     }
+    let seen: Vec<(bool, &str)> = seen.iter().map(|(same, o)| (*same, o.as_str())).collect();
     // Both sides of the fingerprint, and every outcome of the order.
     for want in [
         (true, "replay"),
         (true, "tls_mismatch"),
+        (true, "tls_invalid"),
         (true, "not_authorized"),
         (false, "operation_reused"),
         (false, "not_authorized"),
@@ -451,6 +479,35 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
         }
     }
     assert!(another_key);
+    // RFC 7468's line ends: LF, CRLF and a lone CR frame the same DER, so the same fingerprint.
+    let mut eols = Vec::new();
+    for case in vectors["line_ends"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let eol = case["eol"].as_str().unwrap();
+        let params = &case["params"];
+        for text in [&params["cert"], &params["key"]] {
+            let text = text.as_str().unwrap();
+            let others = text.replace(eol, "");
+            assert!(
+                !others.contains(['\r', '\n']),
+                "{name}: only {eol:?} ends a line"
+            );
+        }
+        let (_, input) = journaled::<TlsSetParams>("tls.set", params);
+        let (cert, key) = (&case["cert_der_sha256"], &case["key_der_sha256"]);
+        assert_eq!(
+            String::from_utf8(input).unwrap(),
+            format!(
+                r#"tls.set{}{{"cert_der_sha256":{cert},"key_der_sha256":{key}}}"#,
+                '\0'
+            ),
+            "{name}"
+        );
+        assert_eq!((cert, key), (fields[0].1, fields[0].2), "{name}");
+        eols.push(eol);
+    }
+    assert_eq!(eols, ["\n", "\r\n", "\r"]);
+    // A pair the PEM reader refuses has no fingerprint: tls_invalid, never stored.
     for case in vectors["invalid"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let params: TlsSetParams = serde_json::from_value(case["params"].clone()).unwrap();
@@ -461,7 +518,71 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
             !error.contains("MII") && !error.contains("-----"),
             "{name}: {error}"
         );
+        assert_eq!(case["fingerprint"], "error", "{name}");
+        let pair = tls_pair(&case["params"]["cert"], &case["params"]["key"]);
+        let refusal = TlsRefusal::from(pair.fingerprint().unwrap_err());
+        assert_eq!(code(&refusal), case["expect"].as_str().unwrap(), "{name}");
+        assert!(!refusal.is_stored(TlsInstallOp::TlsSet), "{name}");
     }
+}
+
+/// X-02 §6.3: `tls.set`'s journal lookup needs the pair's fingerprint. A known `operation_id`
+/// with a pair that has none is `tls_invalid`, unstored, never a replay or `operation_reused`.
+#[test]
+fn tls_set_lookup_without_a_fingerprint_is_tls_invalid() {
+    let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let vectors = &doc["tls_set"]["lookup"];
+    let (stored_id, stored) = journaled::<TlsSetParams>("tls.set", &vectors["stored"]["params"]);
+    let mut seen = Vec::new();
+    for retry in vectors["retries"].as_array().unwrap() {
+        let name = retry["name"].as_str().unwrap();
+        let params: TlsSetParams = serde_json::from_value(retry["params"].clone()).unwrap();
+        // The lookup is by operation_id: every retry here names a known one.
+        assert_eq!(params.operation_id(), stored_id, "{name}");
+        let (fingerprint, outcome) = match fingerprint_input(&params) {
+            Err(_) => {
+                let pair = tls_pair(&retry["params"]["cert"], &retry["params"]["key"]);
+                let refusal = TlsRefusal::from(pair.fingerprint().unwrap_err());
+                assert!(!refusal.is_stored(TlsInstallOp::TlsSet), "{name}");
+                ("error", code(&refusal))
+            }
+            Ok(input) if input == stored => ("same", "replay".to_owned()),
+            Ok(_) => ("other", "operation_reused".to_owned()),
+        };
+        assert_eq!(fingerprint, retry["fingerprint"], "{name}");
+        assert_eq!(outcome, retry["expect"].as_str().unwrap(), "{name}");
+        seen.push(outcome);
+    }
+    for want in ["replay", "operation_reused", "tls_invalid"] {
+        assert!(seen.iter().any(|o| o == want), "{want}");
+    }
+}
+
+/// X-02 §6.2, §6.3: `bootstrap`'s pair and `tls.set`'s pair fingerprint identically: one
+/// implementation, [`TlsPair::fingerprint`], is `tls.set`'s journal fields too.
+#[test]
+fn bootstrap_and_tls_set_fingerprint_a_pair_identically() {
+    let doc: Value = serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let vectors = &doc["tls_set"];
+    let mut checked = 0;
+    for group in ["cases", "line_ends", "invalid"] {
+        for case in vectors[group].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let params: TlsSetParams = serde_json::from_value(case["params"].clone()).unwrap();
+            let pair = tls_pair(&case["params"]["cert"], &case["params"]["key"]);
+            match (pair.fingerprint(), params.fingerprint_fields()) {
+                (Ok(pair), Ok(fields)) => {
+                    assert_eq!(serde_json::to_string(&pair).unwrap(), fields, "{name}");
+                    assert_eq!(pair.cert_der_sha256(), case["cert_der_sha256"], "{name}");
+                    assert_eq!(pair.key_der_sha256(), case["key_der_sha256"], "{name}");
+                    checked += 1;
+                }
+                (Err(_), Err(_)) => assert_eq!(group, "invalid", "{name}"),
+                (pair, fields) => panic!("{name}: {pair:?} / {fields:?}"),
+            }
+        }
+    }
+    assert!(checked >= 9, "{checked}");
 }
 
 /// X-02 §5.2: the byte before the descriptor on `host.sock`.

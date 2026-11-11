@@ -179,14 +179,15 @@
     }
   ],
   "bootstrap": {
+    "comment": "X-02 §6.3: bootstrap's fingerprint is login and hq_operation_id, never the password or the pair. A replay checks the sign-in first (not_authorized), then the fingerprint (operation_reused), then the pair by TlsPair::fingerprint, the same fingerprint as tls.set's: another pair is tls_mismatch, a pair the PEM reader refuses has none and is tls_invalid, unstored, and the same DER with other line ends replays.",
     "stored": {
       "operation_id": "01M72N8MG00000000000000H05",
       "hq_operation_id": "01M72N8MG00000000000000H06",
       "login": "admin",
       "password": "first-password",
       "tls": {
-        "cert": "-----BEGIN CERTIFICATE-----A",
-        "key": "key-secret-A"
+        "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+        "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
       }
     },
     "fingerprint_input": "bootstrap\u0000{\"login\":\"admin\",\"hq_operation_id\":\"01M72N8MG00000000000000H06\"}",
@@ -199,8 +200,8 @@
           "login": "admin",
           "password": "first-password",
           "tls": {
-            "cert": "-----BEGIN CERTIFICATE-----A",
-            "key": "key-secret-A"
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
           }
         },
         "same_fingerprint": true,
@@ -225,12 +226,42 @@
           "login": "admin",
           "password": "first-password",
           "tls": {
-            "cert": "-----BEGIN CERTIFICATE-----B",
-            "key": "key-secret-B"
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgJpa7TB8DxDcXjHm4\nUVKaS+G3S5WdluKet0SRqUxOJ7ihRANCAAQbdD/bUhC6Iq66TNEgbeuMXMxvQwtP\ntJMht48+J/NNmNV3Rd6cHyDCTZMSNUmEAUpVi7NR7sKIdiNXx+7NzV7+\n-----END PRIVATE KEY-----\n"
           }
         },
         "same_fingerprint": true,
         "expect": "tls_mismatch"
+      },
+      {
+        "name": "the same pair with CRLF and lone CR line ends: the same pair fingerprint, a replay",
+        "params": {
+          "operation_id": "01M72N8MG00000000000000H05",
+          "hq_operation_id": "01M72N8MG00000000000000H06",
+          "login": "admin",
+          "password": "first-password",
+          "tls": {
+            "cert": "-----BEGIN CERTIFICATE-----\r\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\r\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\r\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\r\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\r\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\r\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r\n-----END CERTIFICATE-----\r\n",
+            "key": "-----BEGIN PRIVATE KEY-----\rMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\rvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\rXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r-----END PRIVATE KEY-----\r"
+          }
+        },
+        "same_fingerprint": true,
+        "expect": "replay"
+      },
+      {
+        "name": "a pair the PEM reader refuses: no pair fingerprint, tls_invalid (not tls_mismatch), unstored",
+        "params": {
+          "operation_id": "01M72N8MG00000000000000H05",
+          "hq_operation_id": "01M72N8MG00000000000000H06",
+          "login": "admin",
+          "password": "first-password",
+          "tls": {
+            "cert": "-----BEGIN CERTIFICATE-----A",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+          }
+        },
+        "same_fingerprint": true,
+        "expect": "tls_invalid"
       },
       {
         "name": "another password: the same fingerprint, but the sign-in fails first",
@@ -240,8 +271,8 @@
           "login": "admin",
           "password": "second-password",
           "tls": {
-            "cert": "-----BEGIN CERTIFICATE-----A",
-            "key": "key-secret-A"
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
           }
         },
         "same_fingerprint": true,
@@ -255,8 +286,8 @@
           "login": "admin",
           "password": "first-password",
           "tls": {
-            "cert": "-----BEGIN CERTIFICATE-----A",
-            "key": "key-secret-A"
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
           }
         },
         "same_fingerprint": false,
@@ -270,8 +301,8 @@
           "login": "root",
           "password": "first-password",
           "tls": {
-            "cert": "-----BEGIN CERTIFICATE-----A",
-            "key": "key-secret-A"
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
           }
         },
         "same_fingerprint": false,
@@ -280,7 +311,7 @@
     ]
   },
   "tls_set": {
-    "comment": "X-02 §6.2, §6.3: tls.set's fingerprint fields are exactly {\"cert_der_sha256\", \"key_der_sha256\"}, the SHA-256 as lowercase hex of the DER in cert's first CERTIFICATE block and in key's first PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY block, never the pair itself; session and operation_id are excluded as for every op. The certificate and keys are synthetic, made with openssl for these vectors (P-256 and a 512-bit RSA key, CN=mac.local and CN=ca.local); the expected hashes were computed with openssl (x509, pkey, ec and rsa -outform DER | sha256sum), not by this crate. A body is strict standard base64 (spaces, tabs, CR and LF aside); a pair with no such block, or a body that doesn't decode, has no fingerprint: the host refuses it as tls_invalid, unstored, before it would fingerprint it, and fingerprint_fields() fails on it.",
+    "comment": "X-02 §6.2, §6.3: tls.set's fingerprint fields are exactly {\"cert_der_sha256\", \"key_der_sha256\"}, the SHA-256 as lowercase hex of the DER in cert's first CERTIFICATE block and in key's first PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY block, never the pair itself; session and operation_id are excluded as for every op. The certificate and keys are synthetic, made with openssl for these vectors (P-256 and a 512-bit RSA key, CN=mac.local and CN=ca.local); the expected hashes were computed with openssl (x509, pkey, ec and rsa -outform DER | sha256sum), not by this crate. A body is strict standard base64 (spaces, tabs, CR and LF aside); a pair with no such block, or a body that doesn't decode, has no fingerprint: fingerprint_fields() fails on it, and the host refuses it as tls_invalid, unstored, wherever it needs the fingerprint. Lines end with LF, CRLF or a lone CR (RFC 7468 §3's eol), in any mix: 'line_ends' is the same pair with each, and every one fingerprints the same. 'invalid' rows are pairs the PEM reader refuses: their fingerprint is an error ('fingerprint': 'error'), and the host answers them with tls_invalid, unstored, on every path, the journal lookup included. 'lookup' is the journal lookup, which needs the fingerprint: a known operation_id with a pair that has none is tls_invalid, unstored, never a replay or operation_reused; otherwise the same fingerprint replays and another is operation_reused.",
     "cases": [
       {
         "name": "a certificate and a PKCS #8 key",
@@ -360,6 +391,44 @@
         "key_der_sha256": "7e7e81dd994b93af0dd0b548dc827427daecbff5ceed29b3d956aed6a0d110ba"
       }
     ],
+    "line_ends": [
+      {
+        "name": "the same pair with LF line ends",
+        "eol": "\n",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H08",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+        },
+        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
+      },
+      {
+        "name": "the same pair with CRLF line ends",
+        "eol": "\r\n",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H08",
+          "cert": "-----BEGIN CERTIFICATE-----\r\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\r\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\r\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\r\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\r\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\r\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r\n-----END CERTIFICATE-----\r\n",
+          "key": "-----BEGIN PRIVATE KEY-----\r\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\r\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\r\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r\n-----END PRIVATE KEY-----\r\n"
+        },
+        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
+      },
+      {
+        "name": "the same pair with a lone CR line ends",
+        "eol": "\r",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H08",
+          "cert": "-----BEGIN CERTIFICATE-----\rMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\rbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\rYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\rfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\rBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\rz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r-----END CERTIFICATE-----\r",
+          "key": "-----BEGIN PRIVATE KEY-----\rMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\rvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\rXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r-----END PRIVATE KEY-----\r"
+        },
+        "cert_der_sha256": "eafddd66c6159b5932f46fdf12cdaae877ec3b6b11795ca4bcd6ddc1618d3afb",
+        "key_der_sha256": "7381dc9f46101970b1906800c429f0bddad66819a78d38f8e965898922394a60"
+      }
+    ],
     "invalid": [
       {
         "name": "a certificate that isn't PEM",
@@ -368,7 +437,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----A",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a certificate with no end line",
@@ -377,7 +448,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a certificate with an empty body",
@@ -386,7 +459,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a certificate body with a character outside base64",
@@ -395,7 +470,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMII!SDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a key body one character short",
@@ -404,7 +481,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a key body with data after its padding",
@@ -413,7 +492,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIGjjo+DRIhM7mtNK5L15W/vemJFUKIxoaz3iChDcKTZBoAoGCCqGSM49\nAwEHoUQDQgAEX5c+PUWKI5/5TW6QCDPqJ2ua2d/HdF51Ir8Nw1sv23jvrEEp8sMa\n9Q+/0rPmlbBsYUyUPQZE8o2zuM4D1SJ+cA==AAAA\n-----END EC PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "an encrypted key",
@@ -422,7 +503,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rkvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0XnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END ENCRYPTED PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a key with legacy encryption headers",
@@ -431,7 +514,9 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00000000000000000000000000000000\n\nMIIBOwIBAAJBAJ4g6XWZCs8jieSVgbWHjq92+v46vpBfqBYukJtNtA7U6A1oDjT4hxidir+ryp9OCkATNQs51awWIMm4i+3bs/8CAwEAAQJBAJhTZBHgp8T6my8Txqu0NgNZPlgBBunU+/rCSJMSu008z5vAsE+88hti8rEN62g7GrfVhqBYcV0EgjkQHomTR2ECIQDQe5ZMGdmujGnoDp4ZUPaSQJiwrc82kfxUsdYBjG9Y9QIhAMIrSqlms1UVVl7LdQc7FBAQin/+gDxdcETgjI9ek9CjAiB8TnQbA/7LGGW9O5oAtkmOgn2IOtomS30McsyLN9TcUQIhAJB0Tr6K5n41OqWZrj4r6Lgu5itlNxgx19WWTVxYW5YLAiAibkOfHyVELh54qXF4uA3Zpr+OQc42+3x9it62aU+E/g==\n-----END RSA PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       },
       {
         "name": "a key in the URL-safe alphabet",
@@ -440,8 +525,67 @@
           "operation_id": "01M72N8MG00000000000000H08",
           "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
           "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb-96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn_lNbpAIM-ona5rZ38d0\nXnUivw3DWy_beO-sQSnywxr1D7_Ss-aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
-        }
+        },
+        "fingerprint": "error",
+        "expect": "tls_invalid"
       }
-    ]
+    ],
+    "lookup": {
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H08",
+          "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+        }
+      },
+      "retries": [
+        {
+          "name": "the same pair with lone CR line ends after a new sign-in: the same fingerprint, a replay",
+          "params": {
+            "session": "session-handle-two",
+            "operation_id": "01M72N8MG00000000000000H08",
+            "cert": "-----BEGIN CERTIFICATE-----\rMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\rbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\rYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\r6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\rfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\rBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\rz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\r-----END CERTIFICATE-----\r",
+            "key": "-----BEGIN PRIVATE KEY-----\rMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\rvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\rXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\r-----END PRIVATE KEY-----\r"
+          },
+          "fingerprint": "same",
+          "expect": "replay"
+        },
+        {
+          "name": "another key: another fingerprint, operation_reused",
+          "params": {
+            "session": "session-handle-one",
+            "operation_id": "01M72N8MG00000000000000H08",
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgJpa7TB8DxDcXjHm4\nUVKaS+G3S5WdluKet0SRqUxOJ7ihRANCAAQbdD/bUhC6Iq66TNEgbeuMXMxvQwtP\ntJMht48+J/NNmNV3Rd6cHyDCTZMSNUmEAUpVi7NR7sKIdiNXx+7NzV7+\n-----END PRIVATE KEY-----\n"
+          },
+          "fingerprint": "other",
+          "expect": "operation_reused"
+        },
+        {
+          "name": "a certificate the PEM reader refuses, with the stored operation_id: no fingerprint, tls_invalid at the lookup, unstored",
+          "params": {
+            "session": "session-handle-one",
+            "operation_id": "01M72N8MG00000000000000H08",
+            "cert": "-----BEGIN CERTIFICATE-----A",
+            "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgaOOj4NEiEzua00rk\nvXlb+96YkVQojGhrPeIKENwpNkGhRANCAARflz49RYojn/lNbpAIM+ona5rZ38d0\nXnUivw3DWy/beO+sQSnywxr1D7/Ss+aVsGxhTJQ9BkTyjbO4zgPVIn5w\n-----END PRIVATE KEY-----\n"
+          },
+          "fingerprint": "error",
+          "expect": "tls_invalid"
+        },
+        {
+          "name": "a key the PEM reader refuses, with the stored operation_id: no fingerprint, tls_invalid at the lookup, unstored",
+          "params": {
+            "session": "session-handle-one",
+            "operation_id": "01M72N8MG00000000000000H08",
+            "cert": "-----BEGIN CERTIFICATE-----\nMIIBSDCB76ADAgECAgEBMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMMCW1hYy5sb2Nh\nbDAeFw0yNjExMTEwMTUwNDhaFw0zNjExMDgwMTUwNDhaMBQxEjAQBgNVBAMMCW1h\nYy5sb2NhbDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABF+XPj1FiiOf+U1ukAgz\n6idrmtnfx3RedSK/DcNbL9t476xBKfLDGvUPv9Kz5pWwbGFMlD0GRPKNs7jOA9Ui\nfnCjMjAwMB0GA1UdDgQWBBRE3Lcle1NIoZmArOs/S+3qLR0vvzAPBgNVHRMBAf8E\nBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIQCopQ3zeMaunNuIibWX6dYx8Bg+Pblt\nz54pLBNLCRhgEgIgDSiwmRFbFLKZ268Swz8eUy1jM7rIxJWh5E6wlAHOY48=\n-----END CERTIFICATE-----\n",
+            "key": "-----BEGIN PRIVATE KEY-----\nnot base64!\n-----END PRIVATE KEY-----\n"
+          },
+          "fingerprint": "error",
+          "expect": "tls_invalid"
+        }
+      ]
+    }
   }
 }

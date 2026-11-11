@@ -112,6 +112,7 @@ pub use calls::{
 pub use directory::ManagedHome;
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
+pub use gateway::RecoveryCode;
 pub use name::{NameError, OrganizationName};
 pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOutcome};
 pub use org::{

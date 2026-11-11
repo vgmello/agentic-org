@@ -31,7 +31,6 @@
 use std::io::{BufRead, Write};
 
 use org_proto::frame::{self, FrameError};
-use org_proto::gateway::SecretText;
 use org_proto::{GrantKey, OfficeRole};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -39,6 +38,12 @@ use crate::{
     is_plain_id, read_secret_line, zero, ByteCounter, DbKey, FirstLine, HostMessage, LaunchError,
     ServerEvent,
 };
+
+/// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
+/// every attempt of an HQ create, so the server creates the CA and the escrow with it. A secret:
+/// redacted `Debug`, not `Clone`, zeroed on drop. Defined once in `org-proto`, shared with
+/// `org-host-control`'s `recovery.release`.
+pub use org_proto::RecoveryCode;
 
 /// The version of v3 pipe lines and rendezvous lines.
 pub const LAUNCH_VERSION: u32 = 3;
@@ -405,24 +410,6 @@ impl<'de> Deserialize<'de> for ReadyForSecrets {
 pub enum HandoffFd {
     /// The server's end of its transfer socket.
     Transfer,
-}
-
-/// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
-/// every attempt of an HQ create, so the server creates the CA and the escrow with it. A secret:
-/// redacted `Debug`, not `Clone`, zeroed on drop.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RecoveryCode(SecretText);
-
-impl RecoveryCode {
-    pub fn new(code: String) -> Result<Self, &'static str> {
-        SecretText::new(code).map(RecoveryCode)
-    }
-
-    /// The code, only to create the escrow. Never log or format it.
-    pub fn expose(&self) -> &str {
-        self.0.expose()
-    }
 }
 
 /// The host's answer to [`ReadyForSecrets`] on the rendezvous connection: one JSON line with the

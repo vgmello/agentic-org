@@ -11,13 +11,16 @@
 //!   `unavailable` when the sign-in pool is full; `operation_reused` per [`crate::journal`].
 
 use std::fmt;
+use std::fmt::Write as _;
 
 use org_proto::{Call, Empty, Grant, ListOfficesResult};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::listen::{
     Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
 };
+use crate::pem::{self, InvalidPem};
 use crate::{HostOpResult, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
 
 /// `account.verify` (open): sign in. Argon2id on a bounded pool; an unknown login hashes against
@@ -443,22 +446,27 @@ impl Call for TlsFetch {
 }
 
 /// `tls.set` (`host.sock` only; admin, the signed `agentic-org` peer on macOS; journaled): install
-/// a TLS pair. First, as for every journaled op, the journal lookup: a known `operation_id` with
+/// a TLS pair. First, as for every journaled op, the journal lookup, which needs the op's
+/// fingerprint, the pair's [`TlsPairFingerprint`]: a pair the PEM reader ([`crate::pem`]) refuses
+/// has none and gets [`TlsRefusal::TlsInvalid`], unstored, right there, whether or not the
+/// `operation_id` is known (never a replay or `operation_reused`). A known `operation_id` with
 /// a stored result replays it before any check (a stored success replays even if setup has since
 /// rewritten the origin; [`crate::journal`]). Otherwise, before it stores the pair and emits
 /// `tls.renew`, the host checks, in this order, and answers the first failure (X-02 §6.2):
 /// 1. the stored listener fields (`address`, `port`, `scheme`) and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]);
 /// 2. the stored `hsts` ([`TlsRefusal::HstsInvalid`]);
-/// 3. that the certificate and the key parse ([`TlsRefusal::TlsInvalid`]);
+/// 3. that the certificate and the key parse ([`TlsRefusal::TlsInvalid`]), framed by the same
+///    PEM reader;
 /// 4. that the key matches the certificate ([`TlsRefusal::TlsKeyMismatch`]);
 /// 5. that the certificate is valid now ([`TlsRefusal::TlsNotValid`]);
 /// 6. in `https`, that it covers every `https` origin among the stored one and the running one
 ///    ([`TlsRefusal::TlsNameMismatch`]; Certificate coverage).
 ///
-/// It never changes the scheme. Its journal fingerprint is SHA-256 of the certificate DER plus
-/// SHA-256 of the key DER, computed from the secret type (`TlsSetParams`'s
-/// [`crate::journal::Journaled`] implementation); the stored result echoes neither.
+/// It never changes the scheme. Its journal fingerprint fields are the pair's
+/// [`TlsPairFingerprint`] (SHA-256 of the certificate DER and SHA-256 of the key DER), computed
+/// from the secret type (`TlsSetParams`'s [`crate::journal::Journaled`] implementation); the
+/// stored result echoes neither.
 ///
 /// A failed check answers `{"status": "rejected", "refusal": <TlsRefusal>}` and stores no pair;
 /// only [`TlsRefusal::TlsKeyMismatch`] is journaled ([`TlsRefusal::is_stored`]).
@@ -490,8 +498,12 @@ pub enum TlsRefusal {
     /// `{"code": "tls_name_mismatch", "uncovered": [...]}`: in `https`, the certificate doesn't
     /// cover these origins (the stored one first, then the running one).
     TlsNameMismatch { uncovered: Uncovered },
-    /// `{"code": "tls_invalid"}`: the certificate or the key doesn't parse. Never stored: an
-    /// unparseable pair has no fingerprint.
+    /// `{"code": "tls_invalid"}`: the certificate or the key doesn't parse. Never stored, so a
+    /// retry with the same `operation_id` and a fixed pair is checked as new. A pair the PEM reader
+    /// refuses has no fingerprint at all: it
+    /// ([`TlsPair::fingerprint`] fails, `TlsRefusal::from` an [`InvalidPem`]) gets it on every
+    /// path, before anything else that needs the pair's fingerprint: `tls.set`'s journal lookup,
+    /// and a `bootstrap` replay's pair comparison (not `tls_mismatch`).
     TlsInvalid,
     /// `{"code": "tls_key_mismatch"}`: the key doesn't match the certificate.
     TlsKeyMismatch,
@@ -600,9 +612,11 @@ impl TlsRefusal {
     /// Whether the host journals this refusal from `op`, so a retry with the same `operation_id`
     /// replays it (X-02 §6.3):
     /// - `tls.set`: only `tls_key_mismatch` is stored. It depends on the pair alone, which the
-    ///   fingerprint covers. `tls_invalid` isn't: an unparseable pair has no fingerprint. The
-    ///   others depend on state outside the op that is expected to change (the stored and running
-    ///   origins, the clock, the stored configuration), so a retry is checked again.
+    ///   fingerprint covers. `tls_invalid` isn't, so a retry with a fixed pair is checked as new;
+    ///   a pair the PEM reader refuses has no fingerprint at all and gets it at the journal lookup
+    ///   ([`TlsRefusal::TlsInvalid`]). The others depend on state outside the op that is expected
+    ///   to change (the stored and running origins, the clock, the stored configuration), so a
+    ///   retry is checked again.
     ///   [`TlsRefusal::Unknown`] is never stored.
     /// - `bootstrap`: never. The host runs every bootstrap check before it creates the registry,
     ///   so a refused bootstrap leaves no record, and a re-run with the same `operation_id` is a
@@ -612,6 +626,13 @@ impl TlsRefusal {
             TlsInstallOp::TlsSet => matches!(self, TlsRefusal::TlsKeyMismatch),
             TlsInstallOp::Bootstrap => false,
         }
+    }
+}
+
+impl From<InvalidPem> for TlsRefusal {
+    /// A pair the PEM reader refuses has no fingerprint: `tls_invalid`, unstored, on every path.
+    fn from(_: InvalidPem) -> Self {
+        TlsRefusal::TlsInvalid
     }
 }
 
@@ -779,7 +800,9 @@ impl Call for Subscribe {
 /// error `not_authorized`, counted toward lockout as `account.verify` is, and setup answers it by
 /// asking for the password again. Then the fingerprint (the normalized `login` and
 /// `hq_operation_id`, [`crate::journal::Journaled`]): another `hq_operation_id` is the plain
-/// error `operation_reused`. Then the pair: another one is `tls_mismatch`.
+/// error `operation_reused`. Then the pair, compared by [`TlsPair::fingerprint`] with the stored
+/// pair's: another one is `tls_mismatch`, and one the PEM reader refuses (no fingerprint) is
+/// `tls_invalid`, unstored.
 ///
 /// Its result is a [`BootstrapOutcome`] ([`HostOpResult`]'s wire form, **never `accepted`**):
 /// `completed` with [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`], in the order
@@ -807,6 +830,73 @@ pub struct TlsPair {
     /// The certificate chain, PEM.
     pub cert: String,
     pub key: TlsPrivateKey,
+}
+
+impl TlsPair {
+    /// This pair's [`TlsPairFingerprint`], by the one implementation `tls.set`'s journal
+    /// fingerprint uses too, so the same pair fingerprints the same in both ops. A `bootstrap`
+    /// replay compares its pair with the stored one's by it: another fingerprint is
+    /// [`BootstrapRefusal::TlsMismatch`].
+    ///
+    /// An error is a pair the PEM reader refuses ([`crate::pem`]): it has no fingerprint, and the
+    /// host answers it with [`TlsRefusal::TlsInvalid`] (`TlsRefusal::from`), unstored, on every
+    /// path, a replay included.
+    pub fn fingerprint(&self) -> Result<TlsPairFingerprint, InvalidPem> {
+        let TlsPair { cert, key } = self;
+        TlsPairFingerprint::of(cert, key)
+    }
+}
+
+/// A TLS pair's fingerprint (X-02 §6.2, §6.3): the SHA-256, as lowercase hex, of the DER of the
+/// certificate's first `CERTIFICATE` block and of the key's first `PRIVATE KEY`,
+/// `RSA PRIVATE KEY` or `EC PRIVATE KEY` block, each read by [`crate::pem`]. It holds no secret,
+/// so the journal can keep it: it is `tls.set`'s journal fingerprint fields, serialized as
+/// `{"cert_der_sha256", "key_der_sha256"}` in that order, and what a `bootstrap` replay compares
+/// pairs by ([`TlsPair::fingerprint`]). The same DER fingerprints the same however its text is
+/// wrapped, whatever its line ends (LF, CRLF or a lone CR) and whatever text surrounds the block.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct TlsPairFingerprint {
+    cert_der_sha256: String,
+    key_der_sha256: String,
+}
+
+impl TlsPairFingerprint {
+    /// The one implementation, for [`TlsPair::fingerprint`] and `TlsSetParams`'
+    /// [`crate::journal::Journaled`] implementation. The decoded key bytes are zeroed once hashed
+    /// (best effort: `sha2`'s own block buffer isn't). Its error never quotes the pair.
+    pub(crate) fn of(cert: &str, key: &TlsPrivateKey) -> Result<Self, InvalidPem> {
+        let cert_der = pem::first_block(cert, pem::CERTIFICATE)?;
+        let cert_der_sha256 = sha256_hex(cert_der.bytes());
+        let key_der_sha256 = {
+            // Dropped, and so zeroed, at the end of this block.
+            let key_der = pem::first_block(key.expose(), pem::PRIVATE_KEY)?;
+            sha256_hex(key_der.bytes())
+        };
+        Ok(TlsPairFingerprint {
+            cert_der_sha256,
+            key_der_sha256,
+        })
+    }
+
+    /// The SHA-256 of the certificate's DER, lowercase hex.
+    pub fn cert_der_sha256(&self) -> &str {
+        &self.cert_der_sha256
+    }
+
+    /// The SHA-256 of the key's DER, lowercase hex.
+    pub fn key_der_sha256(&self) -> &str {
+        &self.key_der_sha256
+    }
+}
+
+/// SHA-256 as lowercase hex.
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, b| {
+            let _ = write!(hex, "{b:02x}");
+            hex
+        })
 }
 
 /// `bootstrap`'s completed result: a session for the first account.
@@ -848,9 +938,10 @@ pub enum BootstrapOutcome {
 /// 3. otherwise the recorded `operation_id` replays, checked in this order: the `login` and
 ///    password as a sign-in (a `login` and password that don't sign in are the plain error
 ///    `not_authorized`), then the fingerprint (the normalized `login` and `hq_operation_id`:
-///    another `hq_operation_id` is the plain error `operation_reused`), then the pair (one other
-///    than the stored one is [`BootstrapRefusal::TlsMismatch`]). A replay doesn't re-check the
-///    listen configuration;
+///    another `hq_operation_id` is the plain error `operation_reused`), then the pair, by
+///    [`TlsPair::fingerprint`]: one the PEM reader refuses is [`TlsRefusal::TlsInvalid`], one
+///    other than the stored one is [`BootstrapRefusal::TlsMismatch`]. A replay doesn't re-check
+///    the listen configuration;
 /// 4. on an empty registry: the stored listener fields and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
 ///    ([`TlsRefusal::HstsInvalid`]), then
@@ -864,8 +955,9 @@ pub enum BootstrapRefusal {
     /// `{"code": "tls_required"}`: a first bootstrap under `https` without `tls`.
     TlsRequired,
     /// `{"code": "tls_mismatch"}`: a replay with a pair other than the stored one (compared by
-    /// fingerprint). Setup tells the operator to re-run `setup --resume` with the original pair,
-    /// or without `tls` and then `agentic-org tls renew`.
+    /// [`TlsPair::fingerprint`]; a pair with no fingerprint is `tls_invalid` instead). Setup
+    /// tells the operator to re-run `setup --resume` with the original pair, or without `tls` and
+    /// then `agentic-org tls renew`.
     TlsMismatch,
     /// `{"code": "already_bootstrapped"}`: a different `operation_id` on a non-empty registry
     /// (whether or not bootstrap has finished), or a registry setup has no record of. Setup

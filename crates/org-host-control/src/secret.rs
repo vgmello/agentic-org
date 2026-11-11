@@ -55,9 +55,3 @@ secret_text!(
     /// in its credential provider, never on disk in the clear.
     TlsPrivateKey
 );
-
-secret_text!(
-    /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
-    /// printed only to a TTY, never in JSON status output or logs.
-    RecoveryCode
-);

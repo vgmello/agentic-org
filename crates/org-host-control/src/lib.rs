@@ -35,17 +35,21 @@
 //! `hsts` setting, the per-bind snapshot, [`listen::ListenFailure`], and `tls.fetch`'s and
 //! `tls.set`'s use of them.
 //!
+//! **The PEM reader** ([`pem`], X-02 §6.2): the one implementation that frames a TLS pair's
+//! certificate and key blocks, for the pair fingerprint ([`ops::TlsPair::fingerprint`]) and for
+//! the host's own parse of the pair ([`pem::all_blocks`] for the chain). A pair it refuses is
+//! `tls_invalid`, unstored, on every path.
+//!
 //! This crate holds types and pure functions only. Not here yet, because X-02 leaves their params
 //! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the instance status
 //! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
 //! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde and
-//! `sha2` (X-02 §5.2, §11; `sha2` for `tls.set`'s fingerprint, [`journal`]): the gateway imports
-//! it from `org-office-launch`.
+//! `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set` and `bootstrap`,
+//! [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
 
-// No unsafe code, except the one function that zeroes a decoded key's bytes (see `pem`).
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
 
@@ -53,11 +57,15 @@ pub mod gateway;
 pub mod journal;
 pub mod listen;
 pub mod ops;
-mod pem;
+pub mod pem;
 mod secret;
 
+/// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
+/// printed only to a TTY, never in JSON status output or logs. Defined once in `org-proto`, shared
+/// with `org-office-launch`'s v3 create handoff.
+pub use org_proto::RecoveryCode;
 pub use org_proto::{ApiRange, Call, Empty, Hello, HelloParams, HelloResult};
-pub use secret::{Password, RecoveryCode, SessionHandle, TlsPrivateKey};
+pub use secret::{Password, SessionHandle, TlsPrivateKey};
 
 /// This contract's version. Separate from `org_proto::API_VERSION`.
 pub const API_VERSION: u32 = 1;
