@@ -289,6 +289,17 @@ fn capture_under_low_fd_limit(exhaust: bool) {
         assert!(error.to_string().contains("RLIMIT_NOFILE"), "{error}");
         return;
     }
+    // Drop the previous capture's pidfds before opening the next capture's pins.
+    // Otherwise these consecutive snapshots exceed NOFILE even with one fd per pin.
+    for _ in 0..2 {
+        let captured = native
+            .snapshot(Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            captured.len() >= count,
+            "the capture must include the synthetic children"
+        );
+    }
     let gone = recover_record(
         &mut row,
         &(),
