@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { beforeNavigate, goto } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount, tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
@@ -14,17 +14,31 @@
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let closingForNavigation = false;
-	let traversal: { from: string; delta: number } | undefined;
-	let restoreFocusAt: string | undefined;
+	type HistoryEntry = { url: string; key?: string };
+	let traversal: { from: HistoryEntry; delta: number } | undefined;
+	let backReturn: HistoryEntry | undefined;
+	let legacyHistoryLength = 0;
+	let legacyAppendedFragment: string | undefined;
+	let openedOnUntrackedLegacyEntry = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
 	$effect(() => {
 		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
 	});
 
+	afterNavigate(() => {
+		if (window.navigation) return;
+		legacyHistoryLength = window.history.length;
+		legacyAppendedFragment = undefined;
+	});
+
 	beforeNavigate((navigation) => {
-		if (!open || navigation.type !== 'popstate' || (navigation.delta ?? 0) >= 0) return;
-		restoreFocusAt = traversal?.from ?? navigation.from?.url.href;
+		const kitDelta = navigation.delta ?? 0;
+		if (!open || navigation.type !== 'popstate' || kitDelta >= 0 || openedOnUntrackedLegacyEntry) return;
+		if (traversal && traversal.delta >= 0) return;
+
+		const url = navigation.from?.url.href;
+		backReturn = traversal?.from ?? (url ? { url } : undefined);
 		navigation.cancel();
 		open = false;
 	});
@@ -34,18 +48,18 @@
 		if (!navigation) return;
 		function rememberTraversal(event: NavigateEvent) {
 			if (!open) return;
-			const from = navigation.currentEntry?.index ?? -1;
+			const from = navigation.currentEntry;
 			const to = event.destination.index;
-			traversal = event.navigationType === 'traverse' && from >= 0 && to >= 0
-				? { from: window.location.href, delta: to - from }
+			traversal = event.navigationType === 'traverse' && from && from.index >= 0 && to >= 0
+				? { from: { url: window.location.href, key: from.key }, delta: to - from.index }
 				: undefined;
 		}
 		navigation.addEventListener('navigate', rememberTraversal);
 		return () => navigation.removeEventListener('navigate', rememberTraversal);
 	});
 
-	function returnFromBack(from: string, delta: number) {
-		restoreFocusAt = from;
+	function returnFromBack(from: HistoryEntry, delta: number) {
+		backReturn = from;
 		window.history.go(-delta);
 		open = false;
 	}
@@ -57,28 +71,43 @@
 		if (from.pathname !== to.pathname || from.search !== to.search) return;
 
 		// SvelteKit can update fragment history without invoking beforeNavigate.
-		if (traversal?.from === oldURL && traversal.delta < 0) {
-			returnFromBack(oldURL, traversal.delta);
-		} else if (!window.navigation && oldURL.includes('#') && !newURL.includes('#')) {
-			// On browsers without the Navigation API, fragment support is scoped to Back
-			// to the unfragmented page. A native hash addition always has a #.
-			returnFromBack(oldURL, -1);
+		if (traversal?.from.url === oldURL && traversal.delta < 0) {
+			returnFromBack(traversal.from, traversal.delta);
+		} else if (legacyAppendedFragment === oldURL && !newURL.includes('#')) {
+			// The older-browser fallback covers Back from a newly appended native fragment
+			// to its unfragmented page. Other fragment history needs a browser traversal index.
+			returnFromBack({ url: oldURL }, -1);
 		}
 	}
 
 	function handlePopState(event: PopStateEvent) {
-		if (restoreFocusAt) {
-			const url = restoreFocusAt;
-			restoreFocusAt = undefined;
-			if (url !== window.location.href) return;
-			requestAnimationFrame(() => { void restoreReturnedPage(url); });
+		if (backReturn) {
+			const entry = backReturn;
+			backReturn = undefined;
+			requestAnimationFrame(() => { void restoreReturnedPage(entry); });
 		} else if (open && event.state === null && traversal && traversal.delta < 0) {
 			// A native fragment entry can lack SvelteKit state, even on a previous route.
 			returnFromBack(traversal.from, traversal.delta);
+		} else if (!window.navigation && !open) {
+			const length = window.history.length;
+			legacyAppendedFragment = event.state === null && length > legacyHistoryLength && window.location.hash
+				? window.location.href
+				: undefined;
+			legacyHistoryLength = length;
 		}
 	}
 
-	async function restoreReturnedPage(url: string) {
+	async function restoreReturnedPage({ url, key }: HistoryEntry) {
+		if (open || !trigger?.isConnected) return;
+		const navigation = window.navigation;
+		if (key && navigation && navigation.currentEntry?.key !== key) {
+			// SvelteKit's return can land short when its delta omits a native entry.
+			try {
+				await navigation.traverseTo(key).finished;
+			} catch {
+				return;
+			}
+		}
 		if (open || !trigger?.isConnected || window.location.href !== url) return;
 		if (page.url.pathname !== window.location.pathname || page.url.search !== window.location.search) {
 			// A native entry can update page.url without updating SvelteKit's history position.
@@ -95,7 +124,8 @@
 		if (!value) return;
 		closingForNavigation = false;
 		traversal = undefined;
-		restoreFocusAt = undefined;
+		backReturn = undefined;
+		openedOnUntrackedLegacyEntry = !window.navigation && window.history.state === null;
 	}
 
 	function closeForNavigation() {

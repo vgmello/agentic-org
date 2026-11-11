@@ -156,6 +156,7 @@ test('BUG-59: browser Back dismisses Menu before leaving the page', async ({ pag
 	await shot(page, 'shell-menu-back-stays-on-page');
 	await page.goBack();
 	await expect(page).toHaveURL(/\/agents$/);
+	await expect(page.getByRole('group', { name: 'Show agents' })).toBeVisible();
 });
 
 test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ page }) => {
@@ -268,6 +269,51 @@ test('BUG-59: Back dismisses Menu before a native fragment entry on a previous r
 	await shot(page, 'shell-menu-back-to-previous-route-fragment');
 });
 
+test('BUG-59: Back across two entries preserves the drawer opener route', async ({ page }) => {
+	await createOrganization(page);
+	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+	await expect(page).toHaveURL(/\/agents#shell-page-title$/);
+	await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Offices', exact: true }).click();
+	await expect(page.getByRole('heading', { name: 'Offices', exact: true })).toBeVisible();
+	await page.setViewportSize({ width: 600, height: 900 });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.go(-2));
+	await expect(dialog).not.toBeVisible();
+	await expect(page).toHaveURL(/\/offices$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Offices', exact: true })).toBeVisible();
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+	await expect(menu).toBeFocused();
+	await shot(page, 'shell-menu-back-across-two-entries');
+});
+
+test('BUG-59: Forward can reach an unfragmented entry without the Navigation API', async ({ page }) => {
+	await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
+	await openOffices(page);
+	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+	await page.setViewportSize({ width: 600, height: 900 });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await menu.click();
+	await dialog.getByRole('link', { name: 'Offices', exact: true }).click();
+	await expect(page).toHaveURL(/\/offices$/);
+	await menu.click();
+	await dialog.getByRole('link', { name: 'Settings', exact: true }).click();
+	await expect(page).toHaveURL(/\/settings$/);
+	await page.evaluate(() => window.history.go(-2));
+	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+	await menu.click();
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	await expect(page).toHaveURL(/\/offices$/);
+	await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+	await shot(page, 'shell-menu-forward-to-unfragmented-entry');
+	await expect(page).toHaveURL(/\/offices$/);
+});
+
 test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
 	await page.setViewportSize({ width: 720, height: 450 });
 	await createOrganization(page);
@@ -306,11 +352,15 @@ test('BUG-59: a supplied navigation badge appears in the full sidebar and rail',
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	const chat = nav.getByRole('link', { name: 'Chat, 3 need you', exact: true });
+	const chat = nav.getByRole('link', { name: 'Chat', exact: true });
 	const badge = chat.getByText('3', { exact: true });
+	await expect(chat).toHaveAccessibleDescription('3 need you');
 	await expect(badge).toBeInViewport({ ratio: 1 });
 	await shot(page, 'shell-badge-full');
 	await page.setViewportSize({ width: 720, height: 900 });
 	await expect(badge).toBeInViewport({ ratio: 1 });
+	await chat.focus();
+	await expect(page.getByRole('tooltip', { name: 'Chat', exact: true })).toBeVisible();
+	await expect(chat).toHaveAccessibleDescription(/3 need you/);
 	await shot(page, 'shell-badge-rail');
 });

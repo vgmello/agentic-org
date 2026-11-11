@@ -14,6 +14,7 @@
 		onNavigate?: (event: MouseEvent, href: string) => void;
 	} = $props();
 
+	const sidebarId = $props.id();
 	const current = $derived(navFor(page.url.pathname));
 	const responsive = $derived(presentation === 'responsive');
 	const rail = $derived(responsive && (innerWidth.current ?? 960) >= 640 && (innerWidth.current ?? 960) < 960);
@@ -60,14 +61,17 @@
 			<li>
 				<div class="text-xs/6 font-semibold text-gray-400 {responsive ? 'max-[960px]:sr-only' : ''}">Navigation</div>
 				<ul role="list" class="-mx-2 mt-2 space-y-1 {responsive ? 'max-[960px]:mx-0' : ''}">
-					{#each NAV as item (item.href)}
+					{#each NAV as item, index (item.href)}
 						{@const active = current === item}
+						{@const badgeId = `${sidebarId}-badge-${index}`}
 						<li>
 							<Tooltip.Root disabled={!rail}>
 							<Tooltip.Trigger>
 							{#snippet child({ props })}
+							{@const tooltipDescription = typeof props['aria-describedby'] === 'string' ? props['aria-describedby'] : undefined}
 							<a {...mergeProps({ onfocus: revealRailLink }, props, { onclick: (event: MouseEvent) => onNavigate?.(event, item.href) })}
-								type={undefined} href={item.href} aria-label={item.badge ? `${item.name}, ${item.badge.label}` : item.name}
+								type={undefined} href={item.href} aria-label={item.name}
+								aria-describedby={item.badge ? [badgeId, tooltipDescription].filter(Boolean).join(' ') : tooltipDescription}
 								aria-current={active ? 'page' : undefined}
 								class="relative {active ? itemCurrent : itemDefault} {focusRing} {responsive ? 'max-[960px]:size-12 max-[960px]:items-center max-[960px]:justify-center max-[960px]:gap-x-0' : ''}">
 								<span class="relative flex size-6 shrink-0 items-center justify-center">
@@ -84,6 +88,7 @@
 								</span>
 								<span class={responsive ? 'max-[960px]:sr-only' : ''}>{item.name}</span>
 								{#if item.badge}
+									<span id={badgeId} hidden>{item.badge.label}</span>
 									<span aria-hidden="true" class="ml-auto max-w-10 shrink-0 self-center truncate rounded-full bg-amber-300 px-1.5 text-xs/4 font-semibold text-gray-950 {responsive ? 'max-[960px]:absolute max-[960px]:top-0 max-[960px]:right-0' : ''}">{item.badge.text}</span>
 								{/if}
 							</a>
