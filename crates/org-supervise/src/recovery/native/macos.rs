@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::{
     native_mark, sealed, valid_pid, MarkEvidence, ProcessIdentity, ProcessObservation,
@@ -16,6 +16,7 @@ const PROC_FLAG_LP64: u32 = 0x10;
 const PROC_FLAG_PSUGID: u32 = 0x2000;
 const MAX_LISTED_PIDS: usize = 131_072;
 const MAX_ARG_BYTES: usize = 2 * 1024 * 1024;
+const EXIT_RECHECK_INTERVAL: Duration = Duration::from_millis(10);
 
 // XNU sys/codesign.h and kern/cs_blobs.h. CS_RESTRICT controls PROCARGS2 redaction.
 const CS_OPS_STATUS: libc::c_uint = 0;
@@ -345,13 +346,7 @@ impl RecoveryProcesses for NativeRecovery {
             return Ok(false);
         }
         let watch = crate::platform::Watch::new(identity.pid as libc::pid_t)?;
-        // The registration is only a wake-up mechanism. Confirm the same identity
-        // after registering and again after waiting without consuming exit status.
-        if gone()? {
-            return Ok(true);
-        }
-        watch.wait(deadline)?;
-        gone()
+        wait_after_registration(deadline, gone, |until| watch.wait(until))
     }
 
     fn now(&mut self) -> Instant {
@@ -361,6 +356,25 @@ impl RecoveryProcesses for NativeRecovery {
     fn wait_until(&mut self, deadline: Instant) -> io::Result<()> {
         std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
         Ok(())
+    }
+}
+
+fn wait_after_registration(
+    deadline: Instant,
+    mut gone: impl FnMut() -> io::Result<bool>,
+    mut wait: impl FnMut(Instant) -> io::Result<()>,
+) -> io::Result<bool> {
+    // XNU can refuse kqueue registration while libproc still reports the exact
+    // process as live. Treat the queue as a hint and keep checking that identity.
+    loop {
+        if gone()? {
+            return Ok(true);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(false);
+        }
+        wait(deadline.min(now + EXIT_RECHECK_INTERVAL))?;
     }
 }
 
@@ -512,8 +526,32 @@ fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
 
 #[cfg(test)]
 mod tests {
-    use super::procargs_mark;
+    use super::{procargs_mark, wait_after_registration};
     use crate::recovery::MarkEvidence;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn an_empty_exit_queue_does_not_wait_out_the_deadline() {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut observations = 0;
+        let gone = wait_after_registration(
+            deadline,
+            || {
+                observations += 1;
+                Ok(observations == 2)
+            },
+            |until| {
+                assert!(
+                    until < deadline,
+                    "an empty kqueue consumed the exit deadline"
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(gone);
+        assert_eq!(observations, 2);
+    }
 
     fn capture(argc: i32, entries: &[u8]) -> Vec<u8> {
         let mut bytes = argc.to_ne_bytes().to_vec();
