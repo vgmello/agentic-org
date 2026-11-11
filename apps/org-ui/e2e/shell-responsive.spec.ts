@@ -177,8 +177,8 @@ test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ p
 	await shot(page, 'shell-menu-keeps-forward-history');
 });
 
-// Older browsers cover Back from a fragment to the unfragmented URL.
-// Back across native fragment chains uses the Navigation API.
+// Older-browser fallback covers a native fragment observed growing history.
+// Histories with unindexed entries and existing Forward entries use the Navigation API.
 for (const legacy of [false, true]) {
 	test(`BUG-59: Back dismisses Menu before fragment history${legacy ? ' without the Navigation API' : ''}`, async ({ page }) => {
 		if (legacy) await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
@@ -363,4 +363,73 @@ test('BUG-59: a supplied navigation badge appears in the full sidebar and rail',
 	await expect(page.getByRole('tooltip', { name: 'Chat', exact: true })).toBeVisible();
 	await expect(chat).toHaveAccessibleDescription(/3 need you/);
 	await shot(page, 'shell-badge-rail');
+});
+
+test('BUG-59: Back with Menu open preserves an unsent Chat draft', async ({ page }) => {
+	await createOrganization(page);
+	await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Chat', exact: true }).click();
+	await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+	await expect(page).toHaveURL(/\/chat#shell-page-title$/);
+	await page.getByRole('navigation', { name: 'Chat', exact: true })
+		.getByTestId('conversation-link').filter({ hasText: 'general' }).first().click();
+	const composer = page.getByTestId('composer');
+	await expect(page).toHaveURL(/c=c-general/);
+	await composer.fill('Keep this unsent draft');
+	await page.setViewportSize({ width: 600, height: 900 });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect(dialog).not.toBeVisible();
+	await expect(page).toHaveURL(/c=c-general/);
+	await expect(menu).toBeFocused();
+	await expect(composer).toHaveValue('Keep this unsent draft');
+	await shot(page, 'shell-menu-back-preserves-chat-draft');
+	await page.evaluate(() => window.history.back());
+	await expect(page).toHaveURL(/\/chat#shell-page-title$/);
+	await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+	await expect(composer).toHaveCount(0);
+});
+
+test('BUG-59: Back dismisses Menu during an unfinished Forward', async ({ page }) => {
+	await createOrganization(page);
+	const mainNav = page.getByRole('navigation', { name: 'Main', exact: true });
+	await mainNav.getByRole('link', { name: 'Projects', exact: true }).click();
+	await expect(page).toHaveURL(/\/projects$/);
+	await page.goBack();
+	await expect(page.getByRole('group', { name: 'Show agents' })).toBeVisible();
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.getByRole('group', { name: 'Show agents' })).toBeVisible();
+	await page.evaluate(async () => {
+		const path = '/e2e/fakes/org-api.ts';
+		const { orgApi } = await import(path);
+		const original = orgApi.view;
+		orgApi.view = async (...args: unknown[]) => {
+			orgApi.view = original;
+			document.documentElement.dataset.forwardLoading = 'true';
+			await new Promise<void>((resolve) => window.addEventListener('release-forward-load', () => resolve(), { once: true }));
+			return original(...args);
+		};
+	});
+	await page.setViewportSize({ width: 600, height: 900 });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
+	await menu.click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	await expect(page.locator('html')).toHaveAttribute('data-forward-loading', 'true');
+	await expect(page).toHaveURL(/\/projects$/);
+	try {
+		await page.evaluate(() => window.history.back());
+		await expect(dialog).not.toBeVisible();
+		await expect(page).toHaveURL(/\/projects$/);
+		await expect(menu).toBeFocused();
+	} finally {
+		await page.evaluate(() => window.dispatchEvent(new Event('release-forward-load')));
+	}
+	await expect(page.getByRole('heading', { level: 1, name: 'Projects', exact: true })).toBeVisible();
+	await shot(page, 'shell-menu-back-during-forward');
 });
