@@ -43,6 +43,7 @@ org-office-launch = { path = "../../crates/org-office-launch" }
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+rusqlite.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
