@@ -1420,3 +1420,48 @@ fn recovery_live_worker_missing_or_unreadable_record_cannot_authorize_signals() 
         assert!(ops.actions.is_empty());
     }
 }
+
+#[test]
+fn recovery_native_sleep_recomputes_the_budget_after_interrupts() {
+    use std::cell::Cell;
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(100);
+    let clock = Cell::new(start);
+    let mut calls = 0;
+    wait_until_with(
+        deadline,
+        || clock.get(),
+        |remaining| {
+            calls += 1;
+            match calls {
+                1 => {
+                    assert_eq!(remaining, Duration::from_millis(100));
+                    clock.set(start + Duration::from_millis(70));
+                    Err(io::Error::from(io::ErrorKind::Interrupted))
+                }
+                2 => {
+                    assert_eq!(remaining, Duration::from_millis(30));
+                    clock.set(deadline);
+                    Ok(())
+                }
+                _ => panic!("wait retried after its absolute deadline"),
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+
+    clock.set(start);
+    calls = 0;
+    wait_until_with(
+        deadline,
+        || clock.get(),
+        |_| {
+            calls += 1;
+            clock.set(deadline + Duration::from_millis(1));
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 1);
+}

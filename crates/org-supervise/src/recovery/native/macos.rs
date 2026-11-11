@@ -407,8 +407,7 @@ impl RecoveryProcesses for NativeRecovery {
     }
 
     fn wait_until(&mut self, deadline: Instant) -> io::Result<()> {
-        std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
-        Ok(())
+        super::native_wait_until(deadline)
     }
 }
 

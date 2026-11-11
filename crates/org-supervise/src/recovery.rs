@@ -31,7 +31,7 @@ pub use startup::{recover_record, recover_startup, RecoveryBatch, RecoveryGone};
 
 use std::collections::BTreeSet;
 use std::io;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{invalid, ChildIdentity, SessionMark};
 
@@ -457,6 +457,40 @@ fn safe_identity<'a>(
 
 #[cfg(test)]
 mod tests;
+
+fn native_wait_until(deadline: Instant) -> io::Result<()> {
+    wait_until_with(deadline, Instant::now, |remaining| {
+        let timeout = libc::timespec {
+            tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_nsec: remaining.subsec_nanos() as _,
+        };
+        // SAFETY: a valid finite interval. An interrupted call is retried only
+        // after recomputing the absolute budget, so no remaining-time output is needed.
+        if unsafe { libc::nanosleep(&timeout, std::ptr::null_mut()) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    })
+}
+
+fn wait_until_with(
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration) -> io::Result<()>,
+) -> io::Result<()> {
+    loop {
+        let remaining = deadline.saturating_duration_since(now());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        match sleep(remaining) {
+            Ok(()) => continue,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
 
 fn native_mark(bytes: &[u8]) -> MarkEvidence {
     if !bytes.is_empty() && bytes.last() != Some(&0) {
