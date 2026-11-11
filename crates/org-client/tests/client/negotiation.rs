@@ -260,23 +260,26 @@ fn a_well_formed_server_refusal_keeps_its_code_and_message_but_closes() {
 
 #[test]
 fn a_transport_timeout_keeps_its_variant_and_closes_even_before_a_write() {
-    let server = fake(|mut peer| {
-        bounded(&mut peer);
-        // A zero-deadline request may be abandoned before writing. Neither outcome may
-        // be followed by another frame, and the peer deliberately never answers hello.
-        if let Some(request) = peer.next_request() {
-            assert_eq!(request.method, "hello");
-            assert!(peer.next_request().is_none());
-        }
+    // Catch accidental substitution of the ten-second default for Duration::ZERO.
+    watchdog(Duration::from_secs(5), || {
+        let server = fake(|mut peer| {
+            bounded(&mut peer);
+            // A zero-deadline request may be abandoned before writing. Neither outcome may
+            // be followed by another frame, and the peer deliberately never answers hello.
+            if let Some(request) = peer.next_request() {
+                assert_eq!(request.method, "hello");
+                assert!(peer.next_request().is_none());
+            }
+        });
+        let client = server.client();
+        assert!(matches!(
+            client.hello_offering(ApiRange { min: 2, max: 2 }, INSTANCE, Duration::ZERO),
+            Err(ClientError::Timeout)
+        ));
+        after_failure(&client);
+        drop(client);
+        server.finish();
     });
-    let client = server.client();
-    assert!(matches!(
-        client.hello_offering(ApiRange { min: 2, max: 2 }, INSTANCE, Duration::ZERO),
-        Err(ClientError::Timeout)
-    ));
-    after_failure(&client);
-    drop(client);
-    server.finish();
 }
 
 #[test]
