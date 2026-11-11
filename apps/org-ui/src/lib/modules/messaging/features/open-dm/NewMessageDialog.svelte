@@ -6,7 +6,7 @@
 	import { CHAT_LIMITS } from '$lib/modules/messaging/types';
 
 	/** New message (CHAT-3): one member opens a DM, up to seven more make a group of up to 8 with you. */
-	let { open = $bindable(false), members, onsubmit }: { open: boolean; members: ChatMember[]; onsubmit: (ids: string[]) => Promise<void> } = $props();
+	let { open = $bindable(false), members, onsubmit, returnFocus }: { open: boolean; returnFocus?: () => void; members: ChatMember[]; onsubmit: (ids: string[]) => Promise<void> } = $props();
 
 	let picked = $state<string[]>([]);
 	let error = $state<string | undefined>();
@@ -22,6 +22,11 @@
 	});
 	const choices = $derived(members.filter((m) => !m.former && !m.owner));
 	const max = CHAT_LIMITS.groupDmMax - 1;
+
+	/** Navigation uses the same busy guard as the dialog's own dismissal controls. */
+	export function dismiss() {
+		if (!busy) open = false;
+	}
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -40,7 +45,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent class="sm:max-w-md">
+	<DialogContent class="sm:max-w-md max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto" onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }}>
 		<DialogHeader>
 			<DialogTitle>New message</DialogTitle>
 			<DialogDescription>Pick who to talk to. Up to {max} others makes a group.</DialogDescription>

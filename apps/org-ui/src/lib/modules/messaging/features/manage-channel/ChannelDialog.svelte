@@ -17,9 +17,11 @@
 		members,
 		initialName = '',
 		initialMembers = [],
-		onsubmit
+		onsubmit,
+		returnFocus
 	}: {
 		open: boolean;
+		returnFocus?: () => void;
 		mode: 'create' | 'rename' | 'members';
 		members: ChatMember[];
 		initialName?: string;
@@ -50,6 +52,11 @@
 	const choices = $derived(members.filter((m) => !m.former && !m.owner));
 	const title = $derived(mode === 'create' ? 'Add a channel' : mode === 'rename' ? 'Rename channel' : 'Add people');
 
+	/** Navigation uses the same busy guard as the dialog's own dismissal controls. */
+	export function dismiss() {
+		if (!busy) open = false;
+	}
+
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		touched = true;
@@ -68,7 +75,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent class="sm:max-w-md">
+	<DialogContent class="sm:max-w-md max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto" onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }}>
 		<DialogHeader>
 			<DialogTitle>{title}</DialogTitle>
 			<DialogDescription>{mode === 'members' ? 'People and agents in the channel can read it. Agents read only while they are members.' : 'Channels are lowercase, with dashes instead of spaces.'}</DialogDescription>

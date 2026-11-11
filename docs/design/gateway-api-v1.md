@@ -154,6 +154,18 @@ Clients segment-encode IDs and treat an ID separator as a client bug. A raw segm
 such as `%252f` represents a literal percent escape; decode at most once, never a
 second time into a separator. The leading root slash is not itself a segment.
 
+B1-05 accepted parser limitation (D-B59; Rowan, 2026-11-11): these rules apply
+to the target presented by pinned Hyper `=1.12.0` and lockfile `http` `1.5.0`.
+[RFC 9110 §7.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.1) excludes
+fragments from a request's target URI; [RFC 9112 §3.2.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.1)
+defines origin-form using only path and query. A client-sent literal `#` is
+malformed, but `http` truncates it and everything after it before routing.
+The gateway accepts this parser behavior: validation and authorization use the
+same retained path, and discarded bytes do not select routes or static files
+or appear in responses. A raw wire regression pins status, body and policy
+headers to those of the equivalent effective API target. No parser fork or
+additional framing layer is used; this limitation is recorded as a LOW for review.
+
 Hidden resources and missing resources have the same not_found response. A visible
 resource the caller cannot change is 403 not_authorized; there is no new permission
 code. A confirmed submit not_found is a rejected attempt with nothing applied.
@@ -465,6 +477,10 @@ The classifier consumes a correlated native reply with a numeric native ID:
   including not_bound and unknown native refusal names, become sanitized
   unavailable503 with an invariant issue. Native errors cannot supply gateway
   session, cancellation or identity hints. Rate limiting is gateway-owned.
+  The native code allowlist is explicit and exhaustive: codes belonging to
+  HTTP admission or other domains (including unsupported_version and timeout)
+  cannot pass through with a native message. HTTP admission can still emit
+  its own documented errors before dispatch.
 - Native not_authorized returns `NeedsAuthorizationRecheck` outside the
   serializable browser outcome type. B1-06 checks host-session liveness. For a
   live session it renews once and redispatches once with the same operation ID,
@@ -482,7 +498,7 @@ worker enforces authorization. A disabled operation must be refused503 before
 native dispatch even when a client ignores its capability.
 
 Layer A vectors live in `test-vectors/v2/gateway/`: 16 mapping cases, 233 strict
-input/optional cases and 27 reply cases, plus one core outbound-encoding guard.
+input/optional cases and 38 reply cases, plus one core outbound-encoding guard.
 Each case is tagged Rust or Rust+TS; native reply classification is Rust-only,
 while its browser JSON and mapping paths/envelopes are shared with Jules's
 reader/URL builder. The Rust reader does not claim HTTP-path routing coverage.

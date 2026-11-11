@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import type { OfficeInfo, StatusUpdate } from '../src/lib/proto';
 
 async function openOffices(page: Page, stopped?: string) {
 	// `?office=` makes the new organization's HQ a stopped office with a reason (the mock's scenario).
@@ -55,7 +56,7 @@ test('phase 1: Add office is disabled and says it comes in a later release', asy
 test('OFC-13: a row’s label says its name, HQ, where it runs, the status and the agents, and that it opens details', async ({ page }) => {
 	await openOffices(page);
 	const button = rows(page).first().getByRole('button');
-	await expect(button).toHaveAccessibleName("HQ, HQ, This Mac (you're here), Online, 7 agents, opens details");
+	await expect(button).toHaveAccessibleName("HQ, HQ, the office's machine, Online, 7 agents, opens details");
 	await expect(button).toHaveAttribute('aria-haspopup', 'dialog');
 });
 
@@ -75,7 +76,7 @@ test('while the agents are being counted the row shows a skeleton, then the coun
 	await visit(page, '/offices?org=slow');
 	await expect(rows(page)).toHaveCount(1); // the list doesn't wait
 	await expect(page.getByTestId('count-skeleton')).toBeVisible();
-	await expect(rows(page).first().getByRole('button')).toHaveAccessibleName(/^HQ, HQ, This Mac \(you're here\), [^,]+, opens details$/); // no count in it yet
+	await expect(rows(page).first().getByRole('button')).toHaveAccessibleName(/^HQ, HQ, the office's machine, [^,]+, opens details$/); // no count in it yet
 	await expect(page.getByTestId('count-skeleton')).toHaveCount(0, { timeout: 10_000 });
 	await expect(rows(page).first().getByTestId('agent-count')).toContainText('7 agents');
 });
@@ -215,7 +216,7 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	await expect(hq).toContainText(/It stopped unexpectedly\. Restarting in \d+ s/);
 	// The screen-reader label keeps where it runs, puts the reason after the status, and never ticks (spec §6.1).
 	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
-	expect(label).toContain('This Mac');
+	expect(label).toContain("the office's machine");
 	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
 	expect(label).not.toMatch(/\d+ s\b/);
 });
@@ -231,9 +232,10 @@ test('OFC-11: Restart office brings a crashed office back, and the row reads Onl
 	await expect(hq).toContainText('Online', { timeout: 30_000 });
 	await expect(hq).not.toContainText('It stopped unexpectedly');
 	await expect(sheet.getByTestId('restart-office')).toHaveCount(0);
+	await expect(sheet.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
 });
 
-test('OFC-11: a missing key says Try again, and an unsupported version has no button', async ({ page }) => {
+test('OFC-11: a missing key says Try again', async ({ page }) => {
 	await openOffices(page, 'key_missing');
 	await rows(page).first().getByRole('button').first().click();
 	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Try again');
@@ -277,4 +279,361 @@ test('OFC-11: a status change the host pushes shows at once, without waiting for
 	await push({ kind: 'offices', offices: [{ ...office, status: 'active' }] }); // the whole list, as after a reconnect
 	await expect(hq).toContainText('Online');
 	await expect(hq).not.toContainText('It stopped unexpectedly');
+});
+
+async function pushOffice(page: Page, changes: Partial<OfficeInfo>) {
+	await page.evaluate(async (changes) => {
+		const path = '/e2e/fakes/office-api.ts';
+		const { officeApi } = await import(path);
+		const connection = (await officeApi.connections()).at(-1)!;
+		const { __mockOfficeStatus: push } = window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void };
+		push({ kind: 'office', office: { ...connection.office, ...changes } });
+	}, changes);
+}
+
+test('OFC-13 / BUG-23: keyboard focus stays on Restart while it runs and after a refusal', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await visit(page, '/offices?restart=not_ready');
+	await page.evaluate(async () => {
+		const path = '/e2e/fakes/office-api.ts';
+		const { officeApi } = await import(path);
+		const restart = officeApi.restartOffice.bind(officeApi);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const held = { release, calls: 0 };
+		Object.assign(window, { __heldRestart: held });
+		officeApi.restartOffice = async (id: string) => { held.calls++; await gate; return restart(id); };
+	});
+	await expect(rows(page).first()).toContainText('Stopped');
+	await rows(page).first().getByRole('button').press('Enter');
+	const sheet = page.getByRole('dialog');
+	const restart = sheet.getByTestId('restart-office');
+	await restart.press('Enter');
+	await expect(restart).toHaveText('Restarting…');
+	await expect(restart).toHaveAttribute('aria-disabled', 'true');
+	await shot(page, 'office-restart-keyboard-busy');
+	await expect.soft(restart).toBeFocused();
+	await page.keyboard.press('Enter');
+	const calls = await page.evaluate(() => {
+		const held = (window as unknown as { __heldRestart: { release: () => void; calls: number } }).__heldRestart;
+		held.release();
+		return held.calls;
+	});
+	expect(calls).toBe(1);
+	await expect(sheet.getByTestId('restart-error')).toContainText('The office host is still starting');
+	await expect(restart).toHaveText('Restart office');
+	await shot(page, 'office-restart-keyboard-refused');
+	await expect(restart).toBeFocused();
+});
+
+test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the selected office', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	await openOffices(page);
+	const row = rows(page).first();
+	await expect(row).toContainText('Online');
+	await page.setViewportSize({ width: 320, height: 700 });
+	const host = 'northwindregionalagentservicesproductionheadquarterscluster.example';
+	await pushOffice(page, { name: host, host, status: 'unavailable', status_reason: 'unsupported_version' });
+	const reason = `The release components on ${host} don't match. Run diagnostics and repair the selected instance there.`;
+	await expect(row).toContainText(reason);
+	const opener = row.getByRole('button');
+	expect((await opener.boundingBox())?.width).toBeGreaterThanOrEqual(200);
+	await shot(page, 'office-incompatible-row-320');
+	await opener.click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet).toHaveCSS('width', '320px');
+	await expect(sheet.getByRole('heading', { name: host, exact: true })).toBeVisible();
+	expect(await sheet.evaluate((el) => {
+		const title = el.querySelector('[data-slot="sheet-title"]')!.getBoundingClientRect();
+		const close = el.querySelector('[data-slot="sheet-close"]')!.getBoundingClientRect();
+		return title.right <= close.left;
+	})).toBe(true);
+	await shot(page, 'office-incompatible-release');
+	await expect(sheet.getByTestId('office-why')).toHaveText(reason);
+	await expect(sheet.getByTestId('restart-office')).toHaveCount(0);
+	await expect(sheet.getByRole('button', { name: 'Copy details', exact: true })).toBeVisible();
+	const show = sheet.getByRole('button', { name: 'Show local CLI repair instructions', exact: true });
+	await expect(show).toHaveAttribute('aria-expanded', 'false');
+	const id = await show.getAttribute('aria-controls');
+	expect(id).toBeTruthy();
+	await show.press('Enter');
+	const hide = sheet.getByRole('button', { name: 'Hide repair instructions', exact: true });
+	await expect(hide).toBeFocused();
+	await expect(hide).toHaveAttribute('aria-expanded', 'true');
+	const instructions = sheet.locator(`[id="${id}"]`);
+	await expect(instructions.getByText(`On ${host}, run:`, { exact: true })).toBeVisible();
+	await expect(instructions.locator('pre code')).toHaveText('agentic-org doctor');
+	await expect(instructions).toContainText('It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back.');
+	await expect(instructions).toContainText(`If ${host} runs more than one instance, add --name <instance>.`);
+	await expect(instructions.locator('p code')).toHaveText('--name <instance>');
+	expect(await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+	await shot(page, 'office-local-cli-repair');
+	await instructions.getByRole('button', { name: 'Copy command', exact: true }).click();
+	await expect(instructions.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('agentic-org doctor');
+	await shot(page, 'office-repair-command-copied');
+	const details = sheet.getByRole('button', { name: 'Copy details', exact: true });
+	await details.scrollIntoViewIfNeeded();
+	await expect(details).toBeInViewport();
+	await shot(page, 'office-repair-steps-end-320');
+	await hide.press('Enter');
+	await expect(show).toBeFocused();
+	await expect(instructions).not.toBeVisible();
+});
+
+test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', async ({ page, browserName }) => {
+	await openOffices(page);
+	const row = rows(page).first();
+	await expect(row).toContainText('Online');
+	await pushOffice(page, { host: 'This Mac', status: 'unavailable', status_reason: 'unsupported_version' });
+	await row.getByRole('button').click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('office-why')).toHaveText("The release components on the office's machine don't match. Run diagnostics and repair the selected instance there.");
+	const show = sheet.getByRole('button', { name: 'Show local CLI repair instructions', exact: true });
+	await sheet.getByRole('button', { name: 'Close', exact: true }).focus();
+	if (browserName === 'webkit') await show.click();
+	else await show.dispatchEvent('click'); // Model WebKit's click without native focus in the default suite.
+	await expect(sheet.getByRole('button', { name: 'Hide repair instructions', exact: true })).toBeFocused();
+	await expect(sheet.getByText("On the office's machine, run:", { exact: true })).toBeVisible();
+	await shot(page, 'office-repair-pointer-focus');
+});
+
+test('BUG-25: the Offices footer text meets 4.5:1 contrast', async ({ page }) => {
+	await openOffices(page);
+	const footer = page.getByText('Shown from HQ. Statuses include last-seen information.', { exact: true });
+	await shot(page, 'offices-footer-contrast');
+	const contrast = await footer.evaluate((el) => {
+		const canvas = document.createElement('canvas');
+		canvas.width = canvas.height = 1;
+		const ctx = canvas.getContext('2d')!;
+		const ancestors = [];
+		for (let node: Element | null = el; node; node = node.parentElement) ancestors.unshift(node);
+		for (const node of ancestors) {
+			ctx.fillStyle = getComputedStyle(node).backgroundColor;
+			ctx.fillRect(0, 0, 1, 1);
+		}
+		const luminance = () => [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3)
+			.map((v) => v / 255)
+			.map((v) => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+			.reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+		const bg = luminance();
+		ctx.fillStyle = getComputedStyle(el).color;
+		ctx.fillRect(0, 0, 1, 1);
+		const fg = luminance();
+		return (Math.max(fg, bg) + .05) / (Math.min(fg, bg) + .05);
+	});
+	expect(contrast).toBeGreaterThanOrEqual(4.5);
+});
+
+test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push', async ({ page }) => {
+	await page.clock.install();
+	await openOffices(page);
+	const row = rows(page).first();
+	await expect(row).toContainText('Online');
+	await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1_000));
+	await page.clock.runFor(10_000); // Establish the existing countdown clock's last sample.
+	const current = (await page.evaluate(() => Date.now())) + 4_000;
+	await page.clock.setSystemTime(new Date(current)); // A push arrives before the next timer tick.
+	await row.evaluate((el) => {
+		const seconds: number[] = [];
+		const record = (text: string | null) => {
+			const countdown = text?.match(/Restarting in (\d+) s/);
+			if (countdown) seconds.push(Number(countdown[1]));
+		};
+		const observer = new MutationObserver((changes) => {
+			for (const change of changes) {
+				record(change.oldValue);
+				record(change.target.textContent);
+			}
+		});
+		observer.observe(el, { childList: true, characterData: true, characterDataOldValue: true, subtree: true });
+		Object.assign(window, { __officeCountdownWrites: { seconds, stop: () => observer.disconnect() } });
+	});
+	const pending = { status: 'offline', status_reason: 'crashed', next_restart_at: new Date(current + 45_000).toISOString() } as const;
+	await pushOffice(page, pending);
+	await expect(row).toContainText('Stopped');
+	await shot(page, 'office-countdown-new-push', { settle: false });
+	await expect(row).toContainText('Restarting in 40 s');
+	const written = await page.evaluate(() => {
+		const log = (window as unknown as { __officeCountdownWrites: { seconds: number[]; stop: () => void } }).__officeCountdownWrites;
+		log.stop();
+		return [...new Set(log.seconds)];
+	});
+	expect(written).toEqual([40]);
+	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
+	await page.clock.setSystemTime(new Date(current + 2_000));
+	await pushOffice(page, pending); // The same deadline is reported again before a tick.
+	await expect(row).toContainText('Restarting in 40 s');
+	await page.clock.runFor(10_000);
+	await expect(row).toContainText('Restarting in 30 s');
+	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
+
+	const observed = await page.evaluate(() => Date.now());
+	const later = { ...pending, next_restart_at: new Date(observed + 60_000).toISOString() };
+	await pushOffice(page, later);
+	await expect(row).toContainText('Restarting in 60 s');
+	const opener = row.getByRole('button');
+	const label = (await opener.getAttribute('aria-label')) ?? '';
+	expect(label).toMatch(/restarting at \d\d:\d\d/);
+	await page.clock.setSystemTime(new Date(observed + 2_000));
+	await pushOffice(page, later);
+	await expect(opener).toHaveAccessibleName(label);
+});
+
+test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', async ({ page }) => {
+	await openOffices(page);
+	const opener = rows(page).first().getByRole('button');
+	await opener.press('Enter');
+	const sheet = page.getByRole('dialog');
+	await expect(sheet).toBeVisible();
+	await shot(page, 'office-details-single-close');
+	const close = sheet.getByRole('button', { name: 'Close', exact: true });
+	await expect(close).toHaveCount(1);
+	await close.press('Enter');
+	await expect(sheet).not.toBeVisible();
+	await expect(opener).toBeFocused();
+});
+
+test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', async ({ page, browserName }) => {
+	await openOffices(page);
+	const opener = rows(page).first().getByRole('button');
+	await page.getByRole('link', { name: 'Offices', exact: true }).focus();
+	// WebKit doesn't focus a button on pointer activation. Exercise the same path in Chromium.
+	if (browserName === 'webkit') await opener.click();
+	else await opener.dispatchEvent('click');
+	const sheet = page.getByRole('dialog');
+	await expect(sheet).toBeVisible();
+	await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(sheet).not.toBeVisible();
+	await expect(opener).toBeFocused();
+	await shot(page, 'office-details-pointer-return-focus');
+});
+
+test('BUG-25: HQ source copy is accurate in a remote browser', async ({ page }) => {
+	await openOffices(page);
+	const footer = page.getByText('Shown from HQ. Statuses include last-seen information.', { exact: true });
+	await expect(rows(page).first()).toContainText('7 agents');
+	await expect(rows(page).first()).toContainText('Online');
+	await expect(footer).toBeVisible();
+	await page.setViewportSize({ width: 320, height: 640 });
+	await footer.scrollIntoViewIfNeeded();
+	await expect(footer).toBeInViewport({ ratio: 1 });
+	await shot(page, 'offices-hq-source-320', { context: footer });
+});
+
+for (const host of ['studio-mac.local', 'This Mac']) {
+	test(`BUG-25: the office row names its host ${host} without claiming the viewer is there`, async ({ page }) => {
+		await openOffices(page);
+		await expect(rows(page).first()).toContainText('Online');
+		await pushOffice(page, { host, endpoint: '/tmp/test-owned-office.sock' });
+		const location = host === 'This Mac' ? "the office's machine" : host;
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await expect(row.getByRole('button')).toHaveAccessibleName(`HQ, HQ, ${location}, Online, 7 agents, opens details`);
+		await row.getByRole('button').press('Enter');
+		await expect(page.getByRole('dialog')).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(row.getByRole('button')).toBeFocused();
+	});
+}
+
+for (const reason of ['crashed', 'in_use'] as const) {
+	test(`BUG-26: step boundaries and shortly are correct for ${reason}`, async ({ page }) => {
+		await page.clock.install();
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1_000));
+		const now = await page.evaluate(() => Date.now());
+		await pushOffice(page, { status: 'offline', status_reason: reason, next_restart_at: new Date(now + 45_000).toISOString() });
+		const verb = reason === 'in_use' ? 'Trying again' : 'Restarting';
+		await expect(row).toContainText(`${verb} in 40 s`);
+		const label = await row.getByRole('button').getAttribute('aria-label');
+		await row.getByRole('button').press('Enter');
+		const why = page.getByTestId('office-why');
+		await expect(why).toContainText(`${verb} in 40 s`);
+		await page.clock.runFor(5_001);
+		await expect(why).toContainText(`${verb} in 30 s`);
+		await page.keyboard.press('Escape');
+		const observed = await page.evaluate(() => Date.now());
+		await pushOffice(page, { status: 'offline', status_reason: reason, next_restart_at: new Date(observed + 11_000).toISOString() });
+		await expect(row).toContainText(`${verb} in 10 s`);
+		await expect(row.getByRole('button')).toHaveAccessibleName(label!); // 11 seconds remain.
+		await page.clock.runFor(1_000);
+		await expect(row).toContainText(`${verb} in 10 s`);
+		await expect(row.getByRole('button')).toHaveAccessibleName(label!); // 10 seconds remain.
+		await page.clock.runFor(1_000);
+		await expect(row).toContainText(`${verb} shortly`);
+		await expect(row.getByRole('button')).toHaveAccessibleName(label!); // 9 seconds remain.
+		await page.clock.runFor(10_000);
+		await expect(row).toContainText(`${verb} shortly`);
+		await row.getByRole('button').press('Enter');
+		await expect(why).toContainText(`${verb} shortly`);
+		await shot(page, `office-countdown-shortly-${reason}`);
+	});
+}
+
+for (const change of ['reason', 'status'] as const) {
+	test(`BUG-64: a refused restart note clears after its ${change} changes`, async ({ page }) => {
+		await openOffices(page, 'crashed');
+		await visit(page, '/offices?restart=not_ready');
+		await rows(page).first().getByRole('button').press('Enter');
+		const sheet = page.getByRole('dialog');
+		const restart = sheet.getByTestId('restart-office');
+		await restart.press('Enter');
+		await expect(sheet.getByTestId('restart-error')).toContainText('The office host is still starting');
+		await expect(restart).toBeFocused();
+		await pushOffice(page, {});
+		await expect(sheet.getByTestId('restart-error')).toContainText('The office host is still starting');
+		await pushOffice(page, change === 'reason'
+			? { status: 'unavailable', status_reason: 'unsupported_version' }
+			: { status: 'active', status_reason: 'crashed' });
+		await expect(sheet.getByTestId('restart-error')).toHaveCount(0);
+		if (change === 'reason') await expect(sheet.getByRole('button', { name: 'Show local CLI repair instructions' })).toBeVisible();
+		else await expect(sheet.getByText('Online', { exact: true })).toBeVisible();
+		await shot(page, `office-refusal-cleared-${change}`);
+	});
+}
+
+test('BUG-64: unavailable restart shows the reason row without raw host text', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await page.evaluate(async () => {
+		const path = '/e2e/fakes/office-api.ts';
+		const { officeApi } = await import(path);
+		officeApi.restartOffice = async () => { throw { source: 'api', code: 'unavailable', message: 'RAW-HOST-REFUSAL' }; };
+	});
+	await rows(page).first().getByRole('button').press('Enter');
+	const sheet = page.getByRole('dialog');
+	const restart = sheet.getByTestId('restart-office');
+	await restart.press('Enter');
+	await expect(restart).toHaveAttribute('aria-busy', 'false');
+	await expect(sheet.getByTestId('office-why')).toHaveText('It stopped unexpectedly');
+	await expect(sheet.getByTestId('restart-error')).toHaveCount(0);
+	await expect(sheet).not.toContainText('RAW-HOST-REFUSAL');
+	await expect(restart).toBeFocused();
+	await shot(page, 'office-unavailable-restart-reason');
+});
+
+test('BUG-64: a delayed refusal cannot restore a note for an obsolete reason', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await page.evaluate(async () => {
+		const path = '/e2e/fakes/office-api.ts';
+		const { officeApi } = await import(path);
+		officeApi.restartOffice = async () => {
+			await new Promise<void>((resolve) => window.addEventListener('release-office-refusal', () => resolve(), { once: true }));
+			document.documentElement.dataset.refusalReturned = 'true';
+			throw { source: 'api', code: 'not_ready', message: 'The office host is still starting.' };
+		};
+	});
+	await rows(page).first().getByRole('button').press('Enter');
+	const sheet = page.getByRole('dialog');
+	await sheet.getByTestId('restart-office').press('Enter');
+	await expect(sheet.getByTestId('restart-office')).toHaveAttribute('aria-busy', 'true');
+	await pushOffice(page, { status: 'active', status_reason: undefined });
+	await expect(sheet.getByText('Online', { exact: true })).toBeVisible();
+	await page.evaluate(() => window.dispatchEvent(new Event('release-office-refusal')));
+	await expect(page.locator('html')).toHaveAttribute('data-refusal-returned', 'true');
+	await expect(sheet.getByTestId('restart-error')).toHaveCount(0);
+	await shot(page, 'office-obsolete-delayed-refusal');
+	await expect(sheet.getByTestId('restart-error')).toHaveCount(0);
 });

@@ -147,12 +147,12 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined, why?: string): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, _here: boolean, status: DisplayStatus | undefined, why?: string): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
 	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
-	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
+	parts.push(status === 'unreachable' ? "Can't reach this office" : repairLocation(o.host));
 	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
@@ -162,7 +162,7 @@ export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolea
 // ---- why an office stopped (spec §3.3, OFC-11..13) ----------------------------------------------------------------
 
 /** The line under a stopped office's name, from the host's `status_reason`. */
-const REASON_COPY: Record<OfficeStatusReason, string> = {
+const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, string> = {
 	crashed: 'It stopped unexpectedly',
 	start_timeout: "It didn't start in time",
 	restarts_exhausted: "It kept stopping, so it won't restart on its own",
@@ -170,31 +170,53 @@ const REASON_COPY: Record<OfficeStatusReason, string> = {
 	in_use: 'Its data is still in use by another Agentic Org process',
 	key_missing: "This office's key isn't available on this Mac, so its data can't be opened",
 	stopped_by_owner: 'You stopped it',
-	unsupported_version: "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in.",
 	invalid_request: "It couldn't start because of an internal error",
 	unknown: "It stopped for a reason this version doesn't know"
 };
 
+type OfficeStop = Pick<OfficeInfo, 'host' | 'status' | 'status_reason' | 'next_restart_at'>;
+export type RestartDeadlineSample = { deadline: string; observedAt: number };
+
+/** The legacy host label refers to the office machine, not the device running the browser. */
+export function repairLocation(host: string): string {
+	return host === 'This Mac' ? "the office's machine" : host;
+}
+
+/** A new pending deadline is sampled once; another office or a repeated report cannot move that sample. */
+export function sampleRestartDeadlines(
+	offices: readonly Pick<OfficeInfo, 'id' | 'status' | 'next_restart_at'>[],
+	previous: ReadonlyMap<string, RestartDeadlineSample>,
+	observedAt: number
+): ReadonlyMap<string, RestartDeadlineSample> {
+	const next = new Map<string, RestartDeadlineSample>();
+	for (const { id, status, next_restart_at: deadline } of offices) {
+		if (status !== 'offline' || !deadline) continue;
+		const sample = previous.get(id);
+		next.set(id, sample?.deadline === deadline ? sample : { deadline, observedAt });
+	}
+	return next;
+}
+
 /** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
-export function whyForLabel(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
+export function whyForLabel(o: OfficeStop, now: Date): string | undefined {
 	const text = whyStopped({ ...o, next_restart_at: undefined }, now);
 	if (text === undefined) return undefined;
 	const lower = text.charAt(0).toLowerCase() + text.slice(1);
 	const n = secondsUntil(o.next_restart_at, now);
-	if (n === undefined || n === 0) return lower;
+	if (n === undefined) return lower;
 	// A restart a minute or more away is read as a clock time, which does not tick; a nearer one as "shortly".
 	if (n < 60) return `${lower}, restarting shortly`;
 	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 	return `${lower}, restarting at ${at}`;
 }
 
-/** Seconds from `now` until `next_restart_at`, rounded up; never negative. Nothing when it is absent or unreadable. */
+/** Seconds from `now` until `next_restart_at`, rounded down; never negative. Nothing when it is absent or unreadable. */
 export function secondsUntil(nextRestartAt: string | undefined, now: Date): number | undefined {
 	if (!nextRestartAt) return undefined;
 	// RFC 3339 with a time zone only: Date.parse alone accepts junk like "5".
 	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt)) return undefined;
 	const t = Date.parse(nextRestartAt);
-	return Number.isNaN(t) ? undefined : Math.max(0, Math.ceil((t - now.getTime()) / 1000));
+	return Number.isNaN(t) ? undefined : Math.max(0, Math.floor((t - now.getTime()) / 1000));
 }
 
 /**
@@ -202,13 +224,16 @@ export function secondsUntil(nextRestartAt: string | undefined, now: Date): numb
  * `in_use` "Trying again in 20 s"). Only an office the host reports `offline` or `unavailable` has a reason line; a
  * missing reason reads "It isn't running". The line comes from the host's status, never from the app's own check.
  */
-export function whyStopped(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
+export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
+	if (o.status_reason === 'unsupported_version')
+		return `The release components on ${repairLocation(o.host)} don't match. Run diagnostics and repair the selected instance there.`;
 	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
-	// A restart whose time has come is not announced as "in 0 s": the next status will say what happened.
-	if (n === undefined || n === 0) return base;
-	return o.status_reason === 'in_use' ? `${base}. Trying again in ${n} s` : `${base}. Restarting in ${n} s`;
+	if (n === undefined) return base;
+	const action = o.status_reason === 'in_use' ? 'Trying again' : 'Restarting';
+	const countdown = n < 10 ? 'shortly' : `in ${Math.floor(n / 10) * 10} s`;
+	return `${base}. ${action} ${countdown}`;
 }
 
 /** What "Copy details" puts on the clipboard (spec §3.3): the office, its status and reason, the time and the app version. Never keys or tokens. */

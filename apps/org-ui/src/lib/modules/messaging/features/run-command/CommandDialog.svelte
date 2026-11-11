@@ -33,7 +33,7 @@
 </script>
 
 <Dialog bind:open>
-	<DialogContent class="sm:max-w-lg">
+	<DialogContent class="sm:max-w-lg max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto">
 		{#if form}
 			<DialogHeader>
 				<DialogTitle>{form.title}</DialogTitle>

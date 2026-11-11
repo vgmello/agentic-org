@@ -4,8 +4,9 @@
 //! The caller persists the mark before spawning and the identity before obtaining stdin.
 //! It owns and drains stdout/stderr throughout the child's life; this crate never reads them.
 //! Exit observation never reaps. Dropping the owner kills its group and reaps only that child.
-//! Cleanup/reaping is explicit after exit. Orphan discovery and PTYs are later deliveries.
-//! Real harnesses whose tools detach require that discovery before use.
+//! Cleanup and reaping are explicit after exit. [`recovery`] provides native orphan
+//! discovery on macOS and Linux. Real harnesses whose tools detach require recovery
+//! integration before use. PTYs are a later delivery.
 //!
 //! All processes in the embedding program must preserve child ownership: never install
 //! SIGCHLD=SIG_IGN/SA_NOCLDWAIT or reap arbitrary children. Preparation checks the former;
@@ -23,6 +24,7 @@ mod cleanup;
 mod environment;
 mod files;
 mod platform;
+pub mod recovery;
 pub mod runtime;
 mod spawn;
 mod stop;

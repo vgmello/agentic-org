@@ -1,5 +1,7 @@
 use std::fs::{self, File, TryLockError};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::directory::{self, RuntimeView, ThisOffice};
@@ -12,9 +14,17 @@ use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
+use org_sync::error::SyncError;
+use org_sync::organization::{
+    OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgStore, ValidatedSnapshot, VerifiedPeer,
+};
+use org_sync_proto::{Digest, Epoch, OfficeId, OrgId};
 
 use crate::store::org as org_db;
-use crate::store::{messages, status};
+use crate::store::org::{
+    OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode,
+};
+use crate::store::{messages, origin, status};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
@@ -47,13 +57,15 @@ const OFFICE_ENTRIES: [&str; 11] = [
 ];
 
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
-/// members' status lines. An older file gets the tables it lacks when it is opened.
+/// members' status lines. Version 4 adds the work feed and origin ledger. An older file
+/// gets the tables it lacks when it is opened.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
-    version: 3,
+    version: 4,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
-        status::create_table(tx)
+        status::create_table(tx)?;
+        origin::create_tables(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -61,6 +73,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 3 {
             status::create_table(tx)?;
+        }
+        if from < 4 {
+            origin::create_tables(tx)?;
         }
         Ok(())
     },
@@ -125,6 +140,23 @@ impl std::fmt::Debug for Office {
             .field("folder", &self.folder)
             .field("info", &self.info)
             .finish_non_exhaustive()
+    }
+}
+
+impl OrgStore for Office {
+    fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
+        let output = org_db::transact_replication(self.org_store(), attempt)?;
+        if matches!(
+            output,
+            OrgOutput::Ack {
+                duplicate: false,
+                ..
+            } | OrgOutput::Published(_)
+                | OrgOutput::SnapshotInstalled
+        ) {
+            self.wake_followers();
+        }
+        Ok(output)
     }
 }
 
@@ -360,6 +392,102 @@ impl Office {
         self.org.read(org_db::snapshot)
     }
 
+    /// Pins trusted HQ CA material and anchors existing organization state at its native head.
+    /// Called by worker composition after the local organization's authority is established.
+    pub fn bind_replication_hq(
+        &self,
+        ca: Digest,
+        max_snapshot_bytes: u64,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.org,
+            org,
+            local.clone(),
+            local,
+            ca,
+            org_db::ReplicationBootstrap::Hq { max_snapshot_bytes },
+        )
+    }
+
+    /// Binds a fresh local office to the CA, HQ and epoch verified by enrollment.
+    pub fn bind_replication_satellite(
+        &self,
+        hq: OfficeId,
+        ca: Digest,
+        authority: Epoch,
+        epoch_base: Digest,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.org,
+            org,
+            local,
+            hq,
+            ca,
+            org_db::ReplicationBootstrap::Satellite {
+                authority,
+                epoch_base,
+            },
+        )
+    }
+
+    /// Returns the materialized federation cursor and authority pin for the worker's handshake.
+    /// A fresh satellite requires its initial snapshot before it can advertise a cursor.
+    pub fn replication_checkpoint(&self) -> Result<OrgCheckpoint, SyncError> {
+        org_db::replication_checkpoint(&self.org)
+    }
+
+    /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
+    pub fn replication_events_after(
+        &self,
+        after: org_sync_proto::Position,
+        digest: Digest,
+        limit: usize,
+    ) -> Result<Option<Vec<OrgEvent>>, SyncError> {
+        org_db::replication_events_after(&self.org, after, digest, limit)
+    }
+
+    fn replication_identity(&self) -> Result<(OrgId, OfficeId), SyncError> {
+        let org =
+            OrgId::new(&self.info.org_id).map_err(org_sync::error::StoreError::unavailable)?;
+        let office = OfficeId::new(&self.info.office_id)
+            .map_err(org_sync::error::StoreError::unavailable)?;
+        Ok((org, office))
+    }
+
+    /// Exports the bound HQ's organization tables with a one-time transport key.
+    pub fn export_replication_snapshot(
+        &self,
+        transport_key: &Key,
+        max_bytes: u64,
+    ) -> Result<OrganizationSnapshotExport, OfficeError> {
+        org_db::export_replication_snapshot(&self.org, transport_key, max_bytes)
+    }
+
+    /// Validates and stages one complete, bounded snapshot stream from the verified HQ.
+    /// Recovery requires the caller to show the warning for the accepted authority first.
+    /// The staged result must still pass `org_sync::organization::install_snapshot`.
+    pub fn stage_replication_snapshot(
+        &self,
+        peer: &dyn VerifiedPeer,
+        manifest: &OrganizationSnapshotManifest,
+        transport_key: &Key,
+        input: impl Read,
+        max_bytes: u64,
+        mode: SnapshotStageMode,
+    ) -> Result<ValidatedSnapshot, SyncError> {
+        org_db::stage_replication_snapshot(
+            &self.org,
+            peer.identity(),
+            manifest,
+            transport_key,
+            input,
+            max_bytes,
+            mode,
+        )
+    }
+
     /// `who`: the directory cards matching `params`, from one consistent read of the organization
     /// and the runtime data (`runtime`: presence, status lines). `Err(ApiError)` inside the `Ok`
     /// is the caller's mistake (see [`crate::directory::who`]); the outer error is the storage's.
@@ -390,10 +518,12 @@ impl Office {
         &self,
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        // The clock is read in the writer, so the log's times follow its order.
-        let answer = self
-            .org
-            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))?;
+        // Sample when the writer first admits the command. Replays keep this
+        // timestamp, and the durable high-water keeps commit order monotonic.
+        let now = OnceLock::new();
+        let answer = self.org.write_replayable(move |db| {
+            org_db::submit(db, *now.get_or_init(time::now_ms), &command)
+        })?;
         // After the commit: whoever follows the log reads it again (a retry of an old command
         // changes nothing, and the extra wake-up is harmless).
         self.changes.bump();

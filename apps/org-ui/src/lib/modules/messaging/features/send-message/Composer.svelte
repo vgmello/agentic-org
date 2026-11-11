@@ -1,10 +1,11 @@
 <script lang="ts">
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { applyMention, mentionAt, mentionOptions, slashSuggestions } from '$lib/modules/messaging/model';
+	import { applyMention, mentionAt, mentionOptions, parseSlash, slashSuggestions } from '$lib/modules/messaging/model';
 	import { CHAT_LIMITS, type Conversation } from '$lib/modules/messaging/types';
 
 	/**
@@ -18,6 +19,7 @@
 		conversation,
 		ctx,
 		resetKey,
+		draft,
 		alsoIn,
 		onsend
 	}: {
@@ -28,10 +30,11 @@
 		ctx: ChatContext;
 		/** A draft is kept per key (a conversation or a thread). */
 		resetKey: string;
+		draft?: DraftText;
 		/** A thread: the channel a reply can also be sent to. */
 		alsoIn?: string;
 		/** Resolves `false` when the message was not sent, so the text stays in the box. */
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[] }) => Promise<boolean | void> | boolean | void;
+		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
 	} = $props();
 
 	const drafts: Record<string, string> = {};
@@ -46,7 +49,9 @@
 	let files = $state<HTMLInputElement | undefined>();
 	let enterSends = $state(false);
 	let lastKey = '';
+	let lastDraft: DraftText | undefined;
 	let error = $state<string | undefined>();
+	let unknownCommand = $state(false);
 
 	try {
 		enterSends = globalThis.localStorage?.getItem('agentic-org.chat.enterSends') === '1';
@@ -62,19 +67,30 @@
 		}
 	};
 
-	// Keep a draft per conversation or thread.
+	// Conversation drafts live here. Thread drafts are supplied by the retained shell.
 	$effect(() => {
 		const key = resetKey;
+		const nextDraft = draft;
 		untrack(() => {
-			if (lastKey) drafts[lastKey] = text;
+			if (lastKey && !lastDraft) drafts[lastKey] = text;
 			lastKey = key;
-			text = drafts[key] ?? '';
+			lastDraft = nextDraft;
+			text = nextDraft ? nextDraft.read() : drafts[key] ?? '';
+			if (nextDraft && text) void restoreCaret(nextDraft, text);
 			attachments = [];
 			alsoInChannel = false;
 			dismissed = false;
 			error = undefined;
+			unknownCommand = false;
 		});
 	});
+
+	async function restoreCaret(restored: DraftText, value: string) {
+		await tick();
+		if (draft !== restored || text !== value || !box) return;
+		caret = value.length;
+		box.setSelectionRange(caret, caret);
+	}
 
 	const at = $derived(mentionAt(text, caret));
 	const mentions = $derived(at && !dismissed ? mentionOptions(ctx, conversation, at.query) : []);
@@ -85,6 +101,7 @@
 		if (!at) return;
 		const next = applyMention(text, at, caret, handle);
 		text = next.text;
+		draft?.write(text);
 		queueMicrotask(() => {
 			box?.focus();
 			box?.setSelectionRange(next.caret, next.caret);
@@ -94,6 +111,7 @@
 	}
 	function pickSlash(name: string) {
 		text = `/${name} `;
+		draft?.write(text);
 		queueMicrotask(() => {
 			box?.focus();
 			box?.setSelectionRange(text.length, text.length);
@@ -102,28 +120,38 @@
 		picked = 0;
 	}
 
-	async function send() {
+	async function send(asMessage = false) {
 		const body = text.trim();
 		if (!canWrite || busy || body === '') return;
 		if (new TextEncoder().encode(body).byteLength > CHAT_LIMITS.bodyMax) {
 			error = 'That message is too long. Shorten it or attach it as a file.';
 			return;
 		}
+		const slash = asMessage ? undefined : parseSlash(text);
+		if (slash && !slash.ok && slash.unknown) {
+			error = slash.message;
+			unknownCommand = true;
+			return;
+		}
 		error = undefined;
+		unknownCommand = false;
 		busy = true;
 		const key = resetKey;
+		const sendingDraft = draft;
+		const clearDraft = sendingDraft?.clearOnSuccess();
+		const submittedText = text;
 		try {
-			if ((await onsend(body, { alsoInChannel, attachments })) === false) return;
-			// The draft that was sent is gone, but only where it was written: the owner may have moved on while it went.
-			drafts[key] = '';
-			if (key === resetKey) {
+			if ((await onsend(submittedText, { alsoInChannel, attachments, asMessage })) === false) return;
+			if (clearDraft) clearDraft();
+			else drafts[key] = '';
+			if (key === resetKey && sendingDraft === draft && text === submittedText) {
 				text = '';
 				attachments = [];
 				alsoInChannel = false;
 			}
 		} finally {
 			busy = false;
-			queueMicrotask(() => box?.focus());
+			queueMicrotask(() => { if (key === resetKey && sendingDraft === draft) box?.focus(); });
 		}
 	}
 
@@ -167,7 +195,7 @@
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}
-				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
+				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
 					{#if popup === 'mention'}
 						{#each mentions as o, i (o.handle)}
 							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % mentions.length}>
@@ -202,18 +230,22 @@
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
-				oninput={() => { error = undefined; track(); }}
+				oninput={(event) => { draft?.write(event.currentTarget.value); error = undefined; unknownCommand = false; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
 				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				data-testid="composer"
 			></textarea>
 		</div>
-		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
-			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
+			<ul class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
 				{#each attachments as a (a)}
-					<li class="flex items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">📎 {a} <button type="button" class="text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button></li>
+					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
+						<span aria-hidden="true" class="shrink-0">📎</span>
+						<span class="min-w-0 truncate" title={a}>{a}</span>
+						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button>
+					</li>
 				{/each}
 			</ul>
 		{/if}
@@ -225,7 +257,15 @@
 				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
 				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}
 			</div>
-			<Button type="button" size="sm" disabled={busy || text.trim() === ''} onclick={send}><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button>
+			<Button type="button" size="sm" disabled={busy || text.trim() === ''} onclick={() => void send()}><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button>
 		</div>
 	{/if}
 </div>
+
+<style>
+	@media (width < 640px), (height <= 32rem) {
+		textarea {
+			max-block-size: min(128px, calc(100dvh - var(--chat-header-height, 4rem)));
+		}
+	}
+</style>
