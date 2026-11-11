@@ -22,6 +22,9 @@ use org_proto::{
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
+#[path = "client/negotiation.rs"]
+mod negotiation;
+
 /// One accepted connection, seen from the server's side.
 struct Peer {
     reader: BufReader<UnixStream>,
