@@ -262,6 +262,16 @@ mod development {
         let alias = f.base.with_file_name("alias");
         symlink(&f.base, &alias).unwrap();
         assert!(DevSecrets::open(&alias, &f.home, A).is_err());
+        for spelling in [
+            PathBuf::from(format!("{}/", alias.display())),
+            alias.join("."),
+        ] {
+            assert!(
+                DevSecrets::open(&spelling, &f.home, A).is_err(),
+                "{spelling:?}"
+            );
+        }
+        assert!(!f.base.join("host-secrets").exists());
         let external = f.base.with_file_name("external");
         fs::create_dir(&external).unwrap();
         symlink(&external, f.base.join("host-secrets")).unwrap();
@@ -519,5 +529,95 @@ mod development {
         assert_eq!(s.put(&n, &Value::new(vec![]).unwrap()), Err(Error::Unsafe));
         assert_eq!(s.list(), Err(Error::Unsafe));
         assert_eq!(fs::read(moved.join("registry")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn case_aliases_fail_closed_in_both_orders() {
+        for (first, alias) in [("recovery.A", "recovery.a"), ("recovery.a", "recovery.A")] {
+            let f = Fixture::new();
+            let store = f.open(A).unwrap();
+            let first = Name::parse(first).unwrap();
+            let alias = Name::parse(alias).unwrap();
+            store
+                .put(&first, &Value::new(b"keep".to_vec()).unwrap())
+                .unwrap();
+            assert_eq!(
+                store.put(&alias, &Value::new(b"wrong".to_vec()).unwrap()),
+                Err(Error::CaseAlias)
+            );
+            assert_eq!(store.load(&alias).unwrap_err(), Error::CaseAlias);
+            assert_eq!(store.delete(&alias), Err(Error::CaseAlias));
+            assert_eq!(store.load(&first).unwrap().unwrap().expose(), b"keep");
+            assert_eq!(store.list().unwrap(), vec![first]);
+            #[cfg(target_os = "linux")]
+            {
+                write(&f.dir(A).join(alias.as_str()), b"external alias");
+                assert_eq!(store.list(), Err(Error::CaseAlias));
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_case_alias_publications_have_one_winner() {
+        for _ in 0..8 {
+            let f = Fixture::new();
+            let store = std::sync::Arc::new(f.open(A).unwrap());
+            let barrier = std::sync::Barrier::new(2);
+            let results = std::thread::scope(|scope| {
+                let a = scope.spawn(|| {
+                    barrier.wait();
+                    store.put(
+                        &Name::parse("recovery.A").unwrap(),
+                        &Value::new(vec![1]).unwrap(),
+                    )
+                });
+                let b = scope.spawn(|| {
+                    barrier.wait();
+                    store.put(
+                        &Name::parse("recovery.a").unwrap(),
+                        &Value::new(vec![2]).unwrap(),
+                    )
+                });
+                (a.join().unwrap(), b.join().unwrap())
+            });
+            assert!(matches!(
+                results,
+                (Ok(()), Err(Error::CaseAlias)) | (Err(Error::CaseAlias), Ok(()))
+            ));
+            let name = store.list().unwrap().pop().unwrap();
+            let expected = if name.as_str() == "recovery.A" { 1 } else { 2 };
+            assert_eq!(store.load(&name).unwrap().unwrap().expose(), &[expected]);
+            assert_eq!(store.list().unwrap(), vec![name]);
+        }
+    }
+
+    #[test]
+    fn office_home_case_aliases_are_refused_by_identity() {
+        let f = Fixture::new();
+        fs::set_permissions(&f.home, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(
+            DevSecrets::open(&f.home, &f.home, A),
+            Err(Error::Unsafe)
+        ));
+        let nested = f.home.join("keys");
+        fs::create_dir(&nested).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(
+            DevSecrets::open(&nested, &f.home, A),
+            Err(Error::Unsafe)
+        ));
+        let alias = f.home.with_file_name("OFFICE");
+        if alias.exists() {
+            assert!(matches!(
+                DevSecrets::open(&alias, &f.home, A),
+                Err(Error::Unsafe)
+            ));
+            assert!(matches!(
+                DevSecrets::open(&alias.join("keys"), &f.home, A),
+                Err(Error::Unsafe)
+            ));
+        }
+        assert!(!f.home.join("host-secrets").exists());
+        assert!(!nested.join("host-secrets").exists());
     }
 }

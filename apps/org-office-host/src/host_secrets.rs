@@ -101,6 +101,7 @@ pub(crate) enum Error {
     Corrupt,
     Unsafe,
     InUse,
+    CaseAlias,
     Io(io::ErrorKind),
 }
 impl From<io::Error> for Error {

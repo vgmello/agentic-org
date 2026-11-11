@@ -1,23 +1,29 @@
 //! Debug-only plaintext files. A lifetime lock owns crash-temp cleanup.
 
-use std::ffi::{CString, OsString};
+#[cfg(target_os = "linux")]
+use libc::__errno_location as errno;
+#[cfg(target_os = "macos")]
+use libc::__error as errno;
+use std::ffi::{CStr, CString, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 use super::{Error, HostSecrets, Name, Value, MAX_BYTES};
 
 pub(crate) struct DevSecrets {
     directory: File,
     path: PathBuf,
-    _lock: File,
+    gate: Mutex<File>,
 }
 
 impl DevSecrets {
     /// `base` already exists, is owner-only, and is the shared development-key base.
-    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.2b hostdb"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "hostdb staging"))]
     pub(crate) fn open(base: &Path, home: &Path, instance: &str) -> Result<Self, Error> {
         if !base.is_absolute()
             || base.components().any(|c| matches!(c, Component::ParentDir))
@@ -28,7 +34,7 @@ impl DevSecrets {
         let directory = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(base)?;
+            .open(base.components().collect::<PathBuf>())?;
         owned(&directory, true)?;
         let base = base.canonicalize()?;
         if base.starts_with(home.canonicalize()?) {
@@ -49,7 +55,7 @@ impl DevSecrets {
         let store = Self {
             directory,
             path: base.join("host-secrets").join(instance),
-            _lock: lock,
+            gate: Mutex::new(lock),
         };
         for raw in store.names()? {
             if let Some(name) = raw.to_str().filter(|n| n.starts_with(".put.")) {
@@ -69,14 +75,45 @@ impl DevSecrets {
     }
     fn names(&self) -> Result<Vec<OsString>, Error> {
         self.verify()?;
-        let names = fs::read_dir(&self.path)?
-            .map(|e| e.map(|e| e.file_name()).map_err(Error::from))
-            .collect::<Result<Vec<_>, _>>()?;
+        let file = at(&self.directory, ".", libc::O_RDONLY | libc::O_DIRECTORY)?;
+        // SAFETY: fdopendir takes ownership on success; otherwise File closes the fd.
+        let stream = unsafe { libc::fdopendir(file.as_raw_fd()) };
+        if stream.is_null() {
+            return Err(io::Error::last_os_error().into());
+        }
+        std::mem::forget(file);
+        let stream = Entries(stream);
+        let mut names = Vec::new();
+        loop {
+            // SAFETY: errno is thread-local; stream owns a live directory descriptor.
+            let entry = unsafe {
+                *errno() = 0;
+                libc::readdir(stream.0)
+            };
+            if entry.is_null() {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(0) {
+                    return Err(error.into());
+                }
+                break;
+            }
+            // SAFETY: readdir's NUL-terminated name remains valid until the next call.
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name != b"." && name != b".." {
+                names.push(OsString::from_vec(name.to_vec()));
+            }
+        }
         self.verify()?;
         Ok(names)
     }
     fn item(&self, name: &str) -> Result<Option<File>, Error> {
         self.verify()?;
+        if self.names()?.iter().any(|raw| {
+            raw.to_str()
+                .is_some_and(|n| n != name && n.eq_ignore_ascii_case(name))
+        }) {
+            return Err(Error::CaseAlias);
+        }
         let file = match at(&self.directory, name, libc::O_RDONLY | libc::O_NONBLOCK) {
             Ok(file) => file,
             Err(Error::Io(io::ErrorKind::NotFound)) => return Ok(None),
@@ -104,6 +141,7 @@ impl HostSecrets for DevSecrets {
         if value.expose().len() > MAX_BYTES {
             return Err(Error::TooLarge);
         }
+        let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
         self.item(name.as_str())?;
         let temporary = format!(".put.{}", crate::ids::generate()?);
         let mut file = at(
@@ -115,16 +153,9 @@ impl HostSecrets for DevSecrets {
             file.write_all(value.expose())?;
             file.sync_all()?;
             let (from, to) = (cstring(&temporary)?, cstring(name.as_str())?);
-            // SAFETY: checked leaves within the same retained directory; rename never follows a symlink.
-            if unsafe {
-                libc::renameat(
-                    self.directory.as_raw_fd(),
-                    from.as_ptr(),
-                    self.directory.as_raw_fd(),
-                    to.as_ptr(),
-                )
-            } != 0
-            {
+            let dir = self.directory.as_raw_fd();
+            // SAFETY: checked leaves within the retained directory; rename never follows a symlink.
+            if unsafe { libc::renameat(dir, from.as_ptr(), dir, to.as_ptr()) } != 0 {
                 return Err(io::Error::last_os_error().into());
             }
             self.directory.sync_all()?;
@@ -136,10 +167,12 @@ impl HostSecrets for DevSecrets {
         result
     }
     fn load(&self, name: &Name) -> Result<Option<Value>, Error> {
+        let guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
         let Some(file) = self.item(name.as_str())? else {
             return Ok(None);
         };
-        // Reserve the bound before reading so no reallocation leaves a stale secret buffer.
+        drop(guard); // The opened inode stays stable across a concurrent replacement.
+                     // Reserve the bound before reading so no reallocation leaves a stale secret buffer.
         let mut value = Value(Vec::with_capacity(MAX_BYTES + 1));
         file.take(MAX_BYTES as u64 + 1).read_to_end(&mut value.0)?;
         if value.0.len() > MAX_BYTES {
@@ -148,12 +181,14 @@ impl HostSecrets for DevSecrets {
         Ok(Some(value))
     }
     fn delete(&self, name: &Name) -> Result<(), Error> {
+        let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
         if self.item(name.as_str())?.is_some() {
             self.remove(name.as_str())?;
         }
         Ok(())
     }
     fn list(&self) -> Result<Vec<Name>, Error> {
+        let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
         let mut names = Vec::new();
         for raw in self.names()? {
             if raw == "lock" {
@@ -192,14 +227,8 @@ fn owned(file: &File, directory: bool) -> Result<(), Error> {
 fn at(directory: &File, name: &str, flags: i32) -> Result<File, Error> {
     let name = cstring(name)?;
     // SAFETY: live directory fd and checked leaf; successful open transfers a new fd to File.
-    let fd = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            0o600,
-        )
-    };
+    let flags = flags | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags, 0o600) };
     if fd < 0 {
         return Err(io::Error::last_os_error().into());
     }
@@ -220,4 +249,14 @@ fn child(parent: &File, name: &str) -> Result<File, Error> {
     let child = at(parent, name, libc::O_RDONLY | libc::O_DIRECTORY)?;
     owned(&child, true)?;
     Ok(child)
+}
+
+struct Entries(*mut libc::DIR);
+impl Drop for Entries {
+    fn drop(&mut self) {
+        // SAFETY: this guard exclusively owns the successful fdopendir result.
+        unsafe {
+            libc::closedir(self.0);
+        }
+    }
 }
