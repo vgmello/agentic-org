@@ -2,6 +2,7 @@
 	import { tick, untrack } from 'svelte';
 	import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '$lib/components/ui/sheet';
 	import Plus from '@lucide/svelte/icons/plus';
+	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { PRESENCE_WORD, type ChatView, type ConversationRow, type Sidebar } from '$lib/modules/messaging/model';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
@@ -35,7 +36,7 @@
 		onnewmessage: (opener: HTMLElement) => void;
 	} = $props();
 
-	const item = 'flex w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
+	const item = 'flex w-full flex-wrap items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
 	const on = 'bg-white/10 text-white';
 	const off = 'text-gray-300 hover:bg-white/5 hover:text-white';
 	const here = (v: ChatView, id?: string) => view.type === v.type && (v.type !== 'conversation' || (view.type === 'conversation' && view.id === id));
@@ -82,14 +83,14 @@
 	<li>
 		<button type="button" class="{item} flex-wrap {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
 			{#if r.conversation.kind === 'channel'}
-				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">#</span>
+				<HeroIcon variant="outline" name="hashtag" />
 				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
 			{:else if r.other}
 				<span class="flex shrink-0" aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
 				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
 				{#if r.presence}<span class="ml-auto max-w-full shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}
-				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">👥</span>
+				<HeroIcon variant="outline" name="user-group" />
 				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
 			{/if}
 			{#if r.mentions > 0}
@@ -106,19 +107,19 @@
 	<ul class="space-y-0.5">
 		<li>
 			<button type="button" class="{item} {here({ type: 'needs' }) ? on : off}" aria-current={here({ type: 'needs' }) ? 'true' : undefined} data-testid="needs-you-link" onclick={() => onselect({ type: 'needs' })}>
-				<span aria-hidden="true">⭐</span><span class="flex-1 {bar.needsYou.length ? 'font-semibold text-white' : ''}">Needs you</span>
+				<HeroIcon variant="outline" name="bell" /><span class="flex-1 {bar.needsYou.length ? 'font-semibold text-white' : ''}">Needs you</span>
 				{#if bar.needsYou.length}<span class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" data-testid="needs-you-count">{bar.needsYou.length}</span>{/if}
 			</button>
 		</li>
 		<li>
 			<button type="button" class="{item} {here({ type: 'mentions' }) ? on : off}" aria-current={here({ type: 'mentions' }) ? 'true' : undefined} data-testid="mentions-link" onclick={() => onselect({ type: 'mentions' })}>
-				<span aria-hidden="true">@</span><span class="flex-1">Mentions</span>
+				<HeroIcon variant="outline" name="at-symbol" /><span class="flex-1">Mentions</span>
 				{#if bar.mentions.length}<span class="text-xs/5 font-semibold text-gray-200">{bar.mentions.length}</span>{/if}
 			</button>
 		</li>
 		<li>
 			<button type="button" class="{item} {here({ type: 'threads' }) ? on : off}" aria-current={here({ type: 'threads' }) ? 'true' : undefined} data-testid="threads-link" onclick={() => onselect({ type: 'threads' })}>
-				<span aria-hidden="true">🧵</span><span class="flex-1">Threads</span>
+				<HeroIcon variant="outline" name="chat-bubble-left-right" /><span class="flex-1">Threads</span>
 				{#if unreadThreads}<span class="text-xs/5 font-semibold text-gray-200">{unreadThreads}</span>{/if}
 			</button>
 		</li>

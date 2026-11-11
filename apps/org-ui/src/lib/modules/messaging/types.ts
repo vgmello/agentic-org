@@ -43,9 +43,9 @@ export interface AskOption {
 }
 
 export type Reaction = 'seen' | 'looking';
-export const REACTIONS: { id: Reaction; emoji: string; label: string }[] = [
-	{ id: 'seen', emoji: '✅', label: 'Seen' },
-	{ id: 'looking', emoji: '👀', label: 'Looking' }
+export const REACTIONS: { id: Reaction; label: string }[] = [
+	{ id: 'seen', label: 'Seen' },
+	{ id: 'looking', label: 'Looking' }
 ];
 
 export type Bridge = 'slack' | 'teams' | 'discord';
