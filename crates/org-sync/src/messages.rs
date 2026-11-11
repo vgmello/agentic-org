@@ -225,11 +225,11 @@ pub fn enqueue(
         tx.authorize_send(&message)?;
         queue.clock_high_ms = queue.clock_high_ms.max(now_ms);
         if expired(&message, queue.clock_high_ms)? {
-            let receipt = Receipt {
+            let receipt = (!queue.pending.iter().any(|m| m.id == message.id)).then(|| Receipt {
                 message: message.clone(),
                 delivered: false,
-            };
-            persist(tx, &queue, Some(&receipt))?;
+            });
+            persist(tx, &queue, receipt.as_ref())?;
             return Ok(MessageOutput::Refused(Refusal::Expired));
         }
         if let Some(receipt) = tx.outgoing_receipt(&message.id)? {
@@ -389,6 +389,7 @@ pub fn acknowledge(
                 return Err(Refusal::Divergence.into());
             }
             if !old.delivered {
+                queue.pending.retain(|m| m.id != receipt.message.id);
                 persist(tx, &queue, Some(&receipt))?;
                 return Ok(MessageOutput::Receipt(receipt.clone()));
             }

@@ -398,6 +398,87 @@ mod tests {
     }
 
     #[test]
+    fn expired_conflicting_retry_preserves_pending_identity_for_original_ack() {
+        let (a, b, pa, pb, message) = offices();
+        messages::enqueue(&a, message.clone(), 10).unwrap();
+        let MessageOutput::Receipt(receipt) =
+            messages::receive(&b, &pa, message.clone(), 10).unwrap()
+        else {
+            panic!("receipt")
+        };
+        let mut changed = message.clone();
+        changed.deadline_ms = 15;
+        changed.payload = Arc::from(&b"conflicting expired retry"[..]);
+        changed.fingerprint = fingerprint(&changed);
+        assert_eq!(
+            messages::enqueue(&a, changed, 20).unwrap(),
+            MessageOutput::Refused(Refusal::Expired)
+        );
+        let a = a.restart();
+        assert_eq!(
+            a.data.borrow().message_queue.pending.front(),
+            Some(&message)
+        );
+        assert_eq!(
+            messages::acknowledge(&a, &pb, receipt.clone()).unwrap(),
+            MessageOutput::Receipt(receipt)
+        );
+        assert!(a.restart().data.borrow().message_queue.pending.is_empty());
+        assert_eq!(messages::next(&a, 1000).unwrap(), MessageOutput::Idle);
+    }
+
+    #[test]
+    fn correcting_expiry_notice_removes_matching_pending_message_atomically() {
+        let (a, b, pa, pb, message) = offices();
+        messages::enqueue(&a, message.clone(), 10).unwrap();
+        let MessageOutput::Receipt(receipt) =
+            messages::receive(&b, &pa, message.clone(), 10).unwrap()
+        else {
+            panic!("receipt")
+        };
+        let mut second = message.clone();
+        second.id = "MSG2".into();
+        second.deadline_ms = 2000;
+        second.fingerprint = fingerprint(&second);
+        messages::enqueue(&a, second.clone(), 10).unwrap();
+        // Reconstitute the previously supported expiry-notice + pending state, including
+        // cases already committed before the expiry-before-dedup fix.
+        let queue = a.data.borrow().message_queue.clone();
+        let notice = Receipt {
+            message: message.clone(),
+            delivered: false,
+        };
+        MessageStore::transact(
+            &a,
+            Arc::new(move |tx| {
+                messages::persist(tx, &queue, Some(&notice))?;
+                Ok(MessageOutput::Idle)
+            }),
+        )
+        .unwrap();
+        let a = a.restart();
+        let before = state(&a);
+        a.inject(Fault::CommitUnavailable);
+        assert!(matches!(
+            messages::acknowledge(&a, &pb, receipt.clone()),
+            Err(SyncError::Storage(_))
+        ));
+        assert_eq!(state(&a), before);
+        assert_eq!(
+            messages::acknowledge(&a, &pb, receipt.clone()).unwrap(),
+            MessageOutput::Receipt(receipt)
+        );
+        assert_eq!(
+            a.restart().data.borrow().message_queue.pending,
+            VecDeque::from([second.clone()])
+        );
+        assert_eq!(
+            messages::next(&a, message.deadline_ms).unwrap(),
+            MessageOutput::Deliver(second)
+        );
+    }
+
+    #[test]
     fn oversize_message_is_refused_before_enqueue() {
         let (a, _, _, _, mut message) = offices();
         message.payload = Arc::from(vec![0; org_sync_proto::MAX_ENCODED_FRAME_BYTES / 2 + 1]);
@@ -409,6 +490,30 @@ mod tests {
         ));
         assert_eq!(a.data.borrow().message_queue, before);
         assert!(a.data.borrow().outgoing_messages.is_empty());
+    }
+
+    #[test]
+    fn expiry_identity_is_retained_alongside_unrelated_pending_message() {
+        let (a, _, _, _, first) = offices();
+        messages::enqueue(&a, first.clone(), 10).unwrap();
+        let mut expired = first.clone();
+        expired.id = "MSG2".into();
+        expired.deadline_ms = 15;
+        expired.fingerprint = fingerprint(&expired);
+        assert_eq!(
+            messages::enqueue(&a, expired.clone(), 20).unwrap(),
+            MessageOutput::Refused(Refusal::Expired)
+        );
+        let a = a.restart();
+        let before = state(&a);
+        expired.deadline_ms = 500;
+        expired.fingerprint = fingerprint(&expired);
+        refused(messages::enqueue(&a, expired, 20), Refusal::OperationReused);
+        assert_eq!(state(&a), before);
+        assert_eq!(
+            a.data.borrow().message_queue.pending,
+            VecDeque::from([first])
+        );
     }
 
     #[test]
