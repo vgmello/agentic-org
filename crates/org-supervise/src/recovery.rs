@@ -15,6 +15,8 @@
 //! ```
 
 mod capture;
+mod failure;
+pub use failure::ScanFailureKind;
 mod job;
 #[cfg(target_os = "linux")]
 #[path = "recovery/native/linux.rs"]
@@ -150,7 +152,11 @@ pub struct CheckpointTarget {
 
 fn validate_target_count(count: usize) -> io::Result<()> {
     if count > MAX_RECOVERY_TARGETS {
-        return Err(invalid("recovery inventory exceeds 256 identities"));
+        return Err(failure::tagged(
+            io::ErrorKind::InvalidData,
+            ScanFailureKind::InventoryOverflow,
+            "recovery inventory exceeds 256 identities",
+        ));
     }
     Ok(())
 }
@@ -159,10 +165,17 @@ fn validate_inventory(inventory: &[CheckpointTarget]) -> io::Result<()> {
     validate_target_count(inventory.len())?;
     let mut identities = BTreeSet::new();
     for target in inventory {
-        if !target.identity.valid()
-            || target.ancestry.len() >= MAX_RECOVERY_TARGETS
-            || !identities.insert(target.identity.key())
-        {
+        if !target.identity.valid() {
+            return Err(invalid("invalid or duplicate saved process identity"));
+        }
+        if target.ancestry.len() >= MAX_RECOVERY_TARGETS {
+            return Err(failure::tagged(
+                io::ErrorKind::InvalidData,
+                ScanFailureKind::InventoryOverflow,
+                "invalid or duplicate saved process identity",
+            ));
+        }
+        if !identities.insert(target.identity.key()) {
             return Err(invalid("invalid or duplicate saved process identity"));
         }
     }
@@ -432,14 +445,7 @@ impl RecoveryReport {
 }
 
 fn check_deadline(ops: &mut dyn RecoveryProcesses, deadline: Instant) -> io::Result<()> {
-    if ops.now() >= deadline {
-        Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            "recovery deadline elapsed",
-        ))
-    } else {
-        Ok(())
-    }
+    failure::check_deadline(ops.now(), deadline, "recovery deadline elapsed")
 }
 
 fn checked_context(ops: &mut dyn RecoveryProcesses) -> io::Result<RecoveryContext> {

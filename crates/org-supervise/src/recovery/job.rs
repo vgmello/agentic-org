@@ -13,6 +13,10 @@ pub(super) struct JobObservation {
     pub safe: bool,
 }
 
+fn check_budget(now: Instant, deadline: Instant) -> io::Result<()> {
+    super::failure::check_deadline(now, deadline, io::Error::from(io::ErrorKind::TimedOut))
+}
+
 /// Read target membership before re-proving its exact live leader. Native start
 /// ordering stays here as an observation, never decoded by the policy layer.
 pub(super) fn verify(
@@ -35,13 +39,7 @@ pub(super) fn verify(
         if leader.pgid != leader.pid || !valid(target) || !valid(&expected_leader) {
             return Ok(false);
         }
-        let mut budget = || {
-            if now() >= deadline {
-                Err(io::Error::from(io::ErrorKind::TimedOut))
-            } else {
-                Ok(())
-            }
-        };
+        let mut budget = || check_budget(now(), deadline);
         budget()?;
         let Some(observed) = read(target)? else {
             return Ok(false);
