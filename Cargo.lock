@@ -499,6 +499,7 @@ dependencies = [
  "org-proto",
  "org-sync",
  "org-sync-proto",
+ "org-work",
  "rusqlite",
  "serde",
  "serde_json",
