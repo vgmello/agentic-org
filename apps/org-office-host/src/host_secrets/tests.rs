@@ -620,4 +620,35 @@ mod development {
         assert!(!f.home.join("host-secrets").exists());
         assert!(!nested.join("host-secrets").exists());
     }
+
+    #[test]
+    fn restrictive_umask_cannot_publish_an_unreadable_replacement() {
+        const MARKER: &str = "SAGE_HOST_SECRET_UMASK_CHILD";
+        if std::env::var_os(MARKER).is_some() {
+            let f = Fixture::new();
+            let store = f.open(A).unwrap();
+            let name = Name::parse("registry").unwrap();
+            store
+                .put(&name, &Value::new(b"old".to_vec()).unwrap())
+                .unwrap();
+            // SAFETY: this exact-test child is isolated from the parent's parallel tests.
+            let prior = unsafe { libc::umask(0o400) };
+            let result = store.put(&name, &Value::new(b"new".to_vec()).unwrap());
+            // SAFETY: restore the process mask before assertions and fixture cleanup.
+            unsafe {
+                libc::umask(prior);
+            }
+            result.unwrap();
+            assert_eq!(
+                fs::metadata(f.dir(A).join("registry")).unwrap().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(store.load(&name).unwrap().unwrap().expose(), b"new");
+            return;
+        }
+        let output = output(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "host_secrets::tests::development::restrictive_umask_cannot_publish_an_unreadable_replacement", "--nocapture"])
+            .env(MARKER, "1"));
+        assert!(output.status.success(), "{output:?}");
+    }
 }

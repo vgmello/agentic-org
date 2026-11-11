@@ -5,11 +5,11 @@ use libc::__errno_location as errno;
 #[cfg(target_os = "macos")]
 use libc::__error as errno;
 use std::ffi::{CStr, CString, OsString};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, Permissions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
@@ -150,6 +150,8 @@ impl HostSecrets for DevSecrets {
             libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
         )?;
         let result = (|| {
+            file.set_permissions(Permissions::from_mode(0o600))?;
+            owned(&file, false)?;
             file.write_all(value.expose())?;
             file.sync_all()?;
             let (from, to) = (cstring(&temporary)?, cstring(name.as_str())?);
