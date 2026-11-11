@@ -27,7 +27,9 @@
 //!   replaying account didn't send and a later password change doesn't refuse an honest retry.
 //!   A mismatch is `operation_reused`: a retry with another password is **not** the same op,
 //!   though its fingerprint is the same. The host computes and stores the verifier (move 2b);
-//!   this crate defines no type for it.
+//!   this crate defines no type for it. A **refused** create (`already_exists`, `invalid_name`,
+//!   stored) produced no hash and keeps no verifier: its refusal doesn't depend on the password,
+//!   so a replay returns it whatever password it carries.
 //! - A `bootstrap` replay checks the password as a sign-in instead, so a wrong one is
 //!   `not_authorized` (see [`crate::ops::Bootstrap`]).
 

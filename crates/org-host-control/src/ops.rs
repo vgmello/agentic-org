@@ -275,10 +275,13 @@ pub struct TlsFetch;
 /// - `{"unavailable": <ListenFailure>}`: exactly a [`ListenFailure`].
 ///
 /// Not `Clone`: the key is a secret. The `ok` object decodes as one flat object, not through
-/// serde's internally tagged enums, so the key goes straight from the JSON into
-/// [`TlsPrivateKey`] without an intermediate buffer. `https` needs both `cert` and `key`;
-/// `http_loopback` takes neither; any other `mode` is refused. `origin` must be canonical; its fit
-/// to the listener is the gateway's check, not the decoder's.
+/// serde's internally tagged enums, so this decode adds no buffer of its own between the JSON and
+/// [`TlsPrivateKey`]. The JSON itself is the envelope's raw result, a `serde_json::Value`: built
+/// with `serde_json::to_value` on the host's side and parsed from the response line on the
+/// gateway's, so the key also sits there, unzeroed, on both sides (§6.5's raw-JSON exception).
+/// `https` needs both `cert` and `key`; `http_loopback` takes neither; any other `mode` is
+/// refused. `origin` must be canonical; its fit to the listener is the gateway's check, not the
+/// decoder's.
 #[derive(Debug)]
 pub enum TlsFetchResult {
     Https {
@@ -416,9 +419,10 @@ impl Call for TlsFetch {
 /// 1. the stored listener fields (`address`, `port`, `scheme`) and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]);
 /// 2. the stored `hsts` ([`TlsRefusal::HstsInvalid`]);
-/// 3. that the key matches the certificate ([`TlsRefusal::TlsKeyMismatch`]);
-/// 4. that the certificate is valid now ([`TlsRefusal::TlsNotValid`]);
-/// 5. in `https`, that it covers every `https` origin among the stored one and the running one
+/// 3. that the certificate and the key parse ([`TlsRefusal::TlsInvalid`]);
+/// 4. that the key matches the certificate ([`TlsRefusal::TlsKeyMismatch`]);
+/// 5. that the certificate is valid now ([`TlsRefusal::TlsNotValid`]);
+/// 6. in `https`, that it covers every `https` origin among the stored one and the running one
 ///    ([`TlsRefusal::TlsNameMismatch`]; Certificate coverage).
 ///
 /// It never changes the scheme. Its journal fingerprint is SHA-256 of the certificate DER plus
@@ -454,6 +458,9 @@ pub enum TlsRefusal {
     /// `{"code": "tls_name_mismatch", "uncovered": [...]}`: in `https`, the certificate doesn't
     /// cover these origins (the stored one first, then the running one).
     TlsNameMismatch { uncovered: Uncovered },
+    /// `{"code": "tls_invalid"}`: the certificate or the key doesn't parse. Never stored: an
+    /// unparseable pair has no fingerprint.
+    TlsInvalid,
     /// `{"code": "tls_key_mismatch"}`: the key doesn't match the certificate.
     TlsKeyMismatch,
     /// `{"code": "tls_not_valid", "not_before", "not_after"}`: the certificate isn't valid now.
@@ -475,9 +482,10 @@ impl TlsRefusal {
     /// Whether the host journals this refusal from `op`, so a retry with the same `operation_id`
     /// replays it (X-02 §6.3):
     /// - `tls.set`: only `tls_key_mismatch` is stored. It depends on the pair alone, which the
-    ///   fingerprint covers. The others depend on state outside the op that is expected to change
-    ///   (the stored and running origins, the clock, the stored configuration), so a retry is
-    ///   checked again. [`TlsRefusal::Unknown`] is never stored.
+    ///   fingerprint covers. `tls_invalid` isn't: an unparseable pair has no fingerprint. The
+    ///   others depend on state outside the op that is expected to change (the stored and running
+    ///   origins, the clock, the stored configuration), so a retry is checked again.
+    ///   [`TlsRefusal::Unknown`] is never stored.
     /// - `bootstrap`: never. The host runs every bootstrap check before it creates the registry,
     ///   so a refused bootstrap leaves no record, and a re-run with the same `operation_id` is a
     ///   first bootstrap.
@@ -656,8 +664,9 @@ impl Call for Subscribe {
 /// that type states.
 /// On an empty registry the host checks the stored listen configuration with or without `tls`
 /// (`origin_invalid`, `hsts_invalid`), and a first `tls` gets `tls.set`'s checks in `tls.set`'s
-/// order, all before it creates the registry. **No bootstrap refusal is ever stored**: a re-run
-/// with the same `operation_id` after a refusal on an empty registry is a first bootstrap.
+/// order (parse, key match, validity, coverage), all before it creates the registry. **No
+/// bootstrap refusal is ever stored**: a re-run with the same `operation_id` after a refusal on
+/// an empty registry is a first bootstrap.
 pub struct Bootstrap;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -719,7 +728,7 @@ pub enum BootstrapOutcome {
 /// 3. on an empty registry: the stored listener fields and `origin`
 ///    ([`TlsRefusal::OriginInvalid`]; a missing listen configuration is one), then `hsts`
 ///    ([`TlsRefusal::HstsInvalid`]), then
-///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (key match,
+///    [`BootstrapRefusal::TlsRequired`], then `tls.set`'s order for the pair (parse, key match,
 ///    validity, coverage). Every refusal here but `tls_required` is a [`BootstrapRefusal::Tls`].
 ///
 /// It is one flat object tagged by `code`, like [`TlsRefusal`]. A code neither type knows decodes

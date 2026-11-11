@@ -227,6 +227,25 @@ fn tls_refusal_vectors() {
             serde_json::from_value(wire).unwrap();
         assert!(matches!(looked_up, HostOpResult::Rejected { .. }), "{name}");
     }
+    // A row for every refusal, and only tls.set's tls_key_mismatch is stored.
+    for code in [
+        "tls_name_mismatch",
+        "tls_invalid",
+        "tls_key_mismatch",
+        "tls_not_valid",
+        "origin_invalid",
+        "hsts_invalid",
+    ] {
+        assert!(
+            rows(&doc, "refusals")
+                .iter()
+                .any(|row| row["wire"]["code"] == code),
+            "no vector for {code}"
+        );
+    }
+    for op in [TlsInstallOp::TlsSet, TlsInstallOp::Bootstrap] {
+        assert!(!TlsRefusal::TlsInvalid.is_stored(op));
+    }
     for row in rows(&doc, "bad_refusals") {
         assert!(
             serde_json::from_value::<TlsRefusal>(row["wire"].clone()).is_err(),
@@ -363,6 +382,7 @@ fn bootstrap_result_vectors() {
         "already_bootstrapped",
         "bootstrap_finished",
         "tls_name_mismatch",
+        "tls_invalid",
         "tls_key_mismatch",
         "tls_not_valid",
         "origin_invalid",
@@ -388,6 +408,7 @@ fn bootstrap_result_vectors() {
             "already_bootstrapped",
         ),
         (BootstrapRefusal::BootstrapFinished, "bootstrap_finished"),
+        (BootstrapRefusal::Tls(TlsRefusal::TlsInvalid), "tls_invalid"),
         (
             BootstrapRefusal::Tls(TlsRefusal::TlsKeyMismatch),
             "tls_key_mismatch",

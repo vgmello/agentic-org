@@ -1,7 +1,9 @@
 //! The secret newtypes of this contract (X-02 §6.5). Each wraps `org-proto`'s [`SecretText`]: it
-//! decodes straight from the JSON string, its `Debug` is redacted, it isn't `Clone`, and its bytes
-//! are zeroed on drop. Decode errors never quote the value. As for every secret here, copies in
-//! serde's and the transport's buffers survive; see `org_proto`'s `AppToken` docs.
+//! decodes from a JSON string, its `Debug` is redacted, it isn't `Clone`, and its bytes are zeroed
+//! on drop. Decode errors never quote the value. Zeroing covers this copy only: on the wire every
+//! one of them also passes through the envelope's raw `serde_json::Value` (a request's `params`,
+//! a response's result; §6.5's raw-JSON exception, see the crate docs), and copies in serde's and
+//! the transport's buffers survive; see `org_proto`'s `AppToken` docs.
 
 use org_proto::gateway::SecretText;
 use serde::{Deserialize, Serialize};

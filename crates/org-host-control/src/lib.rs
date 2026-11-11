@@ -18,13 +18,17 @@
 //! by an account id the client sends. The host owns the account registry and the sessions; it
 //! holds no organization data and parses no HTTP.
 //!
-//! **Secrets** (§6.5) decode straight into secret newtypes ([`Password`], [`SessionHandle`],
-//! [`TlsPrivateKey`], [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no
-//! `Clone`, zeroed on drop. Responses carrying them are written through the host's secret-line
-//! path. §6.5's raw-JSON exception: until they decode, a request's secrets sit unzeroed in
-//! `org-proto`'s envelope as raw JSON, in its `params` until `Request::params` decodes them and,
-//! for a grant MAC, in its `principal` until `Request::principal` does. That JSON is never
-//! logged: the envelope's `Debug` elides both.
+//! **Secrets** (§6.5) end in secret newtypes ([`Password`], [`SessionHandle`], [`TlsPrivateKey`],
+//! [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no `Clone`, zeroed on
+//! drop. Responses carrying them are written through the host's secret-line path. **§6.5's
+//! raw-JSON exception**, on both sides of each connection: `org-proto`'s envelope carries a
+//! request's `params` and `principal` and a response's result (`Outcome::Result`) as raw
+//! `serde_json::Value`, and a response's result is built through `serde_json::to_value` before
+//! it is written. So every secret here (passwords, the session handles from `account.verify` and
+//! `bootstrap`, the TLS key in `tls.fetch` and `tls.set`, the recovery code from
+//! `recovery.release`, grants and their MACs) sits briefly in unzeroed JSON before the typed
+//! decode, or after the typed encode. That JSON is never logged: the envelope's `Debug` elides
+//! it.
 //!
 //! **The listen configuration** ([`listen`], X-02 rev 14): the browser-facing origin
 //! ([`listen::ListenOrigin`], the one implementation that parses, checks and serialises it), the

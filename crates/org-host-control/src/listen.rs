@@ -845,9 +845,9 @@ impl std::error::Error for InvalidListenConfig {}
 /// **The pre-spawn check** (move 2b) runs on the snapshot **before binding**, so a hand-edited
 /// `http_loopback` configuration with a non-loopback address is never bound, even briefly. Its
 /// order, first failure reported: the listener fields and `origin` (`origin_invalid`), `hsts`
-/// (`hsts_invalid`), in
-/// `https` a stored pair (`tls_missing`, a status reason that isn't a `ListenFailure`), then
-/// coverage (`tls_name_mismatch`). On a failure the host neither binds nor spawns.
+/// (`hsts_invalid`), in `https` a stored pair (`tls_missing`, a status reason that isn't a
+/// `ListenFailure`), then coverage (`tls_name_mismatch`). On a failure the host neither binds
+/// nor spawns.
 ///
 /// `tls.fetch`'s `unavailable` carries exactly one of these three, so any other reason is
 /// refused at decode. Status and `doctor` report `gateway_failed` as a `ListenFailure` or as rev
