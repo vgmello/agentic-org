@@ -58,6 +58,24 @@ async function fits(locator: Locator) {
 	});
 }
 
+for (const scale of [1, 2]) {
+	test(`AGENT-3 F-3 BUG-70 BUG-76: roster status stays one line at 390px and ${scale * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 390, height: 900 });
+		await open(page);
+		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
+		const status = page.locator('[data-agent=noor]').getByTestId('agent-status');
+		await expect(status).toHaveText('Asleep · wakes when called');
+		await shot(page, `bug76-roster-390-${scale}`, { context: status });
+		const label = status.locator(':scope > span').last();
+		const size = await label.evaluate((element) => ({ height: element.getBoundingClientRect().height, line: parseFloat(getComputedStyle(element).lineHeight) }));
+		expect(size.height).toBeCloseTo(size.line, 0);
+		expect((await status.boundingBox())!.height).toBeCloseTo(size.line + 8 * scale, 0);
+		await expect(label).toHaveAttribute('title', 'Asleep · wakes when called');
+		expect(await status.ariaSnapshot()).toContain('Asleep · wakes when called');
+		await expect(page.getByRole('table', { name: 'Agents', exact: true }).locator('..')).toHaveCSS('overflow-x', 'auto');
+	});
+}
+
 for (const width of [320, 640, 960, 1280]) {
 	test(`AGENT-3 BUG-70: a readable outlined status pill preserves roster and filters at ${width}px`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
@@ -116,7 +134,7 @@ for (const width of [320, 640, 960, 1280]) {
 }
 
 for (const width of [320, 960]) {
-	test(`AGENT-3 BUG-70: status text wraps inside a constrained cell at 200% text and ${width}px`, async ({ page }) => {
+	test(`AGENT-3 BUG-70: BUG-76: status text truncates inside a constrained cell at 200% text and ${width}px`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await open(page);
 		await page.addStyleTag({ content: 'html { font-size: 200%; }' });
@@ -126,7 +144,12 @@ for (const width of [320, 960]) {
 		const status = table.locator('[data-agent=noor]').getByTestId('agent-status');
 		await expect(status).toHaveText('Asleep · wakes when called');
 		await expect(status).toHaveCSS('white-space', 'normal');
-		expect(await fits(status)).toBe(true);
+		const label = status.locator(':scope > span').last();
+		await expect(label).toHaveCSS('white-space', 'nowrap');
+		await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+		await expect(label).toHaveAttribute('title', 'Asleep · wakes when called');
+		expect(await label.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+		expect(await status.ariaSnapshot()).toContain('Asleep · wakes when called');
 		expect(await status.evaluate((element) => element.getBoundingClientRect().width <= element.parentElement!.clientWidth)).toBe(true);
 		await status.scrollIntoViewIfNeeded();
 		await shot(page, `look-pill-200-${width}`, { context: status });
@@ -214,46 +237,78 @@ test('PROJ-2/3 BUG-70: row links and keyboard assignment keep their behavior', a
 	await expect(page.getByTestId('project-name')).toHaveText('Scratchpad');
 });
 
-test('BUG-70: primitives keep status words, caller roles and native list attributes', async ({ page }) => {
-	await open(page);
-	await page.evaluate(async () => {
-		const path = '/src/lib/components/testing/look-primitives.ts';
-		const { mountPrimitives } = await import(path);
-		const target = document.createElement('div');
-		document.body.append(target);
-		mountPrimitives(target);
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test(`F-3 BUG-70 BUG-76: primitives keep status words, caller roles and native list attributes at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 1000 });
+		await open(page);
+		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
+		await page.evaluate(async () => {
+			const path = '/src/lib/components/testing/look-primitives.ts';
+			const { mountPrimitives } = await import(path);
+			const target = document.createElement('div');
+			document.body.append(target);
+			mountPrimitives(target);
+		});
+		const fixture = page.getByRole('region', { name: 'Primitive contracts', exact: true });
+		await expect(fixture).toBeVisible();
+		await page.evaluate(() => document.fonts.ready.then(() => undefined));
+		await expect(fixture.getByTestId('word-only')).toHaveText('Status unknown');
+		await expect(fixture.getByTestId('word-only').locator('svg')).toHaveCount(0);
+		await expect(fixture.getByTestId('word-and-icon')).toHaveText('Paused');
+		await expect(fixture.getByTestId('word-and-icon').locator('svg')).toBeVisible();
+		await expect(fixture.getByRole('img', { name: 'Status ornament', exact: true })).toHaveCount(0);
+		await expect(fixture.getByTestId('icon-callout').locator('svg')).toBeVisible();
+		await expect(fixture.getByRole('img', { name: 'Callout ornament', exact: true })).toHaveCount(0);
+		const longLabel = fixture.getByTestId('long-label');
+		await expect(longLabel).toHaveText('Status' + 'x'.repeat(64));
+		const token = 'Status' + 'x'.repeat(64);
+		const label = longLabel.locator(':scope > span').last();
+		await expect(label).toHaveAttribute('title', token);
+		await expect(label).toHaveCSS('white-space', 'nowrap');
+		await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+		await expect(label).toHaveCSS('overflow-x', 'hidden');
+		expect(await label.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+		expect(await longLabel.ariaSnapshot()).toContain(token);
+		const icon = longLabel.locator('svg');
+		await expect(icon).toBeVisible();
+		expect(await icon.evaluate((element) => {
+			const box = element.getBoundingClientRect(), pill = element.closest('[data-slot=badge]')!.getBoundingClientRect();
+			return box.width > 0 && box.left >= pill.left && box.right <= pill.right && box.top >= pill.top && box.bottom <= pill.bottom;
+		})).toBe(true);
+		const words = fixture.getByTestId('word-only').locator(':scope > span').last();
+		await expect(words).toHaveCSS('white-space', 'nowrap');
+		expect(await words.evaluate((element) => { const range = document.createRange(); range.selectNodeContents(element); return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size; })).toBe(1);
+		expect(await longLabel.evaluate((element) => element.getBoundingClientRect().width <= element.parentElement!.clientWidth)).toBe(true);
+		expect(await fits(fixture.getByTestId('long-callout'))).toBe(true);
+		const wrapping = fixture.getByTestId('wrapping-pills');
+		const pills = wrapping.locator('[data-slot=badge]');
+		await expect(pills).toHaveText(['On hold', 'Ready now']);
+		// The row wraps between intact pills; neither label is squeezed into multiple lines.
+		const boxes = await pills.evaluateAll((elements) => elements.map((pill) => {
+			const label = pill.lastElementChild!, css = getComputedStyle(label);
+			const range = document.createRange(); range.selectNodeContents(label);
+			return { top: pill.getBoundingClientRect().top, height: label.getBoundingClientRect().height, line: parseFloat(css.lineHeight), lines: new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size, clipped: label.scrollWidth > label.clientWidth };
+		}));
+		expect(boxes[1].top).toBeGreaterThan(boxes[0].top);
+		for (const box of boxes) { expect(box.height).toBeCloseTo(box.line, 0); expect(box.lines).toBe(1); expect(box.clipped).toBe(false); }
+		const quiet = fixture.getByTestId('quiet-contract');
+		expect(await quiet.getAttribute('role')).toBeNull();
+		expect(await quiet.getAttribute('aria-live')).toBeNull();
+		await expect(fixture.getByRole('status')).toHaveText('Saved progress');
+		await expect(fixture.getByRole('alert')).toHaveText('Failed update');
+		await expect(fixture.getByRole('status')).toHaveCount(1);
+		await expect(fixture.getByRole('alert')).toHaveCount(1);
+		const row = fixture.getByRole('list', { name: 'Ordered facts', exact: true }).getByRole('listitem');
+		await expect(row).toHaveAttribute('value', '7');
+		await expect(row).toHaveAttribute('lang', 'pt');
+		await expect(row).toHaveAttribute('title', 'Native row');
+		await expect(row).toHaveAttribute('data-testid', 'native-row');
+		expect(await row.getAttribute('role')).toBeNull();
+		expect(await row.getAttribute('tabindex')).toBeNull();
+		expect(await row.getAttribute('onclick')).toBeNull();
+		await shot(page, `look-primitives-contracts-${width}-${scale}`, { context: fixture });
 	});
-	const fixture = page.getByRole('region', { name: 'Primitive contracts', exact: true });
-	await expect(fixture).toBeVisible();
-	await expect(fixture.getByTestId('word-only')).toHaveText('Status unknown');
-	await expect(fixture.getByTestId('word-only').locator('svg')).toHaveCount(0);
-	await expect(fixture.getByTestId('word-and-icon')).toHaveText('Paused');
-	await expect(fixture.getByTestId('word-and-icon').locator('svg')).toBeVisible();
-	await expect(fixture.getByRole('img', { name: 'Status ornament', exact: true })).toHaveCount(0);
-	await expect(fixture.getByTestId('icon-callout').locator('svg')).toBeVisible();
-	await expect(fixture.getByRole('img', { name: 'Callout ornament', exact: true })).toHaveCount(0);
-	const longLabel = fixture.getByTestId('long-label');
-	await expect(longLabel).toHaveText('Status' + 'x'.repeat(64));
-	expect(await fits(longLabel)).toBe(true);
-	expect(await longLabel.evaluate((element) => element.getBoundingClientRect().width <= element.parentElement!.clientWidth)).toBe(true);
-	expect(await fits(fixture.getByTestId('long-callout'))).toBe(true);
-	const quiet = fixture.getByTestId('quiet-contract');
-	expect(await quiet.getAttribute('role')).toBeNull();
-	expect(await quiet.getAttribute('aria-live')).toBeNull();
-	await expect(fixture.getByRole('status')).toHaveText('Saved progress');
-	await expect(fixture.getByRole('alert')).toHaveText('Failed update');
-	await expect(fixture.getByRole('status')).toHaveCount(1);
-	await expect(fixture.getByRole('alert')).toHaveCount(1);
-	const row = fixture.getByRole('list', { name: 'Ordered facts', exact: true }).getByRole('listitem');
-	await expect(row).toHaveAttribute('value', '7');
-	await expect(row).toHaveAttribute('lang', 'pt');
-	await expect(row).toHaveAttribute('title', 'Native row');
-	await expect(row).toHaveAttribute('data-testid', 'native-row');
-	expect(await row.getAttribute('role')).toBeNull();
-	expect(await row.getAttribute('tabindex')).toBeNull();
-	expect(await row.getAttribute('onclick')).toBeNull();
-	await shot(page, 'look-primitives-contracts', { context: fixture });
-});
+}
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 	test('AGENT-3 BUG-70: flat roster keeps all states at ' + width + 'px and ' + scale * 100 + '% text', async ({ page }) => {

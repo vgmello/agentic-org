@@ -641,10 +641,8 @@ test('BUG-64: a delayed refusal cannot restore a note for an obsolete reason', a
 async function expectOfficePill(badge: Locator, scale: number) {
 	const style = await badge.evaluate((element) => {
 		const css = getComputedStyle(element), box = element.getBoundingClientRect();
-		const range = document.createRange();
-		range.selectNodeContents(element);
 		return { radius: parseFloat(css.borderRadius), x: parseFloat(css.paddingLeft), y: parseFloat(css.paddingTop), shadow: css.boxShadow, inViewport: box.left >= 0 && box.right <= window.innerWidth,
-			fits: [...range.getClientRects()].every((r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) };
+			fits: [...element.children].map((child) => child.getBoundingClientRect()).every((r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) };
 	});
 	expect.soft(style.radius).toBeGreaterThanOrEqual(12 * scale);
 	expect.soft(style.x).toBe(8 * scale);
@@ -652,6 +650,13 @@ async function expectOfficePill(badge: Locator, scale: number) {
 	expect.soft(style.shadow).not.toBe('none');
 	expect(style.fits).toBe(true);
 	expect(style.inViewport).toBe(true);
+	// Labels may ellipsize at 200%; preserve full text/name/title and the icon inside the pill.
+	const label = badge.locator(':scope > span').last(), full = (await badge.textContent())!.trim();
+	await expect(label).toHaveAttribute('title', full);
+	await expect(label).toHaveCSS('white-space', 'nowrap');
+	await expect(label).toHaveCSS('overflow-x', 'hidden');
+	await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+	expect(await label.evaluate((element) => Math.abs(element.getBoundingClientRect().height - parseFloat(getComputedStyle(element).lineHeight)) < 1)).toBe(true);
 	await expect(badge).toHaveCSS('white-space', 'normal');
 	await expect(badge.locator('svg')).toHaveCount(1);
 	await expect(badge.locator('svg')).toHaveAttribute('aria-hidden', 'true');
@@ -688,6 +693,7 @@ for (const width of [320, 640, 960, 1280]) {
 			await trigger.press('Enter');
 			const sheet = page.getByRole('dialog'), status = sheet.locator('[data-status-icon]');
 			await expect(status).toHaveText('Online');
+			expect(await sheet.ariaSnapshot()).toContain('Online');
 			await expectOfficePill(status, scale);
 			await shot(page, `office-pill-details-${width}-${scale * 100}`, { context: sheet });
 			await sheet.getByRole('button', { name: 'Close', exact: true }).press('Enter');
@@ -726,6 +732,7 @@ for (const scale of [1, 2]) {
 			await expect(badge).toBeVisible();
 			await badge.scrollIntoViewIfNeeded();
 			await expect(badge).toHaveText(label);
+			expect(await badge.ariaSnapshot()).toContain(label);
 			await expect(badge).toHaveAttribute('data-status-icon', icon);
 			await expect(badge.locator('svg')).toHaveClass(new RegExp(`\\b${tone}\\b`));
 			if (path) await expect(badge.locator('svg path').first()).toHaveAttribute('d', path);

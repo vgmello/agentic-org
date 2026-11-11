@@ -4,3 +4,4 @@ export { default as EditAgentDialog } from './features/edit-profile/EditAgentDia
 export { default as HowItRunsDialog } from './features/configure-run/HowItRunsDialog.svelte';
 export { default as OffboardAgentDialog } from './features/offboard-employee/OffboardAgentDialog.svelte';
 export { default as PauseAgentDialog } from './features/pause-employee/PauseAgentDialog.svelte';
+export { AGENTS_QUERY_LIMIT, agentsAddUrl, agentsSearchUrl, consumeAgentsAddIntent, normalizeAgentsQuery } from './urls';
