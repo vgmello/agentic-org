@@ -59,7 +59,7 @@ test.describe('Reporting lines view', () => {
 		await tab(page, 'Reporting lines').click();
 	});
 
-	test('REPORT-1: the owner is the root, and everyone appears exactly once', async ({ page }) => {
+	test('REPORT-1: the owner is the root, and everyone appears exactly once', { tag: '@journey' }, async ({ page }) => {
 		await expect(page.getByTestId('report-node').first()).toContainText('Alex Kim');
 		await expect(page.getByTestId('report-node').first()).toContainText('Owner (you)');
 		await expect(page.getByTestId('report-node')).toHaveCount(12); // 11 members + the owner

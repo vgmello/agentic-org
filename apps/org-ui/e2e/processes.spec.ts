@@ -12,7 +12,7 @@ async function open(page: Page, query = '') {
 }
 const row = (page: Page, key: string) => page.locator(`[data-testid=process-row][data-key="${key}"]`);
 
-test('PROC-9: the organization’s processes, and the screen says it is sample data', async ({ page }) => {
+test('PROC-9: the organization’s processes, and the screen says it is sample data', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await expect(page.getByTestId('sample-data-note')).toContainText('Sample data');
 	await expect(page.getByRole('heading', { name: 'Processes · Organization' })).toBeVisible();
@@ -49,7 +49,7 @@ test('PROC-14: a turning-off the author approved herself does not turn the rule 
 	await expect(row(page, 'branch-and-merge')).toBeVisible(); // the process is still in force
 });
 
-test('PROC-8: a process opens with its text and why: every layer and what happened to it', async ({ page }) => {
+test('PROC-8: a process opens with its text and why: every layer and what happened to it', { tag: '@journey' }, async ({ page }) => {
 	await open(page, '?place=team:web');
 	await row(page, 'code-review').click();
 	const sheet = page.getByRole('dialog');

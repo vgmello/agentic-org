@@ -14,7 +14,7 @@ async function openOffices(page: Page, stopped?: string) {
 }
 const rows = (page: Page) => page.getByTestId('office-row');
 
-test('OFC-1: the list shows HQ first with its status, where it runs, and how many agents', async ({ page }) => {
+test('OFC-1: the list shows HQ first with its status, where it runs, and how many agents', { tag: '@journey' }, async ({ page }) => {
 	await openOffices(page);
 	await expect(rows(page)).toHaveCount(1);
 	const hq = rows(page).first();
@@ -32,7 +32,7 @@ test('the agent counts say they are sample data', async ({ page }) => {
 	await expect(page.getByTestId('sample-data-note')).toContainText('Sample data');
 });
 
-test('OFC-1: a row opens a slide-over with the office’s details', async ({ page }) => {
+test('OFC-1: a row opens a slide-over with the office’s details', { tag: '@journey' }, async ({ page }) => {
 	await openOffices(page);
 	await rows(page).first().getByRole('button').click();
 	const details = page.getByTestId('office-details');
@@ -131,7 +131,7 @@ test('a failure to count agents keeps the list and shows an in-page error with R
 	await shot(page, 'offices-count-error');
 });
 
-test('OFC-12: HQ says Checking… until the app has verified the connection, and only then Online', async ({ page }) => {
+test('OFC-12: HQ says Checking… until the app has verified the connection, and only then Online', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -148,7 +148,7 @@ test('OFC-12: HQ says Checking… until the app has verified the connection, and
 	await expect(page.getByTestId('live-status')).toHaveText('HQ: Online'); // said once for screen readers
 });
 
-test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', async ({ page }) => {
+test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -220,7 +220,7 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	expect(label).toContain(await hq.locator('button[aria-haspopup] > span').nth(1).innerText());
 });
 
-test('OFC-11: Restart office brings a crashed office back, and the row reads Online', async ({ page }) => {
+test('OFC-11: Restart office brings a crashed office back, and the row reads Online', { tag: '@journey' }, async ({ page }) => {
 	await openOffices(page, 'crashed');
 	const hq = rows(page).first();
 	await expect(hq).toContainText('Stopped');
@@ -384,7 +384,7 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(instructions).not.toBeVisible();
 });
 
-test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', async ({ page, browserName }) => {
+test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', { tag: '@journey' }, async ({ page, browserName }) => {
 	await openOffices(page);
 	const row = rows(page).first();
 	await expect(row).toContainText('Online');
@@ -499,7 +499,7 @@ test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the o
 	await expect(opener).toBeFocused();
 });
 
-test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', async ({ page, browserName }) => {
+test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', { tag: '@journey' }, async ({ page, browserName }) => {
 	await openOffices(page);
 	const opener = rows(page).first().getByRole('button');
 	await page.getByRole('link', { name: 'Offices', exact: true }).focus();

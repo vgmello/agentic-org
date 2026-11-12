@@ -1,4 +1,5 @@
 <script lang="ts">
+	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import { invalidate } from '$app/navigation';
 	import { Badge } from '$lib/components/ui/badge';
 	import Callout from '$lib/components/Callout.svelte';
@@ -25,7 +26,7 @@
 <svelte:head><title>{row?.project.name ?? 'Project'} · Agentic Org</title></svelte:head>
 
 <div class="min-w-0 space-y-5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
-	<nav aria-label="Breadcrumb" class="min-w-0 text-sm/6 text-gray-400 [overflow-wrap:anywhere]"><a href="/projects" class="hover:text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400">Projects</a> › <span class="text-gray-200">{row?.project.name ?? ''}</span></nav>
+	<nav aria-label="Breadcrumb" class="min-w-0 text-sm/6 text-gray-400 [overflow-wrap:anywhere]"><a href="/projects" class="hover:text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400">Projects</a> <HeroIcon variant="mini" name="chevron-right" class="size-4! text-gray-500" /> <span class="text-gray-200">{row?.project.name ?? ''}</span></nav>
 
 	{#if !row}
 		<Callout data-testid="project-gone">

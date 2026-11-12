@@ -63,7 +63,7 @@ test('RQS-7: with no requests the queue says so, and Requests is a pill of Work'
 	await expect(page.getByText('Requests across every project.')).toBeVisible();
 });
 
-test('RQS-2/3/5: the words are enough, the route is suggested by rule with a reason and can be changed, and it lands With agents', async ({ page }) => {
+test('RQS-2/3/5: the words are enough, the route is suggested by rule with a reason and can be changed, and it lands With agents', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await queue(page);
 	await page.getByTestId('new-request').click();
@@ -111,7 +111,7 @@ test('RQS-2: Just save queues it unrouted, empty words are refused, and Route se
 	await expect(sheet.getByTestId('request-history')).toContainText('You sent this to');
 });
 
-test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, lets the drafts be edited, and makes the tasks', async ({ page }) => {
+test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, lets the drafts be edited, and makes the tasks', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await queue(page);
 	await capture(page, 'Costs per project', { kind: 'Feature' });
@@ -159,7 +159,7 @@ test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, let
 	await expect(page.getByTestId('work-project')).toHaveText(['Atlas', 'Atlas']);
 });
 
-test('RQS-10: asking for changes sends it back to the agent with the note; declining needs a reason; both are in the history', async ({ page }) => {
+test('RQS-10: asking for changes sends it back to the agent with the note; declining needs a reason; both are in the history', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await queue(page);
 	await capture(page, 'Weekly digest by email', { project: 'Atlas' });
