@@ -10,10 +10,14 @@ use std::io;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(not(test))]
+use std::thread::Builder;
 use std::thread::JoinHandle;
 use std::time::Duration;
 #[cfg(test)]
 use tests::poll_readable;
+#[cfg(test)]
+use tests::Builder;
 
 pub(super) struct Channel {
     kind: ChannelKind,
@@ -33,13 +37,11 @@ impl Service {
     ) -> io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
-        let thread = std::thread::Builder::new()
-            .name("org-transfer".into())
-            .spawn(move || {
-                if run(transport, revocations, stopping, &mut channel).is_err() {
-                    fatal();
-                }
-            })?;
+        let thread = Builder::new().name("org-transfer".into()).spawn(move || {
+            if run(transport, revocations, stopping, &mut channel).is_err() {
+                fatal();
+            }
+        })?;
         Ok(Self {
             stop,
             thread: Some(thread),
@@ -132,4 +134,4 @@ fn run(
     Ok(())
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

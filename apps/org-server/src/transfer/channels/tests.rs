@@ -600,6 +600,14 @@ fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gon
         .unwrap();
     peer.shutdown(std::net::Shutdown::Both).unwrap();
     at_exit.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (socket, _second_peer) = UnixStream::pair().unwrap();
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "second-live",
+        ))
+        .unwrap();
     let (done, dropped) = std::sync::mpsc::channel();
     let closer = std::thread::spawn(move || {
         drop(channels);
@@ -612,4 +620,100 @@ fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gon
         matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
         "Drop returned without joining the still-live serving thread"
     );
+}
+
+#[test]
+fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
+    let (mut channels, _events, _, _) = manager();
+    let registry = Arc::clone(&channels.registry);
+    assert!(std::thread::spawn(move || {
+        let _guard = registry.lock().unwrap();
+        panic!("synthetic registry poison");
+    })
+    .join()
+    .is_err());
+    let (datagram, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
+    let error = channels
+        .open(Channel {
+            kind: ChannelKind::Local,
+            office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
+            channel_id: "invalid-before-registry".into(),
+            fd: datagram.into(),
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "channel descriptor is not a stream",
+        "registry refusal masked descriptor validation order"
+    );
+}
+#[test]
+fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
+    let (mut channels, events, _, _) = manager();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.shutdown(std::net::Shutdown::Both).unwrap();
+    drop(peer);
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "peer-already-gone",
+        ))
+        .unwrap();
+    let mut events = std::io::BufReader::new(events);
+    assert_eq!(
+        org_office_launch::v3::read_server_event(&mut events).unwrap(),
+        Some(RendezvousEvent::FdsReceived {
+            of: "peer-already-gone".into()
+        })
+    );
+    drop(channels);
+}
+#[test]
+fn admission_reaps_finished_handles_but_retains_every_still_live_thread() {
+    use std::time::{Duration, Instant};
+    let (mut channels, _events, _, _) = manager();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "finished",
+        ))
+        .unwrap();
+    peer.shutdown(std::net::Shutdown::Both).unwrap();
+    drop(peer);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !channels.threads[0].is_finished() {
+        assert!(Instant::now() < deadline, "closed channel did not finish");
+        std::thread::yield_now();
+    }
+    let (socket, first) = UnixStream::pair().unwrap();
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "live-first",
+        ))
+        .unwrap();
+    assert_eq!(
+        channels.threads.len(),
+        1,
+        "finished thread handle was retained"
+    );
+    let (socket, second) = UnixStream::pair().unwrap();
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "live-second",
+        ))
+        .unwrap();
+    assert_eq!(
+        channels.threads.len(),
+        2,
+        "a live thread handle was discarded"
+    );
+    drop((first, second));
+    drop(channels);
 }

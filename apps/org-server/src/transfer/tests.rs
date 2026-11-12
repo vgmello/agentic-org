@@ -392,7 +392,7 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
     }
 }
 
-pub(super) fn send_rights(
+pub(crate) fn send_rights(
     socket: &UnixDatagram,
     payload: &[u8],
     descriptors: &[std::os::fd::RawFd],
@@ -649,4 +649,26 @@ fn run(
     stop: Arc<AtomicBool>,
 ) -> io::Result<()> {
     super::run(transport, revocations, stop, &mut |_| Err(invalid()))
+}
+
+thread_local! { static REFUSE_SERVICE_SPAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+pub(crate) fn refuse_next_spawn() {
+    REFUSE_SERVICE_SPAWN.with(|fail| fail.set(true));
+}
+// Normal calls still start a real std thread; the owned callback has already
+// crossed the creation boundary when this rare OS refusal is injected.
+pub(super) struct Builder(std::thread::Builder);
+impl Builder {
+    pub(super) fn new() -> Self {
+        Self(std::thread::Builder::new())
+    }
+    pub(super) fn name(self, name: String) -> Self {
+        Self(self.0.name(name))
+    }
+    pub(super) fn spawn(self, work: impl FnOnce() + Send + 'static) -> io::Result<JoinHandle<()>> {
+        if REFUSE_SERVICE_SPAWN.with(|fail| fail.replace(false)) {
+            return Err(io::Error::other("synthetic service thread refusal"));
+        }
+        self.0.spawn(work)
+    }
 }

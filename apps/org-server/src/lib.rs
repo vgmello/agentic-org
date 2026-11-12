@@ -448,6 +448,7 @@ fn serve_office(
         Ok(service) => service,
         Err(_) => {
             let _ = std::fs::remove_file(&socket);
+            eprintln!("org-server: cannot start transfer service");
             return 1;
         }
     };
@@ -619,6 +620,7 @@ fn fail_code(error: &OfficeError) -> FailCode {
 mod tests {
     use super::*;
     use org_office::{Key, NewOffice};
+    mod transfer_composition;
 
     #[test]
     fn c1_production_work_adapter_preserves_committed_refused_and_replayed_answers() {

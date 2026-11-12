@@ -1041,3 +1041,97 @@ fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_f
     stdout.rewind().unwrap();
     assert_eq!(stdout.metadata().unwrap().len(), 0);
 }
+
+#[test]
+fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finishes() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: this test owns the live socket and the correctly sized int buffer.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    let writer = Arc::new(Mutex::new(socket));
+    let owned = Arc::clone(&writer);
+    let writing = std::thread::spawn(move || {
+        write_event(
+            &owned,
+            &RendezvousEvent::FdsReceived {
+                of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
+            },
+        )
+    });
+    assert!(org_socket::poll_readable(peer.as_raw_fd(), Duration::from_secs(2)).unwrap());
+    // A response larger than the tiny send buffer is now blocked; the entire
+    // event must still own the shared lock, not just a temporary clone operation.
+    let held_for_frame = writer.try_lock().is_err();
+    drop(peer);
+    assert!(writing.join().unwrap().is_err());
+    assert!(
+        held_for_frame,
+        "writer released serialization before completing its frame"
+    );
+}
+#[test]
+fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: owned live socket, correctly sized int.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    let writer = Arc::new(Mutex::new(socket));
+    let (cancel, cancelled) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        // A broken deadline is released by closing the peer after seven seconds.
+        // The elapsed-time assertion catches it without an external harness timeout.
+        let _ = cancelled.recv_timeout(Duration::from_secs(7));
+        drop(peer);
+    });
+    let start = std::time::Instant::now();
+    let error = write_event(
+        &writer,
+        &RendezvousEvent::FdsReceived {
+            of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
+        },
+    )
+    .unwrap_err();
+    let elapsed = start.elapsed();
+    let _ = cancel.send(());
+    watchdog.join().unwrap();
+    assert!(
+        matches!(error, LaunchError::Frame(FrameError::Io(ref error)) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)),
+        "unexpected bounded write outcome: {error}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(4) && elapsed < Duration::from_millis(6500),
+        "write deadline was not five seconds: {elapsed:?}"
+    );
+}
+
+#[test]
+fn writer_is_available_only_for_the_authenticated_rendezvous_transport() {
+    let (mut control, _) = control(b"");
+    assert!(control.writer().is_none());
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let writer = Arc::new(Mutex::new(socket));
+    control.rendezvous = Some(Arc::clone(&writer));
+    assert!(Arc::ptr_eq(&control.writer().unwrap(), &writer));
+}
