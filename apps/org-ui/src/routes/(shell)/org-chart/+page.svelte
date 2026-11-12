@@ -2,7 +2,7 @@
 	import { AgentsTabs } from '$lib/modules/employees';
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/state';
-	import { setContext } from 'svelte';
+	import { setContext, tick } from 'svelte';
 	import { MediaQuery, SvelteSet } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
@@ -224,22 +224,47 @@
 		await reload();
 		if (r.message) toast.success(r.message);
 	}
+	let chartFrame = $state<HTMLDivElement>();
+	let restoreLastProject: (() => Promise<void>) | undefined;
+	function projectRemovalFocus(projectId: string, teamId: string) {
+		const card = () => chartFrame?.querySelector<HTMLElement>(`[data-team="${CSS.escape(teamId)}"]`);
+		const buttons = [...(card()?.querySelectorAll<HTMLButtonElement>('button[data-project]') ?? [])];
+		const at = buttons.findIndex((button) => button.dataset.project === projectId);
+		const removed = buttons[at]?.closest('li');
+		const keys = [...buttons.slice(at + 1), ...buttons.slice(0, at).reverse()].map((button) => button.dataset.project!);
+		return async () => {
+			await tick();
+			if (document.activeElement !== document.body && !removed?.contains(document.activeElement)) return;
+			const next = keys.map((id) => card()?.querySelector<HTMLButtonElement>(`button[data-project="${CSS.escape(id)}"]`)).find(Boolean);
+			(next ?? card()?.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]') ?? chartFrame)?.focus();
+		};
+	}
+	async function projectRemoved(r: { message?: string }) {
+		const restore = restoreLastProject;
+		await projectGiven(r);
+		if (r.message) await restore?.();
+	}
 	/** The × on a project's row: no confirmation while other teams remain; the last one asks first (TEAM-8). */
 	async function takeProjectOff(projectId: string, team: Team) {
 		const project = (snapshot.projects ?? []).find((p) => p.id === projectId);
 		if (!project) return;
+		const restore = projectRemovalFocus(projectId, team.id);
 		if (isLastTeam(snapshot, projectId, team.id)) {
 			removeProject = { projectId, projectName: project.name, teamName: team.name, teamId: team.id };
+			restoreLastProject = restore;
 			removeProjectOpen = true;
 			return;
 		}
+		let changed = false;
 		try {
 			await removeProjectTeam(session, projectId, team.id);
 			toast.success(`Removed ${project.name} from ${team.name}.`);
+			changed = true;
 		} catch (e) {
 			toast.error(`Couldn't remove ${project.name} from ${team.name}: ${toAppError(e).message} Nothing changed.`);
 		}
 		await reload();
+		if (changed) await restore();
 	}
 	const organizationName = $derived(data.connection.organization.name);
 	async function personAdded(r: { memberId: string; name: string; problems: string[] }) {
@@ -484,7 +509,7 @@
 				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} actions={teamMenu} />
 			{:else}
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Keyboard users need to enter this scrollable chart frame.) -->
-				<div role="region" aria-label="Teams chart" tabindex="0" onkeydown={onChartFrameKey} class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<div bind:this={chartFrame} role="region" aria-label="Teams chart" tabindex="0" onkeydown={onChartFrameKey} class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} {justAdded} actions={teamMenu} onremoveproject={takeProjectOff} onselect={select} />
 				</div>
 			{/if}
@@ -600,7 +625,7 @@
 <MoveTeamDialog bind:open={moveOpen} team={moving && snapshot.teams.find((x) => x.id === moving?.id)} snapshot={live} {session} ondone={teamMoved} />
 <EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} snapshot={live} {session} ondone={membersEdited} />
 <ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} snapshot={live} {session} ondone={projectGiven} />
-<RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectGiven} />
+<RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectRemoved} />
 <AddPersonSheet bind:open={addPersonOpen} snapshot={full} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
 <EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} snapshot={full} {session} organization={organizationName} ondone={personEdited} />
 <RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} snapshot={live} {session} organization={organizationName} ondone={personRemoved} />
