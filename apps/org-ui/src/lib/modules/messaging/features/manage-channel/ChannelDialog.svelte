@@ -77,7 +77,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="sm:max-w-md max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto" onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }}>
 		<DialogHeader>
-			<DialogTitle>{title}</DialogTitle>
+			<DialogTitle text={title} />
 			<DialogDescription>{mode === 'members' ? 'People and agents in the channel can read it. Agents read only while they are members.' : 'Channels are lowercase, with dashes instead of spaces.'}</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-4" onsubmit={submit} novalidate>

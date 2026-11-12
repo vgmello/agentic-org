@@ -66,7 +66,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Pause {shown?.name}?</DialogTitle>
+			<DialogTitle text={`Pause ${shown?.name ?? ''}?`} />
 			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
 				<span class="block">{shown?.name} won't be started or woken, and new tasks and messages wait until you resume.</span>
 				{#if teams.length > 0}<span class="block">{shown?.name} stays in {teams.join(', ')}.</span>{/if}

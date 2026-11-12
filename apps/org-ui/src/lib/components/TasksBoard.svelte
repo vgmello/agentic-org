@@ -218,7 +218,7 @@
 <Dialog open={!!blocking} onOpenChange={(next) => !next && (blocking = undefined)}>
 	<DialogContent class="sm:max-w-md">
 		<DialogHeader>
-			<DialogTitle>Block {blockTitle}</DialogTitle>
+			<DialogTitle text={`Block ${blockTitle}`} />
 			<DialogDescription>Say in one line what it is blocked on. The card shows it.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-3" onsubmit={confirmBlock} novalidate>

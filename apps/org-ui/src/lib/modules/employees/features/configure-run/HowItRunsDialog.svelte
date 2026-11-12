@@ -81,7 +81,7 @@
 	<DialogContent>
 		<form class="grid gap-4" onsubmit={submit} novalidate>
 			<DialogHeader>
-				<DialogTitle class="[overflow-wrap:anywhere]">How {shown?.name} runs</DialogTitle>
+				<DialogTitle text={`How ${shown?.name ?? ''} runs`} />
 				<DialogDescription>On call and scheduled agents only cost while they run.</DialogDescription>
 			</DialogHeader>
 			<fieldset class="space-y-1" disabled={busy}>

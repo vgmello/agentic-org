@@ -76,7 +76,7 @@
 	<DialogContent>
 		<form class="grid gap-6" onsubmit={submit} novalidate>
 			<DialogHeader>
-				<DialogTitle class="[overflow-wrap:anywhere]">Rename {title}</DialogTitle>
+				<DialogTitle text={`Rename ${title}`} />
 				<DialogDescription>The team keeps its members, projects and the teams under it.</DialogDescription>
 			</DialogHeader>
 			<div class="space-y-2">

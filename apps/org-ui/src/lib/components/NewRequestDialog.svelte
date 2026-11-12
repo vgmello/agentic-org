@@ -136,7 +136,7 @@
 <Dialog bind:open={() => open, setOpen}>
 	<DialogContent class="sm:max-w-xl">
 		<DialogHeader>
-			<DialogTitle>New request</DialogTitle>
+			<DialogTitle text={'New request'} />
 			<DialogDescription>A request isn't a task yet. Whoever scopes it turns it into a feature you can approve.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-4" onsubmit={(e) => (e.preventDefault(), void submit(true))} novalidate>

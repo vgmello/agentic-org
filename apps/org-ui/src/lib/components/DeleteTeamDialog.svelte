@@ -60,7 +60,7 @@
 	<DialogContent>
 		<DialogHeader>
 			<div class="mb-2 flex size-12 items-center justify-center rounded-full bg-red-500/15 text-red-400"><Trash2 class="size-6" aria-hidden="true" /></div>
-			<DialogTitle class="[overflow-wrap:anywhere]">{summary.refused ? `Can't delete ${shownTeam?.name}` : `Delete ${shownTeam?.name}?`}</DialogTitle>
+			<DialogTitle text={summary.refused ? `Can't delete ${shownTeam?.name ?? ''}` : `Delete ${shownTeam?.name ?? ''}?`} />
 			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
 				{#if summary.refused}
 					<span class="block">{summary.refused}</span>

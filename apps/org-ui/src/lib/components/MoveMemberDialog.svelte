@@ -70,7 +70,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Move {shown?.name} to a team</DialogTitle>
+			<DialogTitle text={`Move ${shown?.name ?? ''} to a team`} />
 			<DialogDescription>One step: they leave one team and join the other.</DialogDescription>
 		</DialogHeader>
 

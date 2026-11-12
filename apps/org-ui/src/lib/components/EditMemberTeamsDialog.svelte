@@ -78,7 +78,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="sm:max-w-lg">
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Teams for {shown?.name}</DialogTitle>
+			<DialogTitle text={`Teams for ${shown?.name ?? ''}`} />
 			<DialogDescription>Check each team they are in, and give them a title there if you like.</DialogDescription>
 		</DialogHeader>
 

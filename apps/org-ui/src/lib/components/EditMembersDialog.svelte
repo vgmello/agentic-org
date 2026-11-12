@@ -105,7 +105,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="sm:max-w-lg">
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Members of {shown?.name}</DialogTitle>
+			<DialogTitle text={`Members of ${shown?.name ?? ''}`} />
 			<DialogDescription>Check everyone who should be in the team. Someone can be in any number of teams.</DialogDescription>
 		</DialogHeader>
 

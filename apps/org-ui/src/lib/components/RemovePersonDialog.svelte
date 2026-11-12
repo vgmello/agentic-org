@@ -61,7 +61,7 @@
 	<DialogContent>
 		<DialogHeader>
 			<div class="mb-2 flex size-12 items-center justify-center rounded-full bg-red-500/15 text-red-400"><Trash2 class="size-6" aria-hidden="true" /></div>
-			<DialogTitle class="[overflow-wrap:anywhere]">Remove {shown?.name} from {organization}?</DialogTitle>
+			<DialogTitle text={`Remove ${shown?.name ?? ''} from ${organization ?? ''}?`} />
 			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
 				{#each lines as line (line)}<span class="block">{line}</span>{/each}
 			</DialogDescription>
