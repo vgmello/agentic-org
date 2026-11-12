@@ -19,9 +19,10 @@ export default defineConfig({
 		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } },
 		{ name: 'chromium-default-font', testMatch: 'non-chat-icons-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
 		{ name: 'chromium-chat-default-font', testMatch: 'chat-followups-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
+		{ name: 'chromium-focus-default-font', testMatch: 'focus-primitives-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
 		...(webkit ? [{
 			name: 'webkit',
-			testMatch: ['chat-followups.spec.ts', 'non-chat-icons.spec.ts', 'chat-no-emoji.spec.ts', 'offices.spec.ts', 'shell-responsive.spec.ts', 'chat-lows.spec.ts', 'chat-thread-focus.spec.ts', 'chat-live-delivery.spec.ts', 'chat-layout.spec.ts', 'look-primitives.spec.ts', 'shell-topbar.spec.ts', 'desktop-navigation-focus.spec.ts', 'project-profile.spec.ts', 'shell-switch-footer.spec.ts', 'org-chart-responsive.spec.ts'],
+			testMatch: ['chat-followups.spec.ts', 'non-chat-icons.spec.ts', 'chat-no-emoji.spec.ts', 'offices.spec.ts', 'shell-responsive.spec.ts', 'chat-lows.spec.ts', 'chat-thread-focus.spec.ts', 'chat-live-delivery.spec.ts', 'chat-layout.spec.ts', 'look-primitives.spec.ts', 'focus-primitives.spec.ts', 'shell-topbar.spec.ts', 'desktop-navigation-focus.spec.ts', 'project-profile.spec.ts', 'shell-switch-footer.spec.ts', 'org-chart-responsive.spec.ts'],
 			grep: /BUG-27|BUG-24: pointer|BUG-59|BUG-25|BUG-26|BUG-64|BUG-62|BUG-65|BUG-66|BUG-67|BUG-68|BUG-71|BUG-70|BUG-74|BUG-2:/,
 			use: { browserName: 'webkit' as const, baseURL: `http://localhost:${port}` }
 		}] : [])
