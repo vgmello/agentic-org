@@ -1,0 +1,8 @@
+            ($($variant:ident => $call:ty),* $(,)?) => {
+                match self {
+                    $(Self::$variant(p) => (
+                        <$call as Call>::METHOD,
+                        serde_json::to_string(p).expect("params serialize"),
+                    ),)*
+                }
+            };

@@ -1,0 +1,15 @@
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(NonZeroU64);
+        impl $name {
+            pub fn new(value: u64) -> Result<Self, InvalidValue> {
+                NonZeroU64::new(value).map(Self).ok_or(InvalidValue)
+            }
+            pub fn get(self) -> u64 {
+                self.0.get()
+            }
+            pub fn checked_next(self) -> Option<Self> {
+                self.get().checked_add(1).and_then(|v| Self::new(v).ok())
+            }
+        }
+    };

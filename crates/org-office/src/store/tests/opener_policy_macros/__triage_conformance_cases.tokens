@@ -1,0 +1,8 @@
+    ($open:expr; $($case:ident),* $(,)?) => {
+        $(
+            #[test]
+            fn $case() {
+                $crate::testkit::triage_conformance::$case($open)
+            }
+        )*
+    };
