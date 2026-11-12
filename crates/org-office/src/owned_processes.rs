@@ -2,6 +2,8 @@
 //! org-server adapts them to org-supervise's ports and owns inventory limits (`with_inventory`).
 //! The SQL is `store::owned_processes`'s.
 
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::OfficeError;
@@ -96,6 +98,26 @@ impl Office {
     ) -> Result<Option<OwnedProcess>, OfficeError> {
         self.local_store()
             .read(|reader| Ok(db::select(reader, Some(key))?.pop()))
+    }
+
+    /// Stores `inventory` for the row `key` with `mark`, durably (synchronous FULL) before
+    /// returning. It must hold every saved identity, so the row only grows by identity; a saved
+    /// identity's ancestry is replaced by the one given. The caller validated `inventory` with
+    /// `RecoveryRecord::with_inventory` (the 256 cap). Refused, nothing written: a stale key or
+    /// mark, a missing saved identity, or `deadline` passed when the write is about to be made
+    /// (`TimedOut`). A commit that finishes after `deadline` also answers `TimedOut`, but
+    /// committed: ambiguous, like every error here.
+    pub fn checkpoint_owned_inventory(
+        &self,
+        key: OwnedProcessKey,
+        mark: &str,
+        inventory: &[SavedTarget],
+        deadline: Instant,
+    ) -> Result<(), OfficeError> {
+        let (mark, inventory) = (mark.to_owned(), inventory.to_vec());
+        let write = move |tx: &_| Ok((db::checkpoint(tx, key, &mark, &inventory, deadline)?, None));
+        self.local_store().write(write)?;
+        db::committed_in_time(deadline)
     }
 
     /// Removes the row once its processes are proven gone. `false` if it was already gone.

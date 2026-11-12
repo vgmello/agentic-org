@@ -2,6 +2,7 @@
 //! writes and on a reader for reads; every function takes the caller's connection.
 
 use std::io;
+use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,17 @@ pub(crate) fn create_table(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<(
 const STALE: OfficeError = OfficeError::Invalid("stale owned-process key or mark");
 const COLUMNS: &str = "id, generation, mark, leader_pid, leader_pgid, leader_started, \
                        leader_boot, tool_sessions, inventory FROM owned_processes";
+
+fn missed(deadline: Instant) -> Result<(), OfficeError> {
+    if Instant::now() < deadline {
+        return Ok(());
+    }
+    let late = "owned-process checkpoint missed its deadline";
+    Err(OfficeError::storage(io::Error::new(
+        io::ErrorKind::TimedOut,
+        late,
+    )))
+}
 
 fn decode_inventory(text: &str) -> Result<Vec<SavedTarget>, OfficeError> {
     let stored: StoredInventory = serde_json::from_str(text).map_err(OfficeError::storage)?;
@@ -172,6 +184,38 @@ pub(crate) fn add_tool_session(
         .map_err(OfficeError::storage)?;
     }
     Ok(())
+}
+
+/// See `Office::checkpoint_owned_inventory`. The deadline is checked again on every attempt.
+pub(crate) fn checkpoint(
+    db: &Connection,
+    key: OwnedProcessKey,
+    mark: &str,
+    inventory: &[SavedTarget],
+    deadline: Instant,
+) -> Result<(), OfficeError> {
+    let row = current(db, key)?;
+    if row.mark != mark {
+        return Err(STALE);
+    }
+    let has = |saved: &SavedTarget| inventory.iter().any(|t| t.identity == saved.identity);
+    if !row.inventory.iter().all(has) {
+        return Err(OfficeError::Invalid("the inventory omits a saved entry"));
+    }
+    missed(deadline)?;
+    db.execute(
+        "UPDATE owned_processes SET inventory=?3 WHERE id=?1 AND generation=?2",
+        (key.id, key.generation, encode_inventory(inventory)?),
+    )
+    .map_err(OfficeError::storage)?;
+    #[cfg(test)]
+    crate::owned_processes::tests::pause_before_commit(mark, deadline);
+    Ok(())
+}
+
+/// After an `Office` call returned: a commit that finished past `deadline` answers TimedOut.
+pub(crate) fn committed_in_time(deadline: Instant) -> Result<(), OfficeError> {
+    missed(deadline)
 }
 
 pub(crate) fn retire(db: &Connection, key: OwnedProcessKey) -> Result<bool, OfficeError> {
