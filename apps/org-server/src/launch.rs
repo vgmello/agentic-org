@@ -14,7 +14,7 @@ pub(super) struct Create {
     pub auth: LaunchAuth,
     pub instance: Option<String>,
     pub owner_member_id: Option<String>,
-    // The remaining field stays alive through create AND the blocking serve call.
+    // Retains the recovery code through create and the blocking serve call.
     pub _recovery: CreationRecovery,
 }
 
