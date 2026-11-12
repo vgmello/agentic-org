@@ -13,6 +13,19 @@ const POLICY_NAMES: &[&str] = &[
     ".clippy.toml",
 ];
 
+fn require_policy_spelling(path: &Path) {
+    for relative in path.ancestors() {
+        let folded = std::path::PathBuf::from(relative.to_string_lossy().to_ascii_lowercase());
+        for &name in POLICY_NAMES {
+            assert!(
+                !folded.ends_with(name.to_ascii_lowercase()) || relative.ends_with(name),
+                "case-variant policy name: {}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
     command.env_clear();
@@ -40,16 +53,7 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
             "tracked input resolves to a directory (symlink or gitlink): {}",
             path.display()
         );
-        for relative in path.strip_prefix(&root).unwrap().ancestors() {
-            let folded = std::path::PathBuf::from(relative.to_string_lossy().to_ascii_lowercase());
-            for &name in POLICY_NAMES {
-                assert!(
-                    !folded.ends_with(name.to_ascii_lowercase()) || relative.ends_with(name),
-                    "case-variant policy name: {}",
-                    path.display()
-                );
-            }
-        }
+        require_policy_spelling(path.strip_prefix(&root).unwrap());
     }
     let scope = SourceScope {
         files: paths
@@ -253,6 +257,10 @@ fn sqlcipher_inventory_refuses_policy_name_case_variants_on_every_filesystem() {
         ("nested/Clippy.toml", clippy),
         ("nested/.Clippy.toml", clippy),
     ] {
+        assert!(
+            std::panic::catch_unwind(|| require_policy_spelling(Path::new(name))).is_err(),
+            "accepted case-variant spelling {name}"
+        );
         let directory = fixture(&[(name, source)]);
         assert!(
             std::panic::catch_unwind(|| tracked(directory.path())).is_err(),
