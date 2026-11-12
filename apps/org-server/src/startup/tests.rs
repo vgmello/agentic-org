@@ -876,3 +876,86 @@ fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
         );
     }
 }
+
+#[test]
+fn only_eof_and_connection_reset_are_host_disappearance_not_protocol_or_other_io_faults() {
+    for kind in [
+        io::ErrorKind::UnexpectedEof,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::InvalidData,
+        io::ErrorKind::BrokenPipe,
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::NotConnected,
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::Interrupted,
+        io::ErrorKind::WouldBlock,
+        io::ErrorKind::Other,
+    ] {
+        assert_eq!(
+            host_disappeared(kind),
+            matches!(
+                kind,
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
+            ),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn transfer_is_taken_once_with_the_same_owned_fd_and_spawn_fence() {
+    let (host, child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+    let raw = child.as_raw_fd();
+    let fence = Arc::new(Mutex::new(()));
+    let (mut control, _events) = control(b"");
+    control.transfer = Some(child.into());
+    control.fence = Arc::clone(&fence);
+    let transferred = control.transfer().unwrap();
+    assert!(control.transfer().is_none());
+    assert_eq!(transferred.receiver.fd().unwrap().as_raw_fd(), raw);
+    assert!(Arc::ptr_eq(&transferred.fence, &fence));
+    drop(transferred);
+    assert!(host.send(b"closed").is_err());
+}
+
+#[test]
+fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
+    for unread in [false, true] {
+        let (host, mut worker) = UnixStream::pair().unwrap();
+        if unread {
+            worker.write_all(b"unread worker event").unwrap();
+        }
+        drop(host);
+        let mut receiver = StreamReceiver::new(worker);
+        let deadline = std::time::Instant::now() + WAIT;
+        let error = loop {
+            match receiver.receive_byte(0, &Mutex::new(())) {
+                Err(ReceiveError::Fatal(error)) => break error,
+                Err(ReceiveError::WouldBlock) => {
+                    assert!(std::time::Instant::now() < deadline);
+                    org_socket::poll_readable(
+                        receiver.fd().unwrap().as_raw_fd(),
+                        Duration::from_millis(10),
+                    )
+                    .unwrap();
+                }
+                Ok(_) => panic!("peer close produced unexpected data"),
+            }
+        };
+        let reset = unread && cfg!(target_os = "linux");
+        let expected = if reset {
+            io::ErrorKind::ConnectionReset
+        } else {
+            io::ErrorKind::UnexpectedEof
+        };
+        assert_eq!(error.kind(), expected, "unread={unread}");
+        assert_eq!(error.raw_os_error(), reset.then_some(libc::ECONNRESET));
+        assert!(host_disappeared(error.kind()));
+        assert!(receiver.fd().is_none());
+        eprintln!(
+            "measured rendezvous unread={unread}: kind={:?} errno={:?}",
+            error.kind(),
+            error.raw_os_error()
+        );
+    }
+}

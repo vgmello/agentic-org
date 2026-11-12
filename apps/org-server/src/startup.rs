@@ -32,7 +32,7 @@ pub(super) struct Control {
     pipe: ControlPipe,
     rendezvous: Option<UnixStream>,
     receiver: Option<StreamReceiver>,
-    // Owned before the ACK; kept until shutdown, then serviced by 2a.4.
+    // Owned before the handoff ACK; moved to the service after Ready.
     transfer: Option<OwnedFd>,
     fence: Arc<Mutex<()>>,
     #[cfg(test)]
@@ -140,6 +140,15 @@ impl Control {
         })
     }
 
+    /// The trusted host must hand off an AF_UNIX/SOCK_DGRAM endpoint.
+    /// Takes ownership once and retains the original spawn/receive fence.
+    pub fn transfer(&mut self) -> Option<Transfer> {
+        self.transfer.take().map(|fd| Transfer {
+            receiver: org_socket::rights::DatagramReceiver::new(fd.into()),
+            fence: Arc::clone(&self.fence),
+        })
+    }
+
     pub fn emit(&mut self, event: &ServerEvent) -> Result<(), LaunchError> {
         match &mut self.rendezvous {
             Some(stream) => v3::write_server_event(stream, event),
@@ -168,7 +177,7 @@ impl Drop for Control {
     }
 }
 
-/// Only EOF is ordinary lifetime input; rights faults must not unwind into serving.
+/// EOF and genuine connection reset end host lifetime; rights/data faults stay fatal.
 pub(super) enum Lifetime {
     Pipe(File),
     Rendezvous {
@@ -188,9 +197,7 @@ impl Read for Lifetime {
                 let fd = receiver.fd().expect("live lifetime receiver").as_raw_fd();
                 match receive_with_poll(
                     || match receiver.receive_byte(0, fence) {
-                        Err(ReceiveError::Fatal(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                            Ok(false)
-                        }
+                        Err(ReceiveError::Fatal(e)) if host_disappeared(e.kind()) => Ok(false),
                         other => other.map(|_| true),
                     },
                     || org_socket::poll_readable(fd, org_socket::READ_TICK),
@@ -261,3 +268,15 @@ fn io_error(error: io::Error) -> LaunchError {
 
 #[cfg(test)]
 mod tests;
+
+/// Launch transfers only owned receipt capability and the original caller fence.
+pub(super) struct Transfer {
+    pub receiver: org_socket::rights::DatagramReceiver,
+    pub fence: Arc<Mutex<()>>,
+}
+fn host_disappeared(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
+    )
+}

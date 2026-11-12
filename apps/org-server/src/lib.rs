@@ -24,6 +24,7 @@ mod msg_calls;
 mod serve;
 mod signals;
 mod startup;
+mod transfer;
 mod zeroed;
 
 use std::path::Path;
@@ -419,8 +420,21 @@ fn serve_office(
         },
     );
 
+    let revocations = Arc::new(std::sync::Mutex::new(transfer::Revocations::default()));
+    let transfers = match control
+        .transfer()
+        .map(|transport| transfer::Service::start(transport, revocations))
+        .transpose()
+    {
+        Ok(service) => service,
+        Err(_) => {
+            let _ = std::fs::remove_file(&socket);
+            return 1;
+        }
+    };
     let stop = || host_gone.load(Ordering::SeqCst) || signals::stop_requested();
     serve::run(&listener, &shared, &stop);
+    drop(transfers);
 
     drop(listener);
     let _ = std::fs::remove_file(&socket);
