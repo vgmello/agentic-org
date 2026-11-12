@@ -1954,3 +1954,96 @@ fn sqlcipher_argument_files_and_opaque_items_fail_closed() {
     }
     modules(dir.path(), &file, "pub struct Supported;");
 }
+
+pub(super) fn manifest_paths(
+    scope: &super::opener_scope::SourceScope,
+    manifest: &Path,
+    source: &str,
+) {
+    fn entry(
+        scope: &super::opener_scope::SourceScope,
+        base: &Path,
+        path: Vec<String>,
+        value: &str,
+    ) {
+        assert!(
+            !matches!(path.first().map(String::as_str), Some("patch" | "replace")),
+            "unsupported Cargo override"
+        );
+        if let Some(inline) = value.trim().strip_prefix('{') {
+            let inline = inline
+                .strip_suffix('}')
+                .expect("unsupported inline Cargo table");
+            for field in split(inline, ',').into_iter().filter(|s| !s.is_empty()) {
+                let (name, value) = field
+                    .split_once('=')
+                    .expect("unsupported inline Cargo field");
+                let mut child = path.clone();
+                child.extend(key(name));
+                entry(scope, base, child, value);
+            }
+        } else {
+            let names = path.iter().map(String::as_str).collect::<Vec<_>>();
+            if matches!(
+                names.as_slice(),
+                ["workspace", "members" | "default-members" | "exclude"]
+            ) {
+                let values = value
+                    .trim()
+                    .strip_prefix('[')
+                    .and_then(|s| s.strip_suffix(']'))
+                    .expect("literal workspace entries required");
+                for value in split(values, ',').into_iter().filter(|s| !s.is_empty()) {
+                    let path = string(value);
+                    assert!(
+                        !path.contains(['*', '?', '[', ']']),
+                        "workspace globs unsupported"
+                    );
+                    scope.require(&base.join(path).join("Cargo.toml"));
+                }
+            } else if names == ["package", "workspace"] {
+                scope.require(&base.join(string(value)).join("Cargo.toml"));
+            } else if names.iter().any(|name| {
+                matches!(
+                    *name,
+                    "dependencies" | "dev-dependencies" | "build-dependencies"
+                )
+            }) {
+                match names.last().copied() {
+                    Some("path") => {
+                        scope.require(&base.join(string(value)).join("Cargo.toml"));
+                    }
+                    Some("git") => assert!(
+                        !string(value).to_ascii_lowercase().starts_with("file:"),
+                        "local Git sources unsupported"
+                    ),
+                    _ => {}
+                }
+            }
+        }
+    }
+    let base = manifest.parent().unwrap();
+    let mut section = Vec::new();
+    for line in statements(source) {
+        if line.starts_with('[') {
+            let header = line
+                .strip_prefix("[[")
+                .and_then(|s| s.strip_suffix("]]"))
+                .or_else(|| line.strip_prefix('[').and_then(|s| s.strip_suffix(']')))
+                .expect("unsupported Cargo table");
+            section = key(header);
+            assert!(
+                !matches!(
+                    section.first().map(String::as_str),
+                    Some("patch" | "replace")
+                ),
+                "unsupported Cargo override"
+            );
+        } else {
+            let (name, value) = line.split_once('=').expect("unsupported Cargo assignment");
+            let mut path = section.clone();
+            path.extend(key(name));
+            entry(scope, base, path, value);
+        }
+    }
+}

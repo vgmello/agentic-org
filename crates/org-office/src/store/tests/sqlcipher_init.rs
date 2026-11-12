@@ -4,6 +4,8 @@ mod opener_inventory;
 mod opener_policy;
 #[path = "opener_scope.rs"]
 mod opener_scope;
+#[path = "opener_sources.rs"]
+mod opener_sources;
 
 use super::*;
 use std::io::{BufRead, BufReader, Write};
@@ -159,7 +161,12 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
 
 fn check_source_inventory(root: &Path) {
     let scope = opener_inventory::tracked(root);
-    for path in &scope.files {
+    check_tracked_sources(&scope);
+    opener_sources::cargo_roots(&scope);
+}
+
+fn check_tracked_sources(scope: &opener_scope::SourceScope) {
+    for path in scope.files.keys() {
         if path.extension().is_some_and(|extension| extension == "rs") {
             check_rust_file(&scope.root, path, &std::fs::read_to_string(path).unwrap());
         }
