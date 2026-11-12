@@ -30,7 +30,7 @@ fn auth(grants: bool) -> LaunchAuth {
         token().into()
     }
 }
-fn principal_values() -> [Value; 3] {
+pub(super) fn principal_values() -> [Value; 3] {
     let vectors: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../crates/org-proto/test-vectors/v2/proto-grant-mac.json"
@@ -49,7 +49,7 @@ fn principal_values() -> [Value; 3] {
     serde_json::from_value::<org_proto::Principal>(valid.clone()).unwrap();
     [valid, Value::Null, json!({"bad":"principal"})]
 }
-fn with_principal(id: u64, method: &str, params: Value, principal: Value) -> Request {
+pub(super) fn with_principal(id: u64, method: &str, params: Value, principal: Value) -> Request {
     // Use the actual envelope decoder, including its distinction between absent and null.
     serde_json::from_value(json!({"id":id,"method":method,"params":params,"principal":principal}))
         .unwrap()

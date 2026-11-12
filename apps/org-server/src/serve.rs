@@ -1057,13 +1057,6 @@ fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response
 /// failed one leaves the connection unbound.
 fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     *binding = Binding::Anonymous;
-    if matches!(shared.auth, LaunchAuth::Grants { .. }) {
-        return bind_error(
-            request.id,
-            ErrorCode::NotAuthorized,
-            "grant authorization is not active",
-        );
-    }
     let params = match request.params::<MsgBind>() {
         Ok(params) => params,
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
@@ -1261,7 +1254,7 @@ mod tests {
     }
 
     #[test]
-    fn grants_bind_refuses_before_params_or_directory_and_clears_each_prior_binding() {
+    fn grants_invalid_binds_clear_each_prior_binding_without_directory_lookup() {
         struct ForbiddenDirectory;
         impl MemberDirectory for ForbiddenDirectory {
             fn resolve_member(
@@ -1271,7 +1264,7 @@ mod tests {
                 Option<(org_proto::Member, org_proto::org::Position)>,
                 org_mailbox::StoreError,
             > {
-                panic!("grant bind must never query the legacy directory");
+                panic!("input-only bind refusals must not query the directory");
             }
         }
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
@@ -1287,15 +1280,25 @@ mod tests {
         assert!(
             matches!(&shared.auth, LaunchAuth::Grants { _key } if _key == &org_proto::GrantKey::from_bytes([7;32]))
         );
-        for params in [
-            serde_json::json!({"app_token":"a7".repeat(32)}),
-            serde_json::json!({"app_token":"11".repeat(32)}),
-            serde_json::json!({}),
-            serde_json::json!({"app_token":"not hex"}),
-            serde_json::json!({"member":"ada"}),
-            serde_json::json!({"member":"pat","app_token":"a7".repeat(32)}),
-            serde_json::json!({"member":7}),
-            serde_json::json!({"member":"office"}),
+        for (params, expected) in [
+            (
+                serde_json::json!({"app_token":"07".repeat(32)}),
+                ErrorCode::NotAuthorized,
+            ),
+            (
+                serde_json::json!({"app_token":"11".repeat(32)}),
+                ErrorCode::NotAuthorized,
+            ),
+            (serde_json::json!({}), ErrorCode::InvalidRequest),
+            (
+                serde_json::json!({"app_token":"not hex"}),
+                ErrorCode::InvalidRequest,
+            ),
+            (serde_json::json!({"member":7}), ErrorCode::InvalidRequest),
+            (
+                serde_json::json!({"member":"office"}),
+                ErrorCode::InvalidRequest,
+            ),
         ] {
             for mut binding in [
                 Binding::Anonymous,
@@ -1313,7 +1316,7 @@ mod tests {
                 };
                 assert_eq!(
                     code_of(answer(&request, &shared, &mut binding).outcome),
-                    ErrorCode::NotAuthorized
+                    expected
                 );
                 assert_eq!(binding, Binding::Anonymous);
             }
@@ -1321,7 +1324,7 @@ mod tests {
     }
 
     #[test]
-    fn grants_mode_keeps_v1_hello_and_closes_the_tokenless_legacy_agent_path() {
+    fn grants_mode_keeps_v1_hello_and_allows_the_tokenless_agent_path() {
         let legacy = shared(Path::new("/unused"));
         let request = Request::new::<MsgBind>(
             1,
@@ -1343,9 +1346,22 @@ mod tests {
                 _key: org_proto::GrantKey::from_bytes([7; 32]),
             },
         );
+        let mut binding = Binding::Anonymous;
+        let response = answer(&request, &grants, &mut binding);
         assert_eq!(
-            code_of(answer(&request, &grants, &mut Binding::Anonymous).outcome),
-            ErrorCode::NotAuthorized
+            response
+                .into_result::<MsgBind>()
+                .unwrap()
+                .member_id
+                .as_deref(),
+            Some(org_mailbox::testkit::fixture::ADA_ID)
+        );
+        assert_eq!(
+            binding,
+            Binding::Member {
+                id: org_mailbox::testkit::fixture::ADA_ID.into(),
+                with_app_token: false
+            }
         );
         assert_eq!(
             serde_json::to_value(&grants.hello).unwrap(),
@@ -1354,7 +1370,7 @@ mod tests {
     }
 
     #[test]
-    fn grants_authority_refuses_every_bind_on_the_live_socket_and_keeps_api_one() {
+    fn grants_authority_allows_agents_but_refuses_app_and_person_binds_on_the_live_socket() {
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let shared = Arc::new(Shared::new(
@@ -1372,15 +1388,29 @@ mod tests {
                 matches!(client.call::<Hello>(&Default::default()), org_proto::Outcome::Result(value)
                 if value == serde_json::to_value(&shared.hello).unwrap() && value["api_version"] == 1)
             );
-            for params in [
-                serde_json::json!({"app_token":"a7".repeat(32)}),
-                serde_json::json!({"app_token":"11".repeat(32)}),
-                serde_json::json!({}),
-                serde_json::json!({"app_token":"not hex"}),
-                serde_json::json!({"member":"ada"}),
-                serde_json::json!({"member":"pat","app_token":"a7".repeat(32)}),
-                serde_json::json!({"member":7}),
-                serde_json::json!({"member":"office"}),
+            for (params, expected) in [
+                (
+                    serde_json::json!({"app_token":"07".repeat(32)}),
+                    ErrorCode::NotAuthorized,
+                ),
+                (
+                    serde_json::json!({"app_token":"11".repeat(32)}),
+                    ErrorCode::NotAuthorized,
+                ),
+                (serde_json::json!({}), ErrorCode::InvalidRequest),
+                (
+                    serde_json::json!({"app_token":"not hex"}),
+                    ErrorCode::InvalidRequest,
+                ),
+                (
+                    serde_json::json!({"member":"pat","app_token":"07".repeat(32)}),
+                    ErrorCode::NotAuthorized,
+                ),
+                (serde_json::json!({"member":7}), ErrorCode::InvalidRequest),
+                (
+                    serde_json::json!({"member":"office"}),
+                    ErrorCode::InvalidRequest,
+                ),
             ] {
                 assert_eq!(
                     code_of(client.ask(|id| Request {
@@ -1389,13 +1419,43 @@ mod tests {
                         params,
                         principal: None,
                     })),
-                    ErrorCode::NotAuthorized
+                    expected
                 );
                 assert_eq!(
                     code_of(client.call::<MsgInbox>(&inbox_params())),
                     ErrorCode::NotBound
                 );
                 assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+            }
+            assert!(matches!(
+                client.bind(Some("ada"), None),
+                org_proto::Outcome::Result(_)
+            ));
+            assert!(matches!(
+                client.call::<MsgInbox>(&inbox_params()),
+                org_proto::Outcome::Result(_)
+            ));
+            assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+            // Principal-bearing rebinds cannot cancel the active Grants agent's held call.
+            let _wait = client.call_later::<MsgWait>(&wait_params());
+            until("Grants agent wait is held", || {
+                shared.ports.mailbox.held_waits() == 1
+            });
+            for principal in office_socket::principal_values() {
+                assert_eq!(
+                    code_of(client.ask(|id| office_socket::with_principal(
+                        id,
+                        "msg.bind",
+                        serde_json::json!({"member":"unknown"}),
+                        principal
+                    ))),
+                    ErrorCode::NotAuthorized
+                );
+                assert_eq!(shared.ports.mailbox.held_waits(), 1);
+                assert!(matches!(
+                    client.call::<MsgInbox>(&inbox_params()),
+                    org_proto::Outcome::Result(_)
+                ));
             }
         }));
         stop.store(true, Ordering::SeqCst);
