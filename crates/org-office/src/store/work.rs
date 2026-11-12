@@ -99,6 +99,11 @@ fn validate_event(event: &WorkEvent) -> Result<(), OfficeError> {
     Ok(())
 }
 
+/// Reads one native item inside a caller-held office.db transaction.
+pub(crate) fn get_in(db: &Connection, id: &str) -> Result<Option<StoredItem>, OfficeError> {
+    get(db, id)
+}
+
 /// Composes the item and its ID index from one caller-held transaction.
 fn get(db: &Connection, id: &str) -> Result<Option<StoredItem>, OfficeError> {
     if db.is_autocommit() {

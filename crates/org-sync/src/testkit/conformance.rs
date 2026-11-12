@@ -45,6 +45,19 @@ pub fn organization_adapter<H: OrganizationHarness>(hq: &H, satellite: &H) {
     );
     assert_eq!(satellite.inspect_checkpoint(), empty);
     assert_eq!(satellite.domain_application_count(), 0);
+    let mut missing = snapshot.clone();
+    missing.staging_id = "AcceptedMissingStagingForConformance".into();
+    let error = install_snapshot(&satellite, missing).unwrap_err();
+    assert!(matches!(
+        error,
+        SyncError::Refused(Refusal::IntegrityFailure)
+    ));
+    assert!(error.aborts_batch());
+    let satellite = satellite.reopen();
+    assert!(satellite.initial_snapshot_required());
+    assert_eq!(satellite.inspect_checkpoint(), empty);
+    assert_eq!(satellite.domain_application_count(), 0);
+    // The existing accepted stage must survive the refused install and reopen.
     satellite.fail_next_commit();
     assert!(install_snapshot(&satellite, snapshot.clone()).is_err());
     let satellite = satellite.reopen();

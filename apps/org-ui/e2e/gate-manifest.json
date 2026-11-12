@@ -11,9 +11,9 @@
 		"maxChromiumSeconds": 300,
 		"measured": { "tests": 55, "chromiumSeconds": 190, "workers": 2, "date": "2026-11-11" }
 	},
-	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font" },
+	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font", "focus-primitives-default-font.ts": "chromium-focus-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
@@ -98,8 +98,8 @@
 			"sources": ["src/routes/(shell)/offices/**", "src/lib/offices/**", "src/lib/components/Office*.svelte", "src/lib/components/testing/office-status.*"]
 		},
 		"shell-look": {
-			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "shot.spec.ts"],
-			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*"]
+			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "focus-primitives-default-font.ts", "shot.spec.ts"],
+			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "e2e/focus-primitives.ts"]
 		},
 		"projects-work": {
 			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
@@ -130,6 +130,7 @@
 		{ "category": "projects-work", "files": ["src/routes/(shell)/org-chart/+page.{svelte,ts}", "src/lib/components/ChartFitMenuItem.svelte"], "why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports." }
 	],
 	"allowedCoupling": [
+		{ "from": "e2e/focus-primitives.spec.ts", "to": "src/routes/(shell)/processes/+page.svelte", "why": "Dedicated ProcessSheet caller-override regression for the shared Button outline. The helper also samples nine consumer families (documented route-scanner limit); shared primitive changes select FULL, page-only changes retain their category and journey coverage." },
 		{ "from": "src/routes/(shell)/+layout.svelte", "to": "src/lib/modules/messaging/index.ts", "why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys." },
 		{ "from": "e2e/*.spec.ts", "to": "src/routes/(onboarding)/*/+page.svelte", "why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages." },
 		{ "from": "e2e/{shell-*,desktop-navigation-focus}.spec.ts", "to": "src/routes/(shell)/{offices,chat}/+page.svelte", "why": "These specs open Offices or Chat mainly for shell chrome (topbar, footer, navigation focus, Back), but they also assert page-owned states (for example a stopped office or an offline chat shown inside the shell). Accepted speed tradeoff: a page change does not re-run them; a shared or unknown change does." },

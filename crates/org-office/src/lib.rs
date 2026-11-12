@@ -34,3 +34,4 @@ pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};
 pub use status::presence_after_status;
 pub use store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
+pub use store::sqlcipher_ready;
