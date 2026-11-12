@@ -727,3 +727,149 @@ test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explan
 		await expect(trigger).toBeFocused();
 	}
 });
+
+for (const width of [320, 390, 960, 1440]) for (const root of [20, 40]) {
+	test(`PEOPLE-1 BUG-70 BUG-129: closing View rejects stale item focus at ${width}px root${root}`, async ({ page }) => {
+		await openChart(page, width);
+		await page.addStyleTag({ content: `html { font-size: ${root}px !important; }` });
+		await expect(page.locator('html')).toHaveCSS('font-size', `${root}px`);
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const trigger = page.getByRole('button', { name: 'View', exact: true });
+		await trigger.press('Enter');
+		const item = page.getByRole('menuitem').first();
+		await expect(item).toBeFocused({ timeout: 5_000 });
+		await expect(item).toHaveAttribute('aria-disabled', 'false');
+		await expect(page.getByRole('tooltip')).toHaveCount(0);
+		await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+		const text = await item.evaluate((element) => {
+			const range = document.createRange(); range.selectNodeContents(element);
+			const style = getComputedStyle(element), canvas = document.createElement('canvas').getContext('2d')!;
+			canvas.font = `${style.fontSize} ${style.fontFamily}`;
+			return { width: range.getBoundingClientRect().width, minimum: Math.min(canvas.measureText('000000').width, canvas.measureText(element.textContent ?? '').width) };
+		});
+		expect(text.width).toBeGreaterThan(0);
+		expect(text.width).toBeGreaterThanOrEqual(text.minimum - 1);
+		await shot(page, `bug129-enabled-view-${width}-${root}`);
+		await item.evaluate((element) => {
+			const trigger = document.querySelector<HTMLButtonElement>('button[aria-controls="' + element.closest('[role="menu"]')!.id + '"]')!;
+			// Replay the observed late focus after default close-autofocus, within the real exit animation.
+			trigger.addEventListener('focus', () => queueMicrotask(() => {
+				const menu = element.closest<HTMLElement>('[role="menu"]')!;
+				const before = document.activeElement === trigger;
+				const closed = menu.dataset.state === 'closed';
+				const connected = element.isConnected;
+				(element as HTMLElement).focus();
+				Object.assign(window, { bug129Attempt: { before, closed, connected, after: document.activeElement === trigger } });
+			}), { once: true });
+		});
+		await page.keyboard.press('Escape');
+		const attempt = () => page.evaluate(() => (window as unknown as { bug129Attempt?: { before: boolean; closed: boolean; connected: boolean; after: boolean } }).bug129Attempt);
+		await expect.poll(attempt, { timeout: 5_000 }).toBeDefined();
+		expect(await attempt(), 'stale focus must not leave View during its closing animation').toEqual({ before: true, closed: true, connected: true, after: true });
+		// Inert content is hidden from default role queries before its exit animation unmounts it.
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+		await expect(trigger).toBeFocused({ timeout: 5_000 });
+		await shot(page, `bug129-escape-view-${width}-${root}`);
+		// Opening again must remove the closed-state focus guard.
+		await trigger.press('Enter');
+		await expect(item).toBeFocused({ timeout: 5_000 });
+		await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+		await item.press('ArrowDown');
+		await expect(page.getByRole('menuitem', { name: 'Expand all', exact: true })).toBeFocused({ timeout: 5_000 });
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+		await expect(trigger).toBeFocused({ timeout: 5_000 });
+	});
+}
+
+for (const view of ['Teams', 'People', 'Reporting lines']) {
+	test(`PEOPLE-1 TEAM-1 REPORT-2 BUG-70 BUG-129: ${view} keeps first-arrow, selection and Tab focus`, async ({ page }) => {
+		await openChart(page, 1280);
+		await page.getByRole('tab', { name: view, exact: true }).click();
+		const trigger = page.getByRole('button', { name: 'View', exact: true });
+		await trigger.click();
+		// No intervening wait for inert to clear: the first key after pointer-open must work.
+		await page.keyboard.press('ArrowDown');
+		await expect(page.getByRole('menuitem').first()).toBeFocused({ timeout: 5_000 });
+		await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+		await shot(page, `bug129-${view.replaceAll(' ', '-')}-first-arrow`);
+		await page.getByRole('menuitem', { name: 'Collapse all', exact: true }).click();
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+		await expect(trigger).toBeFocused({ timeout: 5_000 });
+		await trigger.press('ArrowDown');
+		await expect(page.getByRole('menuitem').first()).toBeFocused({ timeout: 5_000 });
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+		await expect(page.getByRole('region', { name: view === 'Reporting lines' ? 'Reporting chart' : `${view} chart`, exact: true })).toBeFocused({ timeout: 5_000 });
+		await shot(page, `bug129-${view.replaceAll(' ', '-')}-tab-focus`);
+	});
+}
+
+test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the open menu', async ({ page }) => {
+	await openChart(page, 320);
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const trigger = page.getByRole('button', { name: 'View', exact: true });
+	await trigger.press('Enter');
+	const fit = page.getByRole('menuitem', { name: 'Fit to width', exact: true });
+	await expect(fit).toHaveAttribute('aria-disabled', 'true');
+	await expect(fit).toBeFocused({ timeout: 5_000 });
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('tooltip')).toHaveCount(0);
+	await expect(page.getByRole('menu')).toBeVisible();
+	await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+	await expect(fit).toBeFocused({ timeout: 5_000 });
+	await shot(page, 'bug129-first-escape-keeps-fit');
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await expect(trigger).toBeFocused({ timeout: 5_000 });
+	await shot(page, 'bug129-second-escape-returns-view');
+});
+
+test('PEOPLE-1 BUG-70 BUG-129: live team removal remounts View closed with a fresh focus guard', async ({ page }) => {
+	await openChart(page, 1280);
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const trigger = page.getByRole('button', { name: 'View', exact: true });
+	await trigger.press('Enter');
+	await expect(page.getByRole('menuitem').first()).toBeFocused({ timeout: 5_000 });
+	const organizationId = await page.evaluate(async () => {
+		const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		const id = connections[connections.length - 1].organization.id;
+		const modulePath = '/e2e/fakes/org-api.ts';
+		const { orgApi } = await import(modulePath);
+		// Use the existing command feed and real versions; parents cannot be deleted before their children.
+		const { snapshot: initial } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+		for (let remaining = initial.teams.length; remaining > 0; remaining--) {
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const leaf = snapshot.teams.find((team) => !snapshot.teams.some((child) => child.owner_team_id === team.id))!;
+			await (window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.delete', params: { team_id: leaf.id, expected_version: leaf.version } });
+		}
+		return id;
+	});
+	await expect(trigger).toHaveCount(0);
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await shot(page, 'bug129-live-empty-no-view');
+	await page.evaluate(async (id) => {
+		await (window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'restored-team', name: 'Restored team' } });
+	}, organizationId);
+	await expect(trigger).toBeVisible();
+	await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await shot(page, 'bug129-live-remounted-closed');
+	await trigger.press('Enter');
+	const item = page.getByRole('menuitem').first();
+	await expect(item).toBeFocused({ timeout: 5_000 });
+	await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+	await item.evaluate((element) => {
+		const menu = element.closest<HTMLElement>('[role="menu"]')!;
+		const trigger = document.querySelector<HTMLButtonElement>('button[aria-controls="' + menu.id + '"]')!;
+		trigger.addEventListener('focus', () => queueMicrotask(() => Object.assign(window, {
+			bug129RemountClose: { connected: menu.isConnected, closed: menu.dataset.state === 'closed', inert: menu.inert }
+		})), { once: true });
+	});
+	await page.keyboard.press('Escape');
+	await expect.poll(() => page.evaluate(() => (window as unknown as { bug129RemountClose?: object }).bug129RemountClose), { timeout: 5_000 }).toEqual({ connected: true, closed: true, inert: true });
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await expect(trigger).toBeFocused({ timeout: 5_000 });
+	await shot(page, 'bug129-live-remounted-escape');
+});

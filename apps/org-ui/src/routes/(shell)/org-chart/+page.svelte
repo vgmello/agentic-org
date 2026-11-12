@@ -7,9 +7,10 @@
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '$lib/components/ui/dropdown-menu';
+	import { DropdownMenuItem, DropdownMenuSeparator } from '$lib/components/ui/dropdown-menu';
 	import Callout from '$lib/components/Callout.svelte';
 	import ChartFitMenuItem from '$lib/components/ChartFitMenuItem.svelte';
+	import ChartViewMenu from './ChartViewMenu.svelte';
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
@@ -366,24 +367,17 @@
 {#snippet plus()}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>{/snippet}
 
 {#snippet viewMenu()}
-	<DropdownMenu>
-		<DropdownMenuTrigger>
-			{#snippet child({ props })}
-				<Button {...props} variant="outline" size="sm">View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg></Button>
-			{/snippet}
-		</DropdownMenuTrigger>
-		<DropdownMenuContent align="end" class="w-48 max-w-[calc(100vw-2rem)]">
-			{#if tab === 'teams'}
-				<DropdownMenuItem onSelect={() => (chosen = asList ? 'chart' : 'list')}>{asList ? 'Chart' : 'List'}</DropdownMenuItem>
-			{/if}
-			{#if tab !== 'teams' || !asList}
-				{#if tab === 'teams'}<DropdownMenuSeparator />{/if}
-				<ChartFitMenuItem {fit} unavailable={tab === 'people' && fitBlocked} ontoggle={() => (fit = !fit)} />
-				<DropdownMenuItem onSelect={() => tab === 'reporting' ? collapsedReports.clear() : collapsed.clear()}>Expand all</DropdownMenuItem>
-				<DropdownMenuItem onSelect={() => tab === 'reporting' ? reportParents(reporting!).forEach((id) => collapsedReports.add(id)) : parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</DropdownMenuItem>
-			{/if}
-		</DropdownMenuContent>
-	</DropdownMenu>
+	<ChartViewMenu>
+		{#if tab === 'teams'}
+			<DropdownMenuItem onSelect={() => (chosen = asList ? 'chart' : 'list')}>{asList ? 'Chart' : 'List'}</DropdownMenuItem>
+		{/if}
+		{#if tab !== 'teams' || !asList}
+			{#if tab === 'teams'}<DropdownMenuSeparator />{/if}
+			<ChartFitMenuItem {fit} unavailable={tab === 'people' && fitBlocked} ontoggle={() => (fit = !fit)} />
+			<DropdownMenuItem onSelect={() => tab === 'reporting' ? collapsedReports.clear() : collapsed.clear()}>Expand all</DropdownMenuItem>
+			<DropdownMenuItem onSelect={() => tab === 'reporting' ? reportParents(reporting!).forEach((id) => collapsedReports.add(id)) : parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</DropdownMenuItem>
+		{/if}
+	</ChartViewMenu>
 {/snippet}
 
 <AgentsTabs current="org-chart" />
