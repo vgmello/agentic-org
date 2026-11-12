@@ -66,6 +66,26 @@ fn modules(path: &Path, inspect: &mut impl FnMut(&syn::File)) {
 
 #[derive(Default)]
 struct Declarations(BTreeMap<String, String>);
+fn references_call_generator(tokens: proc_macro2::TokenStream) -> bool {
+    let mut tokens = tokens.into_iter().peekable();
+    while let Some(token) = tokens.next() {
+        match token {
+            proc_macro2::TokenTree::Group(group) if references_call_generator(group.stream()) => {
+                return true;
+            }
+            proc_macro2::TokenTree::Ident(ident)
+                if (ident == "Call"
+                    && matches!(tokens.peek(), Some(proc_macro2::TokenTree::Ident(next)) if next == "for"))
+                    || (matches!(ident.to_string().as_str(), "command" | "write_call")
+                        && matches!(tokens.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!')) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
 impl Declarations {
     fn add(&mut self, call: String, method: String) {
         assert!(
@@ -75,6 +95,12 @@ impl Declarations {
     }
 }
 impl<'ast> Visit<'ast> for Declarations {
+    fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
+        assert!(
+            item.ident != "Call" || item.rename == "Call" || item.rename == "_",
+            "renaming Call needs inventory support"
+        );
+    }
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
         if !test_only(&item.attrs) {
             syn::visit::visit_item_mod(self, item);
@@ -110,7 +136,7 @@ impl<'ast> Visit<'ast> for Declarations {
     }
     fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
         let generator = item.mac.path.segments.last().unwrap().ident.to_string();
-        if generator == "macro_rules" && item.mac.tokens.to_string().contains("impl Call") {
+        if generator == "macro_rules" && references_call_generator(item.mac.tokens.clone()) {
             assert!(
                 matches!(
                     item.ident.as_ref().unwrap().to_string().as_str(),
@@ -171,13 +197,7 @@ impl Dispatch<'_> {
     }
 
     fn candidate(&mut self, value: &str) {
-        if !value.is_empty()
-            && value
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b == b'_' || b == b'.')
-        {
-            self.candidates.insert(value.into());
-        }
+        self.candidates.insert(value.into());
     }
     fn tokens(&mut self, tokens: proc_macro2::TokenStream) {
         for token in tokens {
@@ -314,6 +334,68 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
     let mut declared: BTreeSet<_> = declarations.0.values().cloned().collect();
     declared.extend(UNTYPED.iter().map(|method| (*method).into()));
     (declared, dispatch.methods)
+}
+
+#[test]
+fn call_declaration_forms_are_enumerated_or_explicitly_rejected() {
+    let implementation = "pub struct FutureOperation; impl crate::Call for FutureOperation { const METHOD: &'static str = \"future.declaration2\"; type Params = crate::Empty; type Result = crate::Empty; }";
+    let sources = [
+        implementation.to_owned(),
+        format!("use crate::Call as Call; {implementation}"),
+        format!("use crate::Call as _; {implementation}"),
+        format!("use crate::Empty as FutureParams; {implementation}"),
+        format!("macro_rules! helper {{ ($command:ident) => {{}}; }} {implementation}"),
+        format!("macro_rules! helper {{ () => {{ fn method() {{ let _ = <FutureOperation as crate::Call>::METHOD; }} }}; }} {implementation}"),
+        format!("macro_rules! future_operation {{ () => {{ {implementation} }}; }} future_operation!();"),
+        "macro_rules! future_operation { () => { command!(FutureOperation, \"future.declaration2\", FutureOperationParams {}); }; } future_operation!();".into(),
+        "macro_rules! future_operation { () => { write_call!(FutureOperation, \"future.declaration2\", FutureOperationParams {}); }; } future_operation!();".into(),
+        format!("use crate::Call as FutureWireCall; {}", implementation.replace("crate::Call", "FutureWireCall")),
+    ];
+    for (index, source) in sources.into_iter().enumerate() {
+        let file = syn::parse_file(&source).unwrap();
+        let recognized = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut declarations = Declarations::default();
+            declarations.visit_file(&file);
+            declarations
+                .0
+                .values()
+                .any(|method| method == "future.declaration2")
+        }));
+        if index < 6 {
+            assert!(
+                matches!(recognized, Ok(true)),
+                "supported Call rejected: {source}"
+            );
+        } else {
+            assert!(
+                recognized.unwrap_or(true),
+                "silently omitted Call: {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn raw_parser_literals_are_probed_without_a_method_grammar() {
+    let declarations = BTreeMap::new();
+    for method in [
+        "",
+        "member.future2",
+        "work.Future-2",
+        "msg.将来2",
+        " name\n",
+    ] {
+        let source = format!(
+            "fn parse(request: &Request) {{ if [{method:?}].contains(&request.method.as_str()) {{ unreachable!(); }} }}"
+        );
+        let mut dispatch = Dispatch {
+            declarations: &declarations,
+            methods: BTreeSet::new(),
+            candidates: BTreeSet::new(),
+        };
+        dispatch.visit_file(&syn::parse_file(&source).unwrap());
+        assert!(dispatch.candidates.contains(method), "missed {method:?}");
+    }
 }
 
 #[test]
