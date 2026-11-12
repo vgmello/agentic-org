@@ -179,20 +179,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
             } else if name == "clippy.toml" || name == ".clippy.toml" {
                 configs += 1;
                 let config = std::fs::read_to_string(entry.path()).unwrap();
-                for method in [
-                    "open",
-                    "open_with_flags",
-                    "open_in_memory",
-                    "open_in_memory_with_flags",
-                    "open_with_flags_and_vfs",
-                    "open_in_memory_with_flags_and_vfs",
-                ] {
-                    assert!(
-                        config.contains(&format!("path = \"rusqlite::Connection::{method}\"")),
-                        "{} drops the init fence",
-                        entry.path().display()
-                    );
-                }
+                opener_policy::clippy(&config);
             }
         }
     }

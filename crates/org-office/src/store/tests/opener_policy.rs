@@ -33,12 +33,13 @@ fn weakening(lint: &str) -> bool {
         )
 }
 
-// Split only outside single-line TOML strings. Multiline strings and unfamiliar
+// Split only outside single-line TOML strings and nested arrays/tables. Multiline strings and unfamiliar
 // key/level forms are intentionally unsupported, rather than silently ignored.
 fn split(source: &str, separator: char) -> Vec<&str> {
     let mut quote = None;
     let mut escaped = false;
     let mut start = 0;
+    let mut depth = 0;
     let mut parts = Vec::new();
     for (i, c) in source.char_indices() {
         if escaped {
@@ -55,7 +56,11 @@ fn split(source: &str, separator: char) -> Vec<&str> {
             }
         } else if c == '"' || c == '\'' {
             quote = Some(c);
-        } else if c == separator {
+        } else if c == '[' || c == '{' {
+            depth += 1;
+        } else if c == ']' || c == '}' {
+            depth -= 1;
+        } else if c == separator && depth == 0 {
             parts.push(source[start..i].trim());
             start = i + c.len_utf8();
         }
@@ -172,6 +177,8 @@ fn table_field(source: &str, wanted: &str, allowed: &[&str]) -> String {
         if name[0] == wanted {
             assert!(value.is_none(), "duplicate Cargo policy field");
             value = Some(string(item));
+        } else if name[0] == "reason" {
+            string(item);
         } else if name[0] == "priority" {
             item.trim()
                 .parse::<i64>()
@@ -327,6 +334,95 @@ pub(super) fn config(source: &str) {
     }
 }
 
+const OPENERS: &[&str] = &[
+    "open",
+    "open_with_flags",
+    "open_in_memory",
+    "open_in_memory_with_flags",
+    "open_with_flags_and_vfs",
+    "open_in_memory_with_flags_and_vfs",
+];
+pub(super) fn clippy(source: &str) {
+    let mut methods = None;
+    for record in statements(source) {
+        assert!(methods.is_none(), "duplicate Clippy configuration record");
+        let (name, value) = record
+            .split_once('=')
+            .expect("invalid Clippy configuration record");
+        assert_eq!(
+            key(name),
+            ["disallowed-methods"],
+            "unknown Clippy configuration key"
+        );
+        let array = value
+            .trim()
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .expect("expected Clippy methods array");
+        let entries: std::collections::BTreeSet<_> = split(array, ',')
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .map(|entry| {
+                if entry.starts_with('{') {
+                    table_field(entry, "path", &["path", "reason"])
+                } else {
+                    string(entry)
+                }
+            })
+            .collect();
+        methods = Some(entries);
+    }
+    let methods = methods.expect("absent Clippy configuration record");
+    for method in OPENERS {
+        assert!(
+            methods.contains(&format!("rusqlite::Connection::{method}")),
+            "Clippy drops the init fence for {method}"
+        );
+    }
+}
+
+// Standard-library glob/prelude imports and named aliases are opaque to this
+// syntax-only policy. Local glob imports and the anonymous trait-import idiom remain usable.
+fn imports(tree: &syn::UseTree, standard: bool) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            let name = normalized(&path.ident.to_string());
+            let standard = standard || ["std", "core"].contains(&name.as_str());
+            assert!(
+                !(standard && name == "prelude"),
+                "opaque standard prelude import"
+            );
+            imports(&path.tree, standard);
+        }
+        syn::UseTree::Name(name) => assert!(
+            normalized(&name.ident.to_string()) != "include",
+            "code include import"
+        ),
+        syn::UseTree::Rename(rename) => {
+            let name = normalized(&rename.ident.to_string());
+            assert!(name != "include", "code include alias");
+            let standard = standard || ["std", "core"].contains(&name.as_str());
+            assert!(
+                !standard || rename.rename == "_",
+                "opaque standard named alias"
+            );
+        }
+        syn::UseTree::Glob(_) => assert!(!standard, "opaque standard glob import"),
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                imports(tree, standard);
+            }
+        }
+    }
+}
+fn extern_import(item: &syn::ItemExternCrate) {
+    let standard = ["std", "core"].contains(&normalized(&item.ident.to_string()).as_str());
+    assert!(
+        !standard || item.rename.as_ref().is_none_or(|(_, name)| name == "_"),
+        "opaque standard extern alias"
+    );
+}
+
 // These data-only attribute forwarders predate the policy. A fixture update is a
 // reviewed fence change; no definition exception is inherited by an invocation.
 const MACRO_PINS: &[(&str, &str, &str)] = &[
@@ -454,6 +550,15 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
         }
     }
     impl<'ast> Visit<'ast> for Modules<'_> {
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            imports(&item.tree, false);
+            syn::visit::visit_item_use(self, item);
+        }
+        fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+            extern_import(item);
+            syn::visit::visit_item_extern_crate(self, item);
+        }
+
         fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
             let previous = self.opaque_definition;
             self.opaque_definition = pinned_macro(self.root, self.file, item);
@@ -530,10 +635,74 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                     _ => {}
                 }
             }
-            fn tokens(stream: proc_macro2::TokenStream, opaque_definition: bool) {
+            fn tokens(stream: proc_macro2::TokenStream, opaque_definition: bool, definition: bool) {
                 let mut iter = stream.into_iter().peekable();
+                let mut pending_definition = false;
                 while let Some(token) = iter.next() {
                     match token {
+                        proc_macro2::TokenTree::Ident(name)
+                            if name == "macro_rules"
+                                && matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!') =>
+                        {
+                            pending_definition = true;
+                        }
+                        proc_macro2::TokenTree::Ident(name) if name == "use" => {
+                            let tree: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
+                            let tree: syn::UseTree =
+                                syn::parse2(tree).expect("opaque macro use import");
+                            imports(&tree, false);
+                        }
+                        proc_macro2::TokenTree::Ident(name)
+                            if name == "extern"
+                                && matches!(iter.peek(), Some(proc_macro2::TokenTree::Ident(next)) if next == "crate") =>
+                        {
+                            iter.next();
+                            let body: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
+                            let item: syn::ItemExternCrate =
+                                syn::parse_str(&format!("extern crate {body};"))
+                                    .expect("opaque macro extern import");
+                            extern_import(&item);
+                        }
+                        proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '$' => {
+                            let mut look = iter.clone();
+                            let target = look.next();
+                            if definition {
+                                assert!(
+                                    !matches!((&target, look.peek()), (Some(proc_macro2::TokenTree::Ident(_)), Some(proc_macro2::TokenTree::Group(group))) if group.delimiter() == proc_macro2::Delimiter::Bracket),
+                                    "opaque macro attribute introducer"
+                                );
+                            }
+                            let literal_crate = matches!(&target, Some(proc_macro2::TokenTree::Ident(name)) if name == "crate");
+                            let mut literal_path = false;
+                            let mut call = match target {
+                                Some(proc_macro2::TokenTree::Ident(_)) => look.next(),
+                                Some(proc_macro2::TokenTree::Group(_)) => {
+                                    look.find(|token| matches!(token, proc_macro2::TokenTree::Punct(p) if ['*','+','?'].contains(&p.as_char())))
+                                        .and_then(|_| look.next())
+                                }
+                                _ => None,
+                            };
+                            while matches!(&call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ':')
+                            {
+                                match (look.next(), look.next()) {
+                                    (
+                                        Some(proc_macro2::TokenTree::Punct(separator)),
+                                        Some(proc_macro2::TokenTree::Ident(_)),
+                                    ) if separator.as_char() == ':' => {
+                                        literal_path = true;
+                                        call = look.next();
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            if literal_crate && literal_path {
+                                call = None;
+                            }
+                            assert!(
+                                !matches!(call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!'),
+                                "opaque macro call name"
+                            );
+                        }
                         proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
                             if matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!')
                             {
@@ -545,7 +714,7 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                                 {
                                     attribute(group.stream(), opaque_definition);
                                 }
-                                _ => {}
+                                _ => panic!("unstructured macro attribute introducer"),
                             }
                         }
                         proc_macro2::TokenTree::Ident(name)
@@ -557,7 +726,12 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                             )
                         }
                         proc_macro2::TokenTree::Group(group) => {
-                            tokens(group.stream(), opaque_definition)
+                            tokens(
+                                group.stream(),
+                                opaque_definition,
+                                definition || pending_definition,
+                            );
+                            pending_definition = false;
                         }
                         _ => {}
                     }
@@ -571,7 +745,11 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                     == "include"),
                 "code include is outside the module inventory"
             );
-            tokens(node.tokens.clone(), self.opaque_definition);
+            tokens(
+                node.tokens.clone(),
+                self.opaque_definition,
+                node.path.is_ident("macro_rules"),
+            );
         }
     }
     let root = root.canonicalize().unwrap();
@@ -633,10 +811,8 @@ pub(super) fn function<'a>(source: &'a str, name: &str) -> Function<'a> {
             self.ranges.push(stmt.span().byte_range());
             syn::visit::visit_stmt(self, stmt);
         }
-        // Closures belong to their function; a nested function/module does not.
-        fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
-        fn visit_item_mod(&mut self, _: &'ast syn::ItemMod) {}
-        fn visit_impl_item_fn(&mut self, _: &'ast syn::ImplItemFn) {}
+        // Closures belong to this function; every nested item has a separate owner.
+        fn visit_item(&mut self, _: &'ast syn::Item) {}
     }
     let mut statements = Statements { ranges: Vec::new() };
     statements.visit_block(block);
@@ -809,6 +985,83 @@ fn sqlcipher_config_policy_checks_flags_and_environment() {
 }
 
 #[test]
+fn sqlcipher_clippy_policy_requires_actual_complete_method_entries() {
+    // Independent names: removing one production entry must lose a negative case.
+    let names = [
+        "open",
+        "open_with_flags",
+        "open_in_memory",
+        "open_in_memory_with_flags",
+        "open_with_flags_and_vfs",
+        "open_in_memory_with_flags_and_vfs",
+    ];
+    let paths: Vec<_> = names
+        .iter()
+        .map(|name| format!("rusqlite::Connection::{name}"))
+        .collect();
+    let strings: Vec<_> = paths.iter().map(|path| format!("\"{path}\"")).collect();
+    let valid = format!("disallowed-methods = [{}]", strings.join(","));
+    clippy(&valid);
+    clippy(&format!(
+        "# comment\n'disallowed-methods' = [\n{}, # comment\n]",
+        strings.join(",")
+    ));
+    clippy(&format!(
+        "\"disallowed-\\u006dethods\" = [{}]",
+        paths
+            .iter()
+            .map(|path| format!("{{ 'path' = '{path}', reason = \"a, b # c\" }}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    ));
+    clippy(&valid.replace(']', ", 'unrelated::method']"));
+    for (missing, name) in names.iter().enumerate() {
+        let entries = strings
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != missing)
+            .map(|(_, entry)| entry.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(
+            std::panic::catch_unwind(|| clippy(&format!("disallowed-methods = [{entries}]")))
+                .is_err(),
+            "accepted missing {}",
+            name
+        );
+    }
+    for source in [
+        String::new(),
+        " \n\t".into(),
+        "# only a comment\n".into(),
+        "disallowed-methods = []".into(),
+        format!("# {}\ndisallowed-methods = []", valid),
+        format!("{valid}\n{valid}"),
+        valid.replace("disallowed-methods", "unknown"),
+        valid.replace("disallowed-methods", "methods.disallowed-methods"),
+        "disallowed-methods = true".into(),
+        "disallowed-methods = [1]".into(),
+        "disallowed-methods = [{reason = 'missing path'}]".into(),
+        valid.replace(
+            &strings[0],
+            &format!("{{path={},path={}}}", strings[0], strings[0]),
+        ),
+        valid.replace(
+            &strings[0],
+            &format!("{{path={},surprise=true}}", strings[0]),
+        ),
+        valid.replace(&strings[0], &format!("{{path={},reason=true}}", strings[0])),
+        format!("{valid}\nunknown = true"),
+        format!("{valid}\n[other]"),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| clippy(&source)).is_err(),
+            "accepted {source}"
+        );
+    }
+}
+
+#[test]
 fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
     let dir = tempfile::TempDir::new().unwrap();
     let root = dir.path();
@@ -843,7 +1096,14 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "macro_rules! ordinary { ($predicate:meta) => { #[cfg_attr($predicate, derive(Debug), doc = \"data\",)] struct Data; }; }",
         "macro_rules! ordinary { () => { #[cfg_attr(any(path), cfg_attr(test, derive(Debug)))] struct Data; }; }",
         "other! { #[doc = \"#[path=rogue.inc]\"] struct Data; #![doc = \"inner\"] mod nested {} }",
-        "other! { # (path) [path] path data; }",
+        "use std::{fs, io::Write as _}; use super::*; use local::prelude::*; extern crate std;",
+        "use local::prelude::v1; use local::Thing as Alias; extern crate local as alias;",
+        "other! { $x[0]; }",
+        "macro_rules! ordinary { ($x:expr) => { $x(0); }; }",
+        "macro_rules! ordinary { ($m:ident) => { let _: $m::Type; }; }",
+        "macro_rules! ordinary { () => { use std::fmt::Write as _; use super::*; extern crate core; }; }",
+        "macro_rules! ordinary { ($m:ident, $p:tt) => { literal!($m, $p); }; }",
+        "macro_rules! ordinary { ($($m:tt)*) => { literal!($($m)*); }; }",
     ] {
         super::check_rust_file(root, &file, source);
     }
@@ -867,6 +1127,32 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "r#include!(\"rogue.inc\");",
         "other! { include!(\"rogue.inc\"); }",
         "macro_rules! wrapper { () => { include!(\"rogue.inc\"); } }",
+        "use std::include as include_source; include_source!(\"rogue.inc\");",
+        "#[path=\"ok.rs\"] use std::fs;",
+        "#[path=\"ok.rs\"] extern crate std;",
+        "macro_rules! wrapper { ($($m:ident)::*,$p:tt) => { $($m)::*!($p); }; }",
+        "macro_rules! wrapper { ($m:ident) => { std::$m!(\"rogue.inc\"); }; }",
+        "macro_rules! wrapper { ($m:ident) => { $m::literal!(\"rogue.inc\"); }; }",
+        "macro_rules! wrapper { ($m:ident) => { $m::include!(\"rogue.inc\"); }; }",
+        "other! { # (path) [path] path data; }",
+        "other! { # (doc = \"ok\") }",
+        "other! { #doc }", "other! { #!doc }", "other! { # }",
+        "macro_rules! wrapper { ($x:tt) => { $x[path = \"rogue.inc\"] mod child; }; }",
+        "other! { macro_rules! wrapper { ($x:tt) => { $x[path = \"rogue.inc\"] mod child; }; } }",
+        "macro_rules! wrapper { ($hash:tt,$attr:ident,$p:tt) => { $hash[$attr=$p] mod child; }; } wrapper!(#,path,\"rogue.inc\");",
+        "use exported::include;", "use exported::include as x;",
+        "use std::fs as files;", "use core as c;", "use std::prelude::v1;",
+        "use std::{self, {r#include as include_source}};",
+        "use {std::{include as x}, local::Thing};",
+        "use std::*;", "use core::prelude::*;", "use std::prelude::v1 as p;",
+        "use std as s;", "extern crate std as s;", "extern crate r#core as c;",
+        "other! { use std::include as x; }", "other! { use std::*; }",
+        "other! { extern crate std as s; }",
+        "macro_rules! wrapper { ($m:ident, $p:tt) => { $m!($p); }; }",
+        "macro_rules! wrapper { ($m:ident, $p:tt) => { $m!{$p} }; }",
+        "macro_rules! wrapper { ($m:ident, $p:tt) => { $m![$p]; }; }",
+        "macro_rules! wrapper { ($($m:tt)*) => { $($m)*!(\"rogue.inc\"); }; }",
+        "macro_rules! wrapper { ($($m:tt),*) => { $($m),*!(\"rogue.inc\"); }; }",
         "macro_rules! wrapper { () => { #[path=\"rogue.inc\"] mod child; }; }",
         "macro_rules! wrapper { () => { #[r#path=\"ok.rs\"] mod child; }; }",
         "macro_rules! wrapper { ($predicate:meta) => { #[cfg_attr($predicate, path=\"ok.rs\")] mod child; }; }",
@@ -934,6 +1220,8 @@ fn sqlcipher_exact_function_policy_checks_free_and_impl_items_without_nested_the
         format!("impl Host {{fn wrongfnconnect(&self){{{attr}let x=op();}}}}"),
         format!("fn connect(){{}} fn other(){{{attr}let x=op();}}"),
         format!("fn connect(){{fn child(){{{attr}let x=op();}}}}"),
+        format!("fn connect(){{static CHILD:std::sync::LazyLock<()> = std::sync::LazyLock::new(||{{{attr}let x=op();}});}}"),
+        format!("fn connect(){{const CHILD:() = {{{attr}let x=op();}};}}"),
         format!("fn connect(){{mod nested{{fn child(){{{attr}let x=op();}}}}}}"),
         format!("fn connect(){{mod nested{{const X:()={{{attr}let x=op();}};}}}}"),
         format!("fn connect(){{impl Host{{fn child(&self){{{attr}let x=op();}}}}}}"),
@@ -948,6 +1236,44 @@ fn sqlcipher_exact_function_policy_checks_free_and_impl_items_without_nested_the
                 "letx=op();"
             ))
             .is_err(),
+            "accepted {source}"
+        );
+    }
+}
+
+#[test]
+fn sqlcipher_reserved_crate_macro_paths_remain_literal() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let results = [
+        "crates/org-mailbox/src/testkit/conformance.rs",
+        "crates/org-mailbox/src/testkit/triage_conformance.rs",
+    ]
+    .map(|relative| {
+        let file = root.join(relative);
+        let source = std::fs::read_to_string(&file).unwrap();
+        (
+            relative,
+            std::panic::catch_unwind(|| modules(&root, &file, &source)).is_ok(),
+        )
+    });
+    assert!(results.iter().all(|(_, allowed)| *allowed), "{results:?}");
+    let temporary = tempfile::TempDir::new().unwrap();
+    let root = temporary.path();
+    let file = root.join("lib.rs");
+    std::fs::write(&file, "").unwrap();
+    modules(
+        root,
+        &file,
+        "macro_rules! wrapper { () => { $crate::literal::call!(); }; }",
+    );
+    for source in [
+        "macro_rules! wrapper { ($m:ident) => { $crate::$m!(); }; }",
+        "macro_rules! wrapper { ($m:ident) => { $crate::literal::$m!(); }; }",
+        "macro_rules! wrapper { () => { $crate::include!(\"rogue.inc\"); }; }",
+        "macro_rules! wrapper { () => { $crate!(); }; }",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| modules(root, &file, source)).is_err(),
             "accepted {source}"
         );
     }
