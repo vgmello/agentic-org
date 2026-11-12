@@ -385,3 +385,124 @@ fn served_message_calls_act_as_the_canonical_owner() {
     );
     assert_eq!(read["result"]["message"]["body"], "to owner");
 }
+
+#[test]
+fn inbox_rechecking_owner_cannot_reveal_that_grant_authority_passed() {
+    #[derive(Clone, Copy)]
+    enum Next {
+        Owner,
+        Missing,
+        NonOwner,
+        Agent,
+        Error,
+    }
+    struct ChangingDirectory {
+        next: Next,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl org_mailbox::MemberDirectory for ChangingDirectory {
+        fn resolve_member(
+            &self,
+            id: &str,
+        ) -> Result<Option<(Member, org_proto::Position)>, org_mailbox::StoreError> {
+            assert_eq!(id, OWNER_ID);
+            let mut member = org_mailbox::testkit::fixture::members()
+                .into_iter()
+                .find(|m| m.owner)
+                .unwrap();
+            if self.calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                match self.next {
+                    Next::Owner => {}
+                    Next::Missing => return Ok(None),
+                    Next::NonOwner => member.owner = false,
+                    Next::Agent => member.kind = MemberKind::Agent,
+                    Next::Error => {
+                        return Err(org_mailbox::StoreError::new("SECRET second lookup"))
+                    }
+                }
+            }
+            Ok(Some((member, POSITION)))
+        }
+    }
+    for next in [
+        Next::Owner,
+        Next::Missing,
+        Next::NonOwner,
+        Next::Agent,
+        Next::Error,
+    ] {
+        let mut shared = shared();
+        let directory = Arc::new(ChangingDirectory {
+            next,
+            calls: Default::default(),
+        });
+        shared.ports.directory = directory.clone();
+        let request = signed(&shared, "inbox.list", json!({"state":"open"}));
+        let response = answer(&shared, &context(), &request);
+        if matches!(next, Next::Owner) {
+            assert!(
+                response.get("result").is_some(),
+                "stable owner must remain allowed: {response}"
+            );
+        } else {
+            refused(response, "not_authorized");
+        }
+        assert_eq!(directory.calls.load(Ordering::SeqCst), 2);
+    }
+    let mut shared = shared();
+    let invalid = answer(
+        &shared,
+        &context(),
+        &signed(&shared, "inbox.list", json!({"state":"bogus"})),
+    );
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert_ne!(
+        invalid["error"]["message"],
+        "request refused on host channel"
+    );
+    shared.inbox = None;
+    let unserved = answer(
+        &shared,
+        &context(),
+        &signed(&shared, "inbox.list", json!({"state":"open"})),
+    );
+    assert_eq!(unserved["error"]["code"], "unknown_method");
+    assert_ne!(
+        unserved["error"]["message"],
+        "request refused on host channel"
+    );
+}
+
+#[test]
+fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals() {
+    let mut shared = shared();
+    shared.ports.submit = Box::new(|_| {
+        Ok(Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "org operation refusal",
+        )))
+    });
+    shared.ports.work = Box::new(|_, _| {
+        Ok(Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "work operation refusal",
+        )))
+    });
+    for (method, params, message) in [
+        (
+            "team.create",
+            json!({"command_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","team_id":"team","name":"Team"}),
+            "org operation refusal",
+        ),
+        (
+            "task.create",
+            json!({"change_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","item_id":"item","project_id":"project","title":"Task"}),
+            "work operation refusal",
+        ),
+    ] {
+        let response = answer(&shared, &context(), &signed(&shared, method, params));
+        assert_eq!(response["id"], 71);
+        assert_eq!(response["error"]["code"], "not_authorized");
+        assert_eq!(response["error"]["message"], message);
+    }
+}

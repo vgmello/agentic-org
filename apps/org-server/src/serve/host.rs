@@ -77,14 +77,21 @@ fn dispatch(
         return refuse(request.id, ErrorCode::NotAuthorized);
     }
     // This value lives for this call only. Host channels never acquire a binding.
-    super::answer(
+    let response = super::answer(
         request,
         shared,
         &mut Binding::Member {
             id: owner,
             with_app_token: true,
         },
-    )
+    );
+    // Inbox may recheck live ownership after authorization; keep that refusal opaque too.
+    if request.is::<org_proto::inbox::InboxList>()
+        && matches!(&response.outcome, org_proto::Outcome::Error(error) if error.code == ErrorCode::NotAuthorized)
+    {
+        return refuse(request.id, ErrorCode::NotAuthorized);
+    }
+    response
 }
 fn allowed(request: &Request) -> bool {
     let method = request.method.as_str();
