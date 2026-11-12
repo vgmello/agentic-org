@@ -797,20 +797,16 @@ mod tests {
         hq.bind_replication_hq(Digest::ZERO, LIMIT).unwrap();
         let original = hq.replication_checkpoint().unwrap();
         let authority = Epoch::new(2).unwrap();
-        organization::accept_authority(
-            &hq,
-            AuthorityRecord {
-                org_id: original.org_id,
-                hq_office: original.hq_office,
-                ca: original.ca,
-                epoch: authority,
-                restored_position: original.position,
-                restored_digest: original.digest,
-                signature: Arc::from([1]),
-            },
-            Arc::new(VerifiedSignature),
-        )
-        .unwrap();
+        let signed = AuthorityRecord {
+            org_id: original.org_id,
+            hq_office: original.hq_office,
+            ca: original.ca,
+            epoch: authority,
+            restored_position: original.position,
+            restored_digest: original.digest,
+            signature: Arc::from([1]),
+        };
+        organization::accept_authority(&hq, signed.clone(), Arc::new(VerifiedSignature)).unwrap();
         let satellite = new_office(&dir, "SAT");
         satellite
             .bind_replication_satellite(
@@ -864,6 +860,29 @@ mod tests {
             ),
             Err(SyncError::Refused(Refusal::Divergence))
         ));
+        let before = satellite.replication_checkpoint().unwrap();
+        let state = satellite.org_snapshot().unwrap();
+        assert_eq!(before.digest, signed.restored_digest);
+        assert_eq!(
+            organization::accept_authority(&satellite, signed.clone(), Arc::new(VerifiedSignature))
+                .unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: false
+            }
+        );
+        let mut conflicting_record = signed;
+        conflicting_record.restored_digest = Digest::from_bytes([6; 32]);
+        assert_ne!(conflicting_record.restored_digest, before.digest);
+        let error = organization::accept_authority(
+            &satellite,
+            conflicting_record,
+            Arc::new(VerifiedSignature),
+        )
+        .unwrap_err();
+        assert!(error.aborts_batch());
+        assert!(matches!(error, SyncError::Refused(Refusal::Divergence)));
+        assert_eq!(satellite.replication_checkpoint().unwrap(), before);
+        assert_eq!(satellite.org_snapshot().unwrap(), state);
     }
 
     #[test]
