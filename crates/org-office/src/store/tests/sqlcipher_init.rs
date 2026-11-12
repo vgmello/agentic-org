@@ -443,6 +443,7 @@ fn rust_code(source: &str) -> String {
 }
 
 fn override_policy(path: &Path, code: &str) {
+    reject_lint_groups(path, code);
     let lint = "disallowed_methods";
     if path == Path::new("crates/org-office/src/store.rs") {
         assert_eq!(
@@ -455,13 +456,23 @@ fn override_policy(path: &Path, code: &str) {
             3,
             "store overrides must use the plain allow form"
         );
+        let plain = format!("#[allow(clippy::{lint})]");
+        for (function, statement) in office_opener_statements() {
+            require_exception_statement(code, function, &plain, statement);
+        }
+        assert!(code.contains("#[cfg(test)]fnconnection_for_test("));
     } else if path == Path::new("crates/org-supervise/src/lib.rs") {
         assert_eq!(code.matches(lint).count(), 1);
         assert!(code.contains(&format!("#![deny(clippy::{lint})]")));
     } else if path == Path::new("crates/org-supervise/src/spawn.rs") {
         // Preserve the existing test-only Command::status exception, not a SQL opener.
         assert_eq!(code.matches(lint).count(), 1);
-        assert!(code.contains(&format!("#[expect(clippy::{lint},reason=)]")));
+        require_exception_statement(code,
+            "fnevery_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec(",
+            &format!("#[expect(clippy::{lint},reason=)]"),
+            "letstatus=std::process::Command::new().env_clear().args([,,,]).args(descriptors.map(|fd|fd.to_string())).status().unwrap();");
+        assert!(code
+            .contains("#[test]fnevery_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec("));
         assert!(!code.contains("rusqlite") && !code.contains("Connection"));
     } else {
         assert!(
@@ -493,7 +504,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
         }
     }
     let plain = format!("#[allow(clippy::{lint})]");
-    let source = format!("{plain}{plain}{plain}");
+    let source = office_policy_fixture(&plain);
     override_policy(
         Path::new("crates/org-office/src/store.rs"),
         &rust_code(&source),
@@ -510,7 +521,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
     }
     // The existing unrelated child-exec exception stays legal, and quoted/comment
     // lookalikes cannot satisfy a fence-order check or invent an override.
-    let child = format!("#[expect(clippy::{lint}, reason = \"test-only exec\")] fn child() {{}}");
+    let child = format!("#[test] fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec() {{ #[expect(clippy::{lint}, reason = \"test-only exec\")] let status = std::process::Command::new(\"/bin/sh\").env_clear().args([\"-c\",\"payload\",\"check\",]).args(descriptors.map(|fd|fd.to_string())).status().unwrap(); }}");
     override_policy(
         Path::new("crates/org-supervise/src/spawn.rs"),
         &rust_code(&child),
@@ -821,5 +832,190 @@ fn sqlcipher_probe_compiler_honors_explicit_paths_without_shell_parsing() {
             fallback.get_args().collect::<Vec<_>>(),
             ["-I", "/ssl/include", "-L", "/ssl/lib"]
         );
+    }
+}
+
+// Fixed statements make the exception scope reviewable: an attribute on a function,
+// module or a larger initializer cannot silently authorize additional raw opens.
+fn office_opener_statements() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            "pubfnsqlcipher_ready(",
+            "letdb=Connection::open_in_memory().map_err(key_failure_reason)?;",
+        ),
+        (
+            "fnconnect(",
+            "letdb=Connection::open_with_flags(db_path,flags).map_err(OfficeError::storage)?;",
+        ),
+        (
+            "fnconnection_for_test(",
+            "letdb=Connection::open(path).map_err(OfficeError::storage)?;",
+        ),
+    ]
+}
+fn function_body<'a>(code: &'a str, function: &str) -> &'a str {
+    let start = code
+        .find(function)
+        .expect("exception's approved function is missing");
+    let open = start + code[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (index, c) in code[open..].char_indices() {
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return &code[open + 1..open + index];
+            }
+        }
+    }
+    panic!("unterminated function body")
+}
+fn require_exception_statement(code: &str, function: &str, attribute: &str, statement: &str) {
+    let body = function_body(code, function);
+    assert_eq!(
+        body.matches(attribute).count(),
+        1,
+        "exception escaped its approved function"
+    );
+    assert!(
+        body.contains(&format!("{attribute}{statement}")),
+        "exception escaped its approved statement in {function}"
+    );
+}
+fn office_policy_fixture(attribute: &str) -> String {
+    office_opener_statements()
+        .map(|(function, statement)| {
+            let prefix = if function == "fnconnection_for_test(" {
+                "#[cfg(test)]"
+            } else {
+                ""
+            };
+            format!("{prefix}{function}){{{attribute}{statement}}}")
+        })
+        .join("")
+}
+
+fn reject_lint_groups(path: &Path, code: &str) {
+    // Only inspect attributes, not function calls named allow/expect. cfg_attr's
+    // nested allow/expect/warn lists are covered too. Quoted reasons were removed above.
+    for (start, _) in code.match_indices('#') {
+        let tail = &code[start + 1..];
+        let Some(attribute) = tail.strip_prefix('[').or_else(|| tail.strip_prefix("![")) else {
+            continue;
+        };
+        let attribute = attribute.split(']').next().unwrap();
+        for keyword in ["allow(", "expect(", "warn("] {
+            for parameters in attribute.split(keyword).skip(1) {
+                for lint in parameters.split(')').next().unwrap().split(',') {
+                    let lint = lint.replace("r#", "");
+                    assert!(
+                        ![
+                            "warnings",
+                            "clippy",
+                            "clippy::all",
+                            "clippy::restriction",
+                            "clippy::pedantic",
+                            "clippy::nursery",
+                            "clippy::cargo",
+                            "clippy::style",
+                            "clippy::correctness",
+                            "clippy::suspicious",
+                            "clippy::complexity",
+                            "clippy::perf"
+                        ]
+                        .contains(&lint.as_str()),
+                        "{} has a broad lint override that can hide an opener",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
+    let file = Path::new("crates/org-office/src/lib.rs");
+    for group in [
+        "warnings",
+        "r#warnings",
+        "clippy",
+        "clippy::all",
+        "clippy::restriction",
+        "clippy::r#restriction",
+        "clippy::pedantic",
+        "clippy::nursery",
+        "clippy::cargo",
+        "clippy::style",
+        "clippy::correctness",
+        "clippy::suspicious",
+        "clippy::complexity",
+        "clippy::perf",
+    ] {
+        for source in [
+            format!("#![allow({group})] mod store;"),
+            format!("#![warn({group})] mod store;"),
+            format!("#[expect(dead_code,{group},reason=\"test\")] mod store;"),
+            format!("#[cfg_attr(test,allow(dead_code,{group}))] mod store;"),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| override_policy(file, &rust_code(&source))).is_err()
+            );
+        }
+    }
+    override_policy(
+        file,
+        &rust_code("#[allow(dead_code,clippy::too_many_arguments,reason=\"warnings\")] fn x(){}"),
+    );
+    override_policy(file, &rust_code("#![deny(warnings)]"));
+    let lint = "disallowed_methods";
+    let plain = format!("#[allow(clippy::{lint})]");
+    let code = office_policy_fixture(&plain);
+    override_policy(Path::new("crates/org-office/src/store.rs"), &code);
+    for (function, statement) in office_opener_statements() {
+        let moved = code
+            .replacen(&format!("{plain}{statement}"), statement, 1)
+            .replacen(function, &format!("{plain}{function}"), 1);
+        assert!(std::panic::catch_unwind(|| override_policy(
+            Path::new("crates/org-office/src/store.rs"),
+            &moved
+        ))
+        .is_err());
+    }
+    let missing_cfg = code.replace("#[cfg(test)]", "");
+    assert!(std::panic::catch_unwind(|| override_policy(
+        Path::new("crates/org-office/src/store.rs"),
+        &missing_cfg
+    ))
+    .is_err());
+    // A matching attribute on a surrounding module does not bind it to the command.
+    let broad =
+        format!("#[expect(clippy::{lint},reason=)] mod wide {{ fn call(){{ Conn::open(); }} }}");
+    assert!(std::panic::catch_unwind(|| override_policy(
+        Path::new("crates/org-supervise/src/spawn.rs"),
+        &broad
+    ))
+    .is_err());
+}
+
+#[test]
+fn sqlcipher_exception_statement_requires_one_attribute_on_the_named_statement() {
+    let attr = "#[allow(clippy::disallowed_methods)]";
+    let code = format!("fnallowed(){{{attr}letx=op();}}");
+    require_exception_statement(&code, "fnallowed(", attr, "letx=op();");
+    for code in [
+        format!("fnallowed(){{{attr}letx=op();{attr}lety=op();}}"),
+        format!("fnallowed(){{{attr}letx={{extra();op()}};}}"),
+        format!("{attr}fnallowed(){{letx=op();}}"),
+        format!("fnother(){{{attr}letx=op();}}"),
+    ] {
+        assert!(std::panic::catch_unwind(|| require_exception_statement(
+            &code,
+            "fnallowed(",
+            attr,
+            "letx=op();"
+        ))
+        .is_err());
     }
 }

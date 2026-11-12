@@ -657,7 +657,6 @@ static READY: OnceLock<Result<(), String>> = OnceLock::new();
 /// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
 /// All openers must pass this fence, including host storage that shares this process.
 /// Initialization failure is cached for the process lifetime; restart after fixing its cause.
-#[allow(clippy::disallowed_methods)] // The initializer must open its own probe connection.
 pub fn sqlcipher_ready() -> Result<(), OfficeError> {
     initialized(&READY, || {
         initialize_sqlcipher(
@@ -669,6 +668,7 @@ pub fn sqlcipher_ready() -> Result<(), OfficeError> {
                 unsafe { rusqlite::ffi::sqlite3_initialize() }
             },
             || {
+                #[allow(clippy::disallowed_methods)] // Only the keyed init probe.
                 let db = Connection::open_in_memory().map_err(key_failure_reason)?;
                 keyed_cipher_version(&db)
             },
@@ -732,10 +732,11 @@ fn key_failure_reason(error: rusqlite::Error) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_methods)] // Raw fixtures still cross the process-wide fence.
 fn connection_for_test(path: impl AsRef<Path>) -> Result<Connection, OfficeError> {
     sqlcipher_ready()?;
-    Connection::open(path).map_err(OfficeError::storage)
+    #[allow(clippy::disallowed_methods)] // Raw fixtures still cross the fence.
+    let db = Connection::open(path).map_err(OfficeError::storage)?;
+    Ok(db)
 }
 
 fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
