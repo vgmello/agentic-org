@@ -147,6 +147,16 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
         "inbox.changed",
         "org.future",
         "future.method",
+        "work.future",
+        "task.future",
+        "bug.future",
+        "checklist.future",
+        "project.future",
+        "area.future",
+        "chat.future",
+        "chat.open",
+        "msg.future",
+        "member.future",
     ] {
         refused(
             answer(&shared, &ctx, &signed(&shared, method, json!({}))),
@@ -168,13 +178,7 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
         "msg.threads",
         "msg.human_needs_you",
         "dm.open",
-        "chat.open",
         "work.list",
-        "task.future",
-        "bug.future",
-        "checklist.future",
-        "project.future",
-        "area.future",
     ] {
         let response = answer(&shared, &ctx, &signed(&shared, method, json!({})));
         assert_eq!(
@@ -506,3 +510,6 @@ fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals
         assert_eq!(response["error"]["message"], message);
     }
 }
+
+#[path = "inventory.rs"]
+mod inventory;

@@ -73,8 +73,18 @@ fn dispatch(
         Ok(owner) => owner,
         Err(code) => return refuse(request.id, code),
     };
-    if !allowed(request) {
-        return refuse(request.id, ErrorCode::NotAuthorized);
+    match allowed(request) {
+        HostPolicy::Serve => {}
+        HostPolicy::Unserved => {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::UnknownMethod,
+                    format!("this office does not know `{}`", request.method),
+                ),
+            );
+        }
+        _ => return refuse(request.id, ErrorCode::NotAuthorized),
     }
     // This value lives for this call only. Host channels never acquire a binding.
     let response = super::answer(
@@ -93,42 +103,33 @@ fn dispatch(
     }
     response
 }
-fn allowed(request: &Request) -> bool {
-    let method = request.method.as_str();
-    if method == "member.set_run_mode" {
-        return false;
-    }
-    matches!(
-        method,
-        "org.snapshot"
-            | "who"
-            | "operation.get"
-            | "inbox.list"
-            | "msg.send"
-            | "msg.inbox"
-            | "msg.read"
-            | "msg.ask"
-            | "msg.reply"
-            | "msg.defer"
-            | "msg.done"
-            | "msg.notify"
-            | "msg.get"
-            | "msg.list"
-            | "msg.threads"
-            | "msg.human_needs_you"
-            | "dm.open"
-    ) || [
-        "work.",
-        "task.",
-        "bug.",
-        "checklist.",
-        "project.",
-        "area.",
-        "chat.",
-    ]
-    .iter()
-    .any(|prefix| method.starts_with(prefix))
-        || !matches!(OrgCommand::parse(request), Ok(None))
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HostPolicy {
+    Serve,
+    Unserved,
+    Refuse,
+    Hello,
+    InvalidRequest,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Operation {
+    method: String,
+    policy: HostPolicy,
+}
+fn operations() -> &'static [Operation] {
+    static OPERATIONS: std::sync::OnceLock<Vec<Operation>> = std::sync::OnceLock::new();
+    OPERATIONS.get_or_init(|| {
+        serde_json::from_str(include_str!("host/operations.json"))
+            .expect("the checked-in host operation policy is valid")
+    })
+}
+fn allowed(request: &Request) -> HostPolicy {
+    operations()
+        .iter()
+        .find(|row| row.method == request.method)
+        .map_or(HostPolicy::Refuse, |row| row.policy)
 }
 
 fn refuse(id: u64, code: ErrorCode) -> Response {
