@@ -219,7 +219,7 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	// The row name contains its visible countdown; the separate live-status announcement stays stable.
 	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
 	expect(label).toContain("This Mac");
-	expect(label).toContain(await hq.locator('button[aria-haspopup] > span').nth(1).innerText());
+	expect(label).toContain(await hq.getByTestId('office-location').innerText());
 });
 
 test('OFC-11: Restart office brings a crashed office back, and the row reads Online', { tag: '@journey' }, async ({ page }) => {
@@ -466,13 +466,13 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 		return [...new Set(log.seconds)];
 	});
 	expect(written).toEqual([40]);
-	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByRole('button').locator(':scope > span').nth(1).innerText()));
+	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByTestId('office-location').innerText()));
 	await page.clock.setSystemTime(new Date(current + 2_000));
 	await pushOffice(page, pending); // The same deadline is reported again before a tick.
 	await expect(row).toContainText('Restarting in 40 s');
 	await page.clock.runFor(10_000);
 	await expect(row).toContainText('Restarting in 30 s');
-	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByRole('button').locator(':scope > span').nth(1).innerText()));
+	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByTestId('office-location').innerText()));
 
 	const observed = await page.evaluate(() => Date.now());
 	const later = { ...pending, next_restart_at: new Date(observed + 60_000).toISOString() };
@@ -484,7 +484,7 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await page.clock.setSystemTime(new Date(observed + 2_000));
 	await pushOffice(page, later);
 	await expect(row).toContainText('Restarting in 50 s');
-	await expect(opener).toHaveAccessibleName(literal(await opener.locator(':scope > span').nth(1).innerText()));
+	await expect(opener).toHaveAccessibleName(literal(await opener.getByTestId('office-location').innerText()));
 });
 
 test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', async ({ page }) => {
@@ -814,7 +814,7 @@ test('OFC-13 BUG-70 BUG-81: the row accessible name contains its visible locatio
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
 	const opener = rows(page).first().locator('button[aria-haspopup]');
-	const visible = await opener.locator(':scope > span').nth(1).innerText();
+	const visible = await opener.getByTestId('office-location').innerText();
 	await shot(page, 'of1-visible-row-name', { context: rows(page).first() });
 	await expect(opener).toHaveAccessibleName(literal(visible));
 });
@@ -830,11 +830,11 @@ for (const seconds of [45, 60]) {
 		const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
 		await expect(row).toContainText(`Restarting in ${seconds === 45 ? 40 : 60} s`);
 		await shot(page, `of1-visible-countdown-${seconds}`, { settle: false, context: row });
-		const visible = await opener.locator(':scope > span').nth(1).innerText();
+		const visible = await opener.getByTestId('office-location').innerText();
 		await expect(opener).toHaveAccessibleName(literal(visible));
 		const announcement = await page.getByTestId('live-status').textContent();
 		await page.clock.runFor(10_000);
-		await expect(opener).toHaveAccessibleName(literal(await opener.locator(':scope > span').nth(1).innerText()));
+		await expect(opener).toHaveAccessibleName(literal(await opener.getByTestId('office-location').innerText()));
 		await expect(page.getByTestId('live-status')).toHaveText(announcement!);
 	});
 }

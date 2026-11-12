@@ -243,7 +243,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	<ul class="{compactRow.bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<DividedRow data-testid="office-row" data-office={office.id} class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center gap-x-4 gap-y-2 hover:bg-white/[0.025]">
+			<DividedRow data-testid="office-row" data-office={office.id} class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-white/[0.025]">
 				<button
 					type="button"
 					class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left outline-none [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
@@ -253,7 +253,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span class="font-normal text-gray-400">{' · HQ'}</span>{/if}</span>
 					<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-gray-400">
-					<span class="max-w-full [overflow-wrap:anywhere]" title={whyOf(office.id)}>
+					<span class="max-w-full [overflow-wrap:anywhere]" title={whyOf(office.id)} data-testid="office-location">
 						{#if office.status_reason === 'unsupported_version' && whyOf(office.id)}
 							{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}
 						{:else}{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}{/if}
@@ -282,7 +282,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
 				</span>
-				<ChevronRight class="ml-auto size-5 shrink-0 text-gray-400" aria-hidden="true" />
+				<ChevronRight class="size-5 shrink-0 text-gray-400" aria-hidden="true" />
 			</DividedRow>
 		{:else}
 			<DividedRow class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
