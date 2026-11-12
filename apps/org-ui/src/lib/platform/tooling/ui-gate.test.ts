@@ -87,7 +87,7 @@ describe('gate manifest guard', () => {
 		const files = execFileSync('git', ['ls-files', '-z', '--', '.'], { cwd: app, encoding: 'utf8' }).split('\0').filter(Boolean);
 		for (const extra of manifest.alsoRuns ?? [])
 			for (const file of files.filter((candidate) => extra.files.some((glob) => matches(glob, candidate))))
-				expect(classify(file, manifest).some((effect) => !effect.also), `${file} is only reached through alsoRuns`).toBe(true);
+				expect(classify(file, manifest).some((effect) => !effect.also && ['category', 'all', 'ignore'].includes(effect.kind)), `${file} is only reached through alsoRuns`).toBe(true);
 		// A file that only alsoRuns names is unmapped: the plan fails closed to the full suite.
 		const lone = { ...manifest, alsoRuns: [{ category: 'projects-work', files: ['src/lib/zz-only-also.ts'], why: 'synthetic entry for the guard test' }] };
 		expect(classify(ui('src/lib/zz-only-also.ts'), lone).map((effect) => effect.kind)).toEqual(['unknown']);
