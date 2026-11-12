@@ -275,9 +275,13 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
         methods: BTreeSet::new(),
         candidates: BTreeSet::new(),
     };
-    modules(&root.join("apps/org-server/src/lib.rs"), &mut |file| {
-        dispatch.visit_file(file)
-    });
+    for source in [
+        "apps/org-server/src/lib.rs",
+        "crates/org-office/src/rules/command.rs",
+        "crates/org-work/src/call.rs",
+    ] {
+        modules(&root.join(source), &mut |file| dispatch.visit_file(file));
+    }
     let shared = shared();
     let candidates: BTreeSet<_> = declarations
         .0
