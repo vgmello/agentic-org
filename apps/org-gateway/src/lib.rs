@@ -1,0 +1,20 @@
+//! Browser gateway composition, started only after the verified host handoff.
+//!
+//! The service consumes an already-bound listener. It never binds a production
+//! listener, opens an office database or obtains an office database key.
+
+#![deny(unsafe_code)]
+
+pub mod assets;
+pub mod blocking;
+pub mod body;
+mod csp;
+mod ingress;
+mod origin;
+pub mod path;
+pub mod service;
+mod static_ui;
+pub mod tls;
+pub mod transport;
+
+pub use static_ui::{Hsts, StaticUi};

@@ -1,8 +1,63 @@
 # Agentic Org
 
+**V1 direction changed 2026-11-09:** the target is a standalone Rust server
+on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
+See the [server design](docs/design/standalone-server.md) and [deletion inventory](docs/design/standalone-server-removal-inventory.md).
+This documentation change specifies the pivot; the source described below is the
+inspected pre-pivot implementation. Its Tauri/bundle commands are historical
+development instructions, not installation instructions for the new v1. Do not
+claim the new CLI, HTTP server or remote sync exists until implemented. No migration
+of the undeployed desktop app or its data is required.
+
+The same proposal includes [employee supervision and native delegates](docs/specs/employee-supervision-ux.md),
+[process delivery and standards lookup](docs/specs/processes-ux.md), and
+[channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
+belongs to the offices; the browser accesses it through HQ.
+
+## Proposed v1 layout
+
+The browser application is **org-ui** at `apps/org-ui/`. The Rust server
+application, Cargo package and worker executable are **org-server** at
+`apps/org-server/`. The host still supervises one worker per office.
+
+```text
+apps/
+  org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
+  org-server/         Per-office worker composition and local transport
+  org-gateway/        Planned instance browser HTTP/TLS helper
+  org-setup/          Planned setup/lifecycle CLI (binary agentic-org)
+  org-office-host/    Instance and office-process supervision
+  org-agent/          Small employee CLI
+crates/               Cohesive libraries; domain modules contain feature slices
+docs/
+  architecture-rules.md
+  design/project-structure.md
+```
+
+Follow the [architecture rules](docs/architecture-rules.md) and
+[proposed project structure](docs/design/project-structure.md) for domain/feature
+organization, shared code ownership, and the source-to-target implementation plan.
+The UI and worker renames and Tauri-shell removal are implemented. The remaining
+target layout is planned. Browser areas without a gateway adapter show unavailable
+in both ordinary development and release; test fakes require explicit test composition.
+The historical shell commands below no longer run against this tree.
+
+Run the UI checks from `apps/org-ui`:
+
+```sh
+cd apps/org-ui
+bun install --frozen-lockfile
+bun run check
+bun run test
+bun run build
+bun run test:e2e
+```
+
+## Inspected source layout (pre-pivot)
+
 A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
 
-## Layout
+### Historical layout
 
 ```
 crates/                         libraries only
@@ -12,7 +67,7 @@ crates/                         libraries only
   org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
 apps/                           things you run or ship
   desktop/                      Agentic Org, the app (Tauri 2 + SvelteKit)
-  org-office-server/            one office's server (one process per office)
+  org-server/                   one office's server (one process per office)
   org-office-host/              the host: the one macOS login service, which runs the office servers (to come)
   org-agent/                    the CLI agents use (messages now; tasks and queues later)
 docs/
@@ -26,13 +81,13 @@ Dependencies point one way, and apps depend on crates, never the reverse:
 
 ```
 apps/desktop          ─▶ org-client ─▶ org-proto
-apps/org-office-server ─▶ org-office ─▶ org-proto
+apps/org-server        ─▶ org-office ─▶ org-proto
 apps/org-agent        ─▶ org-spool
 apps/org-agent        ─▶ org-proto   (planned)
 ```
 The office server is also the agents' message hub (ADR-0001, decision 4): `org-agent` will talk to it over the local socket in `org-proto`. A messaging ADR, to be written before that is built, sets the details, including what happens while the server is down.
 
-## Build
+## Historical development commands
 
 ```
 cargo check --workspace          # Rust crates and servers

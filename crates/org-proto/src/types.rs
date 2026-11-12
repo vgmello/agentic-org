@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// uniqueness by [`crate::OrganizationName::key`].
 pub const ORGANIZATION_NAME_MAX_CHARS: usize = 64;
 
-/// An office: a node of one organization, run by its own `org-office-server` process.
+/// An office: a node of one organization, run by its own `org-server` process.
 /// The organization's first office is its HQ (see `docs/design/offices-hq-and-satellites.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeInfo {
@@ -86,6 +86,16 @@ pub enum OfficeStatus {
     #[default]
     #[serde(other)]
     Unknown,
+}
+
+impl OfficeStatus {
+    /// Whether the state needs operator action instead of recovering on its own.
+    pub const fn requires_operator_action(self) -> bool {
+        match self {
+            Self::Unavailable | Self::UpdateNeeded | Self::Unknown => true,
+            Self::Active | Self::Starting | Self::Pending | Self::Offline => false,
+        }
+    }
 }
 
 /// Why an office is `offline` or `unavailable` ([`OfficeInfo::status_reason`]). The host sets

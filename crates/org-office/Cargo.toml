@@ -7,14 +7,25 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+org-work = { path = "../org-work" }
 org-proto = { path = "../org-proto" }
 org-mailbox = { path = "../org-mailbox" }
+org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+org-work = { path = "../org-work", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
+org-sync = { path = "../org-sync", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true
+# Use the exact already-bundled source for the barrier-controlled upstream defect probe.
+sqlcipher-src = "=419.0.6"
+
+# Reuse locked parsers only for the opener regression policy.
+syn = { version = "=2.0.119", default-features = false, features = ["full", "parsing", "printing", "visit"] }
+proc-macro2 = { version = "=1.0.107", features = ["span-locations"] }

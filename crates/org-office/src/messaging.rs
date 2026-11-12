@@ -16,7 +16,7 @@ use crate::directory::resolve_member;
 use crate::error::OfficeError;
 use crate::model::OfficeRole;
 use crate::office::Office;
-use crate::store::{messages, org as org_db};
+use crate::store::{messages, org as org_db, origin};
 
 /// An error the ports report: opaque, its cause only for the server's log (an `OfficeError`'s
 /// text never holds a path, SQL or a secret).
@@ -47,7 +47,7 @@ impl Office {
     ) -> Result<Mailbox, OfficeError> {
         let incarnation = self
             .local_store()
-            .write(|db| Ok((messages::incarnation(db)?, None)))?;
+            .write(|db| Ok((origin::incarnation(db)?, None)))?;
         let identity = OfficeIdentity {
             office_id: self.info().office_id.clone(),
             incarnation,
@@ -415,7 +415,7 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 3);
+        assert_eq!(count(&office, "PRAGMA user_version"), 6);
         assert_eq!(
             count(
                 &office,
@@ -657,11 +657,11 @@ mod tests {
         let office = office_in(&dir);
         let first = office
             .local_store()
-            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .write(|db| Ok((origin::incarnation(db)?, None)))
             .unwrap();
         let again = office
             .local_store()
-            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .write(|db| Ok((origin::incarnation(db)?, None)))
             .unwrap();
         assert_eq!(first, again);
         assert_eq!(first.len(), 26);
@@ -674,7 +674,7 @@ mod tests {
         let reopened = Arc::new(Office::open(&folder, test_key()).unwrap());
         let after = reopened
             .local_store()
-            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .write(|db| Ok((origin::incarnation(db)?, None)))
             .unwrap();
         assert_eq!(first, after);
     }

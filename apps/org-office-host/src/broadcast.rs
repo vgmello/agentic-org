@@ -74,6 +74,10 @@ impl Broadcast {
     /// adds `subscriber` (once: subscribing again changes nothing), all under the lock. So no
     /// event overtakes the answer, and an event published meanwhile either reaches the new
     /// subscriber or is reflected in every snapshot it takes after the answer.
+    #[cfg_attr(
+        not(any(test, all(feature = "test-support", debug_assertions))),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn subscribe(
         &self,
         subscriber: Weak<dyn Subscriber>,

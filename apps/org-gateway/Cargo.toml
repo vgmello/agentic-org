@@ -1,0 +1,24 @@
+[package]
+name = "org-gateway"
+description = "The instance browser HTTP service; no office database or key access."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-proto = { path = "../../crates/org-proto" }
+org-host-control = { path = "../../crates/org-host-control" }
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+tokio-rustls.workspace = true
+scraper.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

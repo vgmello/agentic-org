@@ -15,7 +15,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 # Test-only: the real office server for tests/office.rs. Never a dependency of the binary.
-org-office-server = { path = "../org-office-server" }
+org-server = { path = "../org-server" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 tempfile.workspace = true
 

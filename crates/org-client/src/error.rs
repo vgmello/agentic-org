@@ -32,6 +32,8 @@ pub enum ClientError {
     AlreadySubscribed,
     /// The server speaks a different protocol version.
     VersionMismatch { client: u32, server: u32 },
+    /// A well-formed hello identifies a different instance from the selected context.
+    InstanceMismatch,
 }
 
 impl fmt::Display for ClientError {
@@ -60,6 +62,7 @@ impl fmt::Display for ClientError {
                 f,
                 "the office server speaks protocol version {server}, this app speaks {client}"
             ),
+            ClientError::InstanceMismatch => write!(f, "the server belongs to another instance"),
         }
     }
 }

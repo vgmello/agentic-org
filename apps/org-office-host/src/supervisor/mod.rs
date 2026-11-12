@@ -1,4 +1,4 @@
-//! Supervision: one `org-office-server` per office, each watched by its own thread
+//! Supervision: one `org-server` per office, each watched by its own thread
 //! (`office`), plus the short runs around them: `--create` makes a new office, `--discard`
 //! removes an unfinished one.
 //!
@@ -53,6 +53,7 @@ pub(crate) use state::{OfficeState, StatusObserver};
 pub(crate) struct SupervisorConfig {
     pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
+    pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) logs_dir: PathBuf,
     pub(crate) log_max_bytes: u64,
     pub(crate) timings: Timings,
@@ -201,10 +202,15 @@ impl Drop for Registration<'_> {
 }
 
 impl Supervisor {
+    pub(crate) fn socket_path(&self, office_id: &str) -> Option<PathBuf> {
+        self.spawner.socket_path(office_id)
+    }
+
     pub(crate) fn new(config: SupervisorConfig) -> Self {
         let spawner = Spawner {
             program: config.program.clone(),
             home: config.home.clone(),
+            runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
         };
         Self {
@@ -293,7 +299,7 @@ impl Supervisor {
         }
     }
 
-    /// Stores `create`'s database key, then starts `org-office-server --create` and sends it
+    /// Stores `create`'s database key, then starts `org-server --create` and sends it
     /// `create`; the key is zeroed in memory once the line is written. Its app token becomes the
     /// office's token for this host run if the office is adopted.
     pub(crate) fn begin_create(
@@ -332,7 +338,7 @@ impl Supervisor {
         })
     }
 
-    /// Runs `org-office-server --discard <office_id>` with the office's key (or `null` when
+    /// Runs `org-server --discard <office_id>` with the office's key (or `null` when
     /// the key store has none) and waits (up to the discard timeout) for it to report. The
     /// server takes the office lock, refuses a folder that holds `office.json`, and removes the
     /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
@@ -698,6 +704,7 @@ mod tests {
         Supervisor::new(SupervisorConfig {
             program,
             home: dir.to_path_buf(),
+            runtime_dir: None,
             logs_dir: dir.join("logs"),
             log_max_bytes: 1024,
             timings,

@@ -102,6 +102,18 @@ pub enum ErrorCode {
     /// unticked and no `anyway_reason` is given; the message names the steps. Clients branch on
     /// it ("Mark done anyway…"). A build that doesn't know it reads it as [`ErrorCode::Unknown`].
     ChecklistIncomplete,
+    /// `hello` offered no version this server speaks, or a connection that needs a v2
+    /// `hello` didn't start with one (X-02 §3). The server closes the connection after it and
+    /// never stores it. Not the office status reason of the same name
+    /// ([`crate::OfficeStatusReason::UnsupportedVersion`]), which says why an office can't start.
+    UnsupportedVersion,
+    /// A known operation id (`command_id`, `change_id`, `msg.send`'s `id`, or a host op's
+    /// `operation_id`) came with different params (its fingerprint differs) or from a
+    /// different principal than the stored one. Use a new id for a different operation
+    /// (X-02 §4.2).
+    OperationReused,
+    /// A reserved organization create was cancelled or abandoned after its window expired.
+    Cancelled,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,

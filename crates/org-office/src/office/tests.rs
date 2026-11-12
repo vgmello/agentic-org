@@ -3,6 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 use super::*;
+mod work;
 use crate::model::OfficeRole;
 use org_proto::org::CommandStatus;
 
@@ -114,7 +115,13 @@ fn both_databases_are_encrypted_with_the_one_key() {
 
 #[test]
 fn a_failed_create_leaves_nothing_but_the_lock_file_and_can_be_repeated() {
-    for step in ["databases", "workspace", "organization", "office_json"] {
+    for step in [
+        "databases",
+        "workspace",
+        "work",
+        "organization",
+        "office_json",
+    ] {
         let dir = TempDir::new().unwrap();
         let key = test_key();
         let folder = folder_of(&dir, ID);
@@ -140,6 +147,7 @@ fn office_json_is_written_after_every_other_step() {
         [
             ("databases", false),
             ("workspace", false),
+            ("work", false),
             ("organization", false),
             ("office_json", false)
         ],
@@ -1123,18 +1131,51 @@ fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused
         .unwrap();
     assert_eq!(
         code(&office, team_create(&c1, "T9", "Other")),
-        org_proto::ErrorCode::InvalidRequest
+        org_proto::ErrorCode::OperationReused
     );
-    // A refused one, too: the blank name is `invalid_name`; other params are `invalid_request`.
+    // A refused one, too: the blank name is `invalid_name`; other params reuse the operation.
     assert_eq!(
         code(&office, team_create(&c2, "T3", "  ")),
         org_proto::ErrorCode::InvalidName
     );
     assert_eq!(
         code(&office, team_create(&c2, "T3", "Fine")),
-        org_proto::ErrorCode::InvalidRequest
+        org_proto::ErrorCode::OperationReused
     );
     assert_eq!(office.org_snapshot().unwrap().position, at(2));
+}
+
+#[test]
+fn org_operation_get_uses_the_read_clock_without_advancing_the_mark() {
+    let (_dir, _key, office) = made();
+    let id = cmd(1, 0);
+    office
+        .submit_org(team_create(&id, "T1", "Engineering"))
+        .unwrap()
+        .unwrap();
+    let before = office.org_snapshot().unwrap();
+    office.stores.org.run_sql_for_test(
+        "UPDATE commands SET expires_at='1970-01-01T00:00:00.001Z';
+         UPDATE meta SET value='0' WHERE key='clock_high_ms'",
+    );
+    assert_eq!(
+        office.org_operation_get(&id).unwrap().unwrap_err().code,
+        org_proto::ErrorCode::Expired
+    );
+    let high: String = office
+        .stores
+        .org
+        .read(|db| {
+            db.query_row(
+                "SELECT value FROM meta WHERE key='clock_high_ms'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(OfficeError::storage)
+        })
+        .unwrap();
+    assert_eq!(high, "0");
+    assert_eq!(office.org_snapshot().unwrap(), before);
 }
 
 #[test]
@@ -1202,7 +1243,7 @@ fn the_clock_never_goes_back_so_a_stepped_back_clock_cannot_reopen_the_window() 
     // HQ's clock once read the year 2100 (the high-water mark is kept); it now reads the
     // present again. An id dated now is then decades behind the mark: `expired`, as it would
     // have been with the clock that never stepped back.
-    office.org.run_sql_for_test(
+    office.stores.org.run_sql_for_test(
         "INSERT INTO meta (key, value) VALUES ('clock_high_ms', '4102444800000')",
     );
 
@@ -1221,6 +1262,7 @@ fn the_high_water_mark_follows_the_clock_forward() {
         .unwrap();
     let mark = |office: &Office| {
         office
+            .stores
             .org
             .meta("clock_high_ms")
             .unwrap()
@@ -1389,3 +1431,6 @@ fn a_log_left_beside_an_empty_database_is_never_looked_into_or_deleted() {
         }
     }
 }
+
+#[path = "tests/instance.rs"]
+mod instance;

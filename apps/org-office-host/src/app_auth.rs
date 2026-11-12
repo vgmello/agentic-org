@@ -1,5 +1,5 @@
-//! Who may use the app-only calls on `host.sock` (`office.app_token`, `office.restart`): the
-//! desktop app, recognised by its code signature (ADR-0003 §2.1).
+//! Peer checks reserved for verified CLI sessions in 2b.3. Current host.sock operations
+//! never authorize the retired `office.app_token` or `office.restart` methods.
 //!
 //! The threat is the exec swap: a process connects, keeps a copy of the socket in a child, sends
 //! an app-only call, then `exec`s the signed app, so the host checks the app while the child
@@ -52,10 +52,13 @@ pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
-use crate::code_signing::{self, developer_id_requirement};
+#[cfg(target_os = "macos")]
+use crate::code_signing;
+use crate::code_signing::developer_id_requirement;
 
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) trait Peer {
     /// Whether the request was sent after the connection was accepted (its line starts at or
     /// after the bytes already buffered then).
@@ -70,7 +73,7 @@ pub(crate) trait Peer {
     /// Whether the process `token` names satisfies the designated requirement `requirement`
     /// and runs hardened code (see [`code_signing::hardened_and_clean`]).
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool;
-    /// The caller's uid (the development fallback).
+    /// The effective UID when the kernel confirms a matching peer, otherwise None (development fallback).
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32>;
     /// The path of the caller's executable (the development fallback).
@@ -80,6 +83,7 @@ pub(crate) trait Peer {
 
 /// Which check let a caller in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 enum Grant {
     /// The app's code signature.
     Signed,
@@ -142,6 +146,7 @@ impl AppPolicy {
     }
 
     /// Whether `peer` may use the app-only calls.
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn allows(&self, peer: &impl Peer) -> bool {
         let Some(grant) = self.grant(peer) else {
             return false;
@@ -161,6 +166,7 @@ impl AppPolicy {
     }
 
     /// Which check lets `peer` in, the final re-check included: `None` refuses the call.
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     fn grant(&self, peer: &impl Peer) -> Option<Grant> {
         let grant = self.decide(peer)?;
         // Nothing may have happened while it was decided either: nothing arrived after the
@@ -172,6 +178,7 @@ impl AppPolicy {
     }
 
     /// Which check would let `peer` in, before the final re-check in [`Self::grant`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     fn decide(&self, peer: &impl Peer) -> Option<Grant> {
         // Sent after the accept, with nothing after it, by the process the host accepted (see
         // the module docs).
@@ -204,21 +211,23 @@ impl AppPolicy {
     /// What the host logs about this policy at startup.
     pub(crate) fn describe(&self) -> Vec<String> {
         let mut lines = Vec::new();
+        lines
+            .push("host.sock refuses retired office.app_token and office.restart calls".to_owned());
         match &self.requirement {
             Some(requirement) => lines.push(format!(
-                "office.app_token and office.restart accept the app satisfying: {requirement}"
+                "configured CLI peer requirement (inactive until sessions): {requirement}"
             )),
             None => lines.push(
                 "WARNING: no app team id (a release build takes it from ORG_APP_TEAM_ID when it's \
-                 built): office.app_token and office.restart accept no signed app"
+                 built): no signed CLI peer is configured; session operations are inactive"
                     .to_owned(),
             ),
         }
         #[cfg(debug_assertions)]
         if let Some(dev_app) = &self.dev_app {
             lines.push(format!(
-                "DEVELOPMENT FALLBACK (debug build only): office.app_token and office.restart \
-                 also accept {} run by this user, WITHOUT checking its code signature",
+                "DEVELOPMENT FALLBACK (debug build only, inactive until sessions): \
+                 configured peer {} run by this user, WITHOUT checking its code signature",
                 dev_app.display()
             ));
         }
@@ -241,6 +250,7 @@ pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<S
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
 #[cfg(target_os = "macos")]
+#[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
     /// What the host noted when it accepted the connection.
@@ -275,9 +285,12 @@ impl Peer for SocketPeer<'_> {
         code_signing::satisfies_hardened(token, requirement)
     }
 
+    /// Returns the effective UID only when the peer matches it, otherwise None.
+    /// A foreign peer's UID is not reported by this adapter.
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32> {
-        crate::peer::peer_uid(self.stream).ok()
+        let uid = org_socket::effective_uid();
+        org_socket::peer_allowed(self.stream, uid).then_some(uid)
     }
 
     #[cfg(debug_assertions)]
@@ -522,6 +535,44 @@ mod tests {
         assert!(!peer(&a, 1).nothing_after_request());
         (&b).write_all(b"x").unwrap();
         assert!(!peer(&a, 0).nothing_after_request());
+    }
+
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[test]
+    fn a_socket_peer_reports_the_effective_uid_after_shared_admission() {
+        let (stream, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let peer = SocketPeer {
+            stream: &stream,
+            accepted: crate::peer::Accepted {
+                token: None,
+                buffered: 0,
+            },
+            received: crate::peer::Received {
+                sent_at: 0,
+                buffered_after: 0,
+            },
+        };
+        assert_eq!(crate::home::euid(), org_socket::effective_uid());
+        assert_eq!(peer.uid(), Some(crate::home::euid()));
+    }
+
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[test]
+    fn a_socket_peer_refuses_a_failed_credential_query() {
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let stream = std::os::unix::net::UnixStream::from(std::os::fd::OwnedFd::from(file));
+        let peer = SocketPeer {
+            stream: &stream,
+            accepted: crate::peer::Accepted {
+                token: None,
+                buffered: 0,
+            },
+            received: crate::peer::Received {
+                sent_at: 0,
+                buffered_after: 0,
+            },
+        };
+        assert_eq!(peer.uid(), None);
     }
 
     #[cfg(debug_assertions)]

@@ -53,10 +53,10 @@ use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloResult, ListOfficesResult,
-    ListOrganizationsResult, OfficeInfo, OfficeList, Organization, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList, Position, Request, Response, ServerMessage,
-    Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
+    salvage_id, ApiRange, AppToken, Call, CallError, Empty, Event, Hello, HelloParams, HelloResult,
+    ListOfficesResult, ListOrganizationsResult, OfficeInfo, OfficeList, Organization,
+    OrganizationCreate, OrganizationCreateParams, OrganizationList, Position, Request, Response,
+    ServerMessage, Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
 };
 
 pub use error::ClientError;
@@ -136,13 +136,23 @@ impl Shared {
     /// Gives the connection up: later calls fail at once, waiting ones are woken, the peer is
     /// told to stop, and a write blocked on the socket is woken.
     fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        // After the peer has half-closed, macOS refuses `shutdown(Both)` (ENOTCONN) and also
-        // `shutdown(Read)`; `shutdown(Write)` still works, and that is what wakes a writer.
-        if self.stream.shutdown(std::net::Shutdown::Both).is_err() {
-            let _ = self.stream.shutdown(std::net::Shutdown::Read);
-            let _ = self.stream.shutdown(std::net::Shutdown::Write);
+        self.close_with(|stream| {
+            // After the peer has half-closed, macOS refuses shutdown(Both) and Read.
+            if stream.shutdown(std::net::Shutdown::Both).is_err() {
+                let _ = stream.shutdown(std::net::Shutdown::Read);
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+            }
+        });
+    }
+
+    // The callback lets the unit test hold shutdown in progress explicitly.
+    fn close_with(&self, shutdown: impl FnOnce(&UnixStream)) {
+        // One owner completes shutdown before notifying waiting calls. The half-close
+        // test relies on that completion signal before its peer begins reading EOF.
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
         }
+        shutdown(&self.stream);
         // Dropping the senders wakes every waiting call with `Disconnected`.
         lock(&self.pending).clear();
         *lock(&self.events) = None;
@@ -539,18 +549,29 @@ impl Client {
     /// and the caller then closes the connection, healthy or not. Callers must be ready to
     /// reconnect.
     fn settle(&self, state: &AtomicU8) -> bool {
+        self.settle_with(state, Instant::now, || {
+            std::thread::sleep(Duration::from_millis(1));
+        })
+    }
+
+    fn settle_with(
+        &self,
+        state: &AtomicU8,
+        mut now: impl FnMut() -> Instant,
+        mut wait_for_writer: impl FnMut(),
+    ) -> bool {
         match state.compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst) {
             Ok(_) | Err(ABANDONED) => return true,
             Err(WRITING) => {}
             Err(_) => return false, // written
         }
-        let give_up_at = Instant::now() + WRITE_GRACE;
-        while Instant::now() < give_up_at {
-            let now = state.load(Ordering::SeqCst);
-            if now != WRITING || self.shared.closed.load(Ordering::SeqCst) {
-                return now == ABANDONED;
+        let give_up_at = now() + WRITE_GRACE;
+        while now() < give_up_at {
+            let progress = state.load(Ordering::SeqCst);
+            if progress != WRITING || self.shared.closed.load(Ordering::SeqCst) {
+                return progress == ABANDONED;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            wait_for_writer();
         }
         if state.load(Ordering::SeqCst) == WRITING {
             self.shared.close();
@@ -566,7 +587,7 @@ impl Client {
 
     /// [`Client::hello`] with a timeout of your own.
     pub fn hello_with_timeout(&self, timeout: Duration) -> Result<HelloResult, ClientError> {
-        let hello = self.call_with_timeout::<Hello>(&Empty {}, timeout)?;
+        let hello = self.call_with_timeout::<Hello>(&HelloParams::default(), timeout)?;
         if hello.api_version != API_VERSION {
             return Err(ClientError::VersionMismatch {
                 client: API_VERSION,
@@ -574,6 +595,67 @@ impl Client {
             });
         }
         Ok(hello)
+    }
+
+    /// Offers API versions and verifies the selected instance (X-02 §3).
+    ///
+    /// The offer is the caller's contract; it is not clamped to `SUPPORTED_API`.
+    /// A malformed range or noncanonical expected ULID returns a fixed protocol
+    /// error without sending anything or closing this connection.
+    ///
+    /// After valid arguments, checks the decoded answer's version, then its
+    /// instance. Version 1 cannot prove an instance. Transport and API errors keep
+    /// their variants; any handshake error closes this connection and later calls
+    /// fail with [`ClientError::Disconnected`]. Use this before sharing or using a
+    /// new connection. Each repeated hello checks its own offer and expected ID.
+    /// The legacy [`Client::hello`] wrappers retain their version-1 behavior.
+    pub fn hello_offering(
+        &self,
+        offered: ApiRange,
+        expected_instance_id: &str,
+        timeout: Duration,
+    ) -> Result<HelloResult, ClientError> {
+        if offered.min == 0 || offered.min > offered.max {
+            return Err(ClientError::Protocol(
+                "the offered API range is invalid".into(),
+            ));
+        }
+        if org_proto::ulid_time_ms(expected_instance_id).is_none() {
+            return Err(ClientError::Protocol(
+                "the expected instance id is invalid".into(),
+            ));
+        }
+        let outcome = (|| {
+            let mut params = HelloParams::default();
+            params.api = Some(offered);
+            let hello = self.call_with_timeout::<Hello>(&params, timeout)?;
+            if !offered.contains(hello.api_version) {
+                return Err(ClientError::Protocol(
+                    "the server chose an API version outside the offered range".into(),
+                ));
+            }
+            if hello.api_version == 1 {
+                return Err(ClientError::Protocol(
+                    "the instance cannot be verified with API version 1".into(),
+                ));
+            }
+            let instance = match hello.instance_id.as_deref() {
+                Some(id) if org_proto::ulid_time_ms(id).is_some() => id,
+                _ => {
+                    return Err(ClientError::Protocol(
+                        "the server's instance id is missing or malformed".into(),
+                    ))
+                }
+            };
+            if instance != expected_instance_id {
+                return Err(ClientError::InstanceMismatch);
+            }
+            Ok(hello)
+        })();
+        if outcome.is_err() {
+            self.shared.close();
+        }
+        outcome
     }
 
     /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`
@@ -742,10 +824,9 @@ impl Drop for Client {
         // Let the writer thread end once its queue is empty.
         self.outbound.take();
         if let Some(reader) = self.reader.take() {
-            // The shutdown above ends the reader's read. On macOS it has been seen not to wake
-            // it (in about one drop in a hundred), and an unconditional join would then freeze
-            // whoever dropped the client, usually a UI thread. Wait a moment, then let the
-            // thread go: it ends when the server closes its side.
+            // Shutdown normally wakes the reader. If macOS misses that wakeup, Ticked
+            // observes `closed` within READ_TICK. Keep this short UI-facing join bound;
+            // a reader that outlives it releases its remaining resources at the next tick.
             let give_up_at = Instant::now() + DROP_JOIN_WAIT;
             while !reader.is_finished() && Instant::now() < give_up_at {
                 std::thread::sleep(Duration::from_millis(5));
@@ -816,9 +897,21 @@ fn write_before(
     bytes: &[u8],
     deadline: Instant,
 ) -> std::io::Result<Written> {
+    write_before_with(stream, bytes, deadline, Instant::now, |stream, timeout| {
+        stream.set_write_timeout(Some(timeout))
+    })
+}
+
+fn write_before_with<W: Write>(
+    stream: &mut W,
+    bytes: &[u8],
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut configure_timeout: impl FnMut(&mut W, Duration) -> std::io::Result<()>,
+) -> std::io::Result<Written> {
     let mut rest = bytes;
     while !rest.is_empty() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(now());
         if remaining.is_zero() && rest.len() == bytes.len() {
             return Ok(Written::NotStarted);
         }
@@ -826,7 +919,7 @@ fn write_before(
         // given up here, which closes the connection (part of the request is on the wire).
         // This does not wait for a caller to notice: a caller whose call was answered early
         // (a server may answer before it has read the whole request) never will.
-        if remaining.is_zero() && Instant::now() >= deadline + WRITE_GRACE {
+        if remaining.is_zero() && now() >= deadline + WRITE_GRACE {
             return Err(ErrorKind::TimedOut.into());
         }
         // Past the deadline, keep going in short steps; the check above (or the caller, in
@@ -836,7 +929,7 @@ fn write_before(
         } else {
             remaining
         };
-        stream.set_write_timeout(Some(step))?;
+        configure_timeout(stream, step)?;
         match stream.write(rest) {
             Ok(0) => return Err(ErrorKind::WriteZero.into()),
             Ok(n) => rest = &rest[n..],
@@ -860,8 +953,23 @@ impl Drop for CloseOnExit<'_> {
 
 /// Reads server messages until the connection ends, then fails everything still waiting.
 fn read_loop(shared: &Shared, stream: UnixStream) {
+    read_loop_with_poll(
+        shared,
+        stream,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn read_loop_with_poll(
+    shared: &Shared,
+    stream: UnixStream,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
+) {
     let _close = CloseOnExit(shared);
-    let mut reader = std::io::BufReader::new(stream);
+    let mut reader =
+        org_socket::Ticked::with_poll(stream, tick, || shared.closed.load(Ordering::SeqCst), poll);
     while let Ok(Some(line)) = frame::read_line(&mut reader) {
         match serde_json::from_slice::<ServerMessage>(&line) {
             Ok(ServerMessage::Response(response)) => {
@@ -917,6 +1025,110 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+
+    #[test]
+    fn ticked_reader_stops_on_a_closed_client_after_one_idle_tick() {
+        // Keep the peer open: EOF must come from the client's stop flag, not the socket.
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let shared = Shared {
+            closed: AtomicBool::new(true),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let mut polls = 0;
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |_, tick| {
+            polls += 1;
+            assert!(polls < 3, "closed client reader did not stop after a tick");
+            assert_eq!(tick, org_socket::READ_TICK);
+            Ok(false)
+        });
+        assert_eq!(polls, 1);
+    }
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_and_closes_pending_calls() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let (answer, pending) = mpsc::sync_channel(1);
+        let shared = Shared {
+            closed: AtomicBool::new(false),
+            next_id: AtomicU64::new(2),
+            pending: Mutex::new(HashMap::from([(1, answer)])),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let polls = std::cell::Cell::new(0);
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |fd, _| {
+            polls.set(polls.get() + 1);
+            assert!(polls.get() <= 10, "client reader failed to observe EOF");
+            if polls.get() == 1 {
+                Ok(false)
+            } else {
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            }
+        });
+        assert_eq!(polls.get(), 2);
+        assert!(shared.closed.load(Ordering::SeqCst));
+        assert!(matches!(
+            pending.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn a_concurrent_close_does_not_finish_calls_before_the_first_shutdown_finishes() {
+        use std::io::Read;
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let (answer_to, answer) = mpsc::sync_channel(1);
+        let shared = Shared {
+            closed: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::from([(1, answer_to)])),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream,
+        };
+        let (entered, shutdown_started) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let closing = &shared;
+            let first = scope.spawn(move || {
+                closing.close_with(|stream| {
+                    entered.send(()).unwrap();
+                    released.recv_timeout(Duration::from_secs(10)).unwrap();
+                    stream.shutdown(std::net::Shutdown::Write).unwrap();
+                })
+            });
+            shutdown_started
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            // Another close must not notify the waiting call while the owner's
+            // shutdown is still held in progress.
+            shared.close_with(|_| {});
+            let before_shutdown_completed = answer.try_recv();
+            let before_peer_eof = peer.read(&mut [0u8; 1]);
+            release.send(()).unwrap();
+            first.join().unwrap();
+            assert_eq!(before_peer_eof.unwrap_err().kind(), ErrorKind::WouldBlock);
+            assert_eq!(peer.read(&mut [0u8; 1]).unwrap(), 0);
+            assert!(matches!(
+                before_shutdown_completed,
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                answer.try_recv(),
+                Err(mpsc::TryRecvError::Disconnected)
+            ));
+        });
+    }
 
     /// A server that accepts one connection and never reads or answers, until dropped.
     struct StuckServer {
@@ -993,13 +1205,15 @@ mod tests {
         let client = Client::connect(&server.path).unwrap();
         let started = Instant::now();
         let stop_at = started + Duration::from_millis(200);
-        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(30), || {
-            Instant::now() >= stop_at
-        });
+        let outcome =
+            client.call_unless::<Hello>(&HelloParams::default(), Duration::from_secs(30), || {
+                Instant::now() >= stop_at
+            });
         assert!(outcome.is_none(), "{outcome:?}");
         let took = started.elapsed();
         assert!(took < Duration::from_secs(5), "{took:?}");
-        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(1));
+        let after =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_secs(1));
         assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
     }
 
@@ -1013,7 +1227,8 @@ mod tests {
             Response::ok::<Hello>(request.id, &hello).unwrap()
         });
         let client = Client::connect(&path).unwrap();
-        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(10), || false);
+        let outcome =
+            client.call_unless::<Hello>(&HelloParams::default(), Duration::from_secs(10), || false);
         assert_eq!(outcome.unwrap().unwrap().api_version, API_VERSION);
     }
 
@@ -1096,10 +1311,162 @@ mod tests {
             .next_id
             .store(MAX_REQUEST_ID, Ordering::SeqCst);
         // The last id is still usable (it times out: nobody answers)...
-        let last = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        let last =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(50));
         assert!(matches!(last, Err(ClientError::Timeout)), "{last:?}");
         // ...and the next call is refused rather than sent with an id the peer may misread.
-        let next = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        let next =
+            client.call_with_timeout::<Hello>(&HelloParams::default(), Duration::from_millis(50));
         assert!(matches!(next, Err(ClientError::Protocol(_))), "{next:?}");
+    }
+    // Script the kernel write's result and clock progress without threads or sleeps.
+    struct ScriptedWrite<F>(F);
+
+    impl<F: FnMut(&[u8]) -> std::io::Result<usize>> Write for ScriptedWrite<F> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            (self.0)(bytes)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_mid_write_finished_inside_caller_grace_keeps_the_connection_usable() {
+        let (_dir, path, _got) = answering_server(|request| {
+            Response::ok::<Hello>(request.id, &HelloResult::host("t", "h")).unwrap()
+        });
+        let client = Client::connect(path).unwrap();
+        let state = AtomicU8::new(WRITING);
+        let deadline = Instant::now();
+        let clock = std::cell::Cell::new(deadline);
+        let withdrew = client.settle_with(
+            &state,
+            || clock.get(),
+            || {
+                assert_eq!(
+                    state.load(Ordering::SeqCst),
+                    WRITING,
+                    "waited after completion"
+                );
+                clock.set(deadline + WRITE_GRACE / 2);
+                state.store(WRITTEN, Ordering::SeqCst);
+            },
+        );
+        assert!(!withdrew);
+        assert_eq!(client.hello().unwrap().server_version, "t");
+    }
+
+    #[test]
+    fn a_mid_write_pending_at_caller_grace_expiry_closes_the_connection() {
+        let server = stuck_server();
+        let client = Client::connect(&server.path).unwrap();
+        let state = AtomicU8::new(WRITING);
+        let deadline = Instant::now();
+        let clock = std::cell::Cell::new(deadline);
+        assert!(!client.settle_with(
+            &state,
+            || clock.get(),
+            || {
+                assert_eq!(clock.get(), deadline, "waited beyond grace expiry");
+                clock.set(clock.get() + WRITE_GRACE);
+            }
+        ));
+        assert_eq!(clock.get(), deadline + WRITE_GRACE);
+        assert!(matches!(client.hello(), Err(ClientError::Disconnected)));
+    }
+
+    #[test]
+    fn a_partial_write_can_finish_after_deadline_inside_writer_grace() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(1);
+        let clock = std::cell::Cell::new(started);
+        let mut sent = Vec::new();
+        let mut calls = 0;
+        let mut writer = ScriptedWrite(|bytes: &[u8]| {
+            calls += 1;
+            assert!(calls <= 2, "wrote after completing the frame");
+            let count = if calls == 1 { 1 } else { bytes.len() };
+            sent.extend_from_slice(&bytes[..count]);
+            clock.set(deadline + WRITE_GRACE / 2);
+            Ok(count)
+        });
+        let result = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || clock.get(),
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert!(matches!(result, Written::Whole));
+        assert_eq!(sent, b"frame\n");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_partial_write_stops_at_writer_grace_expiry() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(1);
+        let clock = std::cell::Cell::new(started);
+        let mut sent = Vec::new();
+        let mut writer = ScriptedWrite(|bytes: &[u8]| {
+            assert!(
+                sent.is_empty(),
+                "no write is allowed at or beyond grace expiry"
+            );
+            sent.push(bytes[0]);
+            clock.set(deadline + WRITE_GRACE);
+            Ok(1)
+        });
+        let error = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || clock.get(),
+            |_, _| Ok(()),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(sent, b"f");
+    }
+
+    #[test]
+    fn a_request_expired_before_its_first_write_is_never_sent() {
+        let deadline = Instant::now();
+        let mut writer = ScriptedWrite(|_: &[u8]| panic!("expired request was written"));
+        let result = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || deadline,
+            |_, _| panic!("expired request configured a write"),
+        )
+        .unwrap();
+        assert!(matches!(result, Written::NotStarted));
+    }
+
+    #[test]
+    fn write_timeout_configuration_errors_are_not_retried_as_write_errors() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(1);
+        let mut writer =
+            ScriptedWrite(|_: &[u8]| panic!("write despite failed timeout configuration"));
+        let mut configurations = 0;
+        let error = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || started,
+            |_, _| {
+                configurations += 1;
+                assert_eq!(configurations, 1, "retried timeout configuration failure");
+                Err(ErrorKind::WouldBlock.into())
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), ErrorKind::WouldBlock);
     }
 }

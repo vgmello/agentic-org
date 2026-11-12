@@ -12,14 +12,13 @@
 mod support;
 
 use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use org_office_host::{Config, Host, HostError};
 use org_proto::{
-    ApiError, Empty, ErrorCode, OfficeRestart, OfficeRestartParams, OfficeStatus,
-    OfficeStatusReason, OrganizationCreate, OrganizationCreateParams,
+    ApiError, ErrorCode, OfficeStatus, OfficeStatusReason, OrganizationCreate,
+    OrganizationCreateParams,
 };
 use serde_json::json;
 use support::{alive, eventually, hq, office_info, restart_host, Client, TestHome};
@@ -36,30 +35,24 @@ fn app_config(home: &TestHome) -> Config {
     config
 }
 
-fn create(socket: &Path, name: &str) -> Result<org_proto::Organization, ApiError> {
-    Client::connect(socket)
+fn create(host: &Host, name: &str) -> Result<org_proto::Organization, ApiError> {
+    Client::for_host(host)
         .call::<OrganizationCreate>(&OrganizationCreateParams { name: name.into() })
 }
 
-fn restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
-    let mut client = Client::connect(socket);
-    client.call::<org_proto::Hello>(&Empty {}).unwrap();
-    client
-        .call::<OfficeRestart>(&OfficeRestartParams {
-            office_id: office_id.into(),
-        })
-        .map(drop)
+fn restart(host: &Host, office_id: &str) -> Result<(), ApiError> {
+    org_office_host::test_support::Fixture::new(host).restart(office_id)
 }
 
 fn wait_for_state(
-    socket: &Path,
+    host: &Host,
     office_id: &str,
     status: OfficeStatus,
     reason: Option<OfficeStatusReason>,
 ) {
     let deadline = Instant::now() + WAIT;
     loop {
-        let info = office_info(socket, office_id).expect("the office is listed");
+        let info = office_info(host, office_id).expect("the office is listed");
         if info.status == status && info.status_reason == reason {
             return;
         }
@@ -82,7 +75,7 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
     for dir in [None, Some(std::path::PathBuf::from("relative/keys"))] {
         let mut config = home.config();
         config.dev_key_dir = dir.clone();
-        match Host::start(config) {
+        match home.start(config) {
             Err(e @ HostError::NoDevKeyDir) => {
                 assert!(e.to_string().contains("ORG_OFFICE_DEV_KEY_DIR"), "{e}");
             }
@@ -95,7 +88,7 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
 
 #[test]
 fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     let mut config = home.config();
     // Lists the key folder as each `--create` server starts.
     config.set_server_program(home.wrapper(
@@ -106,8 +99,8 @@ fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
             home.keys_dir().display()
         ),
     ));
-    let host = Host::start(config.clone()).unwrap();
-    let org = create(host.socket_path(), "Acme").unwrap();
+    let host = home.start(config.clone()).unwrap();
+    let org = create(&host, "Acme").unwrap();
     let office_id = org.offices[0].id.clone();
     let listed = fs::read_to_string(home.path().join("keys-at-create")).unwrap();
     assert_eq!(
@@ -124,16 +117,16 @@ fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
     assert_eq!(home.key_ids(), std::slice::from_ref(&office_id));
 
     // A restart after a crash, and the next host run, load the same key.
-    wait_for_state(host.socket_path(), &office_id, OfficeStatus::Active, None);
+    wait_for_state(&host, &office_id, OfficeStatus::Active, None);
     let pid = home.pids("create")[0];
     kill(pid);
     eventually(WAIT, "the office to restart", || {
         home.runs(&office_id) == 1 && !alive(pid)
     });
-    wait_for_state(host.socket_path(), &office_id, OfficeStatus::Active, None);
+    wait_for_state(&host, &office_id, OfficeStatus::Active, None);
     host.shutdown();
-    let host = restart_host(&config);
-    wait_for_state(host.socket_path(), &office_id, OfficeStatus::Active, None);
+    let host = restart_host(&home, &config);
+    wait_for_state(&host, &office_id, OfficeStatus::Active, None);
     assert_eq!(
         home.db_key_fingerprints(&office_id),
         [stored.clone(), stored]
@@ -144,16 +137,15 @@ fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
 
 #[test]
 fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_finds_it() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.remove_key(A);
     home.write_office(&hq(B, "01ORGB", "Beta", T));
     home.write_key_text(B, "not a key");
-    let host = Host::start(app_config(&home)).unwrap();
-    let socket = host.socket_path().to_path_buf();
+    let host = home.start(app_config(&home)).unwrap();
     for office in [A, B] {
         wait_for_state(
-            &socket,
+            &host,
             office,
             OfficeStatus::Unavailable,
             Some(OfficeStatusReason::KeyMissing),
@@ -165,8 +157,8 @@ fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_find
 
     // Once the key is back, a restart starts it with that key.
     home.write_key(A);
-    restart(&socket, A).unwrap();
-    wait_for_state(&socket, A, OfficeStatus::Active, None);
+    restart(&host, A).unwrap();
+    wait_for_state(&host, A, OfficeStatus::Active, None);
     assert_eq!(home.runs(A), 1);
     assert_eq!(
         home.db_key_fingerprints(A),
@@ -180,13 +172,13 @@ fn a_missing_or_unreadable_key_is_key_missing_with_no_spawn_until_a_restart_find
 
 #[test]
 fn a_servers_key_missing_is_key_missing_with_no_restarts_and_the_key_untouched() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     let before = home.key_text(A).unwrap();
     home.script(json!({ A: {"do": "fail", "code": "key_missing"} }));
-    let host = Host::start(home.config()).unwrap();
+    let host = home.start(home.config()).unwrap();
     wait_for_state(
-        host.socket_path(),
+        &host,
         A,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::KeyMissing),
@@ -201,14 +193,14 @@ fn a_servers_key_missing_is_key_missing_with_no_restarts_and_the_key_untouched()
 
 #[test]
 fn a_failed_create_keeps_its_key_until_a_discard_reports_discarded() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     // The first discard (right after the create) is refused; the next host run's succeeds.
     home.script(json!({
         "create": {"do": "fail", "code": "storage_error"},
         "discard": [{"do": "fail", "code": "storage_error"}, {"do": "ready"}]
     }));
-    let host = Host::start(home.config()).unwrap();
-    let err = create(host.socket_path(), "Acme").unwrap_err();
+    let host = home.start(home.config()).unwrap();
+    let err = create(&host, "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);
     let created = home.db_key_fingerprints("create");
     assert_eq!(created.len(), 1);
@@ -228,7 +220,7 @@ fn a_failed_create_keeps_its_key_until_a_discard_reports_discarded() {
     host.shutdown();
 
     // The next start discards the folder with the kept key; then, and only then, the key goes.
-    let host = restart_host(&home.config());
+    let host = restart_host(&home, &home.config());
     eventually(WAIT, "the startup discard", || {
         home.office_folders().is_empty()
     });
@@ -246,7 +238,7 @@ fn a_failed_create_keeps_its_key_until_a_discard_reports_discarded() {
 
 #[test]
 fn a_crashed_or_timed_out_create_is_discarded_with_its_key_which_goes_only_after_discarded() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     // The first create crashes and its discard crashes too; the second hangs until the create
     // times out, and its discard succeeds.
     home.script(json!({
@@ -255,9 +247,9 @@ fn a_crashed_or_timed_out_create_is_discarded_with_its_key_which_goes_only_after
     }));
     let mut config = home.config();
     config.timings.create_timeout = Duration::from_secs(5);
-    let host = Host::start(config).unwrap();
+    let host = home.start(config).unwrap();
     for name in ["Acme", "Beta"] {
-        let err = create(host.socket_path(), name).unwrap_err();
+        let err = create(&host, name).unwrap_err();
         assert_eq!(err.code, ErrorCode::StorageError, "{name}");
     }
     let created = home.db_key_fingerprints("create");
@@ -282,15 +274,15 @@ fn a_crashed_or_timed_out_create_is_discarded_with_its_key_which_goes_only_after
 
 #[test]
 fn already_exists_and_a_refused_create_keep_the_key_and_discard_nothing() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.script(json!({"create": [
         {"do": "fail", "code": "already_exists"},
         {"do": "ready", "report": {"org_name": "Other"}}
     ]}));
-    let host = Host::start(home.config()).unwrap();
-    let err = create(host.socket_path(), "Acme").unwrap_err();
+    let host = home.start(home.config()).unwrap();
+    let err = create(&host, "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::AlreadyExists);
-    let err = create(host.socket_path(), "Beta").unwrap_err();
+    let err = create(&host, "Beta").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);
     assert_eq!(home.runs("discard"), 0);
     // Both keys stay: the already-existing folder's (a later start may discard it with this
@@ -313,11 +305,11 @@ fn already_exists_and_a_refused_create_keep_the_key_and_discard_nothing() {
 
 #[test]
 fn a_create_whose_server_cant_start_keeps_its_key() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     let mut config = home.config();
     config.set_server_program(home.path().join("no-such-server"));
-    let host = Host::start(config).unwrap();
-    let err = create(host.socket_path(), "Acme").unwrap_err();
+    let host = home.start(config).unwrap();
+    let err = create(&host, "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);
     // Stored before the spawn; its discard couldn't start either, so nothing reported
     // `discarded` and the key stays.
@@ -329,7 +321,7 @@ fn a_create_whose_server_cant_start_keeps_its_key() {
 
 #[test]
 fn a_discard_line_carries_the_offices_key_or_null() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     // Unfinished creates: one with a key and databases, one with neither, and one with
     // databases but no key (which can't be checked, so it's kept for a person).
     const KEYED: &str = "01KEYEDKEYEDKEYEDKEYEDKEYE";
@@ -343,7 +335,7 @@ fn a_discard_line_carries_the_offices_key_or_null() {
     }
     home.write_key(KEYED);
     let keyed = home.stored_key_fingerprint(KEYED).unwrap();
-    let host = Host::start(home.config()).unwrap();
+    let host = home.start(home.config()).unwrap();
     eventually(WAIT, "the startup discards", || {
         home.discard_keys().len() == 3 && home.office_folders() == [LOCKED]
     });

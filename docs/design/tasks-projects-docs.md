@@ -325,7 +325,7 @@ A project may have no repository (`repo` empty). Its tasks, bugs and areas work;
 ### 3.1 Where the code lives
 ```
 apps/org-agent ───────────▶ crates/org-client ─────────────────────────┐
-apps/org-office-server ───▶ crates/org-office (store.rs: all SQL) ─┬──▶ crates/org-proto
+apps/org-server ───▶ crates/org-office (store.rs: all SQL) ─┬──▶ crates/org-proto
         │                         │                                │
         │                         ├──▶ crates/org-work  ───────────┤   (rules, no SQL/git/network)
         │                         └──▶ crates/org-docs  ───────────┘   (P3/P4: front matter, templates, index)
@@ -333,7 +333,7 @@ apps/org-office-server ───▶ crates/org-office (store.rs: all SQL) ─┬
 ```
 - **`org-work`** (new library; owner **TBD by ada**: codex-dev if it's back, otherwise River or server-dev): the work-item model, the state machines, validation, links, checklists, numbering requests, automatic rules and Undo, org cascades, ownership decisions, change-request and handover effects, and the time figures. It depends on `org-proto` (the wire types are its vocabulary), `serde`, `serde_json` and `sha2` (the params hash) (`Ce = 4`; `org-sync-proto` joins in phase 2). Expected `I ≈ 0.4` (a domain capability). It defines its ports; it implements none.
 - **`org-docs`** (new library, P3/P4; owner **TBD by ada**): front matter parsing and writing, templates and schemas, validation, doc numbering, mention extraction, building the index from a tree. It defines a `DocRepo` port (read a file at a ref, list a tree, commit a set of path changes (write, rename, delete) on a branch with expected blobs, list branches). `Ce = 4` (`org-proto`, `serde`, `serde_json`, one YAML parser at an exact pin). It knows nothing about work items: the office composes the two (a feature status effect from `org-work` becomes a doc write through `org-docs`).
-- **`org-office`** (server-dev) depends on both, implements their storage traits in `store.rs` and the `OrgView` read port, wires the calls, and runs the org cascades. **`org-office-server`** (the composition root) implements `DocRepo` with River's `org-git`, as the GitHub design does for its traits. No cycle: `org-work` and `org-docs` never depend on `org-office`, `org-git` or each other.
+- **`org-office`** (server-dev) depends on both, implements their storage traits in `store.rs` and the `OrgView` read port, wires the calls, and runs the org cascades. **`org-server`** (the composition root) implements `DocRepo` with River's `org-git`, as the GitHub design does for its traits. No cycle: `org-work` and `org-docs` never depend on `org-office`, `org-git` or each other.
 - Check against the change-time checklist: one new dependency each for `org-office` (to `org-work`, later `org-docs`), both stable-ward (`org-office` is the more volatile); no cross-domain dependency between work and docs; no new edge into `org-proto` except additive types.
 
 ### 3.2 The ports `org-work` defines
@@ -667,7 +667,7 @@ Rust details (derives, `#[serde(default)]` and `skip_serializing_if` on every op
 | `task.set_status` | `item_id`, `expected_version`, `status`, `blocked_reason?` (exactly when `blocked`), `resolution?` (only with `done`), `anyway_reason?` (only with `done`), `shortcut?: Shortcut` (only with `done`; P4) | `not_found`, `invalid_request` (wrong state; a reason missing or misplaced), `conflict`, `checklist_incomplete` (required steps left and no `anyway_reason`; the message names the steps) | P1 |
 | `work.set_current` | `item?` (absent: clear) | `not_found`, `invalid_request` (not a task; the caller isn't an agent; the caller isn't the task's assignee) | P1 |
 
-`NewStep { step_id, text, required }`. `work.set_current` sets the bound agent's current task (C14) in `member_status`; it isn't an item change and takes no `change_id`; its result is `Empty`.
+`NewStep { step_id, text, required }`. `work.set_current` sets the bound agent's current task (C14) in `member_status`; it isn't an item change and takes no `change_id`; its result is `Empty`. A Done task (any resolution) can stay current until replaced or cleared. Reassignment, deletion and offboarding do not publish presence in C2a: `who` checks validity; C2b will refresh live views.
 
 ### 4.5 Bugs (P2)
 | Call | Params (after `change_id`) | Errors |

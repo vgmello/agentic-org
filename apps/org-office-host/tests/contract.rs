@@ -2,10 +2,9 @@
 //! `next_restart_at`, `office.status_changed`, the give-up rule, and the app-only
 //! `office.app_token` and `office.restart`, against the fake office server.
 //!
-//! The app-only calls are made by this test process, accepted through the debug-build
-//! development fallback (its own executable as the allowed path), so the tests that need it run
-//! in debug builds only (`cargo test` without `--release`). The code-signature path needs a signed
-//! app and is covered by `app_auth`'s unit tests.
+//! Retired wire calls are refused under every peer configuration. Native token/restart
+//! lifecycle checks use the temporary in-process fixture; these gate tests do not establish
+//! signed-peer authorization. Real app_auth wire coverage returns with verified sessions in2b.3.
 
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only. Many
@@ -32,7 +31,7 @@ const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
 const T: &str = "2026-11-08T00:00:00.000Z";
 
-/// A config whose app-only calls accept this test process (the debug-build fallback).
+/// A matching development peer policy; retired wire calls remain refused.
 #[cfg(debug_assertions)]
 fn app_config(home: &TestHome) -> Config {
     let mut config = home.config();
@@ -40,16 +39,16 @@ fn app_config(home: &TestHome) -> Config {
     config
 }
 
-/// A client that has read `hello`'s answer, as an app-only call requires (the client rule).
+/// A negotiated client used to test refusal of retired wire calls.
 fn app_client(socket: &Path) -> Client {
     let mut client = Client::connect(socket);
     client
-        .call::<org_proto::Hello>(&org_proto::Empty {})
+        .call::<org_proto::Hello>(&org_proto::HelloParams::default())
         .unwrap();
     client
 }
 
-fn app_token(socket: &Path, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
+fn wire_app_token(socket: &Path, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
     app_client(socket)
         .call::<OfficeAppToken>(&OfficeAppTokenParams {
             office_id: office_id.into(),
@@ -57,7 +56,7 @@ fn app_token(socket: &Path, office_id: &str) -> Result<org_proto::AppToken, ApiE
         .map(|result| result.app_token)
 }
 
-fn restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
+fn wire_restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
     app_client(socket)
         .call::<OfficeRestart>(&OfficeRestartParams {
             office_id: office_id.into(),
@@ -65,8 +64,15 @@ fn restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
         .map(drop)
 }
 
+fn app_token(host: &Host, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
+    org_office_host::test_support::Fixture::new(host).token(office_id)
+}
+fn restart(host: &Host, office_id: &str) -> Result<(), ApiError> {
+    org_office_host::test_support::Fixture::new(host).restart(office_id)
+}
+
 fn wait_for_state(
-    socket: &Path,
+    host: &Host,
     office_id: &str,
     status: OfficeStatus,
     reason: Option<OfficeStatusReason>,
@@ -74,7 +80,7 @@ fn wait_for_state(
     let mut last = None;
     let deadline = Instant::now() + WAIT;
     loop {
-        let info = office_info(socket, office_id).expect("the office is listed");
+        let info = office_info(host, office_id).expect("the office is listed");
         if info.status == status && info.status_reason == reason {
             return info;
         }
@@ -90,20 +96,20 @@ fn wait_for_state(
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
 #[test]
-fn the_app_gets_the_token_its_office_was_started_with() {
-    let home = TestHome::new();
+fn native_fixture_gets_the_token_its_office_was_started_with() {
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
-    let host = Host::start(app_config(&home)).unwrap();
-    wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
-    let token = app_token(host.socket_path(), A).unwrap();
+    let host = home.start(app_config(&home)).unwrap();
+    wait_for_state(&host, A, OfficeStatus::Active, None);
+    let token = app_token(&host, A).unwrap();
     assert_eq!(home.token_fingerprints(A), [fingerprint(&token)]);
     home.assert_no_secret_in_home();
     host.shutdown();
 }
 
 #[test]
-fn a_caller_that_isnt_the_app_is_refused() {
-    let home = TestHome::new();
+fn retired_calls_are_refused_under_each_non_app_policy() {
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     // No development app and no team id: nobody. Debug builds also try another executable as the
     // allowed development app (this test process isn't it), and one that isn't built yet.
@@ -117,14 +123,14 @@ fn a_caller_that_isnt_the_app_is_refused() {
     }
     for config in configs {
         // The same home, one host after another.
-        let host = support::restart_host(&config);
-        wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
-        let err = app_token(host.socket_path(), A).unwrap_err();
+        let host = support::restart_host(&home, &config);
+        wait_for_state(&host, A, OfficeStatus::Active, None);
+        let err = wire_app_token(host.socket_path(), A).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotAuthorized);
-        let err = restart(host.socket_path(), A).unwrap_err();
+        let err = wire_restart(host.socket_path(), A).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotAuthorized);
         // The check comes first: even an unknown office is `not_authorized`.
-        let err = app_token(host.socket_path(), "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
+        let err = wire_app_token(host.socket_path(), "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotAuthorized);
         host.shutdown();
     }
@@ -133,8 +139,8 @@ fn a_caller_that_isnt_the_app_is_refused() {
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
 #[test]
-fn app_token_errors_follow_the_contract() {
-    let home = TestHome::new();
+fn native_token_errors_follow_the_runtime_contract() {
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     // An unfinished folder whose discard is slow, and a slow create.
     let unfinished = "01UNFINISHEDUNFINISHEDUNFI";
@@ -146,35 +152,33 @@ fn app_token_errors_follow_the_contract() {
     }));
     let mut config = app_config(&home);
     config.timings.create_wait = Duration::from_millis(300);
-    let host = Host::start(config).unwrap();
-    let socket = host.socket_path().to_path_buf();
+    let host = home.start(config).unwrap();
 
     // Still being discarded at startup: `not_ready`, after a short wait.
-    let err = app_token(&socket, unfinished).unwrap_err();
+    let err = app_token(&host, unfinished).unwrap_err();
     assert_eq!(err.code, ErrorCode::NotReady);
     // No such office: `not_found`.
-    let err = app_token(&socket, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
+    let err = app_token(&host, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     // Not running (`unavailable`: its key is missing): `unavailable`.
     wait_for_state(
-        &socket,
+        &host,
         A,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::KeyMissing),
     );
-    let err = app_token(&socket, A).unwrap_err();
+    let err = app_token(&host, A).unwrap_err();
     assert_eq!(err.code, ErrorCode::Unavailable);
 
     // Still being created: `not_ready`. (Creates wait for the startup discards first.)
     // Wait for the startup discard to be over (the host itself says so: the folder is no
     // longer being discarded, so it's simply `not_found`), so the create doesn't wait for it.
     eventually(WAIT, "the startup discard to finish", || {
-        app_token(&socket, unfinished).is_err_and(|e| e.code == ErrorCode::NotFound)
+        app_token(&host, unfinished).is_err_and(|e| e.code == ErrorCode::NotFound)
     });
     let creating = {
-        let socket = socket.clone();
+        let mut client = Client::for_host(&host);
         thread::spawn(move || {
-            let mut client = Client::connect(&socket);
             client.call::<org_proto::OrganizationCreate>(&org_proto::OrganizationCreateParams {
                 name: "Beta".into(),
             })
@@ -184,7 +188,7 @@ fn app_token_errors_follow_the_contract() {
         home.office_folders().iter().any(|f| f != A)
     });
     let new_id = home.office_folders().into_iter().find(|f| f != A).unwrap();
-    let err = app_token(&socket, &new_id).unwrap_err();
+    let err = app_token(&host, &new_id).unwrap_err();
     assert_eq!(err.code, ErrorCode::NotReady);
     creating.join().unwrap().unwrap();
     host.shutdown();
@@ -193,8 +197,8 @@ fn app_token_errors_follow_the_contract() {
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
 #[test]
-fn restart_follows_the_contract() {
-    let home = TestHome::new();
+fn native_restart_follows_the_runtime_contract() {
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.write_office(&hq(B, "01ORGB", "Beta", T));
     // A's key is missing at first, then found; B's server speaks another version.
@@ -202,16 +206,15 @@ fn restart_follows_the_contract() {
         A: [{"do": "fail", "code": "key_missing"}, {"do": "ready"}],
         B: {"do": "fail", "code": "unsupported_version"}
     }));
-    let host = Host::start(app_config(&home)).unwrap();
-    let socket = host.socket_path().to_path_buf();
+    let host = home.start(app_config(&home)).unwrap();
     wait_for_state(
-        &socket,
+        &host,
         A,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::KeyMissing),
     );
     wait_for_state(
-        &socket,
+        &host,
         B,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::UnsupportedVersion),
@@ -221,18 +224,18 @@ fn restart_follows_the_contract() {
     assert_eq!(home.runs(A), 1);
 
     // `key_missing` is retried by a restart; this time the key is there.
-    restart(&socket, A).unwrap();
-    wait_for_state(&socket, A, OfficeStatus::Active, None);
+    restart(&host, A).unwrap();
+    wait_for_state(&host, A, OfficeStatus::Active, None);
     assert_eq!(home.runs(A), 2);
     // Running: `conflict`.
-    let err = restart(&socket, A).unwrap_err();
+    let err = restart(&host, A).unwrap_err();
     assert_eq!(err.code, ErrorCode::Conflict);
     // A reason a restart can't fix: `unavailable`, saying why.
-    let err = restart(&socket, B).unwrap_err();
+    let err = restart(&host, B).unwrap_err();
     assert_eq!(err.code, ErrorCode::Unavailable);
     assert!(err.message.contains("version"), "{}", err.message);
     assert_eq!(home.runs(B), 1);
-    let err = restart(&socket, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
+    let err = restart(&host, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     host.shutdown();
 }
@@ -294,16 +297,16 @@ fn every_way_a_start_ends_has_its_reason() {
         ),
     ];
     for (step, status, reason) in cases {
-        let home = TestHome::new();
+        let home = TestHome::registered();
         home.write_office(&hq(A, "01ORGA", "Acme", T));
         home.script(json!({ A: step.clone() }));
         let mut config = home.config();
         config.timings.ready_timeout = ready_timeout(&step);
         // Long enough to see the office offline, waiting for its restart.
         config.timings.backoff_initial = Duration::from_secs(5);
-        let host = Host::start(config).unwrap();
+        let host = home.start(config).unwrap();
         let before = rfc3339(SystemTime::now());
-        let info = wait_for_state(host.socket_path(), A, status, Some(reason));
+        let info = wait_for_state(&host, A, status, Some(reason));
         let after = rfc3339(SystemTime::now() + Duration::from_secs(6));
         match status {
             // A restart is pending, within the backoff.
@@ -319,7 +322,7 @@ fn every_way_a_start_ends_has_its_reason() {
 
 #[test]
 fn status_changes_are_pushed_on_subscribe() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     // It gets ready after a moment (so this test subscribes first) and crashes at once, then
     // runs. Events are level-triggered (each carries the state as it is then; a state may be
@@ -330,8 +333,8 @@ fn status_changes_are_pushed_on_subscribe() {
     ]}));
     let mut config = home.config();
     config.timings.backoff_initial = Duration::from_millis(300);
-    let host = Host::start(config).unwrap();
-    let mut events = Client::connect(host.socket_path());
+    let host = home.start(config).unwrap();
+    let mut events = Client::for_host(&host);
     events
         .call::<org_proto::Subscribe>(&org_proto::SubscribeParams::default())
         .unwrap();
@@ -366,17 +369,16 @@ fn status_changes_are_pushed_on_subscribe() {
 #[cfg(debug_assertions)]
 #[test]
 fn the_give_up_rule_stops_restarts_until_office_restart() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.script(json!({ A: {"do": "crash"} }));
     let mut config = app_config(&home);
     config.timings.give_up_after = 3;
     config.timings.backoff_initial = Duration::from_millis(50);
     config.timings.backoff_max = Duration::from_millis(50);
-    let host = Host::start(config).unwrap();
-    let socket = host.socket_path().to_path_buf();
+    let host = home.start(config).unwrap();
     let info = wait_for_state(
-        &socket,
+        &host,
         A,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::RestartsExhausted),
@@ -386,10 +388,10 @@ fn the_give_up_rule_stops_restarts_until_office_restart() {
     assert_eq!(home.runs(A), 3, "it kept restarting");
 
     // office.restart starts it again, with the count back at 0: three more tries.
-    restart(&socket, A).unwrap();
+    restart(&host, A).unwrap();
     eventually(WAIT, "three more runs", || home.runs(A) == 6);
     wait_for_state(
-        &socket,
+        &host,
         A,
         OfficeStatus::Unavailable,
         Some(OfficeStatusReason::RestartsExhausted),
@@ -399,7 +401,7 @@ fn the_give_up_rule_stops_restarts_until_office_restart() {
 
 #[test]
 fn uptime_counts_from_ready_not_from_the_spawn() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     // Each run takes 1.2 s to get ready, then crashes at once: up for 1.2 s from its spawn,
     // over the 1 s that makes a fresh start, but up for no time after `ready`.
@@ -409,11 +411,11 @@ fn uptime_counts_from_ready_not_from_the_spawn() {
     config.timings.backoff_reset_after = Duration::from_secs(1);
     config.timings.backoff_initial = Duration::from_millis(50);
     config.timings.backoff_max = Duration::from_millis(50);
-    let host = Host::start(config).unwrap();
+    let host = home.start(config).unwrap();
     // Every run is a failed restart, so the give-up rule ends it after three.
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let info = office_info(host.socket_path(), A).unwrap();
+        let info = office_info(&host, A).unwrap();
         if info.status == OfficeStatus::Unavailable {
             assert_eq!(
                 info.status_reason,
@@ -431,11 +433,11 @@ fn uptime_counts_from_ready_not_from_the_spawn() {
 #[test]
 fn a_status_change_publishes_the_whole_office_record() {
     // The event's data is the office's whole record, as `office.list` shows it.
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
     home.script(json!({ A: {"do": "ready", "delay_ms": 600} }));
-    let host = Host::start(home.config()).unwrap();
-    let mut events = Client::connect(host.socket_path());
+    let host = home.start(home.config()).unwrap();
+    let mut events = Client::for_host(&host);
     events
         .call::<org_proto::Subscribe>(&org_proto::SubscribeParams::default())
         .unwrap();
@@ -445,28 +447,24 @@ fn a_status_change_publishes_the_whole_office_record() {
     let data: Value = event.data.clone();
     let office = event.data::<OfficeStatusChanged>().unwrap().unwrap().office;
     assert_eq!(office.status, OfficeStatus::Active);
-    assert_eq!(Some(office), office_info(host.socket_path(), A));
+    assert_eq!(Some(office), office_info(&host, A));
     assert!(data["office"]["endpoint"].is_string(), "{data}");
     host.shutdown();
 }
 
-/// The caller is compared with the process the host accepted, not with whoever sends the call: a
-/// child process (this test binary again, the allowed development app) that writes an app-only
-/// call on a connection this test process opened is refused, though it would pass the
-/// development fallback on its own (the kernel reports the last writer as the peer). The exec
-/// swap itself can't be staged here (it needs a signed app to `exec` into, at the right moment);
-/// this exercises the same check: another process on an accepted connection.
+/// The retired token method remains refused when a second process writes an accepted socket.
+/// This gate test does not establish app_auth's process-identity enforcement.
 #[cfg(debug_assertions)]
 #[test]
-fn a_call_written_by_another_process_on_an_accepted_connection_is_refused() {
+fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     use std::io::{BufRead, BufReader, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
 
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
-    let host = Host::start(app_config(&home)).unwrap();
-    wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
+    let host = home.start(app_config(&home)).unwrap();
+    wait_for_state(&host, A, OfficeStatus::Active, None);
 
     let stream = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
     let _ = stream.set_read_timeout(Some(WAIT));
@@ -518,11 +516,11 @@ fn a_call_written_by_another_process_on_an_accepted_connection_is_refused() {
     host.shutdown();
 }
 
-/// Set for the child of `a_call_written_by_another_process_on_an_accepted_connection_is_refused`.
+/// Set for the child of `retired_calls_stay_refused_when_another_process_writes_the_connection`.
 const WRITE_ON_FD3: &str = "ORG_HOST_TEST_WRITE_ON_FD3";
 
 /// Not a test on its own: in the child process of
-/// `a_call_written_by_another_process_on_an_accepted_connection_is_refused`, writes the request
+/// `retired_calls_stay_refused_when_another_process_writes_the_connection`, writes the request
 /// line it's given on fd 3 (the parent's connection), then lingers so the host sees it alive.
 #[cfg(debug_assertions)]
 #[test]
@@ -541,18 +539,17 @@ fn write_on_fd3_when_asked() {
     thread::sleep(Duration::from_secs(1));
 }
 
-/// After an app-only call the client sends nothing until its answer (the client rule): an extra
-/// line, or even one byte, that arrived right after the call gets it refused. Each is sent in
-/// the same write as the call, so it's there when the host checks.
+/// Retired token calls remain refused with any buffered suffix. Actual app_auth timing
+/// enforcement is tested separately and needs session wire coverage again in2b.3.
 #[cfg(debug_assertions)]
 #[test]
-fn an_app_only_call_with_anything_right_after_it_is_refused() {
+fn retired_calls_stay_refused_with_a_buffered_suffix() {
     use std::io::{BufRead, BufReader, Write};
 
-    let home = TestHome::new();
+    let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
-    let host = Host::start(app_config(&home)).unwrap();
-    wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
+    let host = home.start(app_config(&home)).unwrap();
+    wait_for_state(&host, A, OfficeStatus::Active, None);
     let call = format!(
         "{{\"id\":2,\"method\":\"office.app_token\",\"params\":{{\"office_id\":\"{A}\"}}}}\n"
     );
@@ -582,7 +579,7 @@ fn an_app_only_call_with_anything_right_after_it_is_refused() {
             }
         }
     }
-    // The same call alone, after hello's answer, is accepted.
-    assert!(app_token(host.socket_path(), A).is_ok());
+    // The native fixture still reaches the token backend; no wire call was authorized.
+    assert!(app_token(&host, A).is_ok());
     host.shutdown();
 }

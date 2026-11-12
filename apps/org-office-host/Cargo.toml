@@ -1,6 +1,6 @@
 [package]
 name = "org-office-host"
-description = "The host: the per-user login service that supervises one org-office-server per office, creates organizations and tells clients where offices are."
+description = "The host: the per-user login service that supervises one org-server per office, creates organizations and tells clients where offices are."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,12 +23,29 @@ required-features = ["test-support"]
 test = false
 doc = false
 
+[[bin]]
+name = "fixture-office-host"
+path = "testing/fixture_host.rs"
+required-features = ["test-support"]
+test = false
+doc = false
+
+[[test]]
+name = "shutdown_signals"
+# Exercise block-before-threads in a real single-threaded process, before libtest starts.
+harness = false
+
 [dependencies]
+org-host-control = { path = "../../crates/org-host-control" }
+org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+rusqlite.workspace = true
+caseless = "=0.2.2"
+unicode-normalization = "=0.1.26"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
@@ -41,3 +58,4 @@ core-foundation.workspace = true
 # Turns on `test-support` for test builds only, so `CARGO_BIN_EXE_fake-office-server` exists.
 org-office-host = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }

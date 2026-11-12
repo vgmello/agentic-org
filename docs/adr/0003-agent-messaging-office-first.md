@@ -1,8 +1,27 @@
 # ADR-0003 · Agent messaging: office-first, high-volume storage, directory, presence, triage, and cross-office routing
 
+**Standalone-v1 amendment (2026-11-09):**
+[ADR-0005](0005-standalone-server-v1.md) replaces the desktop application's human
+authorization and packaging. References below to app-only human actions now mean
+an authenticated, authorized owner/person through HQ's HTTP boundary; no browser
+receives an `app_token`. Employee/session bindings, per-call permissions and
+office-first messaging still apply. An office certificate is not owner authority.
+
+The desktop-owned bridge token/start lifetime in §6.6 must become an explicitly
+authorized service-managed credential/start contract if bridges ship; it cannot
+depend on a Tauri window. Native deep links become normal HQ URLs. No desktop
+application/data migration is required. However, the team's live Phase A spool
+coordination state is retained under the cutover contract below; it must not be
+dropped when switching transports. Fresh organizations need no import. Retained
+person-started spool behavior remains separate from office-managed authentication.
+The first standalone local protocol advances to API_VERSION 2 under ADR-0001;
+historical statements that additive chat additions keep version 1 apply to that
+version only, not breaking removals or changed authority in the standalone pivot. See the
+[removal inventory](../design/standalone-server-removal-inventory.md).
+
 Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
 Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md) (decision 4: the office server is the agents' message hub), [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) (SQLCipher, `org.db` + `office.db`, one batching writer with `fullfsync`), [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Office-first: tasks and messages"), and [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) (who agents may interact with).
-Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended 2026-11-08: chat, proposed)** and stays proposed until ada approves it.
+Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended 2026-11-08: chat, proposed)** and stays proposed until ada approves it. **Proposed owner-requested amendment 2026-11-09:** §6.8 extends channel discovery/membership, undirected questions, agent DM opening and wake semantics (CHAT-19..23); it takes precedence over §6.5/§6.7 only for the explicit changes it names.
 Supersedes the `v1-old` file-spool relay (`org-relay` + `~/.agency/spool`) and the pre-offices ADR-0003 draft.
 
 ---
@@ -12,7 +31,7 @@ Supersedes the `v1-old` file-spool relay (`org-relay` + `~/.agency/spool`) and t
 - Agents run across multiple CLIs (Claude Code, Antigravity, Codex) and coordinate continuously using `org-agent`.
 - Under the approved **offices model** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)):
   - An organization has **offices**; the first is **HQ** (authoritative organization structure in `org.db`) and the rest are **satellites** (local or remote) holding a full copy of `org.db`.
-  - **One office = one `org-office-server` process**, supervised by `org-office-host` (the single macOS login service). Each office owns `<office_home>/offices/<office_id>/{office.json, org.db, office.db, workspace/}` and listens on `<office_home>/run/<handle>.sock` (mode `0600`).
+  - **One office = one `org-server` process**, supervised by `org-office-host` (the single macOS login service). Each office owns `<office_home>/offices/<office_id>/{office.json, org.db, office.db, workspace/}` and listens on `<office_home>/run/<handle>.sock` (mode `0600`).
   - **Agent messages are office-first work data:** an agent runs on its office's machine and talks only to its own office. Same-office messages commit and wake waiting recipients locally in milliseconds, even if HQ is unreachable. Cross-office messages commit locally first, stream to HQ over the office's persistent connection, and are forwarded by HQ to the recipient's office (`office → HQ → office`).
   - **Recipient rules** ([`teams-and-org-chart.md`](../design/teams-and-org-chart.md)): an agent may message or `ask` another **agent** of the organization, a **person** added to the organization, or the **owner** (`owner: true`). Anyone else is rejected with `unknown_recipient`.
   - **Directory, Presence, Humans, and Triage:** Agents need to discover who is in the organization and what they are doing (`org-agent who`, `org-agent status`), communicate seamlessly with humans through the Agentic Org desktop app, and triage incoming messages without being interrupted during focused work except for urgent requests (`--priority high|urgent`, `msg defer`, `msg done`, `msg notify`).
@@ -143,12 +162,13 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
    - Index: `UNIQUE INDEX idx_msg_state_origin ON msg_state(owner_office_id, origin_incarnation, origin_seq) WHERE origin_seq > 0`.
 
 6. **`member_status` (agent self-reported status lines in `office.db`, owned by `org-office` runtime)**
-   - Stores each local agent's short status line set via `org-agent status "<text>"` so it survives local `org-office-server` restarts without polluting `org.db`'s permanent event log:
+   - Stores each local agent's short status line set via `org-agent status "<text>"` so it survives local `org-server` restarts without polluting `org.db`'s permanent event log:
      - `member_id TEXT PRIMARY KEY`
-     - `status_text TEXT NOT NULL` ($\le 140$ chars / $256$ UTF-8 bytes, no control characters)
+     - `status_text TEXT` (nullable; $\le 140$ chars / $256$ UTF-8 bytes, no control characters)
      - `current_task_id TEXT` (optional, populated when working on a task)
      - `updated_at TEXT NOT NULL`
-     - `expires_at TEXT NOT NULL` (defaults to `updated_at + 8 hours`)
+     - `expires_at TEXT` (nullable; defaults to `updated_at + 8 hours`)
+   - Schema v6 requires `CHECK((status_text IS NULL) = (expires_at IS NULL))` and `CHECK(status_text IS NOT NULL OR current_task_id IS NOT NULL)`. Clearing or lapsing a line preserves its task; clearing both removes the row.
 
 7. **Integration with the Per-Origin Work Stream (`crates/org-sync`, owned by `ac-software-engineer-river`)**
    - Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (lines 74–79, 210–213), each office numbers every work change it originates from one monotonic counter `origin_seq` in the **same transaction** as the change.
@@ -186,33 +206,41 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 
 #### 2.1 How `org-agent` Finds Its Office and Authenticates (`office.json`, `<handle>.sock`, `app_token`, and Call Authorization)
 
+**Standalone precedence:** managed launches use the injected instance/office/session
+binding and exact authenticated private socket from the trusted launch contract.
+Person-started calls require explicit instance/office selection or a saved immutable
+context under [the cutover contract](#live-phase-a-coordination-cutover-and-person-started-context).
+The single-home paths and sole-office auto-discovery in historical steps 1-3 below
+are pre-pivot behavior, not a standalone fallback. Browser authority is the gateway's
+scoped session contract, never an exported desktop app token.
+
 1. Each office on a Mac owns `<office_home>/offices/<office_id>/office.json` and, while running, listens on `<office_home>/run/<handle>.sock` (`org_proto::location::office_socket_path`).
 2. When an agent runs in an office, `ORG_OFFICE=<office_id>` and `ORG_AGENT=<member_id_or_handle>` identify its office and member identity. (amended 2026-11-08: agent sessions rev 3, ada: a handle, not a display name; see §2.6.)
 3. `org-agent` resolves its target `office_id` deterministically (never guessing from which `.sock` files happen to be open in `run/`):
    - If `--office <id>` or `$ORG_OFFICE` is set, it uses that `office_id`.
-   - Otherwise, it scans `<office_home>/offices/*/office.json` (read through `org-office-launch`) and ignores any folder without an `office.json`: that is an unfinished create, which the host never starts and discards with `org-office-server --discard <id>` ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)). If **exactly one** office on this Mac has an `office.json`, it uses that `office_id`; if zero or multiple do, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
+   - Otherwise, it scans `<office_home>/offices/*/office.json` (read through `org-office-launch`) and ignores any folder without an `office.json`: that is an unfinished create, which the host never starts and discards with `org-server --discard <id>` ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)). If **exactly one** office on this Mac has an `office.json`, it uses that `office_id`; if zero or multiple do, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
    - (amended 2026-11-08: agent sessions rev 3.1, ada) `--discard` and the "discarded" control line (here and in §2.1.4) are defined in the offices design as amended on `ada/docs-followups-2`, with [`office-host-boundary.md`](../design/office-host-boundary.md). (amended 2026-11-08: agent sessions rev 3.3, ada) That branch is merged into `v1` (7eca67f), and the agent-sessions branch has merged `v1`, so these references resolve.
 4. **Authentication, Accepted Risks, and Call-by-Call Authorization (`H1a`, `H1b`, `M-A`, `M-B`):**
-   - **Human / App Capability (`app_token` in the host's memory + `SecCode` peer check, never on disk):**
+   - **Human / App Capability (`app_token` in the host's memory + `SecCode` peer check, never on disk):** (Superseded 2026-11-10 by X-02 D6, §4.4 and §7, an approved draft not yet in this repo; see the launch v3 note in office-host-boundary.md §3: the app token, its launch-pipe delivery and app binding are retired (under launch v3 the keys move to the verified rendezvous too); human authority is a per-request `principal` with a host-issued grant.)
      - (amended 2026-11-08: ephemeral app_token, ada)
      - Because agents run under the same macOS user account as the owner ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)), a mode-`0600` token file on disk could be read by an agent to forge human replies.
      - Therefore, the per-office **`app_token`** (256-bit random secret) is **ephemeral in phase 1**. `org-office-host` makes a fresh random token for each office every time the host starts and keeps it **only in memory**. It is never written to disk or to the Keychain, so a failed create leaves nothing behind.
      - A host restart rotates every token. The office servers die with the host ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)), and the desktop app fetches the token again when it reconnects.
      - How satellites (phase 2+) handle it is decided then.
-     - **How `org-office-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-office-server`, it passes the office's `app_token` over the **launch pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)) — never via `argv`, environment variables, or disk files, and never inherited by any child process. The pipe is long-lived and two-way: stdin carries host → server lines (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed", "discarded"), and the server exits when stdin closes. The host sends the token on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it. (amended 2026-11-08: key custody) Now it does: the host creates and holds every office's key and sends it on the first line of every create, start and discard, by the same path as the token; the server never stores a key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md), [`office-host-boundary.md`](../design/office-host-boundary.md)).
-     - **Peer code-signature check on `host.sock` (`R3`):** When the desktop app requests an office's `app_token` from `org-office-host` over `host.sock` (`office.app_token { office_id }`), `org-office-host` verifies the connecting peer's kernel `audit_token_t` (`LOCAL_PEERTOKEN`) via `SecCodeCopyGuestWithAttributes` + `SecCodeCheckValidityWithErrors` against the designated requirement `identifier "com.ellosoft.agentic-org" and anchor apple generic and certificate leaf[subject.OU] = "<TEAM_ID>"` (the app's bundle identifier; it must match tauri.conf.json) before returning the token.
+     - **How `org-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-server`, it passes the office's `app_token` over the **launch pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)) — never via `argv`, environment variables, or disk files, and never inherited by any child process. The pipe is long-lived and two-way: stdin carries host → server lines (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed", "discarded"), and the server exits when stdin closes. The host sends the token on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it. (amended 2026-11-08: key custody) Now it does: the host creates and holds every office's key and sends it on the first line of every create, start and discard, by the same path as the token; the server never stores a key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md), [`office-host-boundary.md`](../design/office-host-boundary.md)).
+     - **Peer code-signature check on `host.sock` (`R3`):** When the desktop app requests an office's `app_token` from `org-office-host` over `host.sock` (`office.app_token { office_id }`), `org-office-host` verifies the connecting peer's kernel `audit_token_t` (`LOCAL_PEERTOKEN`) via `SecCodeCopyGuestWithAttributes` + `SecCodeCheckValidityWithErrors` against the designated requirement `identifier "com.ellosoft.agentic-org" and anchor apple generic and certificate leaf[subject.OU] = "<TEAM_ID>"` (the app's bundle identifier; it must match tauri.conf.json) before returning the token. (Amended 2026-11-10 by X-02 D6 and §6.2: `office.app_token` is retired, but the `SecCode` peer check stays, repurposed to require the signed `agentic-org` peer for admin, account (except `account.verify`) and recovery ops on `host.sock` (X-02 §6.2), on macOS; on Linux it's the same-UID residual of X-02 §2. Every other `host.sock` op except `hello`, the read-only instance status (`status`, `doctor`), `account.verify` and `account.reset_password` (no session, but never open: on macOS the signed `agentic-org` peer plus OS user presence; on Linux a root peer through `sudo`, the only op `host.sock` admits uid 0 for, never the same-UID residual; X-02 §6.2) needs an `account.verify` session, and only the session ops X-02 §6.2 lists are served; anything else is refused. The CLI's own signing identifier (not yet chosen) replaces the app's `com.ellosoft.agentic-org` below; the host compiles it in when B2-03 repurposes `app_auth.rs` (X-02 §7).)
        - (amended 2026-11-08: host review M1) **The pinned requirement.** The app's designated requirement is `identifier "com.ellosoft.agentic-org" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "<team id>"`: only a Developer ID Application signature of that team passes, not a development or distribution certificate of the same team. On the same code object, the host also reads its signing information (`SecCodeCopySigningInformation`) and requires the hardened runtime (`kSecCodeSignatureRuntime`), and refuses an app with `com.apple.security.get-task-allow`, `com.apple.security.cs.allow-dyld-environment-variables` or `com.apple.security.cs.disable-library-validation`. Any error fails closed (`not_authorized`). Why: the token lets the holder act as the owner, so the host hands it only to code no other process can attach to, inject a library into, or steer with `DYLD_*` variables. (amended 2026-11-08: host review L7) `SecCodeCheckValidity` checks the app's dynamic validity, not its bundle's sealed resources, so the app must not load code or behaviour-steering content from unsealed resources (Tauri embeds its frontend assets in the binary). The owner has no Developer ID yet, so a release build can't get an `app_token` until the app is signed with one (and the team id is configured); development uses the debug-only fallback (an unsigned development app at a build-time path, every use logged). (amended 2026-11-08: key custody) **Release prerequisite** (ada): verify the host's `keychain-access-groups` entitlement on the first signed build. If it needs a provisioning profile, the host ships as a helper app bundle (`Contents/Library/LoginItems/…`). The legacy-ACL fallback is used only if the Data Protection keychain proves impossible, and then it goes back to ada first. **The stdio rule:** first thing in the app's main, before any output or threads, it fstats fds 0-2 and dup2s `/dev/null` over any that is a socket, and it never reads or writes an fd it didn't open; it sends no app-only call before `hello`'s answer, and nothing else on that connection until the call's answer arrives (the host can't see whether the app read `hello`'s answer or how it handles its stdio; it checks what it can see: the call was sent after the connection was accepted, nothing follows it, and the caller's audit token is the accept-time one, when it decides and again after the decision; see [`office-host-boundary.md`](../design/office-host-boundary.md)).
-     - Binding as a `Person` or `owner` (`msg.bind { agent: "owner" | "<person_id>", app_token }`), or calling app-only methods, requires a valid `app_token`. Any connection without `app_token` attempting to bind as a `Person` or `owner` is rejected with `ErrorCode::NotAuthorized` ("human binding requires app token"). (amended 2026-11-08: agent sessions rev 3, ada) This was `InvalidRequest`. It's now `not_authorized`, like a missing session token, so every missing credential on `msg.bind` gets the same code.
+     - Binding as a `Person` or `owner` (`msg.bind { agent: "owner" | "<person_id>", app_token }`), or calling app-only methods, requires a valid `app_token`. Any connection without `app_token` attempting to bind as a `Person` or `owner` is rejected with `ErrorCode::NotAuthorized` ("human binding requires app token"). (amended 2026-11-08: agent sessions rev 3, ada) This was `InvalidRequest`. It's now `not_authorized`, like a missing session token, so every missing credential on `msg.bind` gets the same code. (Superseded 2026-11-10 by X-02 D6 and §4.4: `app_token` is retired; see the amendment above the authorization table.)
      - **Residual risk (v1):** An unsandboxed local process that can drive the macOS GUI (Accessibility) or attach to an unsigned dev build of the app could still act through the UI; OS-level sandboxing of agent child processes is deferred to v2.
-     - (amended 2026-11-08: key custody) **Closed: a self-launched server.** A same-user process could stop the host and run the signed `org-office-server` itself with its own app token, and a Keychain item owned by the server would have trusted it, so it would serve the office with a token the attacker knows. Key custody closes this: the host holds every office's key and sends it only to the servers it starts, so a server started by anyone else gets no key and can't open `org.db`. (amended 2026-11-08: whole-branch review H1) The host also verifies each server's code signature before it hands over a key: a release host spawns every server suspended, checks the suspended child by its audit token against `identifier "com.ellosoft.agentic-org.org-office-server"` signed with the team's Developer ID and hardened (the same checks as the app's), resumes only a child that passes (one that fails is killed before it ran a single instruction, unless another process resumed it: see the residual risk, so it can't hand stdin to a helper and `exec` the genuine server), and checks the token is unchanged right before the first line. Without that check, a same-user process could run the signed host from a copy, a symlink or a hard link, next to its own `org-office-server`, and receive every key; the check closes that, except for the residual risk below. **Signing identifiers** (ada): the bundle signs `Contents/MacOS/org-office-server` as `com.ellosoft.agentic-org.org-office-server` and `Contents/MacOS/org-office-host` as `com.ellosoft.agentic-org.org-office-host`, with the team's Developer ID and the hardened runtime; a release host gives an office's key only to a server signed so. **Residual risk (open):** a suspended child is resumed by any `SIGCONT`, from any same-user process. An attacker that resumes the child before the host takes its token (stopping or starving the host, e.g. a copy of the host it launched itself, makes that easy) can let its image fork a helper that keeps stdin and turn itself into the genuine server (`posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_START_SUSPENDED`), and then the check sees the genuine server and the helper reads the key. No check of the child can tell this from a clean spawn, so this attack isn't closed yet: closing it needs the key handed only to an authenticated reader (e.g. over a per-spawn socket whose peer audit token must equal the admitted one), a change to the launch contract and the server.
+     - (amended 2026-11-08: key custody) **Closed: a self-launched server.** A same-user process could stop the host and run the signed `org-server` itself with its own app token, and a Keychain item owned by the server would have trusted it, so it would serve the office with a token the attacker knows. Key custody closes this: the host holds every office's key and sends it only to the servers it starts, so a server started by anyone else gets no key and can't open `org.db`. (amended 2026-11-08: whole-branch review H1) The host also verifies each server's code signature before it hands over a key: a release host spawns every server suspended, checks the suspended child by its audit token against `identifier "com.ellosoft.agentic-org.org-server"` signed with the team's Developer ID and hardened (the same checks as the app's), resumes only a child that passes (one that fails is killed before it ran a single instruction, unless another process resumed it: see the residual risk, so it can't hand stdin to a helper and `exec` the genuine server), and checks the token is unchanged right before the first line. Without that check, a same-user process could run the signed host from a copy, a symlink or a hard link, next to its own `org-server`, and receive every key; the check closes that, except for the residual risk below. **Signing identifiers** (ada): the bundle signs `Contents/MacOS/org-server` as `com.ellosoft.agentic-org.org-server` and `Contents/MacOS/org-office-host` as `com.ellosoft.agentic-org.org-office-host`, with the team's Developer ID and the hardened runtime; a release host gives an office's key only to a server signed so. **Residual risk (open):** a suspended child is resumed by any `SIGCONT`, from any same-user process. An attacker that resumes the child before the host takes its token (stopping or starving the host, e.g. a copy of the host it launched itself, makes that easy) can let its image fork a helper that keeps stdin and turn itself into the genuine server (`posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_START_SUSPENDED`), and then the check sees the genuine server and the helper reads the key. No check of the child can tell this from a clean spawn, so this attack isn't closed yet: closing it needs the key handed only to an authenticated reader (e.g. over a per-spawn socket whose peer audit token must equal the admitted one), a change to the launch contract and the server.
    - **Agent Identity (Accepted Risk Until Office Runner Spawns Agents, `M-A`):**
-     - **Accepted risk for v1:** Until the office runner spawns every agent session directly, agents are launched by `bin/agent` or developer terminals outside `org-office-server`. Therefore, any local process on the office machine can bind as any **`MemberKind::Agent`** via `--as` / `ORG_AGENT` (never as a `Person` or `owner`). Once the office runner spawns agents directly, `org-office-server` will issue a per-session capability token (`ORG_SESSION_TOKEN`) in the spawned child's environment and require it on `msg.bind` for agent identities.
+     - **Accepted risk for v1:** Until the office runner spawns every agent session directly, agents are launched by `bin/agent` or developer terminals outside `org-server`. Therefore, any local process on the office machine can bind as any **`MemberKind::Agent`** via `--as` / `ORG_AGENT` (never as a `Person` or `owner`). Once the office runner spawns agents directly, `org-server` will issue a per-session capability token (`ORG_SESSION_TOKEN`) in the spawned child's environment and require it on `msg.bind` for agent identities.
      - (amended 2026-11-08: agent sessions, ada) **The token is now issued** ([`agent-sessions.md`](../design/agent-sessions.md)). The office runner spawns office-run agents, meaning agents with a `run_mode`:
        - Every run gets a fresh random `ORG_SESSION_TOKEN` (amended 2026-11-08: agent sessions rev 3, ada) (rev 2 said every start and resume). A run is one process's life, so every spawn (start, resume or take-over) gets a fresh token, and the token dies when the process exits. The office holds it only in memory and puts it only in the child's environment, next to `ORG_OFFICE=<office_id>` and `ORG_AGENT`. It's never in argv or a settings file, and never logged. The office redacts the live session tokens and `app_token`s it knows from every event it stores or streams.
        - `msg.bind` as an office-run agent requires that agent's live session token (`msg.bind { agent, session_token }`). A missing or invalid one is refused with `not_authorized`. `org-agent` reads the token from `ORG_SESSION_TOKEN`.
        - (amended 2026-11-08: agent sessions rev 3.1, ada) **It fails closed.** A token is required for any agent with a `run_mode`, `Unknown` included. Binding as an offboarded agent, an agent whose status this office can't read (`Unknown`), or a member that isn't found is refused with `not_authorized`, and so is a bind when the lookup itself fails. An offboarded or removed agent's connections are closed, and no token is ever issued for it again.
        - (amended 2026-11-08: agent sessions rev 3, ada) **Peer ancestry too.** The office reads the caller's audit token (`LOCAL_PEERTOKEN`: the pid plus its pid version, so a reused pid doesn't match) and walks its parent chain, which must include the session's recorded child pid. Otherwise the bind is refused with `not_authorized`.
-       - (amended 2026-11-08: agent sessions rev 3, ada) **Where it's checked.** `org-mailbox` owns a narrow port, `SessionAuth`, which verifies a token for a member or a one-off run, given the caller's audit token (§4.3). `org-office-server` implements it ((amended 2026-11-08: agent sessions rev 3.1, ada) through `org-office-sessions`). Tokens are compared in constant time. When a run's process exits, its token dies and the office closes every connection bound with that token.
+       - (amended 2026-11-08: agent sessions rev 3, ada) **Where it's checked.** `org-mailbox` owns a narrow port, `SessionAuth`, which verifies a token for a member or a one-off run, given the caller's audit token (§4.3). `org-server` implements it ((amended 2026-11-08: agent sessions rev 3.1, ada) through `org-office-sessions`). Tokens are compared in constant time. When a run's process exits, its token dies and the office closes every connection bound with that token.
        - (amended 2026-11-08: agent sessions rev 3.3, ada) **No way around the office.** An office-run Claude session gets an explicit tool allowlist, and Claude's own cross-session and messaging tools (`SendMessage`, `ListAgents`, `PushNotification`) and its trigger and scheduling tools (`RemoteTrigger`, `Cron*`, `ScheduleWakeup`) are disallowed by name. They run in the unsandboxed CLI, so the sandbox's socket allowlist can't hold them, and they could reach other Claude sessions on the Mac (the user's own included) without the session token or a one-off's recipient rule. Office-run agents message only through `org-agent` and the office ([`agent-sessions.md`](../design/agent-sessions.md), decision 6).
        - (amended 2026-11-08: agent sessions rev 3, ada) **One-offs** have no Member. A one-off run binds with its run's token and no `agent` (`msg.bind { session_token }`), with the same peer-ancestry check. See [`agent-sessions.md`](../design/agent-sessions.md), "One-offs".
          - Its address is a **run address**, `run:<office id>/<run id>`, a reserved form that's never a member id or handle. It goes in `from_member_id` / `to_member_id` (§1.1) like a member id, with the display name "<role> (one-off R-n)".
@@ -233,6 +261,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
      - (amended 2026-11-08: chat, proposed) **In a channel or group DM** the check is readability of the parent's conversation, not sender or recipient (§6.4): `reply_to` (and `msg.reply`) is allowed when the caller is a member of the parent's conversation, and the reply goes into the parent's thread (§6.3). A caller that is not a member gets `NotInConversation`; an unknown id is `NotFound`. A bridge-bound caller can reply only inside its chosen channels.
      - Furthermore, an agent-bound connection can read **only messages where `from_member_id == bound_member_id` or `to_member_id == bound_member_id`** (never earlier or third-party messages in a thread between other members).
    - **Call-by-Call Authorization and Row Visibility Table (`M-B`):**
+     - (amended 2026-11-10: X-02 D6 and §4.4) **`app-bound` is retired in `org-proto` v2.** X-02 retires the app token and app binding (`office.app_token`, `msg.bind`'s `app_token`, which a permanent sentinel refuses, X-02 §4.3). So every `app-bound` authority in the table below, `msg.bind`'s `Person`/`owner` path included, is replaced by X-02 §4.4's authorization on host-made channels: a per-request human `principal` carrying a host-issued grant (in v1.0, the owner), and `not_authorized` for any operation §4.4 doesn't list. §4.4 doesn't yet list `session.heartbeat`, `session.hand_back`, `session.resize` or the chat ops other than `read_as_owner`, `mute`, `mark_read` and `pin` (X-02 §12 Q9); until it does, those rows keep their human rule from the table below, carried by the `principal` (for `session.heartbeat`, `session.hand_back` and `session.resize`, the lease holder: v2 binds the lease to the account and session, X-02 §4.5). `bridge`-bound rows are deferred with `bridge.*` (X-02 §4.4). Agents keep their connection bindings (X-02 D3), so the `agent-bound` and run-bound rules below still apply. X-02 is an approved draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3".
 
 | Wire Call | Who May Call It | Row / Target Authorization Rule |
 | :--- | :--- | :--- |
@@ -275,15 +304,15 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 `crates/org-mailbox`'s `Mailbox` struct owns the in-memory `WaiterRegistry` and snooze deadline min-heap, keeping all waiter and wake-up logic inside `org-mailbox` so `crates/org-office/src/store.rs` (`MessageStore`) remains a pure storage implementation that never calls back into `org-mailbox`:
 
 - **Boundary rule:** Every message delivery and state transition — local `send`/`ask`/`reply`, local `defer`/`done`/`read`, synced `WorkChange` application, `resolve_pending_references`, and offline spool ingest — is invoked through `Mailbox` methods. After `store.commit_message(...)` or `store.update_state_local(...)` returns `Ok(...)`, **`Mailbox` notifies `WaiterRegistry` in memory (`< 1 ms`)**.
-- **Snooze timer min-heap & startup rebuild (`L-a`):** `WaiterRegistry` maintains a `BTreeSet<(Instant, String, String)>` of active time-based `(snoozed_until, to_member_id, msg_id)` deadlines.
-  - On `org-office-server` startup, `Mailbox::new` initializes this heap from `store.list_active_snooze_deadlines()`, and updates it whenever `msg.defer` or `apply_synced_state` sets or clears a `snoozed_until` timestamp.
+- **Snooze timer min-heap & startup rebuild (`L-a`):** `Mailbox` maintains active `(snoozed_until, to_member_id, msg_id)` deadlines in a `BTreeSet<(i64, String, String)>`, keyed by wall-clock epoch milliseconds from its `Clock`. The stored deadlines are UTC strings, and a snooze is due when the wall clock passes it (as `check_notify` decides). An `Instant` taken at startup would drift from the wall clock across a sleep or clock change (`org-mailbox`'s `snoozes.rs`).
+  - On `org-server` startup, a triage-enabled mailbox is constructed with `Mailbox::with_triage`, which seeds its timers from `store.list_active_snooze_deadlines()`. Triage transitions update them whenever a `snoozed_until` timestamp is set or cleared; the same invariant applies to future sync integration.
   - When a `msg.wait` call blocks for `to_member_id`, its wait timeout is bounded by `MIN(request_timeout, next_snooze_deadline_for_member)`. When the snooze deadline arrives, `Mailbox` runs `store.check_notify(...)` to release the due snooze in `msg_unread` (`snoozed → unread`, `triage_gen += 1`) and returns the newly due message to the waiting `msg.wait` caller immediately.
 
 **Race-free "register before check" and "claim before commit" protocol (`M-C`):**
 1. **`msg.wait { timeout_ms, from?, urgent_only? }`:**
    - **Step 1 (Register):** Inserts an inbox waiter handle into `WaiterRegistry`.
    - **Step 2 (Check):** Releases any due time-based snoozes (`snoozed_until <= now_utc`) and queries `peek_next_unread` for the oldest unsnoozed unread message for `to_member_id` (matching `from` and `urgent_only` if given).
-     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`.
+     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`. (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids, the oldest first in commit order, so one check stays bounded however many requests expired; the Mailbox expires those and the next check reports the rest.
    - **Step 3 (Complete or block):** If a matching unread message is found (or if a concurrent `Mailbox` commit completed the waiter handle during Step 2), removes the waiter handle and returns that message immediately **without** marking it read. Otherwise, blocks on the waiter handle until woken by `Mailbox` or until `timeout_ms` elapses (returning `null`, which makes `org-agent msg wait` exit `2`).
 2. **Claim-before-commit on `msg.ask` replies (zero double-wake window, `M-C`):**
    - **Step 1 (Register ask waiter):** `Mailbox::ask` registers a reply waiter for `(ask.id, recipient_member_id)` in `WaiterRegistry` **before** calling `store.commit_message` (or `store.find_reply_for_ask` on an idempotent re-ask).
@@ -319,7 +348,7 @@ To prevent agents from being interrupted mid-task by routine messages while guar
    - **`--session <id>` deduplication storage and retention (`M-F`):**
      - When `--session <id>` is provided, `notify` reports only `(msg_id, triage_gen)` pairs not yet reported to `<id>`, and records them as reported. Without `--session`, `notify` is stateless.
      - **In Phase A (`org-spool`):** Stored inside `inbox/<agent>/triage.json` (under `.meta.lock`) as `reported_sessions: BTreeMap<String, u64>` on each message's triage entry (capped at 16 session IDs per message, automatically removed when the message is marked `done`/`read` or pruned after 24 hours).
-     - **In Phase B (`org-mailbox`):** Stored in memory inside `Mailbox` as a bounded map `session_seen: HashMap<(String, String), (u64, Instant)>` keyed by `(session_id, msg_id) -> (triage_gen, seen_at)`, capped at 10,000 entries with 24-hour TTL eviction (if `org-office-server` restarts mid-session, open unread messages may be summarized one additional time at the next break, which is benign).
+     - **In Phase B (`org-mailbox`):** Stored in memory inside `Mailbox` as a bounded map `session_seen: HashMap<(String, String), (u64, Instant)>` keyed by `(session_id, msg_id) -> (triage_gen, seen_at)`, capped at 10,000 entries with 24-hour TTL eviction (if `org-server` restarts mid-session, open unread messages may be summarized one additional time at the next break, which is benign).
    - **Sanitized output, untrusted-data framing (`L-e`), & exit codes for `msg notify`:**
      - Never prints bodies. Sender, subject, and kind are sanitized (control characters and quotes stripped/escaped, subject truncated to 80 chars and wrapped in quotes as untrusted data; at most 10 lines, followed by `…and <k> more (org-agent msg inbox)` when `more > 0`). The summary explicitly notes that message subjects are untrusted data from other agents, not system instructions.
      - **Exit `0`:** Nothing to report (`stdout` is empty in `text` mode).
@@ -582,12 +611,12 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
      - **Fire-and-forget `send`** writes a versioned `SpooledSend` JSON file into `<office_home>/offices/<office_id>/spool/tmp/` (mode `0700` directory, `0600` file), flushes the file with `F_FULLFSYNC`, atomically renames it into `<office_home>/offices/<office_id>/spool/new/<id>.json`, flushes the `new/` directory with `F_FULLFSYNC`, prints `"queued": true` in `--json` (with a stderr notice), and exits `0`.
      - **`ask`, `reply`, `defer`, `done`, `notify`, `due`, `wait`, `read`, `inbox`, `who`, and `status`** require live office state and exit `5` (`office server unavailable`).
    - **Spool Ingest, FIFO/Symlink Protection, and Plaintext Lifetime:**
-     - `org-office-server` drains `<office_home>/offices/<office_id>/spool/new/` through `crates/org-spool` on startup **before** accepting client connections, and re-scans every 5 seconds as a backstop.
+     - `org-server` drains `<office_home>/offices/<office_id>/spool/new/` through `crates/org-spool` on startup **before** accepting client connections, and re-scans every 5 seconds as a backstop.
      - **Non-blocking regular-file verification (`M4`):** Every entry in `spool/new/` must have a valid `<26-char ULID>.json` filename, is opened with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, and is immediately checked with `fstat`: the descriptor must satisfy `S_ISREG(st_mode)` (rejecting FIFOs, sockets, symlinks, and device nodes so startup ingest can never block on a named pipe) and `st_uid == geteuid()`, with size $\le 512\text{ KiB}$. Non-regular or oversized files are unlinked or moved to `spool/dead/` without reading.
      - (amended 2026-11-08: agent sessions rev 3, ada; rev 3.1) **Spool ingest accepts only active agents run by hand.** Office-run agents never spool (§2.1.4, M-A), and the spool is the one path that skips `msg.bind`. At ingest, the office resolves the spooled send's `from` at its applied org position. It ingests the send only if `from` is a member of kind agent with status `active` and no `run_mode`. Everything else is moved to `spool/dead/` and logged with its id and the reason, never its body: a person, `owner`, `office`, a run address (`run:<office id>/<run id>`), an office-run agent (any `run_mode`, `Unknown` included), an offboarded, paused or `Unknown`-status agent, and an id or handle that resolves to no member. So no process can forge a person's or the owner's message through the spool. Spooled sends from active hand-run agents are ingested as before (their accepted risk). The one-time `import-v1-old-spool` at cutover is a separate path, run by the owner. The check runs in `org-mailbox`'s ingest path through `MemberDirectory`, so `org-spool` still only reads files.
-     - **Time-bounded plaintext exception:** Spooled files exist on disk only while `org-office-server` is mid-restart and are ingested into SQLCipher-encrypted `office.db` and `unlink`ed immediately upon server startup (any corrupt file in `spool/dead/` is purged after 24 hours). Similarly, Phase A's `~/.agency/spool` directory (`0700`/`0600`) is a temporary pre-cutover spool that is imported into HQ's encrypted `office.db` at Phase B cutover and deleted after the 1-week rollback window.
-3. (amended 2026-11-09: cutover, ada) **The cutover is opt-in, and a send is refused until ingest exists.** While the office serves only `msg.bind`, `msg.send`, `msg.inbox`, `msg.read`, `msg.wait` and `who`, `org-agent` routes `send`, `inbox`, `read`, `wait` and `who` through an office only when one is named (`--office` or `ORG_OFFICE`). With none named it uses Phase A's `~/.agency/spool` exactly as before, even when the Mac has an office (item 3 of §2.1, finding the only `office.json`, takes effect once `reply`, `defer`, `done` and `notify` move to the office). Don't name the office on a working agent before then: those commands still use the local spool and can't see the office's messages. With an office named:
-   - If it doesn't answer, `send` exits `5` and sends nothing until `org-office-server` drains `<office_home>/offices/<office_id>/spool/new/` (item 2 above). Writing the `SpooledSend` file is built behind one switch in `org-agent`, turned on when that ingest lands, so no message is reported queued that nothing would deliver, and no plaintext body waits on disk without an ingest to remove it.
+     - **Time-bounded plaintext exception:** Spooled files exist on disk only while `org-server` is mid-restart and are ingested into SQLCipher-encrypted `office.db` and `unlink`ed immediately upon server startup (any corrupt file in `spool/dead/` is purged after 24 hours). Similarly, Phase A's `~/.agency/spool` directory (`0700`/`0600`) is a temporary pre-cutover spool that is imported into HQ's encrypted `office.db` at Phase B cutover and retained read-only for at least one week and until cutover verification plus owner acknowledgement. Never delete live Phase A coordination state automatically merely because that window elapsed; cleanup is explicit under the cutover contract below.
+3. (amended 2026-11-09: cutover, ada) **Historical interim Phase B behavior; standalone selection above supersedes sole-office discovery. The cutover is opt-in, and a send is refused until ingest exists.** While the office serves only `msg.bind`, `msg.send`, `msg.inbox`, `msg.read`, `msg.wait` and `who`, `org-agent` routes `send`, `inbox`, `read`, `wait` and `who` through an office only when one is named (`--office` or `ORG_OFFICE`). With none named it uses Phase A's `~/.agency/spool` exactly as before, even when the Mac has an office (item 3 of §2.1, finding the only `office.json`, takes effect once `reply`, `defer`, `done` and `notify` move to the office). Don't name the office on a working agent before then: those commands still use the local spool and can't see the office's messages. With an office named:
+   - If it doesn't answer, `send` exits `5` and sends nothing until `org-server` drains `<office_home>/offices/<office_id>/spool/new/` (item 2 above). Writing the `SpooledSend` file is built behind one switch in `org-agent`, turned on when that ingest lands, so no message is reported queued that nothing would deliver, and no plaintext body waits on disk without an ingest to remove it.
    - If it doesn't answer, `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool (exit `0`), instead of exiting `5`, for the cutover only.
    - An agent the office runs (`ORG_SESSION_TOKEN` set) never uses the local spool: every `org-agent` command that would open it exits `5`.
 
@@ -597,14 +626,14 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
 
 #### 4.1 `org-proto` Additions (`crates/org-proto`, owned by `ada`)
 
-`API_VERSION` remains `1` (all additions are additive). Because each `org-office-server` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
+The historical additive baseline used `API_VERSION = 1`; first standalone uses version 2 under ADR-0001. Additions remain additive within each version; breaking removals are not licensed under version 1. Because each `org-server` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
 
 - **Directory & Presence Calls (handled by `org-office` runtime):**
   - `who { member?: String, team?: String, kind?: MemberKind } → { members: Vec<DirectoryCard> }`
     - Returns directory cards (`id`, `name`, `handle` (amended 2026-11-08: agent sessions rev 3, ada), `kind`, `owner`, `role_title`, `teams`, `reports_to`, `office`, `presence`, `last_seen_at`, `status`, `status_expires_at`, `current_task_id`).
   - `status.set { text?: String, ttl_ms?: u64 } → { status: Option<String>, expires_at: Option<String> }` (`text: None` clears the caller's status line).
 - **Agent & Shared Messaging Calls (handled by `org-mailbox`):**
-  - `msg.bind { agent?: String, app_token?: String, session_token?: String } → { member_id?: String, run_id?: String, office_id: String }`
+  - `msg.bind { agent?: String, app_token?: String, session_token?: String } → { member_id?: String, run_id?: String, office_id: String }` (v2: `app_token` is a retired sentinel, X-02 §4.3)
     - Resolves `agent` (member ID, handle, or `"owner"`; `"office"` is rejected; (amended 2026-11-08: agent sessions rev 3.2, ada) in §2.6's order, an exact id before a handle, and never a display name) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
     - (amended 2026-11-08: agent sessions rev 3, ada) `session_token` is required when binding as an office-run agent, with the peer-ancestry check. With no `agent`, it binds a one-off run (`run_id` in the result). Every missing or invalid credential is `not_authorized`. (amended 2026-11-08: agent sessions rev 3.1, ada) Binding as an offboarded or `Unknown`-status agent, or when the lookup fails, is `not_authorized` too.
   - `msg.send { id: String, to: String, kind: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64 } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
@@ -657,7 +686,7 @@ Per `AGENTS.md` (amended 2026-11-08: agent sessions rev 3, ada) (Remy, `ac-softw
 apps/org-agent (Remy) ──┬──▶ crates/org-client (server-dev) ──┐
                         └──▶ crates/org-spool  (Remy) ────────├──▶ crates/org-proto (ada)
                                                               │
-apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
+apps/org-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
                                             │                          │
                                             ▼                          │
                                        crates/org-mailbox (Remy) ──────┘
@@ -673,7 +702,7 @@ apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
 | `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` ((amended 2026-11-08: store split, ada) and `TriageStore`, `SyncStore`, `ThreadStore`) inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
 
 **Dependency Inversion Traits (`MemberDirectory`, `MessageStore` and `SessionAuth` in `crates/org-mailbox`):**
-`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements ((amended 2026-11-08: store split, ada) the message store is now four traits, `MessageStore`, `TriageStore`, `SyncStore` and `ThreadStore`, all implemented by `store.rs`), and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-office-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-office-server` wires in):
+`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements ((amended 2026-11-08: store split, ada) the message store is now four traits, `MessageStore`, `TriageStore`, `SyncStore` and `ThreadStore`, all implemented by `store.rs`), and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-server` wires in):
 
 ```rust
 /// Narrow read-only port into `org.db` (shared with tasks; full `who` and `status.set` live in `org-office`).
@@ -746,6 +775,8 @@ pub trait MessageStore {
     /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
     /// (amended 2026-11-08: store split, ada) Read-only: it changes and deletes nothing. The Mailbox
     /// decides what to do with `expired_ids` (through `TriageStore`).
+    /// (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids,
+    /// the oldest first (commit order); the next call reports the rest once the Mailbox has expired these.
     /// (amended 2026-11-08: store split, ada) It reads a fresh snapshot each call, never a long-lived read
     /// transaction, so a waiter woken by a commit sees that commit.
     fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;
@@ -810,7 +841,7 @@ Accounting for ADR-0002's `PRAGMA synchronous = FULL` + `PRAGMA fullfsync = ON` 
 
 ### 6. Conversations, channels, threads and bridges (amended 2026-11-08: chat, proposed)
 
-Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section extends the model additively: `API_VERSION` stays `1`, every new field is optional, and a client that does not know about conversations keeps working with direct messages. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..17).
+Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section originally extended version 1 additively with optional fields and direct-message compatibility. The first standalone release uses local API_VERSION 2 under ADR-0001; these chat additions remain additive within that negotiated version. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..23; §6.8 adds the rev 6 behavior).
 
 #### 6.1 Conversations and members (amended 2026-11-08: chat, proposed)
 
@@ -873,12 +904,94 @@ Additive only; the final shapes go through ada like any contract change.
 
 ---
 
-## Two-Phase Rollout & Migration (`Phase A` Spool CLI → `Phase B` Office Server)
+#### 6.8 Agent channel discovery and team questions (amended 2026-11-09, proposed)
 
-1. **Phase A (Immediate, Spool-Backed in `v1`):**
-   - Port the working `v1-old` spool and CLI into `crates/org-spool` and `apps/org-agent` (with `org-agent relay` + `org-relay` symlink), preserving the `~/.agency/spool` format so no running agent loses its inbox.
-   - Add `who`, `status`, `profile`, and message triage/snooze (`--priority`, `msg defer`, `msg done`, `msg notify`, `msg due`, `'U'`/`'N'` wake socket tags, `msg wait --urgent-only`, and snooze-aware `msg inbox`) backed by per-agent `flock`-protected metadata files (`inbox/<agent>/.meta.lock`, `triage.json`, `profile.json`, `status.json`) in `~/.agency/spool/inbox/<agent>/` so agents and all three runtime adapters (Claude Code, Codex, Antigravity) get the full workflow immediately.
-2. **Phase B (Office-First Server Cutover):**
-   - Implement `crates/org-mailbox` and the `store.rs` `MemberDirectory` + `MessageStore` tables in `org-office`, wire `who`, `status.set`, and `msg.*` in `org-proto` / `org-sync-proto` / `org-client` / `org-office-server`, and switch `apps/org-agent` from the spool transport to `org-client` (keeping `org-spool` as the offline fallback for `send`).
-   - Run `org-office-server import-v1-old-spool --office <hq_office_id> --from ~/.agency/spool` to import existing messages, profiles, statuses, and read/snooze states into HQ's `office.db` (deduplicated by ULID).
-   - Keep `~/.agency/spool` and `.v1-old` binaries for a 1-week rollback window, then delete the plaintext `~/.agency/spool` directory.
+Implements CHAT-19..23. This is a proposed extension of §6, not an implemented API.
+It explicitly amends the §2.1 authorization rows and §6.7's app-only `dm.open` rule
+for the narrowly scoped agent calls below. Bridge bindings gain no new rights.
+
+- **Discovery and membership:** add a paginated authorized channel directory with
+  purpose, team/project, membership and join policy. Manual channels default to
+  invitation-only; explicitly discoverable organization channels can allow self-join.
+  Only metadata of channels visible to the caller is returned; no restricted names,
+  counts or bodies leak through search. `channel.join`/`leave` on an agent binding
+  act only on that bound employee, never arbitrary `member_id` values. HQ authorizes
+  and commits membership changes with idempotent command ids. Archived channels are
+  read-only. Automatic channels remain derived from structure; self-join/leave is
+  refused for them with an explanation to change the underlying membership.
+- **Failure and revocation:** without HQ, membership edits remain pending/unconfirmed
+  and confer no rights. Check membership at every read/post, before wake delivery,
+  and when applying delayed cross-office messages against their org position. Leaving
+  closes unread/snoozed rows as in §6.4 and cancels queued triggers/subscriptions;
+  rejoin never revives expired asks or silently restores a subscription. Already
+  read history by id retains §6.4's existing exception; this is not a broader history
+  grant. Final join-history/backfill policy needs the messaging owner's review.
+- **Undirected question:** add channel kind `question`, an explicit extension to
+  §6.5's agent-kind allowlist (not an announcement, a feature request or a blocking
+  `request`). It needs a channel and body, not `addressed_to`. Replies use `reply`
+  under its root. It creates no per-member blocking Ask, default answer or approval;
+  several members can reply. Apply bounded organization rate/size limits, without
+  coding who should answer. Directed `request` and handoff semantics stay unchanged.
+- **DM continuation:** permit `dm.open` on an agent-bound connection only for a
+  two-party DM including the bound employee and a recipient allowed by §2.1. It is
+  idempotent for that pair; it grants no channel access and copies no channel body.
+  This does not permit arbitrary group-DM membership or cross-agent control. A
+  source-message link is useful only to readers already allowed to read that source.
+- **Fan-out and wakes:** store one logical channel message and separate per-member
+  read/triage state, with deduplicated routing to member offices. Ordinary channel
+  activity is backlog, not a wake for every member. Addressed mentions/Asks,
+  subscribed thread replies and explicit subscriptions may trigger a run, coalesced
+  by member/session and bounded by existing mode, pause, quota and wait limits.
+  Membership alone does not subscribe an employee to every message. An offline
+  office queues delivery; retries never multiply messages or model runs.
+- **Delegates:** no Member or channel subscription is created for an internal job.
+  Where communication is allowed, attribution is the owning employee with internal
+  job provenance; bindings must narrow rights to that job's grant. Checkpoint
+  helpers have no messaging grant. See [`employee-supervision.md`](../design/employee-supervision.md).
+- **Proposed CLI surface:** `org-agent channel list|show|join|leave`, channel-targeted
+  `msg send --channel <id> --kind question`, thread replies and `dm open <member>`.
+  These are help/contract requirements, not commands claimed available today.
+  Tool help documents syntax and access; an overridable process governs when to
+  ask a channel and whether to move to DM. Final wire fields, join-policy values,
+  and limits remain contract work for Remy/server-dev/ada. The standalone-v1
+  amendment removes desktop data migration, while the live Phase A coordination
+  cutover below preserves pending asks and read/triage history when that state exists.
+
+## Live Phase A coordination cutover and person-started context
+
+This is a conditional cutover of the team's **active messaging transport**, not
+an import of an undeployed desktop application or a new team/member importer.
+Fresh disposable organizations have no Phase A state and skip it.
+
+1. Before redirecting a live Phase A producer, explicitly select the source spool,
+   target immutable instance and HQ office IDs. Pause/fence old producers, record
+   the import watermark and use an idempotent owner-authorized import operation
+   run by the **live HQ worker**, which already holds the office lock and key: `agentic-org`
+   signs the owner in on `host.sock` (`account.verify`; the host checks the account), opens
+   a host-made local channel to that office and calls the import there with the owner's grant, naming the immutable instance and office IDs and the source
+   path (2026-11-10: replaces the stand-alone `org-server import-v1-old-spool` spelling,
+   which would have needed key custody and competed for the office lock; see X-02 §4.5, a draft not yet in this repo: office-host-boundary.md §3, "Pending: launch v3").
+2. Preserve message/reply ULIDs, ask correlations and original deadlines, unresolved
+   asks, read/unread, snooze/defer and done state. Expired asks remain expired and
+   import does not wake every historical recipient. Retries deduplicate by source
+   identity/watermark and item ID, with an inspectable result and failure report.
+3. Preserve legacy profiles/statuses as attributed history only. They do not create
+   members, bypass hire approval, select a managed home, or replace authoritative
+   role/run/pause state. Validate member mappings before redirecting producers.
+4. Verify counts, representative pending asks/replies and read/triage state through
+   the real target office, then explicitly switch the selected CLI context. Keep
+   the old spool read-only for at least the prior one-week rollback window and until
+   verification/owner acknowledgement. No automatic deletion of live state. A
+   fixture-based interrupted/repeated cutover is required before real team use.
+
+**Person-started CLI selection (proposed standalone contract):** use explicit
+`org-agent --instance <name> --office <id> ...` or a deliberately saved CLI context
+bound to those immutable IDs. With neither, fail with actionable context selection;
+do not discover an arbitrary office from cwd, HOME, or a different instance.
+Resolve credentials only for that chosen context and apply the existing caller
+rights. A stale, removed or inaccessible office is an error, not a fallback choice.
+Managed employees instead use their injected instance/office/session binding and
+reject conflicting manual selectors. They never fall back to spool on auth failure.
+Any retained hand-run offline spool mode is explicit and uses its existing restricted
+ingest rules. These commands are implementation requirements, not a claim that the
+installed Phase A CLI already accepts these flags.

@@ -2,7 +2,7 @@
 //! before its first line (which carries the key) is written.
 //!
 //! The threat: a same-user process runs the signed host from a copy, a symlink or a hard link,
-//! next to its own `org-office-server` (the host starts the server next to its own executable),
+//! next to its own `org-server` (the host starts the server next to its own executable),
 //! and receives every office's key on the first line. So a release host checks each server it
 //! spawns, before that server has run a single instruction: it starts it **suspended**
 //! (`spawn::spawn_suspended`; otherwise the image's first code could start a helper that
@@ -14,7 +14,7 @@
 //! (`code_signing::satisfies_hardened`):
 //!
 //! ```text
-//! identifier "com.ellosoft.agentic-org.org-office-server" and anchor apple generic
+//! identifier "com.ellosoft.agentic-org.org-server" and anchor apple generic
 //!   and certificate 1[field.1.2.840.113635.100.6.2.6] exists
 //!   and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
 //!   and certificate leaf[subject.OU] = "<ORG_APP_TEAM_ID>"
@@ -38,8 +38,8 @@
 
 /// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
 /// only to a server signed with it by the app's team (`server_check`). The bundle must sign
-/// `Contents/MacOS/org-office-server` with it.
-pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-office-server";
+/// `Contents/MacOS/org-server` with it.
+pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-server";
 
 use crate::peer::AuditToken;
 
@@ -237,7 +237,7 @@ mod tests {
     fn the_requirement_names_the_server_and_the_team() {
         assert_eq!(
             server_requirement(TEAM).unwrap(),
-            "identifier \"com.ellosoft.agentic-org.org-office-server\" and anchor apple generic \
+            "identifier \"com.ellosoft.agentic-org.org-server\" and anchor apple generic \
              and certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""

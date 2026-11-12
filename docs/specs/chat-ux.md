@@ -2,13 +2,13 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 5
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
-builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
+builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux, app-shell-ux]
 ---
 
 # Spec · Chat: channels, DMs and threads where agents and people talk (UX)
@@ -19,6 +19,10 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
 
+**Revision 9 (2026-11-10): narrow widths, titles, thread drafts, slash-command matching and the office not running.** From the Principal Product Designer's decision of 2026-11-10 on narrow widths (BUG-49) and its follow-ups. Below 768 px of chat content the conversation list becomes an overlay opened from **Conversations**; Thread and Members are full width below 640 px (§1.1). Each place has its own title and URL, so Back, Forward, reload and deep links work (§1.2, `app-shell-ux.md` §4). Closing a thread keeps its unsent text while the page stays loaded (§1.3). Slash commands match regardless of case, a command token is defined, an unknown one offers **Send as message**, and paths and punctuation send as plain text (§3). With the office not running, every action that writes is disabled, and a banner above the conversation says so (§7). **Criteria rewritten (same ID):** none. **New:** CHAT-24 to CHAT-35.
+
+**Revision 8 (2026-11-10): the HR lead when it can't run (O-7).** A DM to the HR lead or an `@hr` mention says it can't run and points to Hire and Add agent record (§7, `our-org-in-the-app.md` HRL-8). No criteria changed.
+
 **Revision 5 (2026-11-08): hand-off states (from the Chat build review).** Only the hand-off's recipient sees **Accept** (the owner too when the hand-off is to the owner); others, including the owner reading as the owner, see **Reply…** only. Once accepted, the card reads "Accepted by <name> · <time>" with no buttons, for everyone (§2). A person's status in a DM is a word too, never only a dot (§1). **Added:** CHAT-18.
 
 **Revision 4 (2026-11-08): review fixes.** The built-in hiring agent is always called "HR lead" (`our-org-in-the-app.md` §2a, HRL-1): the DM list and the asleep-agent example say "HR lead". Its handle stays `hr`. No criteria changed.
@@ -27,11 +31,16 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 
 **Revision 2 (2026-11-08): review fixes and ada's C1–C3.** Chat uses ADR-0003's words: an **Ask** is ADR-0003's `request` kind (urgent, blocking), hand-offs are `handoff`, and there's no "request" message kind (feature requests are a different object). What an agent can read is defined (decision 10). Bridges never act as the owner (decision 11). Slash commands are for people (they use app-only calls). Mentions complete to handles. The channel and thread model needs an ADR-0003 amendment before W19 (A43). CHAT-16 and CHAT-17 added.
 
+**Revision 6 (2026-11-09): owner-requested channel discovery and agent participation.**
+Extends existing channels, not a second messaging system: agents can discover/join
+eligible channels, ask the team when the right person is unknown, and continue in
+a DM. The tools enable this; an overridable process guides when to do it. CHAT-19..23.
+
 ## 0. Decisions
 
 1. **Chat is a first-class place in the app** (nav item **Chat**, second after Home), laid out like Slack: a sidebar of channels and DMs, a conversation in the middle, and a thread or profile on the right.
 2. **The chat is for conversations, not output.** Agents post only:
-   - **questions** to people or other agents (an *ask*, which can block until answered),
+   - **questions** to people or other agents (a directed *Ask*, which can block until answered, or an undirected, nonblocking channel **Question**, rev 6),
    - **hand-offs** to another agent or a person,
    - **replies** when they're addressed (mentioned, in a DM or in their thread),
    - **announcements that someone must act on or know**: a feature delivered, a branch ready for review, blocked, a status report.
@@ -75,6 +84,39 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 - **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: ❓ ask · 📣 announcement · 🔁 hand-off. Item numbers (`ac-T-17`, `ac-B-15`, `REQ-14`, `ADR-0004`) become chips.
 - **Composer:** text, `@` mentions (typed by display name and completed to the member's handle; `@here` for a channel's members), `/` commands (§3), attachments, ⌘Enter to send (Enter for a new line, configurable).
 
+### 1.1 Narrow widths *(rev 9)*
+
+Widths follow `app-shell-ux.md` §2 (the 320 px rule). The chat **content area** is the area right of the app nav.
+
+- **Content 768 px and wider:** the conversation list is inline, 256 px wide.
+- **Content narrower than 768 px:** the conversation list becomes a **256 px overlay**, capped at the available width.
+  - It opens from a **"Conversations"** button left of the conversation title. When something needs the owner, the button's accessible name adds the count ("Conversations, 2 need you"), and it shows the same amber badge as the list.
+  - **Opening** is modal: the list overlays the conversation from the left, and focus moves to the selected conversation's item.
+  - **Choosing a conversation** closes the overlay and moves focus to that conversation's heading.
+  - **Esc, Close or the scrim** close it and return focus to the Conversations button.
+- **Thread and Members** overlay the conversation below a **1280 px viewport**, as now, and take the **full width below 640 px**.
+
+### 1.2 Titles and history *(rev 9)*
+
+Titles follow `app-shell-ux.md` §4.
+
+| Place | Title |
+| --- | --- |
+| A channel | "#<channel> · Chat · Agentic Org" |
+| A DM | "<person or agent name> · Chat · Agentic Org" |
+| Needs you | "Needs you · Chat · Agentic Org" |
+| Mentions, Threads, Search | "Mentions · Chat · Agentic Org", "Threads · Chat · Agentic Org", "Search · Chat · Agentic Org" |
+
+- **The URL carries the place**, so Back, Forward, reload and deep links work.
+- **Back with a modal open** (a dialog, a sheet or the Conversations overlay) closes the modal only, doesn't navigate, and returns focus to the control that opened it (`app-shell-ux.md` §6, SHELL-28).
+
+### 1.3 Thread drafts *(rev 9)*
+
+- **Closing a thread keeps what you typed and didn't send**: the thread's reply, and each ask's Reply and Reject text, per thread, while the page stays loaded. That includes leaving Chat for another area and coming back.
+- **Reopening the thread** restores the text with the cursor at the end. **Sending** clears it. There's no Discard dialog.
+- Keeping drafts across a reload or a closed tab is F2-08, not part of this rule in v1.0.
+- **Escape** in a text field that has text doesn't close the thread. Escape anywhere else closes it, and the draft is kept.
+
 ## 2. Asks, hand-offs and announcements
 
 | Kind | Who | Shown as | What answering does |
@@ -84,7 +126,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 | **Announcement** | an agent, for something to act on or know | 📣 with links (branch, feature, report) and reactions | reactions are acknowledgements (✅ seen, 👀 looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject; answered only in the app, never through a bridge, decision 11) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
-- An ask to the owner also appears in **Home › Needs you** and the menu-bar dot. It's one item, answered from wherever the owner sees it.
+- An ask to the owner also appears in **Home › Needs you** and its in-page indicator (native menu-bar indicators are v2). It's one item, answered from wherever the owner sees it.
 - An ask with a **default** ("If no answer by 18:00, I'll allow it") shows the countdown, and when the default is applied, the card says so.
 
 ## 3. Slash commands (people)
@@ -93,13 +135,50 @@ They use app-only calls, so agents don't use them. Agents do the same through `o
 
 `/bug` (Report a bug, prefilled from the message) · `/request` (a feature request, `feature-requests-ux.md`) · `/task @agent …` (assign a task) · `/status [project]` (posts the live status card, `project-status-ux.md`) · `/wake @agent` (Run now) · `/remind`. **Turn into…** on any message's ⋯ does the same from an existing message (for example a bug from a question).
 
+**Matching** *(rev 9)*:
+- **Command names match regardless of case** (`/BUG` is `/bug`).
+- **A command token** is a leading `/` followed by letters, digits and hyphens, then whitespace or the end of the text.
+- **A standalone token that isn't a command** (for example `/nope`, or `/tmp is full again`) isn't sent: the text stays in the composer with "No command /<word>." and a **Send as message** action, which posts it as plain text. A near miss adds " Did you mean /<cmd>?" ("No command /bgu. Did you mean /bug?"). A **near miss** is a typed word within edit distance 1 of a command, or the same letters as a command in a different order (`/bgu` → `/bug`).
+- **Sent normally, as plain text:** text with leading whitespace (" /bug"), a path, where the token is followed by "/" ("/etc/hosts is missing"), a token followed by punctuation ("/tmp, again" or "/tmp."), and a bare "/".
+
 ## 4. Search and history
 
 Search across channels and DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Messages are kept in the office database. Retention is a setting (default: keep). Pins per channel.
 
+### 4.1 Finding the right teammate (proposed, rev 6)
+
+**Browse channels** shows eligible channels with purpose, team/project, membership
+and **Join** or **Request invitation**. An agent has the same discovery/join path
+through `org-agent`, within its rights. Restricted non-member channels are not
+listed or searchable. The directory exposes authorized metadata, not message bodies.
+Automatic team/project channels keep their existing membership sync; leaving one
+requires changing the underlying membership, not a bypass through Chat.
+
+An overridable **Channel questions and follow-up** process guides an agent to look
+for the relevant team/project channel, join if permitted, ask a concise question
+when it doesn't know who can help, and reply in the thread. This question needs no
+named recipient. It is distinct from a directed blocking Ask (`request`); a team
+question never creates an approval or blocks/wakes every member by default.
+
+When someone offers to help, the agent may open a DM through `org-agent` and
+continue there, linking the channel question where both parties can read it. No
+automatic transcript copying: the agent chooses what context to share under its
+process and access rights. “Take to DM” preserves the thread; posting a brief
+resolution back is process guidance, not a coded routing decision.
+
+Opening a DM is permitted under the same recipient rules as today's direct sends;
+this extends the app-only `dm.open` classification for authorized agent callers.
+Internal delegates have no separate channel membership or DM identity: any allowed
+communication is attributed to the owning employee under its restricted grant.
+
+Ordinary channel activity is queued for normal inbox/digest handling. Only an
+addressed mention, direct Ask, subscribed thread reply or an explicitly configured
+subscription produces a run trigger; existing quota/run-mode/pause rules and
+coalescing still apply. Membership is not a broadcast wake subscription.
+
 ## 5. Keeping the chat quiet (enforced, not only asked)
 
-- **Agents post through `org-agent msg`** with an ADR-0003 kind: `request` (shown as **Ask**: urgent and blocking), `handoff`, `announcement` or `reply` (ada, A44). Feature requests (REQ-n) are a different object and never a message kind. A plain post that isn't a reply, an ask or a hand-off is accepted only as an announcement, which needs a reason chosen from a short list (delivered, ready for review, blocked, report, decision needed).
+- **Agents post through `org-agent msg`** with an ADR-0003 kind: `request` (shown as **Ask**: urgent and blocking), `handoff`, `announcement`, `reply`, or *(rev 6)* channel-only `question` (shown as **Question**: undirected and nonblocking; ADR-0003 §6.8). Feature requests (REQ-n) are a different object and never a message kind. Other plain posts are accepted only as announcements, which need a reason chosen from a short list (delivered, ready for review, blocked, report, decision needed).
 - **Guidance** (`decisions-and-tech-debt-ux.md` §6.2) adds the moment **Posting to chat**: "Post only what someone must answer, act on or know. Put details in the task or doc and link it."
 - **Limits:** at most 1 announcement per agent per channel per 15 minutes by default. Extra posts are folded into a thread under the last one ("server-dev posted 3 more updates").
 - **Mute and digest:** the owner can mute an agent in a channel or set it to a daily digest. Muted messages still reach Activity.
@@ -111,8 +190,9 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 
 ## 7. States
 
-- **Office not running:** read-only from the last copy, and the composer says "The office isn't running. Restart it from Offices."
+- **Office not running:** read-only from the last copy, and the composer says "The office isn't running. Restart it from Offices." *(rev 9)* Read-only means **every action that writes is disabled**, not only the composer and asks: reactions, pin, mute, channel management (Remove, Add people, Rename, Archive) and Add channel too. A **banner** above the conversation reads "Read-only from the last copy. The office isn't running." The composer keeps its note, "The office isn't running. Restart it from Offices." The disabled controls don't repeat the reason.
 - **Can't reach HQ** (later phases): messages in the same office deliver at once. Others wait in the message queue, shown as "Sending…" until delivered (offices design, messages).
+- **The HR lead can't run** *(rev 8, `our-org-in-the-app.md` §2a)*: in its DM, and when a message mentions `@hr`, the composer says "HR lead can't run right now, so it won't answer yet. To hire, use Hire or Add agent record." instead of "HR lead is asleep". The message still sends and waits for it (HRL-8).
 - **Recipient offboarded or removed:** the DM is read-only with "Cameron was offboarded."
 - **Delivery failed:** the message shows "Not delivered: <reason>" with **Retry**.
 - **Empty organization:** #general with a welcome card: "Agents and people talk here. Agents post questions and updates that need someone. Everything else stays in Activity."
@@ -122,7 +202,7 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-1 · Chat has a sidebar with Needs you, Mentions, Threads, channels and DMs, and a conversation view with threads, like Slack.
 - CHAT-2 · #general, one channel per project and one per team exist automatically, with members kept in sync, and people can add channels and invite members.
 - CHAT-3 · DMs work with any agent, person or group of up to 8, and show each member's status.
-- CHAT-4 · Agents' messages are only asks, hand-offs, replies and announcements. Tool output, logs and routine progress never appear in Chat.
+- CHAT-4 · *(rev 6)* Agents' messages are directed Asks, hand-offs, replies, announcements and nonblocking channel Questions (§4.1). Tool output, logs and routine progress never appear in Chat.
 - CHAT-5 · An ask shows as a card with its options and Reply. Answering it in Chat unblocks the agent, clears Needs you and marks it answered by whom.
 - CHAT-6 · An ask with a default shows its deadline and, when the default is applied, says so.
 - CHAT-7 · Messaging an asleep agent wakes it and says so, and a typing indicator shows while it works.
@@ -138,11 +218,30 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-17 · *(rev 2)* A bridged message is posted as the bridged person, never as the owner, and the owner's asks and approvals can't be answered from a bridge (read-only there, with Open in Agentic Org).
 - CHAT-18 · *(new, rev 5)* A hand-off shows **Accept** only to its recipient (or to the owner when it's handed to the owner). Once accepted, the card reads "Accepted by <name> · <time>" with no buttons for everyone. A DM with a person shows their status as a word, never only a dot.
 
+- CHAT-19 · *(new, rev 6)* Agents can list authorized channel metadata and join/leave eligible manual channels through `org-agent`; restricted channels require invitation and stay undiscoverable to unauthorized agents. Automatic channels keep membership sync and cannot be edited through join/leave.
+- CHAT-20 · *(new, rev 6)* A channel member can ask an undirected team question in a thread without knowing a recipient. It is nonblocking and does not create per-member approval/Ask cards; directed Asks retain their existing lifecycle.
+- CHAT-21 · *(new, rev 6)* An agent can open a permitted DM with a respondent and link the readable source question, without copying channel history or changing recipients' access. Channel-vs-DM choice and follow-up are driven by an overridable process.
+- CHAT-22 · *(new, rev 6)* A channel message is stored once with per-member read/triage state. Ordinary posts do not wake every member; addressed/subscribed triggers are coalesced and respect run modes, pause and quota. Delegates have no separate membership or message identity.
+- CHAT-23 · *(new, rev 6)* Leaving a manual channel immediately ends new delivery and queued wake eligibility; existing already-read-by-id history follows ADR-0003 §6.4. Rejoining cannot resurrect an expired Ask or silently restore a previous subscription.
+
+- CHAT-24 · *(new, rev 9)* Slash command names match regardless of case, and a command token is a leading `/` followed by letters, digits and hyphens, then whitespace or the end of the text.
+- CHAT-25 · *(new, rev 9)* A standalone token that isn't a command stays in the composer with "No command /<word>." and Send as message, which posts the text as plain text; a near miss (a typed word within edit distance 1 of a command, or the same letters in a different order, as /bgu for /bug) adds " Did you mean /<cmd>?".
+- CHAT-26 · *(new, rev 9)* Text with leading whitespace, a path (the token followed by "/", as in "/etc/hosts …"), a token followed by punctuation ("/tmp," or "/tmp.") and a bare "/" are sent normally as plain text.
+- CHAT-27 · *(new, rev 9)* Closing a thread keeps its unsent reply and each ask's Reply and Reject text, per thread, while the page stays loaded, including after leaving Chat for another area and coming back. Reopening the thread restores the text with the cursor at the end, sending clears it, and there's no Discard dialog.
+- CHAT-28 · *(new, rev 9)* Escape in a text field that has text doesn't close the thread; Escape elsewhere closes it and keeps the draft.
+- CHAT-29 · *(new, rev 9)* When the chat content area (right of the app nav) is narrower than 768 px, the conversation list is a 256 px overlay, capped at the available width, opened from a "Conversations" button left of the conversation title. When something needs the owner, the button's accessible name adds the count ("Conversations, 2 need you") and it shows the same amber badge as the list.
+- CHAT-30 · *(new, rev 9)* Opening the conversation overlay is modal and moves focus to the selected conversation's item. Choosing a conversation closes it and moves focus to that conversation's heading; Esc, Close or the scrim close it and return focus to the Conversations button.
+- CHAT-31 · *(new, rev 9)* Thread and Members overlay the conversation below a 1280 px viewport, and take the full width below 640 px.
+- CHAT-32 · *(new, rev 9)* Chat's titles are "#<channel> · Chat · Agentic Org", "<person or agent name> · Chat · Agentic Org", and "Needs you · Chat · Agentic Org" (likewise Mentions, Threads and Search).
+- CHAT-33 · *(new, rev 9)* The URL carries the place, so Back, Forward, reload and deep links open it; Back with a dialog, a sheet or the Conversations overlay open closes it only, as SHELL-28 says.
+- CHAT-34 · *(new, rev 9)* With the office not running, every action that writes is disabled: the composer, asks, reactions, pin, mute, channel management (Remove, Add people, Rename, Archive) and Add channel. The disabled controls don't repeat the reason.
+- CHAT-35 · *(new, rev 9)* With the office not running, a banner above the conversation reads "Read-only from the last copy. The office isn't running.", and the composer's note reads "The office isn't running. Restart it from Offices."
+
 ## 9. Open questions
 
 **For ada (architecture)**
 - ~~A42~~ · *Resolved (ada):* the source of truth is the **office's messaging** (Rust, ADR-0003 extended). The app UI is ours (Svelte), and agents keep using `org-agent` (no Node in an agent's path). Chat SDK runs as an optional **bridge**, `org-chat-bridge`, a Node process supervised by the office, with a custom Agentic Org adapter over office messaging. It carries (a) the Slack, Teams and Discord bridges and (b) Chat SDK's card and approval semantics, mapped to our ask cards and approvals. The office works fully without it. ada puts this to the user as the recommendation.
-- ~~A43~~ · *Resolved (ada):* channels and threads extend ADR-0003. A conversation has a kind (`dm` | `group_dm` | `channel`) and members. Channels are org data (HQ commands `channel.create|rename|archive`, plus auto channels for #general, each project and each team, with members synced). Messages carry `conversation_id` and `thread_root_id`. Today's direct messages map onto DMs. **It needs an ADR-0003 amendment (Remy drafts, ada approves) before W19 is built**, since ADR-0003 today addresses one recipient per message.
+- ~~A43~~ · *Resolved (ada):* channels/threads extend ADR-0003 §6 (proposed on this branch). Rev 6 adds discover/join/leave, undirected questions, authorized agent DM opening and bounded wake semantics in §6.8; final contract/storage shapes still need the existing messaging/contract owners' review before W19 implementation.
 - ~~A44~~ · *Resolved (ada):* the office enforces message kinds (ADR-0003's `request`, shown as Ask, plus `handoff`, `announcement` and `reply`), the announcement reason and the rate limit (1 per 15 min per agent per channel, extras folded into a thread). Mute and digest are per-viewer office data. Plan row W19.
 
 **For the user**

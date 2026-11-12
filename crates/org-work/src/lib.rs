@@ -80,9 +80,6 @@ mod waiting;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 
-#[cfg(test)]
-mod tests;
-
 pub use call::{Caller, WorkCall};
 pub use cascades::reconcile_bugs;
 pub use engine::{
@@ -102,3 +99,14 @@ pub use service::{read_item, WorkService};
 pub use states::{is_task_status, is_terminal, starts_cycle, task_move_allowed};
 pub use time::{format_ms, parse_ms};
 pub use undo::UNDO_WINDOW_MS;
+
+/// Refuses an operation on another kind, using the work engine's kind error text.
+pub fn kind_refusal(
+    item: &StoredItem,
+    kind: org_proto::work::ItemKind,
+) -> Result<(), org_proto::ApiError> {
+    common::expect_kind(item, kind)
+}
+
+#[cfg(test)]
+mod tests;

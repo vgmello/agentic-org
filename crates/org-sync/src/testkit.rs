@@ -1,0 +1,1371 @@
+//! In-memory transactional adapter for conformance. No filesystem, network or real clock.
+use crate::{
+    error::{Refusal, StoreError, SyncError, MAX_STORE_RETRIES},
+    organization::*,
+};
+use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+};
+
+#[derive(Clone, Copy, Debug)]
+pub enum Fault {
+    Busy,
+    Locked,
+    CommitUnavailable,
+    DomainRefusal,
+    OrgApplyFatal(Refusal),
+    MessagePort(&'static str, usize),
+}
+#[derive(Clone, Debug)]
+struct Data {
+    checkpoint: OrgCheckpoint,
+    initial_snapshot_required: bool,
+    events: BTreeMap<(u64, u64), OrgEvent>,
+    applied: Vec<Arc<[u8]>>,
+    staging: BTreeMap<String, Vec<Arc<[u8]>>>,
+    supported_max: u32,
+    supported_codec_max: u32,
+    message_queue: crate::messages::Queue,
+    outgoing_messages: BTreeMap<String, crate::messages::Receipt>,
+    received_messages: BTreeMap<(OfficeId, String), crate::messages::Receipt>,
+    delivered_messages: Vec<Arc<[u8]>>,
+    expired_messages: BTreeMap<(OfficeId, String), crate::messages::Message>,
+}
+
+/// A committed copy and its independently local office state. Every attempt mutates a clone;
+/// commit failure discards the entire clone, including domain writes and cursor bookkeeping.
+pub struct MemoryOffice {
+    data: RefCell<Data>,
+    faults: RefCell<VecDeque<Fault>>,
+    attempts: RefCell<usize>,
+}
+impl MemoryOffice {
+    pub fn new(
+        org_id: OrgId,
+        local_office: OfficeId,
+        hq_office: OfficeId,
+        ca: Digest,
+        epoch: Epoch,
+    ) -> Self {
+        let message_queue = crate::messages::Queue::new(org_id.clone(), local_office.clone());
+        Self {
+            data: RefCell::new(Data {
+                checkpoint: OrgCheckpoint {
+                    org_id,
+                    local_office,
+                    hq_office,
+                    ca,
+                    position: Position { epoch, seq: 0 },
+                    digest: Digest::ZERO,
+                    highest_epoch: epoch,
+                    restore_pending: false,
+                    pending_restore_base: None,
+                    protocol_level: 1,
+                },
+                initial_snapshot_required: false,
+                events: BTreeMap::new(),
+                applied: Vec::new(),
+                staging: BTreeMap::new(),
+                supported_max: 1,
+                supported_codec_max: 1,
+                message_queue,
+                outgoing_messages: BTreeMap::new(),
+                received_messages: BTreeMap::new(),
+                delivered_messages: Vec::new(),
+                expired_messages: BTreeMap::new(),
+            }),
+            faults: RefCell::default(),
+            attempts: RefCell::new(0),
+        }
+    }
+    /// Reopen only the committed durable state; no injected faults or transient state survives.
+    pub fn restart(&self) -> Self {
+        Self {
+            data: RefCell::new(self.data.borrow().clone()),
+            faults: RefCell::default(),
+            attempts: RefCell::new(0),
+        }
+    }
+    pub fn checkpoint(&self) -> OrgCheckpoint {
+        self.data.borrow().checkpoint.clone()
+    }
+    pub fn applied(&self) -> Vec<Arc<[u8]>> {
+        self.data.borrow().applied.clone()
+    }
+    pub fn inject(&self, fault: Fault) {
+        self.faults.borrow_mut().push_back(fault);
+    }
+    pub fn attempts(&self) -> usize {
+        *self.attempts.borrow()
+    }
+    pub fn stage(&self, id: impl Into<String>, payloads: Vec<Arc<[u8]>>) {
+        self.data.borrow_mut().staging.insert(id.into(), payloads);
+    }
+    pub fn publish(&self, payload: &[u8]) -> Result<OrgEvent, SyncError> {
+        let payload: Arc<[u8]> = Arc::from(payload);
+        let codec = Codec::new("conformance", 1).unwrap();
+        match OrgStore::transact(
+            self,
+            Arc::new(move |tx| append_hq(tx, codec.clone(), payload.clone())),
+        )? {
+            OrgOutput::Published(event) => Ok(event),
+            _ => Err(Refusal::InvariantFailure.into()),
+        }
+    }
+}
+impl MemoryOffice {
+    fn atomic<T>(
+        &self,
+        mut attempt: impl FnMut(&mut Tx<'_>) -> Result<T, SyncError>,
+    ) -> Result<T, SyncError> {
+        for retry in 0..=MAX_STORE_RETRIES {
+            *self.attempts.borrow_mut() += 1;
+            let fault = self.faults.borrow_mut().pop_front();
+            let mut candidate = self.data.borrow().clone();
+            let output = match attempt(&mut Tx {
+                data: &mut candidate,
+                domain_refusal: matches!(fault, Some(Fault::DomainRefusal)),
+                message_failure: match fault {
+                    Some(Fault::MessagePort(name, skip)) => Some((name, skip)),
+                    _ => None,
+                },
+                org_apply_failure: match fault {
+                    Some(Fault::OrgApplyFatal(reason)) => Some(reason),
+                    _ => None,
+                },
+            }) {
+                Err(SyncError::Storage(error))
+                    if error.is_retryable() && retry < MAX_STORE_RETRIES =>
+                {
+                    continue
+                }
+                result => result?,
+            };
+            if matches!(fault, Some(Fault::Busy | Fault::Locked)) {
+                if retry < MAX_STORE_RETRIES {
+                    continue;
+                }
+                return Err(StoreError::busy_or_locked("injected private storage cause").into());
+            }
+            if matches!(fault, Some(Fault::CommitUnavailable)) {
+                return Err(StoreError::unavailable("injected private commit cause").into());
+            }
+            *self.data.borrow_mut() = candidate;
+            return Ok(output);
+        }
+        unreachable!("bounded retry loop returns on final attempt")
+    }
+}
+impl OrgStore for MemoryOffice {
+    fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
+        self.atomic(|tx| attempt(tx))
+    }
+}
+struct Tx<'a> {
+    data: &'a mut Data,
+    domain_refusal: bool,
+    org_apply_failure: Option<Refusal>,
+    message_failure: Option<(&'static str, usize)>,
+}
+impl OrgTxn for Tx<'_> {
+    fn checkpoint(&mut self) -> Result<OrgCheckpoint, StoreError> {
+        Ok(self.data.checkpoint.clone())
+    }
+    fn requires_initial_snapshot(&mut self) -> Result<bool, StoreError> {
+        Ok(self.data.initial_snapshot_required)
+    }
+    fn digest_at(&mut self, position: Position) -> Result<Option<Digest>, StoreError> {
+        Ok(self
+            .data
+            .events
+            .get(&(position.epoch.get(), position.seq))
+            .map(|e| e.digest))
+    }
+    fn supports_codec(&mut self, codec: &Codec) -> Result<bool, StoreError> {
+        Ok(codec.id() == "conformance" && codec.version() <= self.data.supported_codec_max)
+    }
+    fn supports_protocol(&mut self, level: u32) -> Result<bool, StoreError> {
+        Ok(level > 0 && level <= self.data.supported_max)
+    }
+    fn apply_event(&mut self, event: &OrgEvent) -> Result<(), SyncError> {
+        self.data.applied.push(event.payload.clone());
+        if &*event.payload == b"protocol:2" {
+            self.data.checkpoint.protocol_level = 2;
+        }
+        if let Some(reason) = self.org_apply_failure {
+            return Err(reason.into());
+        }
+        if self.domain_refusal {
+            return Err(Refusal::InvalidInput.into());
+        }
+        Ok(())
+    }
+    fn record_event(&mut self, event: &OrgEvent, next: &OrgCheckpoint) -> Result<(), StoreError> {
+        self.data.events.insert(
+            (event.position.epoch.get(), event.position.seq),
+            event.clone(),
+        );
+        // record_event owns the log/cursor, not native domain policy such as protocol level.
+        self.data.checkpoint.position = next.position;
+        self.data.checkpoint.digest = next.digest;
+        Ok(())
+    }
+    fn install_snapshot(
+        &mut self,
+        snapshot: &ValidatedSnapshot,
+        next: &OrgCheckpoint,
+    ) -> Result<(), SyncError> {
+        let data = self
+            .data
+            .staging
+            .get(&snapshot.staging_id)
+            .cloned()
+            .ok_or(Refusal::InvalidInput)?;
+        self.data.applied = data;
+        self.data.events.clear();
+        self.data.checkpoint = next.clone();
+        self.data.initial_snapshot_required = false;
+        if let Some(reason) = self.org_apply_failure {
+            return Err(reason.into());
+        }
+        Ok(())
+    }
+    fn set_authority(&mut self, next: &OrgCheckpoint) -> Result<(), StoreError> {
+        self.data.checkpoint = next.clone();
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct MemoryPeer(pub PeerIdentity);
+impl VerifiedPeer for MemoryPeer {
+    fn identity(&self) -> PeerIdentity {
+        self.0.clone()
+    }
+}
+
+#[cfg(test)]
+impl MemoryPeer {
+    fn at_epoch(peer: &dyn VerifiedPeer, authority: Epoch) -> Self {
+        Self(PeerIdentity {
+            authority,
+            ..peer.identity()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn pair() -> (MemoryOffice, MemoryOffice, MemoryPeer) {
+        let org = OrgId::new("ORG1").unwrap();
+        let hq = OfficeId::new("HQ1").unwrap();
+        let ca = Digest::from_bytes([1; 32]);
+        let epoch = Epoch::new(1).unwrap();
+        (
+            MemoryOffice::new(org.clone(), hq.clone(), hq.clone(), ca, epoch),
+            MemoryOffice::new(
+                org.clone(),
+                OfficeId::new("SAT1").unwrap(),
+                hq.clone(),
+                ca,
+                epoch,
+            ),
+            MemoryPeer(PeerIdentity {
+                authority: Epoch::new(1).unwrap(),
+                org_id: org,
+                office_id: hq,
+                role: PeerRole::Hq,
+            }),
+        )
+    }
+    #[test]
+    fn unsupported_codec_and_equal_position_snapshot_divergence_never_apply() {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        let future = OrgEvent::new(
+            one.org_id.clone(),
+            Position {
+                epoch: one.position.epoch,
+                seq: 2,
+            },
+            one.digest,
+            Codec::new("future", 1).unwrap(),
+            b"two".as_slice(),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply(&sat, &peer, future),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        sat.stage("conflicting", vec![Arc::from(b"different".as_slice())]);
+        let snapshot = ValidatedSnapshot {
+            org_id: one.org_id,
+            authority: one.position.epoch,
+            position: one.position,
+            digest: Digest::ZERO,
+            codec: one.codec,
+            protocol_level: 1,
+            staging_id: "conflicting".into(),
+        };
+        assert!(matches!(
+            install_snapshot(&sat, snapshot),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        assert_eq!(sat.applied(), hq.applied());
+        assert_eq!(sat.checkpoint().digest, one.digest);
+    }
+
+    #[test]
+    fn authoritative_apply_and_snapshot_preserve_batch_fatal_adapter_errors() {
+        let (hq, sat, peer) = pair();
+        let event = hq.publish(b"first").unwrap();
+        sat.stage("staged", hq.applied());
+        let checkpoint = sat.checkpoint();
+        let snapshot = ValidatedSnapshot {
+            org_id: event.org_id.clone(),
+            authority: event.position.epoch,
+            position: event.position,
+            digest: event.digest,
+            codec: event.codec.clone(),
+            staging_id: "staged".into(),
+            protocol_level: 1,
+        };
+        for reason in [Refusal::IntegrityFailure, Refusal::InvariantFailure] {
+            sat.inject(Fault::OrgApplyFatal(reason));
+            let event_error = apply(&sat, &peer, event.clone()).unwrap_err();
+            sat.inject(Fault::OrgApplyFatal(reason));
+            let snapshot_error = install_snapshot(&sat, snapshot.clone()).unwrap_err();
+            for error in [event_error, snapshot_error] {
+                assert!(error.aborts_batch());
+                assert!(matches!(error, SyncError::Refused(actual) if actual == reason));
+            }
+            assert_eq!(sat.checkpoint(), checkpoint);
+            assert!(sat.applied().is_empty());
+        }
+    }
+
+    #[test]
+    fn two_offices_reorder_repeat_and_recover_from_a_lost_ack_without_reapply() {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        let two = hq.publish(b"two").unwrap();
+        assert!(matches!(
+            apply(&sat, &peer, two.clone()).unwrap(),
+            OrgOutput::Gap { .. }
+        ));
+        assert!(sat.applied().is_empty());
+        sat.inject(Fault::CommitUnavailable);
+        assert!(matches!(
+            apply(&sat, &peer, one.clone()),
+            Err(SyncError::Storage(_))
+        ));
+        assert!(sat.applied().is_empty());
+        assert_eq!(sat.checkpoint().position.seq, 0);
+        assert!(matches!(
+            apply(&sat, &peer, one.clone()).unwrap(),
+            OrgOutput::Ack {
+                duplicate: false,
+                ..
+            }
+        ));
+        // Ignore the first ACK, simulating a disconnect after durable commit.
+        assert!(matches!(
+            apply(&sat, &peer, one).unwrap(),
+            OrgOutput::Ack {
+                duplicate: true,
+                ..
+            }
+        ));
+        apply(&sat, &peer, two).unwrap();
+        assert_eq!(sat.applied(), hq.applied());
+        assert_eq!(sat.checkpoint().digest, hq.checkpoint().digest);
+    }
+    #[test]
+    fn tampered_payload_wrong_peer_and_domain_refusal_never_advance_the_cursor() {
+        let (hq, sat, peer) = pair();
+        let event = hq.publish(b"one").unwrap();
+        let mut bad = event.clone();
+        bad.payload = Arc::from(b"changed".as_slice());
+        assert!(matches!(
+            apply(&sat, &peer, bad),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        let mut wrong = peer.clone();
+        wrong.0.role = PeerRole::Satellite;
+        assert!(matches!(
+            apply(&sat, &wrong, event.clone()),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        sat.inject(Fault::DomainRefusal);
+        let error = apply(&sat, &peer, event.clone()).unwrap_err();
+        assert!(matches!(error, SyncError::Refused(Refusal::Divergence)));
+        assert!(error.aborts_batch());
+        assert!(sat.applied().is_empty());
+        assert_eq!(sat.checkpoint().position.seq, 0);
+        apply(&sat, &peer, event).unwrap();
+        assert_eq!(sat.applied().len(), 1);
+    }
+    #[test]
+    fn busy_locked_retries_are_bounded_and_storage_causes_are_server_only() {
+        let (hq, sat, peer) = pair();
+        let event = hq.publish(b"one").unwrap();
+        for fault in [Fault::Busy, Fault::Locked, Fault::Busy] {
+            sat.inject(fault);
+        }
+        apply(&sat, &peer, event.clone()).unwrap();
+        assert_eq!(sat.attempts(), 4);
+        let (_, sat, _) = pair();
+        for _ in 0..4 {
+            sat.inject(Fault::Busy);
+        }
+        let error = apply(&sat, &peer, event).unwrap_err();
+        assert_eq!(error.to_string(), "storage unavailable");
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(sat.attempts(), 4);
+        assert!(sat.applied().is_empty());
+    }
+    struct Signature;
+    impl AuthorityVerifier for Signature {
+        fn verify(&self, record: &AuthorityRecord) -> Result<(), Refusal> {
+            if &*record.signature == b"valid-test-proof" {
+                Ok(())
+            } else {
+                Err(Refusal::NotAuthorized)
+            }
+        }
+    }
+    fn record(hq: &MemoryOffice, position: Position, digest: Digest) -> AuthorityRecord {
+        let meta = hq.checkpoint();
+        AuthorityRecord {
+            org_id: meta.org_id,
+            hq_office: meta.hq_office,
+            ca: meta.ca,
+            epoch: Epoch::new(2).unwrap(),
+            restored_position: position,
+            restored_digest: digest,
+            signature: Arc::from(b"valid-test-proof".as_slice()),
+        }
+    }
+    #[test]
+    fn fatal_authority_verification_refusals_are_preserved() {
+        struct FatalVerifier(Refusal);
+        impl AuthorityVerifier for FatalVerifier {
+            fn verify(&self, _: &AuthorityRecord) -> Result<(), Refusal> {
+                Err(self.0)
+            }
+        }
+        let (hq, sat, _) = pair();
+        let before = sat.checkpoint();
+        let authority = record(&hq, before.position, before.digest);
+        for reason in [
+            Refusal::IntegrityFailure,
+            Refusal::Divergence,
+            Refusal::InvariantFailure,
+        ] {
+            let error = accept_authority(&sat, authority.clone(), Arc::new(FatalVerifier(reason)))
+                .unwrap_err();
+            assert!(error.aborts_batch());
+            assert!(matches!(error, SyncError::Refused(actual) if actual == reason));
+            assert_eq!(sat.checkpoint(), before);
+        }
+    }
+    #[test]
+    fn epoch_fence_survives_a_reconstructed_office_and_an_ahead_peer_needs_snapshot() {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        let two = hq.publish(b"two").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        apply(&sat, &peer, two).unwrap();
+        let restored = record(&hq, one.position, one.digest);
+        assert_eq!(
+            accept_authority(&sat, restored.clone(), Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert!(sat.checkpoint().restore_pending);
+        assert_eq!(sat.checkpoint().highest_epoch.get(), 2);
+        let mut wrong_ca = restored.clone();
+        wrong_ca.epoch = Epoch::new(3).unwrap();
+        wrong_ca.ca = Digest::ZERO;
+        assert!(matches!(
+            accept_authority(&sat, wrong_ca, Arc::new(Signature)),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        let mut unsigned = restored.clone();
+        unsigned.epoch = Epoch::new(3).unwrap();
+        unsigned.signature = Arc::from([]);
+        assert!(accept_authority(&sat, unsigned, Arc::new(Signature)).is_err());
+        let restarted = MemoryOffice {
+            data: RefCell::new(sat.data.borrow().clone()),
+            faults: RefCell::default(),
+            attempts: RefCell::new(0),
+        };
+        let mut stale = restored;
+        stale.epoch = Epoch::new(1).unwrap();
+        stale.restored_position.seq = 0;
+        assert!(accept_authority(&restarted, stale, Arc::new(Signature)).is_err());
+        assert!(apply(&restarted, &peer, one).is_err());
+        restarted.stage("restored", vec![Arc::from(b"one".as_slice())]);
+        let snapshot = ValidatedSnapshot {
+            org_id: OrgId::new("ORG1").unwrap(),
+            authority: Epoch::new(2).unwrap(),
+            position: Position {
+                epoch: Epoch::new(2).unwrap(),
+                seq: 0,
+            },
+            digest: hq.data.borrow().events[&(1, 1)].digest,
+            codec: Codec::new("conformance", 1).unwrap(),
+            protocol_level: 1,
+            staging_id: "restored".into(),
+        };
+        let before = restarted.checkpoint();
+        let mut conflicting = snapshot.clone();
+        conflicting.digest = Digest::ZERO;
+        assert!(matches!(
+            install_snapshot(&restarted, conflicting),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        assert_eq!(restarted.checkpoint(), before);
+        install_snapshot(&restarted, snapshot).unwrap();
+        assert!(!restarted.checkpoint().restore_pending);
+        assert_eq!(restarted.applied().len(), 1);
+    }
+    #[test]
+    fn future_org_event_on_current_hq_session_cannot_observe_restore_fence() {
+        let (hq, sat, peer) = pair();
+        let meta = sat.checkpoint();
+        let future = OrgEvent::new(
+            meta.org_id.clone(),
+            Position {
+                epoch: Epoch::new(2).unwrap(),
+                seq: 1,
+            },
+            Digest::ZERO,
+            Codec::new("conformance", 1).unwrap(),
+            b"future".as_slice(),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply(&sat, &peer, future),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        let old = hq.publish(b"old").unwrap();
+        let signed = record(&hq, old.position, old.digest);
+        let current = MemoryPeer::at_epoch(&peer, signed.epoch);
+        accept_authority(&sat, signed, Arc::new(Signature)).unwrap();
+        let future = OrgEvent::new(
+            meta.org_id,
+            Position {
+                epoch: Epoch::new(3).unwrap(),
+                seq: 1,
+            },
+            Digest::ZERO,
+            Codec::new("conformance", 1).unwrap(),
+            b"future".as_slice(),
+        )
+        .unwrap();
+        assert!(matches!(
+            apply(&sat, &current, future),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert!(sat.applied().is_empty());
+    }
+    #[test]
+    fn repeated_signed_authority_must_match_the_retained_pending_base() {
+        let (hq, sat, _) = pair();
+        let one = hq.publish(b"one").unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        accept_authority(&sat, signed.clone(), Arc::new(Signature)).unwrap();
+        let before = sat.checkpoint();
+        let mut conflict = signed.clone();
+        conflict.restored_digest = Digest::ZERO;
+        assert!(matches!(
+            accept_authority(&sat, conflict, Arc::new(Signature)),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(
+            accept_authority(&sat, signed, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+    }
+    fn same_base_authority() -> (MemoryOffice, MemoryOffice, MemoryPeer, AuthorityRecord) {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"before restore").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        for office in [&hq, &sat] {
+            assert_eq!(
+                accept_authority(office, signed.clone(), Arc::new(Signature)).unwrap(),
+                OrgOutput::AuthorityAccepted {
+                    snapshot_required: false
+                }
+            );
+            let checkpoint = office.checkpoint();
+            assert_eq!(
+                checkpoint.position,
+                Position {
+                    epoch: signed.epoch,
+                    seq: 0
+                }
+            );
+            assert!(!checkpoint.restore_pending);
+            assert_eq!(checkpoint.pending_restore_base, None);
+        }
+        let peer = MemoryPeer::at_epoch(&peer, signed.epoch);
+        (hq, sat, peer, signed)
+    }
+    fn assert_repeat_unchanged(sat: &MemoryOffice, signed: AuthorityRecord) {
+        let before = sat.checkpoint();
+        let applied = sat.applied();
+        assert_eq!(
+            accept_authority(sat, signed, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: false
+            }
+        );
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(sat.applied(), applied);
+    }
+    fn assert_conflict_unchanged(sat: &MemoryOffice, mut signed: AuthorityRecord) {
+        let before = sat.checkpoint();
+        let applied = sat.applied();
+        signed.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(signed.restored_digest, before.digest);
+        let error = accept_authority(sat, signed, Arc::new(Signature)).unwrap_err();
+        assert!(error.aborts_batch());
+        assert!(matches!(error, SyncError::Refused(Refusal::Divergence)));
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(sat.applied(), applied);
+    }
+    fn install_epoch_base(sat: &MemoryOffice, signed: &AuthorityRecord, payload: Arc<[u8]>) {
+        sat.stage("epochbase", vec![payload]);
+        install_snapshot(
+            sat,
+            ValidatedSnapshot {
+                org_id: signed.org_id.clone(),
+                authority: signed.epoch,
+                position: Position {
+                    epoch: signed.epoch,
+                    seq: 0,
+                },
+                digest: signed.restored_digest,
+                codec: Codec::new("conformance", 1).unwrap(),
+                staging_id: "epochbase".into(),
+                protocol_level: 1,
+            },
+        )
+        .unwrap();
+        assert!(!sat.checkpoint().restore_pending);
+        assert!(!sat.data.borrow().initial_snapshot_required);
+        assert_eq!(sat.checkpoint().pending_restore_base, None);
+    }
+    #[test]
+    fn identical_authority_at_same_base_is_an_unchanged_noop() {
+        let (_, sat, _, signed) = same_base_authority();
+        assert_repeat_unchanged(&sat, signed);
+    }
+    #[test]
+    fn conflicting_authority_at_same_base_is_divergence() {
+        let (_, sat, _, signed) = same_base_authority();
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn repeated_authority_checks_the_base_after_a_restore_snapshot_at_zero() {
+        let (hq, sat, _) = pair();
+        let one = hq.publish(b"restored").unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        accept_authority(&sat, signed.clone(), Arc::new(Signature)).unwrap();
+        assert!(sat.checkpoint().pending_restore_base.is_some());
+        install_epoch_base(&sat, &signed, one.payload);
+        assert_repeat_unchanged(&sat, signed.clone());
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn repeated_authority_boundary_not_detected_after_advance() {
+        let (hq, sat, peer, signed) = same_base_authority();
+        for (index, payload) in [b"first".as_slice(), b"second".as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            apply(&sat, &peer, hq.publish(payload).unwrap()).unwrap();
+            assert_eq!(sat.checkpoint().position.seq, index as u64 + 1);
+            assert_repeat_unchanged(&sat, signed.clone());
+            let mut conflict = signed.clone();
+            conflict.restored_digest = Digest::from_bytes([9; 32]);
+            assert_ne!(conflict.restored_digest, sat.checkpoint().digest);
+            assert_repeat_unchanged(&sat, conflict);
+        }
+        apply(&sat, &peer, hq.publish(b"third").unwrap()).unwrap();
+        assert_eq!(sat.checkpoint().position.seq, 3);
+        assert_eq!(sat.applied(), hq.applied());
+    }
+    #[test]
+    fn conflicting_authority_at_base_still_requires_a_verified_signature_first() {
+        let (_, sat, _, mut signed) = same_base_authority();
+        let before = sat.checkpoint();
+        signed.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(signed.restored_digest, before.digest);
+        signed.signature = Arc::from(b"invalid-proof".as_slice());
+        assert!(matches!(
+            accept_authority(&sat, signed, Arc::new(Signature)),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert_eq!(sat.checkpoint(), before);
+    }
+    #[test]
+    fn repeated_authority_checks_consistency_after_initial_snapshot_at_zero() {
+        let (hq, sat, _) = pair();
+        let one = hq.publish(b"initial materialization").unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        {
+            let mut data = sat.data.borrow_mut();
+            data.initial_snapshot_required = true;
+            data.checkpoint.highest_epoch = signed.epoch;
+            data.checkpoint.position.epoch = signed.epoch;
+        }
+        assert_ne!(sat.checkpoint().digest, signed.restored_digest);
+        install_epoch_base(&sat, &signed, one.payload);
+        assert_repeat_unchanged(&sat, signed.clone());
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn local_restore_fence_does_not_compare_a_placeholder_at_the_epoch_base() {
+        let (hq, sat, _) = pair();
+        let initial = sat.checkpoint();
+        let signed = record(&hq, initial.position, Digest::from_bytes([9; 32]));
+        {
+            let mut data = sat.data.borrow_mut();
+            data.checkpoint.highest_epoch = signed.epoch;
+            data.checkpoint.position.epoch = signed.epoch;
+            data.checkpoint.restore_pending = true;
+        }
+        let before = sat.checkpoint();
+        assert_ne!(before.digest, signed.restored_digest);
+        assert_eq!(before.position.seq, 0);
+        assert_eq!(before.pending_restore_base, None);
+        assert_eq!(
+            accept_authority(&sat, signed, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert_eq!(sat.checkpoint(), before);
+        assert!(sat.applied().is_empty());
+    }
+    #[test]
+    fn stale_org_event_on_current_hq_session_cannot_observe_restore_fence() {
+        let (hq, sat, peer) = pair();
+        let old = hq.publish(b"old").unwrap();
+        let new = record(&hq, old.position, old.digest);
+        let current = MemoryPeer::at_epoch(&peer, new.epoch);
+        assert!(matches!(
+            accept_authority(&sat, new, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        ));
+        assert!(matches!(
+            apply(&sat, &current, old),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert!(sat.applied().is_empty());
+    }
+    #[test]
+    fn fresh_satellite_requires_initial_snapshot_before_ordering_deltas() {
+        let (hq, sat, peer) = pair();
+        sat.data.borrow_mut().initial_snapshot_required = true;
+        let one = hq.publish(b"one").unwrap();
+        let two = hq.publish(b"two").unwrap();
+        for event in [two.clone(), one.clone()] {
+            assert_eq!(
+                apply(&sat, &peer, event).unwrap(),
+                OrgOutput::SnapshotRequired
+            );
+        }
+        assert_eq!(sat.checkpoint().position.seq, 0);
+        assert!(sat.applied().is_empty());
+        sat.stage("initial", vec![one.payload.clone()]);
+        let snapshot = ValidatedSnapshot {
+            org_id: one.org_id.clone(),
+            authority: one.position.epoch,
+            position: one.position,
+            digest: one.digest,
+            codec: one.codec.clone(),
+            staging_id: "initial".into(),
+            protocol_level: 1,
+        };
+        sat.inject(Fault::CommitUnavailable);
+        assert!(install_snapshot(&sat, snapshot.clone()).is_err());
+        assert!(sat.data.borrow().initial_snapshot_required);
+        assert!(sat.applied().is_empty());
+        install_snapshot(&sat, snapshot).unwrap();
+        assert!(!sat.data.borrow().initial_snapshot_required);
+        assert!(matches!(
+            apply(&sat, &peer, two).unwrap(),
+            OrgOutput::Ack { .. }
+        ));
+        assert_eq!(sat.applied(), hq.applied());
+    }
+    #[test]
+    fn synthetic_bootstrap_base_does_not_satisfy_repeated_or_higher_authority() {
+        let (hq, fresh, _) = pair();
+        let initial = fresh.checkpoint();
+        let signed = record(&hq, initial.position, initial.digest);
+        fresh.data.borrow_mut().initial_snapshot_required = true;
+        assert_eq!(
+            accept_authority(&fresh, signed.clone(), Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert!(fresh.checkpoint().restore_pending);
+        assert_eq!(fresh.checkpoint().position, initial.position);
+        let (_, enrolled, _) = pair();
+        {
+            let mut data = enrolled.data.borrow_mut();
+            data.initial_snapshot_required = true;
+            data.checkpoint.highest_epoch = signed.epoch;
+            data.checkpoint.position.epoch = signed.epoch;
+        }
+        assert_eq!(
+            accept_authority(&enrolled, signed.clone(), Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert!(enrolled.data.borrow().initial_snapshot_required);
+        let before = enrolled.checkpoint();
+        let mut conflict = signed;
+        conflict.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(conflict.restored_digest, before.digest);
+        assert_eq!(
+            accept_authority(&enrolled, conflict, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert_eq!(enrolled.checkpoint(), before);
+    }
+    #[test]
+    fn local_restore_fence_requires_new_signed_authority_before_snapshot_install() {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        sat.data.borrow_mut().checkpoint.restore_pending = true;
+        sat.stage("premature", Vec::new());
+        let before = sat.checkpoint();
+        let snapshot = ValidatedSnapshot {
+            org_id: one.org_id.clone(),
+            authority: one.position.epoch,
+            position: Position {
+                epoch: one.position.epoch,
+                seq: 0,
+            },
+            digest: Digest::ZERO,
+            codec: one.codec,
+            protocol_level: 1,
+            staging_id: "premature".into(),
+        };
+        assert!(matches!(
+            install_snapshot(&sat, snapshot),
+            Err(SyncError::Refused(Refusal::RestorePending))
+        ));
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(sat.applied(), hq.applied());
+    }
+    #[test]
+    fn matching_restored_base_keeps_the_chain_across_epoch_change() {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        let authority = record(&hq, one.position, one.digest);
+        accept_authority(&hq, authority.clone(), Arc::new(Signature)).unwrap();
+        accept_authority(&sat, authority, Arc::new(Signature)).unwrap();
+        let next = hq.publish(b"after restore").unwrap();
+        assert_eq!(next.previous, one.digest);
+        assert_eq!(next.position.epoch.get(), 2);
+        assert_eq!(next.position.seq, 1);
+        assert!(matches!(
+            apply(&sat, &peer, next.clone()),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        let current = MemoryPeer::at_epoch(&peer, next.position.epoch);
+        apply(&sat, &current, next).unwrap();
+        assert_eq!(sat.applied(), hq.applied());
+    }
+}
+
+pub mod conformance;
+pub mod message_conformance;
+pub mod work_conformance;
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    #[test]
+    fn replicated_level_survives_cursor_write_and_an_old_returning_office_must_upgrade() {
+        let org = OrgId::new("ORG1").unwrap();
+        let hq_id = OfficeId::new("HQ1").unwrap();
+        let hq = MemoryOffice::new(
+            org.clone(),
+            hq_id.clone(),
+            hq_id.clone(),
+            Digest::ZERO,
+            Epoch::new(1).unwrap(),
+        );
+        let sat = MemoryOffice::new(
+            org.clone(),
+            OfficeId::new("SAT1").unwrap(),
+            hq_id.clone(),
+            Digest::ZERO,
+            Epoch::new(1).unwrap(),
+        );
+        hq.data.borrow_mut().supported_max = 2;
+        let peer = MemoryPeer(PeerIdentity {
+            authority: Epoch::new(1).unwrap(),
+            org_id: org,
+            office_id: hq_id,
+            role: PeerRole::Hq,
+        });
+        let event = hq.publish(b"protocol:2").unwrap();
+        assert_eq!(hq.checkpoint().protocol_level, 2);
+        apply(&sat, &peer, event).unwrap();
+        assert_eq!(sat.checkpoint().protocol_level, 2);
+        let event = hq.publish(b"after raise").unwrap();
+        assert!(matches!(
+            apply(&sat, &peer, event.clone()),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        sat.data.borrow_mut().supported_max = 2;
+        apply(&sat, &peer, event).unwrap();
+        sat.stage("LEVEL2", vec![Arc::from(&b"snapshot"[..])]);
+        let current = sat.checkpoint();
+        let snapshot = ValidatedSnapshot {
+            org_id: current.org_id,
+            authority: current.highest_epoch,
+            position: current.position,
+            digest: current.digest,
+            codec: Codec::new("conformance", 1).unwrap(),
+            staging_id: "LEVEL2".into(),
+            protocol_level: 1,
+        };
+        assert!(matches!(
+            install_snapshot(&sat, snapshot),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        assert_eq!(sat.checkpoint().protocol_level, 2);
+    }
+}
+
+#[cfg(test)]
+mod attempt_busy_regression {
+    use super::*;
+    #[test]
+    fn a_busy_error_from_inside_the_attempt_retries_the_whole_attempt() {
+        let office = MemoryOffice::new(
+            OrgId::new("ORG1").unwrap(),
+            OfficeId::new("SAT1").unwrap(),
+            OfficeId::new("HQ1").unwrap(),
+            Digest::ZERO,
+            Epoch::new(1).unwrap(),
+        );
+        let result = OrgStore::transact(
+            &office,
+            Arc::new(|tx| {
+                let mut meta = tx.checkpoint()?;
+                meta.protocol_level = 2;
+                tx.set_authority(&meta)?;
+                Err(StoreError::busy_or_locked("query busy").into())
+            }),
+        );
+        assert!(matches!(result, Err(SyncError::Storage(_))));
+        assert_eq!(office.attempts(), MAX_STORE_RETRIES + 1);
+        assert_eq!(office.checkpoint().protocol_level, 1);
+    }
+    #[test]
+    fn a_nonretryable_storage_error_is_not_retried() {
+        let office = MemoryOffice::new(
+            OrgId::new("ORG1").unwrap(),
+            OfficeId::new("SAT1").unwrap(),
+            OfficeId::new("HQ1").unwrap(),
+            Digest::ZERO,
+            Epoch::new(1).unwrap(),
+        );
+        assert!(OrgStore::transact(
+            &office,
+            Arc::new(|_| Err(StoreError::unavailable("private disk failure").into()))
+        )
+        .is_err());
+        assert_eq!(office.attempts(), 1);
+    }
+}
+
+#[cfg(test)]
+mod fence_regression_tests {
+    use super::*;
+
+    struct Signature;
+    impl AuthorityVerifier for Signature {
+        fn verify(&self, _: &AuthorityRecord) -> Result<(), Refusal> {
+            Ok(())
+        }
+    }
+
+    fn pair() -> (MemoryOffice, MemoryOffice, MemoryPeer) {
+        let org = OrgId::new("ORG1").unwrap();
+        let hq = OfficeId::new("HQ1").unwrap();
+        let epoch = Epoch::new(1).unwrap();
+        (
+            MemoryOffice::new(org.clone(), hq.clone(), hq.clone(), Digest::ZERO, epoch),
+            MemoryOffice::new(
+                org.clone(),
+                OfficeId::new("SAT1").unwrap(),
+                hq.clone(),
+                Digest::ZERO,
+                epoch,
+            ),
+            MemoryPeer(PeerIdentity {
+                org_id: org,
+                office_id: hq,
+                role: PeerRole::Hq,
+                authority: epoch,
+            }),
+        )
+    }
+
+    #[test]
+    fn older_signed_epoch_with_a_valid_restore_position_is_not_authorized() {
+        let (_, satellite, _) = pair();
+        let c = satellite.checkpoint();
+        let record = AuthorityRecord {
+            org_id: c.org_id,
+            hq_office: c.hq_office,
+            ca: c.ca,
+            epoch: Epoch::new(3).unwrap(),
+            restored_position: c.position,
+            restored_digest: c.digest,
+            signature: Arc::from([]),
+        };
+        accept_authority(&satellite, record.clone(), Arc::new(Signature)).unwrap();
+        let before = satellite.checkpoint();
+        let stale = AuthorityRecord {
+            epoch: Epoch::new(2).unwrap(),
+            ..record
+        };
+        assert!(matches!(
+            accept_authority(&satellite, stale, Arc::new(Signature)),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert_eq!(satellite.checkpoint(), before);
+    }
+
+    #[test]
+    fn snapshot_cannot_install_under_an_unaccepted_authority() {
+        let (_, satellite, _) = pair();
+        let before = satellite.checkpoint();
+        satellite.stage("FUTURE", vec![Arc::from(&b"unverified"[..])]);
+        let epoch = Epoch::new(2).unwrap();
+        let snapshot = ValidatedSnapshot {
+            org_id: before.org_id.clone(),
+            authority: epoch,
+            position: Position { epoch, seq: 0 },
+            digest: Digest::ZERO,
+            codec: Codec::new("conformance", 1).unwrap(),
+            staging_id: "FUTURE".into(),
+            protocol_level: 1,
+        };
+        assert!(matches!(
+            install_snapshot(&satellite, snapshot),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert_eq!(satellite.checkpoint(), before);
+        assert!(satellite.applied().is_empty());
+    }
+
+    #[test]
+    fn ordinary_snapshot_cannot_rewind_a_materialized_checkpoint() {
+        let (hq, satellite, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        let two = hq.publish(b"two").unwrap();
+        apply(&satellite, &peer, one.clone()).unwrap();
+        apply(&satellite, &peer, two).unwrap();
+        let before = satellite.checkpoint();
+        let before_domain = satellite.applied();
+        satellite.stage("OLD", vec![one.payload.clone()]);
+        let snapshot = ValidatedSnapshot {
+            org_id: one.org_id,
+            authority: one.position.epoch,
+            position: one.position,
+            digest: one.digest,
+            codec: one.codec,
+            staging_id: "OLD".into(),
+            protocol_level: 1,
+        };
+        assert!(matches!(
+            install_snapshot(&satellite, snapshot),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
+        assert_eq!(satellite.checkpoint(), before);
+        assert_eq!(satellite.applied(), before_domain);
+    }
+
+    #[test]
+    fn older_duplicate_ack_reports_the_current_durable_checkpoint() {
+        let (hq, satellite, peer) = pair();
+        let one = hq.publish(b"one").unwrap();
+        let two = hq.publish(b"two").unwrap();
+        apply(&satellite, &peer, one.clone()).unwrap();
+        apply(&satellite, &peer, two.clone()).unwrap();
+        let before = satellite.checkpoint();
+        let before_domain = satellite.applied();
+        assert_eq!(
+            apply(&satellite, &peer, one).unwrap(),
+            OrgOutput::Ack {
+                position: two.position,
+                digest: two.digest,
+                duplicate: true,
+            }
+        );
+        assert_eq!(satellite.checkpoint(), before);
+        assert_eq!(satellite.applied(), before_domain);
+    }
+
+    #[test]
+    fn codec_table_bounds_override_a_fixture_binary_supporting_newer_versions() {
+        let (hq, satellite, peer) = pair();
+        for office in [&hq, &satellite] {
+            let mut data = office.data.borrow_mut();
+            data.supported_max = 2;
+            data.supported_codec_max = 2;
+            data.checkpoint.protocol_level = 2;
+        }
+        let hq_before = hq.checkpoint();
+        let before = satellite.checkpoint();
+        let codec = Codec::new("conformance", 2).unwrap();
+        let event = OrgEvent::new(
+            before.org_id.clone(),
+            Position {
+                epoch: before.highest_epoch,
+                seq: 1,
+            },
+            before.digest,
+            codec.clone(),
+            &b"newer codec"[..],
+        )
+        .unwrap();
+        assert!(matches!(
+            apply(&satellite, &peer, event),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        assert!(matches!(
+            OrgStore::transact(
+                &hq,
+                Arc::new(move |tx| append_hq(tx, codec.clone(), Arc::from(&b"newer codec"[..])))
+            ),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        satellite.stage("CODEC2", vec![Arc::from(&b"newer codec"[..])]);
+        let snapshot = ValidatedSnapshot {
+            org_id: before.org_id.clone(),
+            authority: before.highest_epoch,
+            position: before.position,
+            digest: before.digest,
+            codec: Codec::new("conformance", 2).unwrap(),
+            staging_id: "CODEC2".into(),
+            protocol_level: 2,
+        };
+        assert!(matches!(
+            install_snapshot(&satellite, snapshot),
+            Err(SyncError::Refused(Refusal::UnsupportedVersion))
+        ));
+        assert_eq!(satellite.checkpoint(), before);
+        assert_eq!(hq.checkpoint(), hq_before);
+        assert!(satellite.applied().is_empty());
+        assert!(hq.applied().is_empty());
+    }
+
+    #[test]
+    fn raw_event_limit_leaves_room_for_base64_and_frame_metadata() {
+        let (hq, satellite, _) = pair();
+        let c = satellite.checkpoint();
+        let make = |len| {
+            OrgEvent::new(
+                c.org_id.clone(),
+                Position {
+                    epoch: c.position.epoch,
+                    seq: 1,
+                },
+                c.digest,
+                Codec::new("conformance", 1).unwrap(),
+                vec![0; len],
+            )
+        };
+        assert!(make(512 * 1024).is_ok());
+        assert!(matches!(make(512 * 1024 + 1), Err(Refusal::InvalidInput)));
+        hq.publish(&vec![0; 512 * 1024]).unwrap();
+        let before = hq.checkpoint();
+        let before_domain = hq.applied();
+        assert!(matches!(
+            hq.publish(&vec![0; 512 * 1024 + 1]),
+            Err(SyncError::Refused(Refusal::InvalidInput))
+        ));
+        assert_eq!(hq.checkpoint(), before);
+        assert_eq!(hq.applied(), before_domain);
+    }
+}
+
+#[cfg(test)]
+mod authority_signature_and_bootstrap_tests {
+    use super::*;
+    use org_sync_proto::authority_record_preimage_v1;
+
+    /// Fixed approved signing input stands in for PKI in this core-only fixture.
+    struct SignedPreimage(Vec<u8>);
+    impl AuthorityVerifier for SignedPreimage {
+        fn verify(&self, record: &AuthorityRecord) -> Result<(), Refusal> {
+            let actual = authority_record_preimage_v1(
+                &record.org_id,
+                &record.hq_office,
+                record.ca,
+                record.epoch,
+                record.restored_position,
+                record.restored_digest,
+            );
+            if actual == self.0 && record.signature.as_ref() == b"fixture-signature" {
+                Ok(())
+            } else {
+                Err(Refusal::NotAuthorized)
+            }
+        }
+    }
+
+    fn replica() -> MemoryOffice {
+        MemoryOffice::new(
+            OrgId::new("ORG1").unwrap(),
+            OfficeId::new("SAT1").unwrap(),
+            OfficeId::new("HQ1").unwrap(),
+            Digest::ZERO,
+            Epoch::new(1).unwrap(),
+        )
+    }
+
+    #[test]
+    fn replacing_any_signed_restore_field_fails_verification_without_changing_state() {
+        let make = || {
+            let office = replica();
+            let c = office.checkpoint();
+            let record = AuthorityRecord {
+                org_id: c.org_id,
+                hq_office: c.hq_office,
+                ca: c.ca,
+                epoch: Epoch::new(3).unwrap(),
+                restored_position: c.position,
+                restored_digest: c.digest,
+                signature: Arc::from(&b"fixture-signature"[..]),
+            };
+            let verifier = Arc::new(SignedPreimage(authority_record_preimage_v1(
+                &record.org_id,
+                &record.hq_office,
+                record.ca,
+                record.epoch,
+                record.restored_position,
+                record.restored_digest,
+            )));
+            (office, record, verifier)
+        };
+        for field in ["restored_epoch", "restored_seq", "restored_digest"] {
+            let (office, mut record, verifier) = make();
+            let before = office.checkpoint();
+            match field {
+                "restored_epoch" => record.restored_position.epoch = Epoch::new(2).unwrap(),
+                "restored_seq" => record.restored_position.seq = 1,
+                _ => record.restored_digest = Digest::from_bytes([9; 32]),
+            }
+            assert!(matches!(
+                accept_authority(&office, record, verifier),
+                Err(SyncError::Refused(Refusal::NotAuthorized))
+            ));
+            assert_eq!(office.checkpoint(), before);
+        }
+        let (office, record, verifier) = make();
+        assert!(matches!(
+            accept_authority(&office, record, verifier).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: false
+            }
+        ));
+    }
+
+    #[test]
+    fn unmaterialized_replica_installs_nonzero_hq_epoch_base_but_materialized_peer_cannot_rebase() {
+        let base = Digest::from_bytes([7; 32]);
+        let epoch = Epoch::new(2).unwrap();
+        let hq = MemoryOffice::new(
+            OrgId::new("ORG1").unwrap(),
+            OfficeId::new("HQ1").unwrap(),
+            OfficeId::new("HQ1").unwrap(),
+            Digest::ZERO,
+            epoch,
+        );
+        hq.data.borrow_mut().checkpoint.digest = base;
+        hq.data.borrow_mut().applied = vec![Arc::from(&b"restored organization"[..])];
+        let hq_base = hq.checkpoint();
+        assert_eq!(hq_base.position, Position { epoch, seq: 0 });
+        for initial in [false, true] {
+            let office = MemoryOffice::new(
+                OrgId::new("ORG1").unwrap(),
+                OfficeId::new("SAT1").unwrap(),
+                OfficeId::new("HQ1").unwrap(),
+                Digest::ZERO,
+                epoch,
+            );
+            office.data.borrow_mut().initial_snapshot_required = initial;
+            let before = office.checkpoint();
+            office.stage("BASE", hq.applied());
+            let snapshot = ValidatedSnapshot {
+                org_id: before.org_id.clone(),
+                authority: before.highest_epoch,
+                position: hq_base.position,
+                digest: hq_base.digest,
+                codec: Codec::new("conformance", 1).unwrap(),
+                staging_id: "BASE".into(),
+                protocol_level: 1,
+            };
+            if initial {
+                assert_eq!(
+                    install_snapshot(&office, snapshot).unwrap(),
+                    OrgOutput::SnapshotInstalled
+                );
+                let office = office.restart();
+                assert_eq!(office.checkpoint().position, before.position);
+                assert_eq!(office.checkpoint().digest, base);
+                assert!(!office.data.borrow().initial_snapshot_required);
+                assert_eq!(
+                    office.applied(),
+                    vec![Arc::from(&b"restored organization"[..])]
+                );
+            } else {
+                assert!(matches!(
+                    install_snapshot(&office, snapshot),
+                    Err(SyncError::Refused(Refusal::Divergence))
+                ));
+                assert_eq!(office.checkpoint(), before);
+                assert!(office.applied().is_empty());
+            }
+        }
+    }
+}
+
+mod message_adapter;
+
+#[cfg(test)]
+mod org_followups;

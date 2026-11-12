@@ -208,6 +208,10 @@ impl Offices {
     /// `not_ready` (the office is still being created, or still being discarded at startup
     /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
     /// caller's code signature is checked before this.
+    #[cfg_attr(
+        not(all(feature = "test-support", debug_assertions)),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn app_token<R>(
         &self,
         office_id: &str,
@@ -239,6 +243,10 @@ impl Offices {
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
+    #[cfg_attr(
+        not(any(test, all(feature = "test-support", debug_assertions))),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
         self.wait_for_startup(Instant::now() + self.create_wait)?;
         self.settled_office(office_id)?;
@@ -298,6 +306,11 @@ impl Offices {
         Ok(())
     }
 
+    #[cfg(all(feature = "test-support", debug_assertions))]
+    pub(crate) fn broadcast_for_test(&self) -> Arc<Broadcast> {
+        Arc::clone(&self.broadcast)
+    }
+
     /// Every organization with an office on this Mac (see [`Catalog::organizations`]).
     pub(crate) fn organizations(&self) -> Vec<Organization> {
         let catalog = lock(&self.catalog);
@@ -325,6 +338,10 @@ impl Offices {
     /// and moved aside (`move_refused`), keeping its key. The error never holds a path. On
     /// success, `respond` queues the answer, inside the critical section that adds the
     /// organization (see [`Offices::add_created`]).
+    #[cfg_attr(
+        not(any(test, all(feature = "test-support", debug_assertions))),
+        expect(dead_code, reason = "activated by 2b.3 CLI")
+    )]
     pub(crate) fn create_organization(
         &self,
         raw_name: &str,
@@ -548,7 +565,9 @@ impl Offices {
     /// The reason goes only with `offline` and `unavailable`, and the next restart only with
     /// `offline`, as the contract says.
     fn office_info(&self, office: &OfficeFile, state: OfficeState) -> OfficeInfo {
-        let endpoint = org_proto::location::office_socket_path(&self.home, &office.office_id)
+        let endpoint = self
+            .supervisor
+            .socket_path(&office.office_id)
             .and_then(|path| path.to_str().map(str::to_owned));
         let down = matches!(
             state.status,
@@ -759,6 +778,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: script,
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -797,6 +817,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -850,6 +871,7 @@ mod tests {
             let supervisor = Supervisor::new(SupervisorConfig {
                 program: home.join("no-such-server"),
                 home: home.to_path_buf(),
+                runtime_dir: None,
                 logs_dir: home.join("logs"),
                 log_max_bytes: 1024,
                 timings: Timings::default(),
@@ -894,6 +916,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),

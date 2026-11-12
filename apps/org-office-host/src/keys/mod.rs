@@ -67,23 +67,44 @@ pub(crate) trait KeyStore: Send + Sync {
 #[derive(Debug)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Exists,
     /// `load`: the item isn't a key.
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Corrupt,
     /// The office id isn't a plain id.
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
+    #[cfg(any(target_os = "macos", test))]
     Os(i32),
     /// The development store's file I/O failed.
     Io(io::Error),
 }
 
+impl KeyStoreError {
+    pub(crate) fn means_key_missing(&self) -> bool {
+        #[cfg(any(target_os = "macos", debug_assertions, test))]
+        {
+            matches!(self, Self::Corrupt)
+        }
+        #[cfg(not(any(target_os = "macos", debug_assertions, test)))]
+        {
+            false
+        }
+    }
+}
+
 impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
+            #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
         }
@@ -94,6 +115,7 @@ impl std::error::Error for KeyStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyStoreError::Io(e) => Some(e),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             _ => None,
         }
     }
@@ -135,17 +157,26 @@ pub(crate) enum StoreError {
 pub(crate) fn store_for(
     dev_key_dir: Option<&Path>,
     home: &Path,
+    instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
 ) -> Result<Arc<dyn KeyStore>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = own_signing;
-        dev_store(dev_key_dir, home)
+        let scoped = dev_key_dir.map(|dir| match instance_id {
+            Some(id) => dir.join(id),
+            None => dir.to_owned(),
+        });
+        dev_store(scoped.as_deref(), home)
     }
     #[cfg(not(debug_assertions))]
     {
         let _ = (dev_key_dir, home);
-        release_store(option_env!("ORG_HOST_KEYCHAIN_GROUP"), own_signing)
+        release_store_scoped(
+            option_env!("ORG_HOST_KEYCHAIN_GROUP"),
+            instance_id,
+            own_signing,
+        )
     }
 }
 
@@ -178,9 +209,18 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, Store
 /// `keychain-access-groups` and no hardened runtime, so it would always refuse. The decision,
 /// [`self_trusted`], is tested on synthetic signing information; the reading is
 /// `code_signing`'s, tested the same way. Check it live on the first signed build.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg(test)]
 fn release_store(
     group: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+) -> Result<Arc<dyn KeyStore>, StoreError> {
+    release_store_scoped(group, None, own_signing)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn release_store_scoped(
+    group: Option<&str>,
+    instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
 ) -> Result<Arc<dyn KeyStore>, StoreError> {
     let group = match group {
@@ -190,10 +230,14 @@ fn release_store(
     self_trusted(group, own_signing().as_ref())?;
     #[cfg(target_os = "macos")]
     {
-        Ok(Arc::new(keychain::Keychain::new(group)))
+        Ok(Arc::new(match instance_id {
+            Some(id) => keychain::Keychain::scoped(group, id),
+            None => keychain::Keychain::new(group),
+        }))
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = instance_id;
         Err(StoreError::NoKeychainGroup)
     }
 }
@@ -230,6 +274,61 @@ fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn instance_key_namespaces_and_orphan_sweeps_are_independent() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let fixture = tempfile::tempdir().unwrap();
+        let home_a = fixture.path().join("a");
+        let home_b = fixture.path().join("b");
+        std::fs::create_dir(&home_a).unwrap();
+        std::fs::create_dir(&home_b).unwrap();
+        let key_base = fixture.path().join("keys");
+        let a = store_for(Some(&key_base), &home_a, Some("INSTANCEA"), || {
+            panic!("debug never signs")
+        })
+        .unwrap();
+        let b = store_for(Some(&key_base), &home_b, Some("INSTANCEB"), || {
+            panic!("debug never signs")
+        })
+        .unwrap();
+        let office = "SAMEOFFICE";
+        a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
+        b.create(office, &DbKey::from_bytes([2; 32])).unwrap();
+        assert_eq!(a.list().unwrap(), vec![office]);
+        assert_eq!(b.list().unwrap(), vec![office]);
+        let before = b.load(office).unwrap().unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(sweep_orphans(&*a, &home_a, |ids| Ok(ids.to_vec()), now).is_empty());
+        assert_eq!(
+            sweep_orphans(
+                &*a,
+                &home_a,
+                |ids| Ok(ids.to_vec()),
+                now + Duration::from_secs(8 * 86400)
+            ),
+            vec![office]
+        );
+        assert!(a.load(office).unwrap().is_none());
+        assert_eq!(b.load(office).unwrap().unwrap(), before);
+        assert!(!home_b.join("orphan-keys.json").exists());
+        b.delete(office).unwrap();
+        assert!(b.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_a_corrupt_item_means_the_key_is_missing() {
+        assert!(KeyStoreError::Corrupt.means_key_missing());
+        for error in [
+            KeyStoreError::Exists,
+            KeyStoreError::NotPlainId,
+            KeyStoreError::Os(-25308),
+            KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+        ] {
+            assert!(!error.means_key_missing(), "{error:?}");
+        }
+    }
 
     #[test]
     fn errors_never_show_more_than_codes() {

@@ -1,4 +1,4 @@
-//! One `org-office-server` process: spawning it with its pipes, reading its control lines,
+//! One `org-server` process: spawning it with its pipes, reading its control lines,
 //! copying its stderr to the office's log, and stopping it.
 
 use std::ffi::{OsStr, OsString};
@@ -14,7 +14,7 @@ use org_office_launch::{
     read_server_event, write_host_line, CreateOffice, HostLine, ServerEvent, CREATE_FLAG,
     DISCARD_FLAG, OFFICE_FLAG,
 };
-use org_proto::location::OFFICE_HOME_ENV;
+use org_proto::location::{self, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
 
 use crate::cloexec::SPAWN_LOCK;
@@ -59,6 +59,7 @@ const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LAN
 pub(crate) struct Spawner {
     pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
+    pub(crate) runtime_dir: Option<PathBuf>,
     /// Who may get a first line: every child is checked before it's written (`server_check`).
     pub(crate) check: Arc<ServerCheck>,
 }
@@ -167,6 +168,13 @@ pub(crate) struct RunningChild {
 }
 
 impl Spawner {
+    pub(crate) fn socket_path(&self, office_id: &str) -> Option<PathBuf> {
+        match &self.runtime_dir {
+            Some(runtime) => location::office_socket_in(runtime, office_id),
+            None => location::office_socket_path(&self.home, office_id),
+        }
+    }
+
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
     /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
     ///
@@ -195,6 +203,12 @@ impl Spawner {
             .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
             .collect();
         env.push((OFFICE_HOME_ENV.into(), self.home.clone().into_os_string()));
+        if let Some(runtime) = &self.runtime_dir {
+            env.push((
+                OFFICE_RUNTIME_DIR_ENV.into(),
+                runtime.clone().into_os_string(),
+            ));
+        }
         let spawned = {
             // See `cloexec`: no fd of ours may be half-made while a child is spawned.
             let _one_at_a_time = lock(&SPAWN_LOCK);

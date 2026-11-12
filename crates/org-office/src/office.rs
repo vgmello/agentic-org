@@ -1,5 +1,7 @@
 use std::fs::{self, File, TryLockError};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::directory::{self, RuntimeView, ThisOffice};
@@ -12,12 +14,23 @@ use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
+use org_sync::error::SyncError;
+use org_sync::organization::{
+    OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgStore, ValidatedSnapshot, VerifiedPeer,
+};
+use org_sync_proto::{Digest, Epoch, OfficeId, OrgId};
 
 use crate::store::org as org_db;
-use crate::store::{messages, status};
+use crate::store::org::work_view::OrgDbSource;
+use crate::store::org::{
+    OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode,
+};
+use crate::store::work::assembly::OfficeWorkStore;
+use crate::store::{messages, origin, status, work};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
+use org_work::{Caller, StoreError, TxnOutput, WorkCall, WorkService};
 
 /// How long `create`, `open` and `discard` wait for the folder's lock: a slow-exiting old
 /// server and its replacement never overlap.
@@ -47,13 +60,19 @@ const OFFICE_ENTRIES: [&str; 11] = [
 ];
 
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
-/// members' status lines. An older file gets the tables it lacks when it is opened.
+/// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
+/// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3.
+/// Version 5 adds change results, number counters and a clock, and is closed.
+/// Version 6 decouples current tasks from status lines; it stays open until B1-11's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
-    version: 3,
+    version: 6,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
-        status::create_table(tx)
+        status::create_table(tx)?;
+        origin::create_tables(tx)?;
+        work::create_tables(tx)?;
+        work::create_v5_tables(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -61,6 +80,15 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 3 {
             status::create_table(tx)?;
+        } else {
+            status::upgrade(tx)?;
+        }
+        if from < 4 {
+            origin::create_tables(tx)?;
+            work::create_tables(tx)?;
+        }
+        if from < 5 {
+            work::create_v5_tables(tx)?;
         }
         Ok(())
     },
@@ -93,7 +121,7 @@ impl ChangeSignal {
     }
 }
 
-/// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-office-server`.
+/// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-server`.
 ///
 /// ```text
 /// office.lock    exclusive flock, taken before anything else is looked at (single owner)
@@ -113,9 +141,26 @@ pub struct Office {
     /// Counts committed organization commands, to wake whoever follows the log.
     changes: ChangeSignal,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
-    org: Store,
-    local: Store,
-    _lock: File,
+    stores: OfficeStores,
+    _lock: OfficeLock,
+}
+
+struct OfficeStores {
+    work: WorkService<OfficeWorkStore>,
+    org: Arc<Store>,
+    local: Arc<Store>,
+}
+
+struct OfficeLock(File);
+
+impl Drop for OfficeLock {
+    fn drop(&mut self) {
+        let _held = &self.0;
+        #[cfg(test)]
+        if let Some(hook) = BEFORE_UNLOCK.with(|hook| hook.borrow_mut().take()) {
+            hook();
+        }
+    }
 }
 
 impl std::fmt::Debug for Office {
@@ -125,6 +170,24 @@ impl std::fmt::Debug for Office {
             .field("folder", &self.folder)
             .field("info", &self.info)
             .finish_non_exhaustive()
+    }
+}
+
+impl OrgStore for Office {
+    fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
+        let output = org_db::transact_replication(self.org_store(), attempt)?;
+        if matches!(
+            output,
+            OrgOutput::Ack {
+                duplicate: false,
+                ..
+            } | OrgOutput::Published(_)
+                | OrgOutput::SnapshotInstalled
+                | OrgOutput::AuthorityAccepted { .. }
+        ) {
+            self.wake_followers();
+        }
+        Ok(output)
     }
 }
 
@@ -147,6 +210,16 @@ impl Office {
         Self::create_waiting(folder, new, key, LOCK_WAIT)
     }
 
+    /// Creates a v3 office bound to the selected instance (X-02 §5.4).
+    pub fn create_for_instance(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        instance: &str,
+    ) -> Result<Self, OfficeError> {
+        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance))
+    }
+
     /// [`Office::create`] with a chosen lock wait.
     pub fn create_waiting(
         folder: impl Into<PathBuf>,
@@ -154,6 +227,17 @@ impl Office {
         key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
+        Self::create_with(folder, new, key, lock_wait, None)
+    }
+
+    fn create_with(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        lock_wait: Duration,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
+        validate_instance(instance)?;
         let info = OfficeInfo {
             office_id: new.office_id.clone(),
             office_name: new.office_name.trim().to_owned(),
@@ -185,14 +269,13 @@ impl Office {
             }
         }
 
-        match build(&folder, &key, &info) {
-            Ok((org, local)) => Ok(Self {
+        match build(&folder, &key, &info, instance) {
+            Ok(stores) => Ok(Self {
                 folder,
                 info,
-                org,
-                local,
+                stores,
                 changes: ChangeSignal::default(),
-                _lock: lock,
+                _lock: OfficeLock(lock),
             }),
             Err(error) => {
                 // Still under the lock. The databases closed when `build` failed. Every entry
@@ -213,12 +296,31 @@ impl Office {
         Self::open_waiting(folder, key, LOCK_WAIT)
     }
 
+    /// Opens a v3 office, adopting its instance only for a pre-v3 office (X-02 §5.4).
+    pub fn open_for_instance(
+        folder: impl Into<PathBuf>,
+        key: Key,
+        instance: &str,
+    ) -> Result<Self, OfficeError> {
+        Self::open_with(folder, key, LOCK_WAIT, Some(instance))
+    }
+
     /// [`Office::open`] with a chosen lock wait.
     pub fn open_waiting(
         folder: impl Into<PathBuf>,
         key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
+        Self::open_with(folder, key, lock_wait, None)
+    }
+
+    fn open_with(
+        folder: impl Into<PathBuf>,
+        key: Key,
+        lock_wait: Duration,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
+        validate_instance(instance)?;
         let folder = plain_folder(folder.into())?;
         check_not_a_link(&folder)?;
         match fs::metadata(&folder) {
@@ -234,17 +336,31 @@ impl Office {
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
 
+        // Refuse before either database migrates or changes journal mode. The office lock
+        // keeps this read and the later transactional adoption under one owner.
+        if let Some(instance) = instance {
+            Store::check_instance(&folder.join(OFFICE_DB), &key, instance, &info.office_id)?;
+        }
         let org = Store::open(
             &folder.join(ORG_DB),
             &key,
             Opening::Existing,
             &org_db::SCHEMA,
         )?;
-        let local = Store::open(
+        if instance.is_some()
+            && (meta(&org, "office_id")? != Some(info.office_id.clone())
+                || meta(&org, "organization_id")? != Some(info.org_id.clone()))
+        {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
+        }
+        let local = Store::open_bound(
             &folder.join(OFFICE_DB),
             &key,
             Opening::Existing,
             &OFFICE_SCHEMA,
+            instance,
         )?;
         let same = meta(&org, "office_id")? == Some(info.office_id.clone())
             && meta(&org, "organization_id")? == Some(info.org_id.clone())
@@ -254,17 +370,18 @@ impl Office {
                 "the databases belong to another office",
             ));
         }
+        org_db::sweep_snapshot_scratch(&folder)?;
+        let stores = stores(org, local, &info.office_id)?;
         Ok(Self {
             folder,
             info,
-            org,
-            local,
+            stores,
             changes: ChangeSignal::default(),
-            _lock: lock,
+            _lock: OfficeLock(lock),
         })
     }
 
-    /// Removes an UNFINISHED create (`org-office-server --discard`): the folder a failed create
+    /// Removes an UNFINISHED create (`org-server --discard`): the folder a failed create
     /// may have left. The key is the host's and is not touched here. When the folder exists it
     /// takes its lock (a missing folder takes none and makes none), and **refuses** anything
     /// that could be a real office, so one is never destroyed automatically:
@@ -357,7 +474,103 @@ impl Office {
 
     /// The organization's structure as of the last log entry, from one consistent read.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
-        self.org.read(org_db::snapshot)
+        self.stores.org.read(org_db::snapshot)
+    }
+
+    /// Pins trusted HQ CA material and anchors existing organization state at its native head.
+    /// Called by worker composition after the local organization's authority is established.
+    pub fn bind_replication_hq(
+        &self,
+        ca: Digest,
+        max_snapshot_bytes: u64,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.stores.org,
+            org,
+            local.clone(),
+            local,
+            ca,
+            org_db::ReplicationBootstrap::Hq { max_snapshot_bytes },
+        )
+    }
+
+    /// Binds a fresh local office to the CA, HQ and epoch verified by enrollment.
+    pub fn bind_replication_satellite(
+        &self,
+        hq: OfficeId,
+        ca: Digest,
+        authority: Epoch,
+        epoch_base: Digest,
+    ) -> Result<(), SyncError> {
+        let (org, local) = self.replication_identity()?;
+        org_db::bind_replication(
+            &self.stores.org,
+            org,
+            local,
+            hq,
+            ca,
+            org_db::ReplicationBootstrap::Satellite {
+                authority,
+                epoch_base,
+            },
+        )
+    }
+
+    /// Returns the materialized federation cursor and authority pin for the worker's handshake.
+    /// A fresh satellite requires its initial snapshot before it can advertise a cursor.
+    pub fn replication_checkpoint(&self) -> Result<OrgCheckpoint, SyncError> {
+        org_db::replication_checkpoint(&self.stores.org)
+    }
+
+    /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
+    pub fn replication_events_after(
+        &self,
+        after: org_sync_proto::Position,
+        digest: Digest,
+        limit: usize,
+    ) -> Result<Option<Vec<OrgEvent>>, SyncError> {
+        org_db::replication_events_after(&self.stores.org, after, digest, limit)
+    }
+
+    fn replication_identity(&self) -> Result<(OrgId, OfficeId), SyncError> {
+        let org =
+            OrgId::new(&self.info.org_id).map_err(org_sync::error::StoreError::unavailable)?;
+        let office = OfficeId::new(&self.info.office_id)
+            .map_err(org_sync::error::StoreError::unavailable)?;
+        Ok((org, office))
+    }
+
+    /// Exports the bound HQ's organization tables with a one-time transport key.
+    pub fn export_replication_snapshot(
+        &self,
+        transport_key: &Key,
+        max_bytes: u64,
+    ) -> Result<OrganizationSnapshotExport, OfficeError> {
+        org_db::export_replication_snapshot(&self.stores.org, transport_key, max_bytes)
+    }
+
+    /// Validates and stages one complete, bounded snapshot stream from the verified HQ.
+    /// Recovery requires the caller to show the warning for the accepted authority first.
+    /// The staged result must still pass `org_sync::organization::install_snapshot`.
+    pub fn stage_replication_snapshot(
+        &self,
+        peer: &dyn VerifiedPeer,
+        manifest: &OrganizationSnapshotManifest,
+        transport_key: &Key,
+        input: impl Read,
+        max_bytes: u64,
+        mode: SnapshotStageMode,
+    ) -> Result<ValidatedSnapshot, SyncError> {
+        org_db::stage_replication_snapshot(
+            &self.stores.org,
+            peer.identity(),
+            manifest,
+            transport_key,
+            input,
+            max_bytes,
+            mode,
+        )
     }
 
     /// `who`: the directory cards matching `params`, from one consistent read of the organization
@@ -390,25 +603,40 @@ impl Office {
         &self,
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        // The clock is read in the writer, so the log's times follow its order.
-        let answer = self
-            .org
-            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))?;
+        // Sample when the writer first admits the command. Replays keep this
+        // timestamp, and the durable high-water keeps commit order monotonic.
+        let now = OnceLock::new();
+        let answer = self.stores.org.write_replayable(move |db| {
+            org_db::submit(db, *now.get_or_init(time::now_ms), &command)
+        })?;
         // After the commit: whoever follows the log reads it again (a retry of an old command
         // changes nothing, and the extra wake-up is harmless).
         self.changes.bump();
         Ok(answer)
     }
 
+    /// Looks up a retained org command for today's implicit owner connection.
+    /// The read does not change the command, its expiry or the durable clock.
+    pub fn org_operation_get(
+        &self,
+        id: &str,
+    ) -> Result<Result<org_proto::OperationOutcome, ApiError>, OfficeError> {
+        self.stores
+            .org
+            .read(|db| org_db::operation_get(db, time::now_ms(), id))
+    }
+
     /// The position of the last log entry, from one consistent read.
     pub fn org_head(&self) -> Result<Position, OfficeError> {
-        self.org.read(org_db::head)
+        self.stores.org.read(org_db::head)
     }
 
     /// Whether a subscriber that holds the organization as of `after` can be sent what follows
     /// (`false`: it must take a fresh snapshot). See `subscribe { from_position }`.
     pub fn org_can_resume_from(&self, after: Position) -> Result<bool, OfficeError> {
-        self.org.read(|db| org_db::can_resume_from(db, after))
+        self.stores
+            .org
+            .read(|db| org_db::can_resume_from(db, after))
     }
 
     /// Up to `limit` committed commands after `after`, oldest first: the data of the
@@ -418,7 +646,9 @@ impl Office {
         after: Position,
         limit: usize,
     ) -> Result<Vec<OrgChangedData>, OfficeError> {
-        self.org.read(|db| org_db::changes_after(db, after, limit))
+        self.stores
+            .org
+            .read(|db| org_db::changes_after(db, after, limit))
     }
 
     /// A number that changes whenever a command has been committed or a live event has been
@@ -444,12 +674,12 @@ impl Office {
 
     /// `office.db`, where the office's own data lives (messages).
     pub(crate) fn local_store(&self) -> &Store {
-        &self.local
+        &self.stores.local
     }
 
     /// `org.db`, the organization's data.
     pub(crate) fn org_store(&self) -> &Store {
-        &self.org
+        &self.stores.org
     }
 
     /// Test seam: replaces the organization's members with `members`, as an organization applied
@@ -462,12 +692,18 @@ impl Office {
         position: Position,
     ) {
         let members = members.to_vec();
-        self.org
+        self.stores
+            .org
             .write(move |db| {
                 org_db::seed_for_test(db, &members, position)?;
                 Ok(((), None))
             })
             .expect("the organization could not be seeded");
+    }
+
+    /// Executes one work write as the bound member, with durable retry semantics.
+    pub fn work_call(&self, caller: Caller, call: WorkCall) -> Result<TxnOutput, StoreError> {
+        self.stores.work.call(caller, call)
     }
 
     /// What `office.json` records about this office.
@@ -481,18 +717,50 @@ impl Office {
     }
 }
 
+/// Composes work capabilities while the office retains both database lifetimes.
+fn stores(org: Store, local: Store, office_id: &str) -> Result<OfficeStores, OfficeError> {
+    #[cfg(test)]
+    STORES_BUILT.with(|count| count.set(count.get() + 1));
+    let (org, local) = (Arc::new(org), Arc::new(local));
+    let store = OfficeWorkStore::new(
+        Arc::clone(&local),
+        Arc::new(OrgDbSource::new(Arc::clone(&org))),
+        Arc::new(time::now_ms),
+    )
+    .map_err(OfficeError::storage)?;
+    let clock = store.clock();
+    Ok(OfficeStores {
+        work: WorkService::new(store, clock, office_id),
+        org,
+        local,
+    })
+}
+
 /// Makes the two databases, the workspace and `office.json` in `folder`, in that order, with the
 /// organization's own commit last before `office.json`: from that commit on, `discard` refuses
 /// the folder, so the window in which a crash leaves something it refuses is as small as it can
 /// be.
-fn build(folder: &Path, key: &Key, info: &OfficeInfo) -> Result<(Store, Store), OfficeError> {
+fn build(
+    folder: &Path,
+    key: &Key,
+    info: &OfficeInfo,
+    instance: Option<&str>,
+) -> Result<OfficeStores, OfficeError> {
     let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &org_db::SCHEMA)?;
-    let local = Store::open(&folder.join(OFFICE_DB), key, Opening::New, &OFFICE_SCHEMA)?;
+    let local = Store::open_bound(
+        &folder.join(OFFICE_DB),
+        key,
+        Opening::New,
+        &OFFICE_SCHEMA,
+        instance,
+    )?;
     failpoint(folder, "databases")?;
     put_meta(&org, &[("office_id", &info.office_id)])?;
     put_meta(&local, &[("office_id", &info.office_id)])?;
     private_dir(&folder.join(WORKSPACE)).map_err(OfficeError::storage)?;
     failpoint(folder, "workspace")?;
+    let stores = stores(org, local, &info.office_id)?;
+    failpoint(folder, "work")?;
     let owner_id = crate::ulid::generate().map_err(OfficeError::storage)?;
     let genesis = org_db::Genesis {
         org_id: info.org_id.clone(),
@@ -500,11 +768,13 @@ fn build(folder: &Path, key: &Key, info: &OfficeInfo) -> Result<(Store, Store), 
         created_at: info.created_at.clone(),
         owner_id,
     };
-    org.write(move |db| org_db::genesis(db, &genesis).map(|_| ((), None)))?;
+    stores
+        .org
+        .write(move |db| org_db::genesis(db, &genesis).map(|_| ((), None)))?;
     failpoint(folder, "organization")?;
     failpoint(folder, "office_json")?;
     office_file::write(folder, info)?;
-    Ok((org, local))
+    Ok(stores)
 }
 
 fn put_meta(store: &Store, rows: &[(&str, &str)]) -> Result<(), OfficeError> {
@@ -736,6 +1006,9 @@ thread_local! {
     static FAIL_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     /// Makes `remove_entries` fail when it reaches the named entry.
     static FAIL_REMOVING: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    /// Counts work-store construction attempts on this thread.
+    static STORES_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BEFORE_UNLOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
     /// Makes `remove_entries` fail without removing anything.
     static FAIL_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Called at every step `build` reaches.
@@ -763,6 +1036,13 @@ fn failpoint(folder: &Path, step: &'static str) -> Result<(), OfficeError> {
 
 #[cfg(not(test))]
 fn failpoint(_folder: &Path, _step: &'static str) -> Result<(), OfficeError> {
+    Ok(())
+}
+
+fn validate_instance(instance: Option<&str>) -> Result<(), OfficeError> {
+    if instance.is_some_and(|id| org_proto::ulid_time_ms(id).is_none()) {
+        return Err(OfficeError::Invalid("instance id must be a canonical ULID"));
+    }
     Ok(())
 }
 

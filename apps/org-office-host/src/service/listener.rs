@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufWriter};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -17,12 +17,12 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use org_proto::frame::{self, FrameError};
-use org_proto::{salvage_id, ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
+use org_proto::{ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
 use serde_json::Value;
 
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
-use crate::peer::{peer_uid, Accepted, Received};
+use crate::peer::{Accepted, Received};
 use crate::sync::lock;
 
 /// How long the accept thread waits for a connection before checking whether to stop.
@@ -41,10 +41,9 @@ pub(crate) trait Handler: Send + Sync + 'static {
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received);
 
     /// Whether `request` is handled on the connection's reader thread, before anything more is
-    /// read from the connection (the app-only calls: their check needs to know that nothing
-    /// arrived after the request).
-    fn inline(&self, request: &Request) -> bool {
-        let _ = request;
+    /// read from the connection, including handshake decisions before later pipelined calls.
+    fn inline(&self, request: &Request, connection: &Connection) -> bool {
+        let _ = (request, connection);
         false
     }
 }
@@ -83,12 +82,6 @@ pub(crate) fn bind(path: &Path) -> Result<UnixListener, BindError> {
     };
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(BindError::Io)?;
     Ok(listener)
-}
-
-/// Whether the peer runs as `expected_uid` (defence in depth: `host.sock` is already 0600 in
-/// an owner-only folder). A peer whose uid can't be read is refused.
-pub(crate) fn peer_allowed(stream: &UnixStream, expected_uid: u32) -> bool {
-    matches!(peer_uid(stream), Ok(uid) if uid == expected_uid)
 }
 
 /// A running listener.
@@ -203,7 +196,7 @@ fn accept_loop(
         if stream.set_nonblocking(false).is_err() {
             continue;
         }
-        if !peer_allowed(&stream, config.expected_uid) {
+        if !org_socket::peer_allowed(&stream, config.expected_uid) {
             host_log::log("refused a connection from another user");
             continue; // dropping `stream` closes it
         }
@@ -278,28 +271,57 @@ fn serve(
     handler: Arc<dyn Handler>,
     max_in_flight: usize,
 ) {
+    serve_with_poll(
+        stream,
+        connection,
+        queue,
+        handler,
+        max_in_flight,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn serve_with_poll(
+    stream: UnixStream,
+    connection: Arc<Connection>,
+    queue: Receiver<Outbound>,
+    handler: Arc<dyn Handler>,
+    max_in_flight: usize,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> io::Result<bool>,
+) {
     // The writer gets its own handle on the socket, never the `Connection`: that owns the
     // queue's sender, and a writer holding it would keep its own queue open forever.
+    let closed = Arc::clone(&connection.closed);
     let writer = stream.try_clone().and_then(|out| {
         thread::Builder::new()
             .name("host-conn-out".into())
-            .spawn(move || write_loop(&out, queue))
+            .spawn(move || write_loop(&out, queue, &closed))
     });
     let in_flight = Arc::new(InFlight::new(max_in_flight));
     let mut reader = Counted {
-        inner: BufReader::new(stream),
+        inner: org_socket::Ticked::with_poll(
+            stream,
+            tick,
+            || connection.closed.load(Ordering::SeqCst),
+            poll,
+        ),
         consumed: 0,
     };
     loop {
+        if connection.closed.load(Ordering::SeqCst) {
+            break;
+        }
         let sent_at = reader.consumed;
         let Ok(Some(line)) = frame::read_line(&mut reader) else {
             break;
         };
-        let request = match serde_json::from_slice::<Request>(&line) {
+        let request = match super::request::decode(&line) {
             Ok(request) => request,
             Err(_) => {
                 connection.send_response(Response::error(
-                    salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
+                    super::request::salvage_id(&line).unwrap_or(UNREADABLE_REQUEST_ID),
                     ApiError::new(ErrorCode::InvalidRequest, "the request couldn't be read"),
                 ));
                 continue;
@@ -310,7 +332,7 @@ fn serve(
             buffered_after: reader.inner.buffer().len(),
         };
         in_flight.acquire();
-        if handler.inline(&request) {
+        if handler.inline(&request, &connection) {
             // Nothing more is read from the connection until it's answered.
             handler.handle(request, &connection, received);
             in_flight.release();
@@ -395,6 +417,7 @@ impl Drop for Release<'_> {
 enum Outbound {
     Response(Response),
     /// A response line already encoded, holding a secret: written as is, then zeroed.
+    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     Secret(SecretLine),
     /// `seq` is given by the writer, so it counts without gaps in the order events are written.
     Event {
@@ -405,13 +428,14 @@ enum Outbound {
     Close,
 }
 
-/// An encoded response line holding a secret (`office.app_token`). It never passes through a
+/// An encoded verified-session response line holding a secret. It never passes through a
 /// `serde_json::Value` or the writer's buffer, and is zeroed when dropped (best effort: the
 /// socket's kernel buffers still hold it until the client reads it).
 pub(crate) struct SecretLine(Vec<u8>);
 
 impl SecretLine {
     /// `bytes` is one JSON line, `\n` included.
+    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
@@ -428,7 +452,11 @@ pub(crate) struct Connection {
     outbound: SyncSender<Outbound>,
     stream: UnixStream,
     /// What the host noted about the client when it accepted the connection (`app_auth`).
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     accepted: Accepted,
+    /// Ends the ticked reader even if shutdown misses a platform wakeup.
+    closed: Arc<AtomicBool>,
+    hello_completed: AtomicBool,
 }
 
 impl Connection {
@@ -438,22 +466,48 @@ impl Connection {
             outbound,
             stream,
             accepted,
+            closed: Arc::new(AtomicBool::new(false)),
+            hello_completed: AtomicBool::new(false),
         };
         (Arc::new(connection), queue)
     }
 
+    pub(crate) fn hello_completed(&self) -> bool {
+        self.hello_completed.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn complete_hello(&self) {
+        self.hello_completed.store(true, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_test() -> Arc<Self> {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        Self::new(stream.try_clone().unwrap(), Accepted::sample(&stream)).0
+    }
+
+    /// Drain the refusal before closing, but stop even already-buffered requests.
+    pub(crate) fn refuse_and_finish(&self, response: Response) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.enqueue(Outbound::Response(response));
+        self.enqueue(Outbound::Close);
+    }
+
     /// What the host noted about the client when it accepted the connection.
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn accepted(&self) -> Accepted {
         self.accepted
     }
 
     /// The connection's socket, to identify the client (`app_auth`).
+    #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
     pub(crate) fn socket(&self) -> &UnixStream {
         &self.stream
     }
 
     /// Queues an encoded response line that holds a secret. Never blocks, like
     /// [`Connection::send_response`].
+    #[expect(dead_code, reason = "activated by 2b.3 secrets")]
     pub(crate) fn send_secret_line(&self, line: SecretLine) {
         self.enqueue(Outbound::Secret(line));
     }
@@ -473,6 +527,7 @@ impl Connection {
 
     /// Closes the socket both ways, which ends the connection's threads.
     pub(crate) fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
         shut_down(&self.stream);
     }
 
@@ -505,7 +560,14 @@ fn shut_down(stream: &UnixStream) {
 
 /// The writer: writes queued messages until [`Outbound::Close`], until every sender is gone,
 /// or until a write fails (then it closes the socket, which also ends the reader).
-fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
+fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>, closed: &AtomicBool) {
+    struct MarkClosed<'a>(&'a AtomicBool);
+    impl Drop for MarkClosed<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let _closed = MarkClosed(closed);
     let mut out = BufWriter::new(stream);
     let mut seq = 0u64;
     for message in queue {
@@ -565,6 +627,111 @@ mod tests {
     use std::io::{BufRead, Write};
     use std::path::PathBuf;
 
+    #[test]
+    fn refusal_marks_reader_closed_and_queues_response_before_close() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        connection.refuse_and_finish(Response::error(
+            9,
+            ApiError::new(ErrorCode::UnsupportedVersion, "unsupported"),
+        ));
+        assert!(connection.closed.load(Ordering::SeqCst));
+        assert!(matches!(queue.recv().unwrap(),Outbound::Response(response) if response.id==9));
+        assert!(matches!(queue.recv().unwrap(), Outbound::Close));
+    }
+
+    #[test]
+    fn refusal_prevents_dispatch_of_an_already_buffered_suffix() {
+        use std::sync::atomic::AtomicUsize;
+        struct Closing(Arc<AtomicUsize>);
+        impl Handler for Closing {
+            fn inline(&self, _: &Request, _: &Connection) -> bool {
+                true
+            }
+            fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
+                let call = self.0.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    assert!(
+                        received.buffered_after > 0,
+                        "suffix must already be buffered"
+                    );
+                }
+                connection.refuse_and_finish(Response::error(
+                    request.id,
+                    ApiError::new(ErrorCode::UnsupportedVersion, "unsupported"),
+                ));
+            }
+        }
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        peer.write_all(b"{\"id\":1,\"method\":\"hello\"}\n{\"id\":2,\"method\":\"suffix\"}\n")
+            .unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let worker =
+            thread::spawn(move || serve(stream, connection, queue, Arc::new(Closing(observed)), 4));
+        let mut reader = io::BufReader::new(peer);
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        assert_eq!(serde_json::from_str::<Response>(&line).unwrap().id, 1);
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
+        worker.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_at_the_host_call_site() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let polls = std::cell::Cell::new(0);
+        serve_with_poll(
+            stream,
+            Arc::clone(&connection),
+            queue,
+            Arc::new(Echo),
+            1,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls.set(polls.get() + 1);
+                if polls.get() == 1 {
+                    Ok(false)
+                } else {
+                    org_socket::poll_readable(fd, Duration::from_millis(1))
+                }
+            },
+        );
+        assert_eq!(polls.get(), 2);
+        assert!(connection.closed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn ticked_reader_observes_host_close_at_the_first_idle_tick() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let polls = std::cell::Cell::new(0);
+        serve_with_poll(
+            stream,
+            Arc::clone(&connection),
+            queue,
+            Arc::new(Echo),
+            1,
+            org_socket::READ_TICK,
+            |_, _| {
+                polls.set(polls.get() + 1);
+                connection.close();
+                Ok(false)
+            },
+        );
+        assert_eq!(polls.get(), 1);
+    }
+
     struct Echo;
 
     impl Handler for Echo {
@@ -610,11 +777,86 @@ mod tests {
 
     #[test]
     fn a_peer_of_another_uid_is_refused() {
-        let (a, _b) = UnixStream::pair().unwrap();
+        use std::io::Read;
+
         let me = crate::home::euid();
-        assert_eq!(peer_uid(&a).unwrap(), me);
-        assert!(peer_allowed(&a, me));
-        assert!(!peer_allowed(&a, me.wrapping_add(1)));
+        for closed in [false, true] {
+            let (mut stream, peer) = UnixStream::pair().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let _peer = if closed {
+                drop(peer);
+                assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+                None
+            } else {
+                Some(peer)
+            };
+            assert!(org_socket::peer_allowed(&stream, me));
+            assert!(!org_socket::peer_allowed(&stream, me.wrapping_add(1)));
+            println!("pair peer_closed={closed} uid={me}: match=true mismatch=false");
+        }
+    }
+
+    #[test]
+    fn expected_uid_is_checked_before_host_dispatch() {
+        use std::io::Read;
+        use std::sync::atomic::AtomicUsize;
+
+        struct Counted(Arc<AtomicUsize>);
+        impl Handler for Counted {
+            fn handle(&self, request: Request, connection: &Arc<Connection>, _: Received) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                connection.send_response(Response {
+                    id: request.id,
+                    outcome: org_proto::Outcome::Result(Value::String(request.method)),
+                });
+            }
+        }
+
+        let uid = crate::home::euid();
+        for expected_uid in [uid, uid.wrapping_add(1)] {
+            let dir = short_tempdir();
+            let path = dir.path().join("uid.sock");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let mut listener = Listener::start(
+                bind(&path).unwrap(),
+                ListenerConfig {
+                    max_connections: 2,
+                    max_in_flight: 4,
+                    expected_uid,
+                },
+                Arc::new(Counted(Arc::clone(&calls))),
+            )
+            .unwrap();
+            let mut stream = connect(&path);
+            let _ = stream.write_all(b"{\"id\":1,\"method\":\"hello\"}\n");
+            if expected_uid == uid {
+                let response: Response =
+                    serde_json::from_str(&read_line(&stream).expect("matching peer served"))
+                        .unwrap();
+                assert_eq!(response.id, 1);
+                assert_eq!(
+                    response.outcome,
+                    org_proto::Outcome::Result(Value::String("hello".into()))
+                );
+                println!("accepted uid={uid} expected={expected_uid}: served");
+            } else {
+                let result = stream.read(&mut [0]);
+                assert!(
+                    matches!(result, Ok(0))
+                        || matches!(result, Err(ref error) if error.kind() == io::ErrorKind::ConnectionReset),
+                    "wrong UID reached dispatch or was not closed: {result:?}"
+                );
+                println!("accepted uid={uid} expected={expected_uid}: {result:?}");
+            }
+            listener.close();
+            listener.join();
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                usize::from(expected_uid == uid)
+            );
+        }
     }
 
     #[test]
@@ -745,7 +987,7 @@ mod tests {
     }
 
     impl Handler for Probe {
-        fn inline(&self, request: &Request) -> bool {
+        fn inline(&self, request: &Request, _: &Connection) -> bool {
             self.inline_app && request.method == "app"
         }
 

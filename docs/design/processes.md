@@ -2,6 +2,17 @@
 
 Status: **proposed, rev 3** 2026-11-08. Owner: ada. It implements Eden's spec [`processes-ux.md`](../specs/processes-ux.md) rev 3 (PROC-1 to PROC-19) without redefining its UX, except decision 13, which spec rev 3 adopts, and builds on [`tasks-projects-docs.md`](tasks-projects-docs.md) (W7), [`agent-sessions.md`](agent-sessions.md), [`projects-git-github.md`](projects-git-github.md) and [`teams-and-org-chart.md`](teams-and-org-chart.md). The first process, [`branch-and-merge.md`](../processes/branch-and-merge.md), is the reference shape.
 
+**Proposed amendment, rev 4 (2026-11-09, owner request):** §3.5 extends delivery for
+fresh contexts, standards lookup and tool help (spec rev 5, PROC-27..30). The rev 3
+design's existing autonomy/branch-rule differences from spec rev 4 still need
+reconciliation; this amendment does not silently decide them.
+
+**Standalone-v1 integration (2026-11-09):** human controls use the authenticated,
+authorized HQ HTTP boundary in [standalone-server.md](standalone-server.md).
+Process composition, enforcement and handbook access remain office responsibilities;
+closing the browser does not unload instructions or suspend enforcement. Native
+desktop trust is not an authorization mechanism in v1.
+
 A new pure library, **`org-process`**, holds the parsing, the resolution and the one-branch rule; the office does the I/O.
 
 ## Decisions
@@ -20,7 +31,7 @@ All decided 2026-11-08, except A55's docs-branch limit, which waits on the user 
 12. **Merges are real merges** (decided 2026-11-08). Task branches merge with `--no-ff`, seen by ancestry. Work merged another way is marked "merged by hand" by a project lead or the owner (never the agent), naming the integration commit. A record idle over a day shows in the lead's Needs you (§4.1, §4.3).
 13. **Team seals on shared projects** (decided 2026-11-08; reconciles spec decisions 3 and 6). A seal binds the sealing team's own projects. On a shared project, a sibling team's override or `off` doesn't silently cancel it: it's a conflict in Needs you, the sealed version applies meanwhile, and the project can settle it with its own version, as any conflict (§3.2). This departed from the spec's rev 2 (decisions 3 and 6, PROC-6); spec rev 3 adopts it, including the conflict wording "sealed by <team>; applies until the project decides".
 14. **Start point from the mirror** (decided 2026-11-08). The office starts a task branch at the integration branch's sha in `mirror.git` and records it as `base_sha` (§4.2).
-15. **Lead powers need a trusted binding** (decided 2026-11-08). `task.allow_second_branch`, `task.mark_branch_merged`, guarded moves by a non-assignee, `process.approve`/`reject` and any approval that leads to an office merge of a handbook branch are accepted only on an app-bound connection, or from an agent bound with a live session token (office-run). A hand-run lead's request becomes a Needs you item for the owner instead.
+15. **Lead powers need a trusted binding** (decided 2026-11-08; human binding amended for standalone v1, 2026-11-09). `task.allow_second_branch`, `task.mark_branch_merged`, guarded moves by a non-assignee, `process.approve`/`reject` and any approval that leads to an office merge of a handbook branch require an authorized human principal through HQ, or an authorized agent bound with a live session token (office-run). Existing role and owner-only checks still apply; neither a browser connection nor an office certificate grants lead powers by itself. A hand-run lead's request becomes a Needs you item for the owner instead.
 
 Amended to match: `projects-git-github.md` (A56, A58, decision 14, the push rule) and `agent-sessions.md` (A57). Still to amend: `agent-sessions.md` (the handbook deny; "Git in worktrees": no worktree passes to a new assignee), `projects-git-github.md` ("When a task is done"), W7 (decision 8, `task.branch`), the `work.rs` docs, and ADR-0003 §2.1.4's rows for the decision-15 calls.
 
@@ -98,6 +109,49 @@ Sets are cached under a fingerprint of the handbook commit, the project's integr
 
 **Checklists** (PROC-12): `task.create` in P adds the steps of P's processes (O ⊕ T ⊕ J, never G) after the project's default checklist, duplicates merged, required winning.
 
+### 3.5 Context bounds, fresh contexts and standards (proposed 2026-11-09)
+
+The **24 KiB cap above remains**, including moment prompts. It is a ceiling, not a
+target. The composer also respects the runtime's verified total instruction/context
+limit, reserves space for identity, goal, tool help and useful task work, and may use
+a smaller process allowance. Render whole UTF-8 entries; never truncate a rule
+midway or mark omitted text read.
+
+- Every fresh main session and delegate gets the effective process manifest and
+  concise applicable behavioral guidance. Agent-wide last-read history is not proof
+  that a new context contains the text. Deliver unchanged applicable text again, or
+  explicit instructions to retrieve its pinned body before the relevant action.
+  Re-establish the current manifest, goal and retrieval instructions after observed
+  compaction/context reset.
+- Deferred bodies have a stable key/version/source digest and a `process show`
+  reference. Retrieval follows the recorded effective version for that context;
+  changes become visible at the existing next start/wake boundary. A model summary
+  never silently substitutes for an approved process body.
+- A resume with unchanged context gets changed entries and relevant moment prompts,
+  not another concatenation of the handbook. Deduplicate reminders and updates by
+  session/context generation and effective-set fingerprint.
+- If concise guidance exceeds the remaining allowance, report **Process context
+  limit reached**, with omitted count and retrieval path. Code-side rules still
+  apply. Affected work needs either its guidance or a retrieval instruction that
+  fits. If the minimum bootstrap cannot fit, refuse the launch with an actionable
+  configuration error rather than silently omit governing instructions.
+
+**Three inputs:** processes say how to behave; standards (stack, cloud and coding
+conventions) are indexed knowledge fetched when a process/task calls for it;
+`org-agent` help explains tools, syntax and permissions. Inject concise tool help
+separately; retrieve detailed help progressively. Standard bodies are not bulk
+injected. Keep source/version references to audit what the agent used.
+
+**Behavior seeds:** provide overridable organization Markdown processes for
+delegation/consultation, memory hygiene and channel questions/follow-up. They use
+the existing approval, seal and inheritance rules. Private specialists are harness
+assets, not private handbook processes, and cannot override inherited processes.
+Choosing to delegate, selecting a specialist or moving a question to DM stays agent
+judgment; the office has no semantic router. Limits/authorization remain code-side.
+See [`employee-supervision.md`](employee-supervision.md). The draft
+[`delegation-and-consultation.md`](../processes/delegation-and-consultation.md)
+is an organization seed proposal, not a newly active repository rule.
+
 ## 4. Enforcement: one open task branch (A54, A55)
 
 ### 4.1 Task branch records
@@ -163,7 +217,7 @@ Process files are docs written with W7's write path (office-made `docs/…` bran
 **Residual risk.** The handbook deny binds office-run agents only. Hand-run agents (no `run_mode`, no session token) and other same-user programs can still read `handbook.git` and forge hand-run agent identities (ADR-0003, M-A), but can't use lead powers over the rules, which need a trusted binding (decision 15), short of stealing a live token from another process's environment (`agent-sessions.md`, Security). The tampering check limits handbook writes; real isolation is v2.
 
 ## 6. The contract (additive)
-A new module, `crates/org-proto/src/process.rs`; `API_VERSION` stays 1. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
+A new module, `crates/org-proto/src/process.rs`. The historical sketch was additive under API_VERSION 1; the first standalone release uses local API_VERSION 2 under ADR-0001, with additive evolution within that version. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
 
 `For`: `current` (default) · `none` (O ⊕ G) · `project { project_id }` · `item { item }`.
 
@@ -194,12 +248,12 @@ A new module, `crates/org-proto/src/process.rs`; `API_VERSION` stays 1. Any boun
 **Organization data.** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
 
 ## 7. Where the code lives
-- **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 3`, `I ≈ 0.5`.
+- **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 2` for the proposed internal package graph, or 3 including `serde`; calculate I only after identifying consumers at the same level.
 - **`org-office`** (server-dev): the index, caches, project-wide items, last reads, records, exceptions, the calls and the checks inside the work write; one new stable-ward edge, to `org-process`.
-- **`org-office-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
+- **`org-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
 - **`org-git`** (River): W7's `DocRepo` API, the handbook's repository and merge, branch creation at a sha, and the §4.5 cleanup.
 - **`org-agent`** (Remy): the PROC-8 commands (Appendix B), `task allow-second-branch`, the `one_branch_open` exit code.
-- **`apps/desktop`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
+- **`apps/org-ui`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
 
 One new library, three stable-ward dependencies, no cycle.
 

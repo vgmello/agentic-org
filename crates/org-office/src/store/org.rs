@@ -10,7 +10,7 @@
 //! Each entity is stored as the contract's own JSON (`org_proto::org`) in a `body` column, beside
 //! the few plain columns a query or a uniqueness rule needs, so there is no mapping layer between
 //! the wire type and the row to get wrong. The rules (`crate::rules`) read through [`OrgSql`] as an
-//! [`OrgView`] and write through it as an [`OrgWrite`], inside the writer's savepoint, so a
+//! [`OrgView`] and write through [`OrgWriteSql`] as an [`OrgWrite`], inside the writer's savepoint, so a
 //! command sees the effects of the one before it.
 //!
 //! The log (`events`) stores the changes of one command per entry, verbatim, at the next
@@ -33,12 +33,39 @@ use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
+mod operation;
+mod replication;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "C1 writes use OrgView; A2/C2 complete the work consumers"
+    )
+)]
+pub(crate) mod work_view;
+pub(crate) use replication::{
+    bind_replication, replication_checkpoint, replication_events_after, transact_replication,
+    ReplicationBootstrap,
+};
+#[cfg(test)]
+mod principal_schema_tests;
+mod snapshot;
+pub(crate) use snapshot::{
+    export_replication_snapshot, stage_replication_snapshot, sweep_snapshot_scratch,
+};
+pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
+
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
 
 pub(crate) const SCHEMA: Schema = Schema {
-    version: 1,
-    upgrade: |_, _| Ok(()),
+    version: 3,
+    upgrade: |tx, from| {
+        if from < 2 {
+            replication::create_tables(tx)?;
+        }
+        add_principal_columns(tx)
+    },
     create: |tx| {
         tx.execute_batch(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -81,17 +108,24 @@ pub(crate) const SCHEMA: Schema = Schema {
              CREATE TABLE areas (
                  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL
              ) STRICT;",
-        )
+        )?;
+        replication::create_tables(tx)?;
+        add_principal_columns(tx)
     },
 };
 
-/// The rules' view of the organization and their way to write it, over the writer's connection
-/// (or a reader's, for reads). A write is an upsert by id that NEVER replaces another row: a
-/// clash on a sibling name, a handle or a (team, member) pair is a constraint error (a panic
-/// here, so the request's savepoint rolls back), not a quiet deletion. The traits have no error
-/// channel: a failing query panics with a
-/// fixed text, which the writer reports as a storage failure of that one request and a reader
-/// surfaces as an error.
+// Existing write/import paths omit these columns and retain NULL. Bound-principal
+// writes require the separately negotiated replication codec/profile activation.
+fn add_principal_columns(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE commands ADD COLUMN principal_account TEXT;
+         ALTER TABLE commands ADD COLUMN principal_member TEXT;
+         ALTER TABLE commands ADD COLUMN actor_kind TEXT;",
+    )
+}
+
+/// The rules' read view over the current transaction. `OrgView` has no error channel, so a
+/// failing query panics and is reported as a storage failure at the transaction boundary.
 pub(crate) struct OrgSql<'a>(pub(crate) &'a Connection);
 
 fn sql<T>(result: rusqlite::Result<T>) -> T {
@@ -134,6 +168,11 @@ fn handle_key(member: &Member) -> Option<String> {
         (MemberKind::Agent, Some(profile)) => profile.messaging_name.to_lowercase(),
         _ => rules::name_key(&member.name),
     })
+}
+
+fn preserves_offboarded_handle(member: &Member, retained_handle: &str) -> bool {
+    crate::organization::is_offboarded(member)
+        && handle_key(member).as_deref() == Some(retained_handle)
 }
 
 impl OrgView for OrgSql<'_> {
@@ -226,9 +265,37 @@ impl OrgView for OrgSql<'_> {
     }
 }
 
-impl OrgWrite for OrgSql<'_> {
+/// The domain's mechanical apply writes through `OrgWrite`, which has no error return.
+/// Retain the SQLite result so the caller can fail the transaction with the original cause.
+struct OrgWriteSql<'a> {
+    db: &'a Connection,
+    error: Option<rusqlite::Error>,
+}
+
+impl<'a> OrgWriteSql<'a> {
+    fn new(db: &'a Connection) -> Self {
+        Self { db, error: None }
+    }
+
+    fn write_result(&mut self, result: rusqlite::Result<usize>) {
+        if self.error.is_none() {
+            self.error = result.err();
+        }
+    }
+
+    fn check_write(&mut self) -> Result<(), OfficeError> {
+        match self.error.take() {
+            Some(error) => Err(OfficeError::storage(error)),
+            None => Ok(()),
+        }
+    }
+}
+
+// Upsert by id. A conflicting name, handle or membership returns the constraint error
+// and lets the writer roll back, preserving the other row.
+impl OrgWrite for OrgWriteSql<'_> {
     fn put_team(&mut self, team: &Team) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO teams (id, owner_team_id, name_key, lead_member_id, body)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (id) DO UPDATE SET owner_team_id = excluded.owner_team_id,
@@ -244,10 +311,10 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_team(&mut self, id: &str) {
-        sql(self.0.execute("DELETE FROM teams WHERE id = ?1", [id]));
+        self.write_result(self.db.execute("DELETE FROM teams WHERE id = ?1", [id]));
     }
     fn put_member(&mut self, member: &Member) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO members (id, handle_key, reports_to_member_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET handle_key = excluded.handle_key,
@@ -261,10 +328,10 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_member(&mut self, id: &str) {
-        sql(self.0.execute("DELETE FROM members WHERE id = ?1", [id]));
+        self.write_result(self.db.execute("DELETE FROM members WHERE id = ?1", [id]));
     }
     fn put_membership(&mut self, membership: &Membership) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO memberships (id, team_id, member_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET team_id = excluded.team_id,
@@ -278,12 +345,13 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_membership(&mut self, id: &str) {
-        sql(self
-            .0
-            .execute("DELETE FROM memberships WHERE id = ?1", [id]));
+        self.write_result(
+            self.db
+                .execute("DELETE FROM memberships WHERE id = ?1", [id]),
+        );
     }
     fn put_project_team(&mut self, project_team: &ProjectTeam) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO project_teams (id, project_id, team_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET project_id = excluded.project_id,
@@ -297,25 +365,30 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_project_team(&mut self, id: &str) {
-        sql(self
-            .0
-            .execute("DELETE FROM project_teams WHERE id = ?1", [id]));
+        self.write_result(
+            self.db
+                .execute("DELETE FROM project_teams WHERE id = ?1", [id]),
+        );
     }
 }
 
 /// Applies `changes` in order. A change this build does not know is an error, so the caller's
 /// savepoint rolls back whatever was written before it.
 pub(crate) fn apply_changes(db: &Connection, changes: &[OrgChange]) -> Result<(), OfficeError> {
-    let mut state = OrgSql(db);
+    let mut state = OrgWriteSql::new(db);
     for change in changes {
         rules::apply(&mut state, change)
             .map_err(|_| OfficeError::Invalid("a change this build does not know"))?;
+        state.check_write()?;
     }
     Ok(())
 }
 
 /// The position of the last log entry, or `None` for an empty log.
 pub(crate) fn last_position(db: &Connection) -> Result<Option<Position>, OfficeError> {
+    if let Some(position) = replication::native_position(db)? {
+        return Ok(Some(position));
+    }
     db.query_row(
         "SELECT epoch, seq FROM events ORDER BY epoch DESC, seq DESC LIMIT 1",
         (),
@@ -370,6 +443,10 @@ const MAX_AGE_MS: u64 = 29 * DAY_MS;
 const MAX_AHEAD_MS: u64 = 5 * 60_000;
 /// How long an answer is kept: from the id's own time, so no clock can reopen the window.
 const KEEP_MS: u64 = 30 * DAY_MS;
+
+fn command_expiry_ms(made_ms: u64) -> u64 {
+    made_ms.saturating_add(KEEP_MS)
+}
 /// `meta` row: the highest clock reading HQ has used, so a clock that steps back cannot reopen
 /// the window.
 const CLOCK_HIGH_KEY: &str = "clock_high_ms";
@@ -381,6 +458,13 @@ struct Answer {
     params_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refusal: Option<ApiError>,
+}
+
+fn valid_fingerprint(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn fingerprint(command: &OrgCommand) -> String {
@@ -402,7 +486,7 @@ fn fingerprint(command: &OrgCommand) -> String {
 /// 1. **Lookup first.** A `command_id` HQ already answered gets that answer without deciding
 ///    again: the commit's position, or the same refusal (**rejections are remembered too**; to
 ///    retry a refused command the client uses a new id). The same id with other params is
-///    `invalid_request`.
+///    `operation_reused`.
 /// 2. The id must be a ULID (`invalid_request`), dated no more than 29 days back (`expired`) and
 ///    no more than 5 minutes ahead (`clock_skew`) of HQ's clock, which never goes back
 ///    (`clock_ms` is the clock's reading; the highest one used is kept). These are not stored.
@@ -423,35 +507,35 @@ pub(crate) fn submit(
     clock_ms: u64,
     command: &OrgCommand,
 ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+    submit_as(db, clock_ms, command, None)
+}
+
+fn submit_as(
+    db: &Connection,
+    clock_ms: u64,
+    command: &OrgCommand,
+    principal: Option<operation::Principal<'_>>,
+) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+    let replicated = match replication::native_binding(db)? {
+        None => false,
+        Some((true, false)) => true,
+        Some(_) => {
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "organization writes require available HQ authority",
+            )))
+        }
+    };
     let command_id = command.command_id();
     let params_hash = fingerprint(command);
-    let seen = db
-        .query_row(
-            "SELECT epoch, seq, result FROM commands WHERE command_id = ?1",
-            [command_id],
-            |row| {
-                Ok((
-                    Position {
-                        epoch: row.get::<_, i64>(0)? as u64,
-                        seq: row.get::<_, i64>(1)? as u64,
-                    },
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(OfficeError::storage)?;
-    if let Some((position, answer)) = seen {
-        let answer: Answer = answer
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .ok_or(OfficeError::Invalid(
-                "a stored command answer is not readable",
-            ))?;
+    if let Some(stored) = operation::retained(db, command_id, principal.is_some())? {
+        if !stored.matches(principal) {
+            return Ok(Err(operation::reused()));
+        }
+        let position = stored.position;
+        let answer = stored.answer()?;
         return Ok(if answer.params_hash != params_hash {
-            Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "command id reused with different params",
-            ))
+            Err(operation::reused())
         } else if let Some(refusal) = answer.refusal {
             Err(refusal)
         } else {
@@ -466,20 +550,7 @@ pub(crate) fn submit(
         )));
     };
     // Absent until the first command; an unreadable mark is an error, not "no mark".
-    let high = match db
-        .query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            [CLOCK_HIGH_KEY],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(OfficeError::storage)?
-    {
-        None => 0,
-        Some(value) => value
-            .parse::<u64>()
-            .map_err(|_| OfficeError::Invalid("the clock high-water mark is not readable"))?,
-    };
+    let high = operation::clock_high(db)?;
     let now_ms = clock_ms.max(high);
     if now_ms > high {
         db.execute(
@@ -510,7 +581,7 @@ pub(crate) fn submit(
                 command_id,
                 position.epoch as i64,
                 position.seq as i64,
-                time::format_epoch_ms(made_ms.saturating_add(KEEP_MS)),
+                time::format_epoch_ms(command_expiry_ms(made_ms)),
                 json(&Answer {
                     params_hash: params_hash.clone(),
                     refusal,
@@ -520,7 +591,28 @@ pub(crate) fn submit(
         .map_err(OfficeError::storage)
     };
     let now = time::format_epoch_ms(now_ms);
-    let changes = match rules::decide(&OrgSql(db), &now, command) {
+    let decision = rules::decide(&OrgSql(db), &now, command);
+    if replicated {
+        let (changes, refusal) = match decision {
+            Ok(changes) => (changes, None),
+            Err(refusal) => (Vec::new(), Some(refusal)),
+        };
+        let position = replication::publish_command(
+            db,
+            command_id,
+            now,
+            changes,
+            Answer {
+                params_hash,
+                refusal: refusal.clone(),
+            },
+        )?;
+        return Ok(match refusal {
+            Some(error) => Err(error),
+            None => Ok(committed(position)),
+        });
+    }
+    let changes = match decision {
         Ok(changes) => changes,
         Err(refusal) => {
             remember(Position { epoch: 0, seq: 0 }, Some(refusal.clone()))?;
@@ -531,6 +623,14 @@ pub(crate) fn submit(
     let position = append_event(db, command_id, &now, &changes)?;
     remember(position, None)?;
     Ok(Ok(committed(position)))
+}
+
+pub(crate) fn operation_get(
+    db: &Connection,
+    clock_ms: u64,
+    id: &str,
+) -> Result<Result<org_proto::OperationOutcome, ApiError>, OfficeError> {
+    operation::lookup(db, clock_ms, id, None)
 }
 
 fn committed(position: Position) -> CommandAccepted {
@@ -544,6 +644,26 @@ fn committed(position: Position) -> CommandAccepted {
 /// that follow: `after` is a position this log has (same epoch, at least the genesis, no later
 /// than the head). Nothing is trimmed yet, so every earlier position of the epoch qualifies.
 pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, OfficeError> {
+    if let Some(head) = replication::native_position(db)? {
+        if after.epoch != head.epoch || after.seq > head.seq {
+            return Ok(false);
+        }
+        let first: Option<i64> = db
+            .query_row(
+                "SELECT min(seq) FROM events WHERE epoch = ?1",
+                [i64::try_from(after.epoch).map_err(OfficeError::storage)?],
+                |row| row.get(0),
+            )
+            .map_err(OfficeError::storage)?;
+        if after.epoch == EPOCH && after.seq == 0 && first == Some(1) {
+            // The original native feed starts at genesis. A restored epoch can have a
+            // materialized sequence-zero baseline, which remains resumable.
+            return Ok(false);
+        }
+        return Ok(
+            after == head || first.is_some_and(|seq| after.seq >= (seq as u64).saturating_sub(1))
+        );
+    }
     Ok(match last_position(db)? {
         Some(head) => after.epoch == head.epoch && (1..=head.seq).contains(&after.seq),
         None => false,
@@ -557,7 +677,15 @@ pub(crate) fn changes_after(
     after: Position,
     limit: usize,
 ) -> Result<Vec<OrgChangedData>, OfficeError> {
-    let mut statement = db
+    // The retention check and page must use the same view. An install can replace the
+    // entire log between reads, so a stale subscription needs to close and resnapshot.
+    let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+    if replication::native_position(&tx)?.is_some() && !can_resume_from(&tx, after)? {
+        return Err(OfficeError::Invalid(
+            "the organization feed requires a fresh snapshot",
+        ));
+    }
+    let mut statement = tx
         .prepare(
             "SELECT epoch, seq, command_id, body FROM events
              WHERE kind = 'org.changed' AND (epoch, seq) > (?1, ?2)
@@ -588,6 +716,7 @@ pub(crate) fn changes_after(
             position,
             command_id,
             changes,
+            actor: None,
         });
     }
     Ok(out)
@@ -609,9 +738,10 @@ pub(crate) fn seed_for_test(
         "DELETE FROM memberships; DELETE FROM teams; DELETE FROM members; DELETE FROM events;",
     )
     .map_err(OfficeError::storage)?;
-    let mut state = OrgSql(db);
+    let mut state = OrgWriteSql::new(db);
     for member in members {
         state.put_member(member);
+        state.check_write()?;
     }
     db.execute(
         "INSERT INTO events (epoch, seq, kind, command_id, at, body)
@@ -1196,15 +1326,16 @@ mod tests {
             .all(|m| m.id != id(21) && m.id != id(25)));
     }
 
-    fn put_fails(store: &Store, put: impl FnOnce(&mut OrgSql<'_>) + Send + 'static) -> bool {
-        let mut put = Some(put);
-        store
-            .write(move |db| {
-                let put = put.take().expect("runs once");
-                put(&mut OrgSql(db));
-                Ok(((), None))
-            })
-            .is_err()
+    fn put_for_test(
+        store: &Store,
+        put: impl Fn(&mut OrgWriteSql<'_>) + Send + 'static,
+    ) -> Result<(), OfficeError> {
+        store.write(move |db| {
+            let mut state = OrgWriteSql::new(db);
+            put(&mut state);
+            state.check_write()?;
+            Ok(((), None))
+        })
     }
 
     fn team(id: &str, name: &str, owner: Option<&str>) -> Team {
@@ -1218,17 +1349,40 @@ mod tests {
     }
 
     #[test]
-    fn the_database_backs_up_the_sibling_name_and_handle_rules_and_never_deletes_to_do_it() {
+    fn organization_apply_preserves_the_sqlite_error_and_rolls_back_earlier_changes() {
+        use std::error::Error;
+
         let (_dir, store) = store();
-        store
+        let error = store
             .write(|db| {
-                let mut state = OrgSql(db);
-                state.put_team(&team("a", "X", None));
+                apply_changes(
+                    db,
+                    &[
+                        OrgChange::TeamUpserted {
+                            team: team("one", "Same name", None),
+                        },
+                        OrgChange::TeamUpserted {
+                            team: team("two", "SAME NAME", None),
+                        },
+                    ],
+                )?;
                 Ok(((), None))
             })
-            .unwrap();
+            .unwrap_err();
+        assert!(matches!(
+            error.source().and_then(|source| source.downcast_ref()),
+            Some(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation
+        ));
+        assert!(store.read(snapshot).unwrap().teams.is_empty());
+    }
+
+    #[test]
+    fn the_database_backs_up_the_sibling_name_and_handle_rules_and_never_deletes_to_do_it() {
+        let (_dir, store) = store();
+        put_for_test(&store, |s| s.put_team(&team("a", "X", None))).unwrap();
         // The same name (any case) among the top-level teams: a constraint error, and `a` stays.
-        assert!(put_fails(&store, |s| s.put_team(&team("b", "x", None))));
+        assert!(put_for_test(&store, |s| s.put_team(&team("b", "x", None))).is_err());
         let after = store.read(snapshot).unwrap();
         assert_eq!(
             after
@@ -1239,12 +1393,7 @@ mod tests {
             ["a"]
         );
         // Updating a team in place is fine.
-        store
-            .write(|db| {
-                OrgSql(db).put_team(&team("a", "X", None));
-                Ok(((), None))
-            })
-            .unwrap();
+        put_for_test(&store, |s| s.put_team(&team("a", "X", None))).unwrap();
         // Two members with one handle: the second write fails and the first member stays.
         let person = |id: &str, name: &str| Member {
             id: id.into(),
@@ -1258,17 +1407,10 @@ mod tests {
             created_at: None,
             version: 1,
         };
-        store
-            .write({
-                let first = person("m1", "Ann");
-                move |db| {
-                    OrgSql(db).put_member(&first);
-                    Ok(((), None))
-                }
-            })
-            .unwrap();
+        let first = person("m1", "Ann");
+        put_for_test(&store, move |s| s.put_member(&first)).unwrap();
         let second = person("m2", "ANN");
-        assert!(put_fails(&store, move |s| s.put_member(&second)));
+        assert!(put_for_test(&store, move |s| s.put_member(&second)).is_err());
         let ids: Vec<String> = store
             .read(snapshot)
             .unwrap()
@@ -1288,19 +1430,8 @@ mod tests {
             title_in_team: None,
             version: 1,
         };
-        store
-            .write(move |db| {
-                OrgSql(db).put_membership(&membership("ms1"));
-                Ok(((), None))
-            })
-            .unwrap();
-        assert!(put_fails(&store, move |s| s.put_membership(&Membership {
-            id: "ms2".into(),
-            team_id: "a".into(),
-            member_id: "m1".into(),
-            title_in_team: None,
-            version: 1,
-        })));
+        put_for_test(&store, move |s| s.put_membership(&membership("ms1"))).unwrap();
+        assert!(put_for_test(&store, move |s| s.put_membership(&membership("ms2"))).is_err());
         assert_eq!(store.read(snapshot).unwrap().memberships.len(), 1);
     }
 
@@ -1459,6 +1590,32 @@ mod tests {
         assert!(run(&store, clock, refused).is_err());
         assert!(run(&store, clock, create_team(&crate::ulid::from_ms(clock, 4))).is_ok());
         assert_eq!(stored_commands(&store), 2);
+    }
+
+    /// X-02 §4.2: fingerprint values don't change. The shared vectors pin `member.add_agent`
+    /// commands as v1 stored them; move 2a's params (the profile as `AgentProfileInput`) must
+    /// serialize the same bytes, which org-proto checks against the same file.
+    #[test]
+    fn fingerprints_match_the_org_proto_v2_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../org-proto/test-vectors/v2/proto-fingerprints.json"
+        ))
+        .unwrap();
+        let cases = doc["org"].as_array().unwrap();
+        for case in cases.iter().chain([&doc["org_refused_v1_home"]]) {
+            let command = OrgCommand::parse(&org_proto::Request {
+                id: 1,
+                method: case["method"].as_str().unwrap().into(),
+                principal: None,
+                params: case["params"].clone(),
+            })
+            .unwrap()
+            .unwrap();
+            let (method, params) = command.method_and_params();
+            assert_eq!(method, case["method"]);
+            assert_eq!(params, case["serialized"].as_str().unwrap());
+            assert_eq!(fingerprint(&command), case["fingerprint"].as_str().unwrap());
+        }
     }
 
     #[test]

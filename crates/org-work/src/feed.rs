@@ -71,6 +71,7 @@ pub(crate) fn split(
             part: u32::try_from(i + 1).unwrap_or(u32::MAX),
             parts,
             changes,
+            actor: None,
         })
         .collect()
 }

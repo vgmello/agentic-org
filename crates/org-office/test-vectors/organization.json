@@ -1,0 +1,350 @@
+{
+  "position": {
+    "epoch": 1,
+    "seq": 1
+  },
+  "teams": [
+    {
+      "id": "eng",
+      "name": "Engineering",
+      "version": 1,
+      "lead_member_id": "sam"
+    },
+    {
+      "id": "web",
+      "name": "Web",
+      "version": 1,
+      "owner_team_id": "eng",
+      "lead_member_id": "noor"
+    },
+    {
+      "id": "platform",
+      "name": "Platform",
+      "version": 1,
+      "owner_team_id": "eng",
+      "lead_member_id": "kai"
+    },
+    {
+      "id": "design",
+      "name": "Design",
+      "version": 1,
+      "lead_member_id": "juno"
+    },
+    {
+      "id": "people",
+      "name": "People",
+      "version": 1,
+      "lead_member_id": "hana"
+    }
+  ],
+  "members": [
+    {
+      "id": "you",
+      "kind": "person",
+      "name": "Alex Kim",
+      "version": 1,
+      "owner": true
+    },
+    {
+      "id": "avery",
+      "kind": "person",
+      "name": "Avery Stone",
+      "version": 1,
+      "contact": "avery@example.com"
+    },
+    {
+      "id": "hana",
+      "kind": "person",
+      "name": "Hana Weiss",
+      "version": 1,
+      "reports_to_member_id": "avery"
+    },
+    {
+      "id": "leo",
+      "kind": "person",
+      "name": "Leo Brandt",
+      "version": 1,
+      "reports_to_member_id": "hana"
+    },
+    {
+      "id": "sam",
+      "kind": "agent",
+      "name": "Sam Okafor",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "software engineer",
+        "title": "software engineer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "sam",
+        "status": "active"
+      },
+      "reports_to_member_id": "avery"
+    },
+    {
+      "id": "noor",
+      "kind": "agent",
+      "name": "Noor Haddad",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "web engineer",
+        "title": "web engineer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "noor",
+        "status": "active"
+      },
+      "reports_to_member_id": "sam"
+    },
+    {
+      "id": "kai",
+      "kind": "agent",
+      "name": "Kai Lindqvist",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "platform engineer",
+        "title": "platform engineer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "kai",
+        "status": "active"
+      },
+      "reports_to_member_id": "sam"
+    },
+    {
+      "id": "mira",
+      "kind": "agent",
+      "name": "Mira Castillo",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "software engineer",
+        "title": "software engineer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "mira",
+        "status": "active"
+      },
+      "reports_to_member_id": "sam"
+    },
+    {
+      "id": "juno",
+      "kind": "agent",
+      "name": "Juno Park",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "designer",
+        "title": "designer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "juno",
+        "status": "active"
+      },
+      "reports_to_member_id": "avery"
+    },
+    {
+      "id": "pax",
+      "kind": "agent",
+      "name": "Pax Moreau",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "designer",
+        "title": "designer",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "pax",
+        "status": "active"
+      },
+      "reports_to_member_id": "juno"
+    },
+    {
+      "id": "ines",
+      "kind": "agent",
+      "name": "Inês Duarte",
+      "version": 1,
+      "reports_to_member_id": "hana",
+      "agent": {
+        "role": "people partner",
+        "title": "people partner",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "ines",
+        "status": "active"
+      }
+    },
+    {
+      "id": "quinn",
+      "kind": "agent",
+      "name": "Quinn Adeyemi",
+      "version": 1,
+      "office_id": "office-1",
+      "agent": {
+        "role": "researcher",
+        "title": "researcher",
+        "runtime": "claude_code",
+        "run_mode": "on_call",
+        "messaging_name": "quinn",
+        "status": "active"
+      }
+    }
+  ],
+  "memberships": [
+    {
+      "id": "ms-1",
+      "team_id": "eng",
+      "member_id": "sam",
+      "version": 1,
+      "title_in_team": "Staff engineer"
+    },
+    {
+      "id": "ms-2",
+      "team_id": "web",
+      "member_id": "noor",
+      "version": 1
+    },
+    {
+      "id": "ms-3",
+      "team_id": "web",
+      "member_id": "mira",
+      "version": 1
+    },
+    {
+      "id": "ms-4",
+      "team_id": "platform",
+      "member_id": "kai",
+      "version": 1
+    },
+    {
+      "id": "ms-5",
+      "team_id": "platform",
+      "member_id": "mira",
+      "version": 1
+    },
+    {
+      "id": "ms-6",
+      "team_id": "design",
+      "member_id": "juno",
+      "version": 1
+    },
+    {
+      "id": "ms-7",
+      "team_id": "design",
+      "member_id": "pax",
+      "version": 1
+    },
+    {
+      "id": "ms-8",
+      "team_id": "design",
+      "member_id": "noor",
+      "version": 1
+    },
+    {
+      "id": "ms-9",
+      "team_id": "people",
+      "member_id": "hana",
+      "version": 1
+    },
+    {
+      "id": "ms-10",
+      "team_id": "people",
+      "member_id": "leo",
+      "version": 1
+    },
+    {
+      "id": "ms-11",
+      "team_id": "people",
+      "member_id": "ines",
+      "version": 1
+    }
+  ],
+  "projects": [
+    {
+      "id": "atlas",
+      "key": "atl",
+      "name": "Atlas",
+      "version": 1
+    },
+    {
+      "id": "beacon",
+      "key": "bea",
+      "name": "Beacon",
+      "version": 1
+    },
+    {
+      "id": "onboarding",
+      "key": "onb",
+      "name": "Onboarding kit",
+      "version": 1
+    },
+    {
+      "id": "scratch",
+      "key": "scr",
+      "name": "Scratchpad",
+      "version": 1
+    }
+  ],
+  "project_teams": [
+    {
+      "id": "pt-1",
+      "project_id": "atlas",
+      "team_id": "platform",
+      "version": 1
+    },
+    {
+      "id": "pt-2",
+      "project_id": "beacon",
+      "team_id": "web",
+      "version": 1
+    },
+    {
+      "id": "pt-3",
+      "project_id": "beacon",
+      "team_id": "design",
+      "version": 1
+    },
+    {
+      "id": "pt-4",
+      "project_id": "onboarding",
+      "team_id": "people",
+      "version": 1
+    }
+  ],
+  "areas": [
+    {
+      "id": "atlas-general",
+      "project_id": "atlas",
+      "name": "General",
+      "team_id": "platform",
+      "general": true,
+      "version": 1
+    },
+    {
+      "id": "beacon-general",
+      "project_id": "beacon",
+      "name": "General",
+      "team_id": "web",
+      "general": true,
+      "version": 1
+    },
+    {
+      "id": "onboarding-general",
+      "project_id": "onboarding",
+      "name": "General",
+      "team_id": "people",
+      "general": true,
+      "version": 1
+    },
+    {
+      "id": "scratch-general",
+      "project_id": "scratch",
+      "name": "General",
+      "general": true,
+      "version": 1
+    }
+  ]
+}

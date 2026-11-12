@@ -1,6 +1,6 @@
 # Controlling agent runtimes from the office server: Claude Code, Codex, Antigravity
 
-Research for Agentic Org's office server (`org-office-server`, Rust). It answers how the office can start, prompt, observe, resume, stop and meter agents on three runtimes, and recommends one session abstraction. Written 2026-11-08.
+Research for Agentic Org's office server (`org-server`, Rust). It answers how the office can start, prompt, observe, resume, stop and meter agents on three runtimes, and recommends one session abstraction. Written 2026-11-08.
 
 ## Evidence legend
 
@@ -103,7 +103,7 @@ Both spikes ran against Claude Code 2.1.311 (the version here).
 ### 1.3 ADRs on `origin/v1`
 
 - **ADR-0001** ("the app is a client; the office server holds the organization"):
-  - One `org-office-server` process per office, supervised by `org-office-host` (a per-user SMAppService login item).
+  - One `org-server` process per office, supervised by `org-office-host` (a per-user SMAppService login item).
   - Each office owns its **runtime side: sessions, live status, local queues**.
   - The office server is also the message hub (decision 4). `org-agent` talks to its own office over the office's local socket.
   - `crates/` are libraries and `apps/` are runnables.
@@ -533,7 +533,7 @@ stream-json **[doc]**:
 
 Put the contract in a small, stable crate that the office domain owns, for example `crates/org-runtime`. Each runtime gets an adapter crate (`org-runtime-claude`, `org-runtime-codex`, `org-runtime-agy`).
 
-- The office server depends on the trait. `apps/org-office-server` wires in the adapters.
+- The office server depends on the trait. `apps/org-server` wires in the adapters.
 - Adapters depend only on the trait crate and their CLI, never on each other or on office storage.
 - That follows the architecture rules: dependency inversion around volatile, third-party CLIs, no cycles, and each adapter with Ce ≤ 3.
 

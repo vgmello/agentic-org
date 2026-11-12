@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 rev15 \u00a75.2: authenticated v3 rendezvous receipts. The opaque of value correlates handoff or a channel ID; the host checks its pending records. V2 stdout has no receipt variant.",
+  "events": [
+    {
+      "of": "handoff",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\"}\n"
+    },
+    {
+      "of": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":\"01ARZ3NDEKTSV4RRFFQ69G5FAV\"}\n"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\"}\n",
+      "error": "json"
+    },
+    {
+      "name": "null of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":null}\n",
+      "error": "json"
+    },
+    {
+      "name": "number of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":1}\n",
+      "error": "json"
+    },
+    {
+      "name": "object of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":{}}\n",
+      "error": "json"
+    },
+    {
+      "name": "array of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":[]}\n",
+      "error": "json"
+    },
+    {
+      "name": "unknown field",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\",\"extra\":true}\n",
+      "error": "json"
+    },
+    {
+      "name": "duplicate of",
+      "wire": "{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\",\"of\":\"other\"}\n",
+      "error": "json"
+    },
+    {
+      "name": "duplicate v",
+      "wire": "{\"v\":3,\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\"}\n",
+      "error": "json"
+    },
+    {
+      "name": "missing version",
+      "wire": "{\"event\":\"fds_received\",\"of\":\"handoff\"}\n",
+      "error": "json"
+    },
+    {
+      "name": "v2 receipt on rendezvous",
+      "wire": "{\"v\":2,\"event\":\"fds_received\",\"of\":\"handoff\"}\n",
+      "error": "unsupported"
+    }
+  ]
+}

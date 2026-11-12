@@ -6,20 +6,42 @@
 //!
 //! The database is SQLCipher (encrypted at rest) with exactly one writer: a dedicated
 //! thread owns the only writing connection. It takes every request queued at that moment,
-//! runs them in ONE transaction (each in its own SAVEPOINT, so a failure undoes only that
-//! request), commits once, and only then answers each request. Readers use their own
+//! runs them in ONE transaction (each in its own SAVEPOINT for ordinary failures), commits
+//! once, and only then answers successful requests. A batch-fatal failure rolls back the
+//! transaction and replays its other requests. Readers use their own
 //! connections (WAL lets them run beside the writer), so many concurrent callers never see
 //! `SQLITE_BUSY`.
 
 pub(crate) mod messages;
 pub(crate) mod org;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "C2 feed reads and B1-14b replication consume the remaining origin APIs"
+    )
+)]
+pub(crate) mod origin;
 pub(crate) mod status;
+mod sync;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "A2 reads, B paging and C2 publication consume the remaining work APIs"
+    )
+)]
+pub(crate) mod work;
 
 use std::any::Any;
+use std::cell::Cell;
+use std::error::Error;
+use std::fmt;
+use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use rusqlite::config::DbConfig;
@@ -38,11 +60,12 @@ const MAX_BATCH: usize = 64;
 /// was part of is not committed after all.
 pub(crate) type Undo = Box<dyn FnOnce() + Send>;
 
-/// One request for the writer. `attempt` may run more than once: if SQLite aborts the batch's
-/// transaction, every other request in it is run again in a fresh one (after its `Undo`).
-struct WriteJob {
+/// One request for the writer. `attempt` may run more than once: if a request aborts the
+/// batch's transaction, every other request runs again in a fresh one (after its `Undo`).
+pub(crate) struct WriteJob {
     attempt: Box<Attempt>,
-    /// Called once, after the batch's commit, with how this request ended.
+    abort_batch: fn(&OfficeError) -> bool,
+    /// Called once, after commit or rollback, with how this request ended.
     reply: Box<dyn FnOnce(Result<(), OfficeError>) + Send>,
 }
 
@@ -79,6 +102,40 @@ pub(crate) struct Store {
     key: Key,
 }
 
+/// An org.db reader pinned for one work attempt. Failed or unwinding readers are discarded.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "C1 writes use snapshots; B/C2 complete the work storage consumers"
+    )
+)]
+pub(crate) struct ReaderSnapshot<'a> {
+    store: &'a Store,
+    db: Option<Connection>,
+    failed: Cell<bool>,
+}
+
+impl Deref for ReaderSnapshot<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.db.as_ref().expect("a live snapshot owns its reader")
+    }
+}
+
+impl Drop for ReaderSnapshot<'_> {
+    fn drop(&mut self) {
+        let db = self.db.take().expect("a snapshot is dropped once");
+        let rolled_back = db.execute_batch("ROLLBACK").is_ok();
+        if rolled_back && !self.failed.get() && !std::thread::panicking() {
+            let mut idle = self.store.idle_readers();
+            if idle.len() < MAX_IDLE_READERS {
+                idle.push(db);
+            }
+        }
+    }
+}
+
 impl Store {
     /// Opens the encrypted database at `db_path`, which must be absolute, with `key`.
     /// `Opening::New` creates the file and `schema`; `Opening::Existing` never does. What the
@@ -91,6 +148,38 @@ impl Store {
         opening: Opening,
         schema: &Schema,
     ) -> Result<Self, OfficeError> {
+        Self::open_bound(db_path, key, opening, schema, None)
+    }
+
+    pub(crate) fn check_instance(
+        db_path: &Path,
+        key: &Key,
+        instance: &str,
+        office: &str,
+    ) -> Result<(), OfficeError> {
+        check_existing_file(db_path)?;
+        let db = connect(db_path, key, false, false)?;
+        let stored: Option<String> = db
+            .query_row("SELECT value FROM meta WHERE key='office_id'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(OfficeError::storage)?;
+        if stored.as_deref() != Some(office) {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
+        }
+        bind_instance(&db, instance, false)
+    }
+
+    pub(crate) fn open_bound(
+        db_path: &Path,
+        key: &Key,
+        opening: Opening,
+        schema: &Schema,
+        instance: Option<&str>,
+    ) -> Result<Self, OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
@@ -98,12 +187,7 @@ impl Store {
             // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
             Opening::New => drop(private_file(db_path).map_err(OfficeError::storage)?),
             Opening::Existing => {
-                // SQLite deletes a WAL beside an empty main file on the first read, which
-                // would destroy whatever that log still holds: don't let it look.
-                let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
-                if !metadata.is_file() || metadata.len() == 0 {
-                    return Err(failure("the database file is missing or empty"));
-                }
+                check_existing_file(db_path)?;
                 tighten_file_if_present(db_path).map_err(OfficeError::storage)?
             }
         }
@@ -133,7 +217,7 @@ impl Store {
                 "SQLite refused WAL mode (stayed in {journal_mode})"
             )));
         }
-        migrate(&mut writer, schema)?;
+        migrate_bound(&mut writer, schema, instance)?;
 
         let (jobs, queue) = mpsc::channel::<WriteJob>();
         let thread = std::thread::Builder::new()
@@ -156,8 +240,30 @@ impl Store {
     /// database. It may be run again (see [`WriteJob`]).
     pub(crate) fn write<R: Send + 'static>(
         &self,
-        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
     ) -> Result<R, OfficeError> {
+        self.write_with_batch_abort(work, |_| false)
+    }
+
+    /// As `write`, with an error classifier for requests that require the entire
+    /// transaction to roll back. The failed request is answered once. Other requests
+    /// are replayed in a fresh transaction, just as after a SQLite-initiated abort.
+    pub(crate) fn write_with_batch_abort<R: Send + 'static>(
+        &self,
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        abort_batch: fn(&OfficeError) -> bool,
+    ) -> Result<R, OfficeError> {
+        let (job, answer) = Self::job_with_batch_abort(work, abort_batch);
+        self.send_job(job)?;
+        answer
+            .recv()
+            .map_err(|_| failure("the storage writer stopped"))?
+    }
+
+    pub(crate) fn job_with_batch_abort<R: Send + 'static>(
+        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        abort_batch: fn(&OfficeError) -> bool,
+    ) -> (WriteJob, mpsc::Receiver<Result<R, OfficeError>>) {
         let (reply, answer) = mpsc::sync_channel(1);
         let slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
         let attempt = {
@@ -170,6 +276,7 @@ impl Store {
         };
         let job = WriteJob {
             attempt: Box::new(attempt),
+            abort_batch,
             reply: Box::new(move |outcome| {
                 let result = outcome.map(|()| {
                     lock(&slot)
@@ -179,13 +286,16 @@ impl Store {
                 let _ = reply.send(result);
             }),
         };
+        (job, answer)
+    }
+
+    pub(crate) fn send_job(&self, job: WriteJob) -> Result<(), OfficeError> {
         let stopped = || failure("the storage writer stopped");
         self.jobs
             .as_ref()
             .ok_or_else(stopped)?
             .send(job)
-            .map_err(|_| stopped())?;
-        answer.recv().map_err(|_| stopped())?
+            .map_err(|_| stopped())
     }
 
     /// Runs `work` on a reader connection: an idle one if there is one, else a new one.
@@ -212,6 +322,38 @@ impl Store {
             }
         }
         result
+    }
+
+    /// Checks out an org.db reader and pins a deferred WAL snapshot with a table read.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C1 writes use snapshots; B/C2 complete the work storage consumers"
+        )
+    )]
+    pub(crate) fn read_snapshot(&self) -> Result<ReaderSnapshot<'_>, OfficeError> {
+        let idle = self.idle_readers().pop();
+        let db = match idle {
+            Some(db) => db,
+            None => {
+                let db = connect(&self.db_path, &self.key, false, true)?;
+                db.pragma_update(None, "query_only", true)
+                    .map_err(OfficeError::storage)?;
+                db
+            }
+        };
+        let snapshot = ReaderSnapshot {
+            store: self,
+            db: Some(db),
+            failed: Cell::new(true),
+        };
+        snapshot
+            .execute_batch("BEGIN")
+            .map_err(OfficeError::storage)?;
+        org::last_position(&snapshot)?;
+        snapshot.failed.set(false);
+        Ok(snapshot)
     }
 
     /// One row of the database's `meta` table, if it has it.
@@ -288,9 +430,26 @@ fn writer_loop(mut db: Connection, queue: mpsc::Receiver<WriteJob>) {
 enum BatchResult {
     /// Every request in the batch has been answered.
     Finished,
-    /// SQLite ended the transaction itself (e.g. disk full, an I/O error) while running the
-    /// request at `culprit`: everything else in the batch was undone with it.
+    /// A request required the transaction to roll back, or SQLite ended it (e.g. disk full).
+    /// Everything else in the batch was undone with the request at `culprit`.
     Aborted { culprit: usize, error: OfficeError },
+}
+
+/// A failed BEGIN or COMMIT can affect multiple requests. Keep the original SQLite
+/// error available to each one for storage diagnostics and retry classification.
+#[derive(Clone, Debug)]
+struct SharedTransactionError(Arc<rusqlite::Error>);
+
+impl fmt::Display for SharedTransactionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for SharedTransactionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.0.as_ref())
+    }
 }
 
 fn run_batch(db: &mut Connection, mut jobs: Vec<WriteJob>) {
@@ -316,9 +475,9 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
     let mut tx = match db.transaction_with_behavior(TransactionBehavior::Immediate) {
         Ok(tx) => tx,
         Err(cause) => {
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for job in jobs.drain(..) {
-                (job.reply)(Err(failure(reason.clone())));
+                (job.reply)(Err(OfficeError::storage(cause.clone())));
             }
             return BatchResult::Finished;
         }
@@ -359,9 +518,9 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
             Err(cause) => Err(OfficeError::storage(cause)),
         };
         match outcome {
-            Err(error) if tx.is_autocommit() => {
-                // SQLite ended the whole transaction: undo what the earlier requests did
-                // outside it, and let the caller run the others again.
+            Err(error) if tx.is_autocommit() || (job.abort_batch)(&error) => {
+                // Dropping the transaction rolls back any remaining savepoints. Undo the
+                // earlier requests' external effects before the caller replays them.
                 for undo in outcomes.drain(..).flatten().flatten() {
                     run_undo(undo);
                 }
@@ -385,14 +544,14 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
             // (SQLite can't rule out that the commit reached the WAL before a later fsync
             // failed; after a crash, recovery could then bring rows back whose folders were
             // just undone. A registered organization with no workspace folder is repairable.)
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for (job, outcome) in jobs.drain(..).zip(outcomes) {
                 match outcome {
                     Ok(undo) => {
                         if let Some(undo) = undo {
                             run_undo(undo);
                         }
-                        (job.reply)(Err(failure(reason.clone())));
+                        (job.reply)(Err(OfficeError::storage(cause.clone())));
                     }
                     Err(error) => (job.reply)(Err(error)),
                 }
@@ -480,6 +639,118 @@ fn wipe(text: &mut String) {
     std::hint::black_box(&*text);
 }
 
+fn initialized(
+    state: &OnceLock<Result<(), String>>,
+    init: impl FnOnce() -> Result<(), String>,
+) -> Result<(), OfficeError> {
+    state
+        .get_or_init(init)
+        .as_ref()
+        .copied()
+        .map_err(|message| failure(message.clone()))
+}
+
+static READY: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Completes process-wide SQLCipher initialization before any keyed connection opens (BUG-100).
+///
+/// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
+/// All office openers must pass this fence.
+/// Initialization failure is cached for the process lifetime; restart after fixing its cause.
+/// Host-only twin: apps/org-office-host/src/hostdb/sqlcipher.rs. If both stores
+/// ever share a process, merge into one fence before linking them together.
+pub fn sqlcipher_ready() -> Result<(), OfficeError> {
+    initialized(&READY, || {
+        initialize_sqlcipher(
+            || {
+                // SAFETY: all process openers must cross this fence before their first
+                // SQLite use. Our first initializer waits for SQLCipher's EXTRA_INIT
+                // callback before admitting other openers; a late fence cannot repair
+                // initialization that an unfenced caller has already started.
+                unsafe { rusqlite::ffi::sqlite3_initialize() }
+            },
+            || {
+                #[allow(clippy::disallowed_methods)] // Only the keyed init probe.
+                let db = Connection::open_in_memory().map_err(key_failure_reason)?;
+                keyed_cipher_version(&db)
+            },
+        )
+    })
+}
+
+fn keyed_cipher_version(db: &Connection) -> Result<String, String> {
+    // This fixed public probe key protects no data; actual keys keep their path.
+    let key = Key::from_db_key(org_proto::DbKey::from_bytes([0; 32]));
+    let pragma = KeyPragma::new(&key);
+    let applied = db.execute_batch(pragma.as_str());
+    drop(pragma);
+    applied.map_err(key_failure_reason)?;
+    db.query_row("PRAGMA cipher_version", (), |row| row.get(0))
+        .map_err(cipher_failure_reason)
+}
+
+fn cipher_failure_reason(error: rusqlite::Error) -> String {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => {
+            "this SQLite build has no encryption (SQLCipher)".to_owned()
+        }
+        other => key_failure_reason(other),
+    }
+}
+
+// Keep the initialization ordering and its required postcondition independent of the FFI.
+fn initialize_sqlcipher(
+    initialize: impl FnOnce() -> i32,
+    keyed_probe: impl FnOnce() -> Result<String, String>,
+) -> Result<(), String> {
+    let code = initialize();
+    if code != rusqlite::ffi::SQLITE_OK {
+        return Err(format!(
+            "could not initialize SQLCipher (SQLite code {code})"
+        ));
+    }
+    if keyed_probe()?.is_empty() {
+        return Err("this SQLite build has no encryption (SQLCipher)".to_owned());
+    }
+    Ok(())
+}
+
+fn key_failure(error: rusqlite::Error) -> OfficeError {
+    failure(key_failure_reason(error))
+}
+
+fn key_failure_reason(error: rusqlite::Error) -> String {
+    // Both variants can carry the raw-key SQL. Keep only their integer code, never text.
+    let code = match error {
+        rusqlite::Error::SqliteFailure(error, _) | rusqlite::Error::SqlInputError { error, .. } => {
+            Some(error.extended_code)
+        }
+        _ => None,
+    };
+    match code {
+        Some(code) => format!("could not apply the database key (SQLite code {code})"),
+        None => "could not apply the database key".to_owned(),
+    }
+}
+
+#[cfg(test)]
+fn connection_for_test(path: impl AsRef<Path>) -> Result<Connection, OfficeError> {
+    sqlcipher_ready()?;
+    #[allow(clippy::disallowed_methods)] // Raw fixtures still cross the fence.
+    let db = Connection::open(path).map_err(OfficeError::storage)?;
+    Ok(db)
+}
+
+fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
+    // SQLite deletes a WAL beside an empty main file on the first read, which would
+    // destroy whatever that log still holds: neither open nor inspection may look.
+    let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(failure("the database file is missing or empty"));
+    }
+    Ok(())
+}
+
 /// Opens a connection to the encrypted database and proves the key works. Only with
 /// `create` may SQLite make the file if it is missing. Until the key is proved, closing the
 /// connection must not checkpoint (that would write the log into a file this key can't
@@ -490,11 +761,13 @@ fn connect(
     create: bool,
     checkpoint_on_close: bool,
 ) -> Result<Connection, OfficeError> {
+    sqlcipher_ready()?;
     let mut flags = OpenFlags::default();
     if !create {
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
     }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
+    #[allow(clippy::disallowed_methods)] // The one durable opener; fenced above.
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(OfficeError::storage)?;
@@ -503,7 +776,7 @@ fn connect(
     let pragma = KeyPragma::new(key);
     let applied = db.execute_batch(pragma.as_str());
     drop(pragma);
-    applied.map_err(|_| failure("could not apply the database key"))?;
+    applied.map_err(key_failure)?;
     // Before the first read, so a busy database makes it wait instead of failing.
     db.pragma_update(None, "busy_timeout", 5_000)
         .map_err(OfficeError::storage)?;
@@ -549,7 +822,11 @@ fn connect(
 }
 
 /// Brings the database to `schema.version`: a new one gets its tables, a newer one is refused.
-fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
+fn migrate_bound(
+    db: &mut Connection,
+    schema: &Schema,
+    instance: Option<&str>,
+) -> Result<(), OfficeError> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(OfficeError::storage)?;
@@ -562,8 +839,16 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
             schema.version
         )));
     }
+    if version >= 1 {
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
+    }
     if version < 1 {
         (schema.create)(&tx).map_err(OfficeError::storage)?;
+        if let Some(instance) = instance {
+            bind_instance(&tx, instance, true)?;
+        }
         tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
     } else if version < schema.version {
@@ -573,6 +858,32 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
     }
     tx.commit().map_err(OfficeError::storage)
 }
+
+fn bind_instance(db: &Connection, instance: &str, adopt: bool) -> Result<(), OfficeError> {
+    let stored: Option<String> = db
+        .query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(OfficeError::storage)?;
+    match stored {
+        Some(stored) if stored != instance => {
+            Err(OfficeError::Invalid("office belongs to another instance"))
+        }
+        None if adopt => db
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('instance_id',?1)",
+                [instance],
+            )
+            .map(|_| ())
+            .map_err(OfficeError::storage),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+#[path = "store/tests/sqlcipher_init.rs"]
+mod sqlcipher_init_tests;
 
 #[cfg(test)]
 mod tests {
@@ -621,6 +932,42 @@ mod tests {
 
     fn open_in(dir: &TempDir) -> Store {
         open_store(&dir.path().join("office.db"), &key(), Opening::New).unwrap()
+    }
+
+    #[test]
+    fn writer_job_builder_defers_work_and_replies_after_commit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = TempDir::new().unwrap();
+        let store = open_in(&dir);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let (job, reply) = Store::job_with_batch_abort(
+            move |db| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                db.execute("INSERT INTO meta VALUES ('job', 'committed')", [])
+                    .map_err(OfficeError::storage)?;
+                Ok((42, None))
+            },
+            |_| false,
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(reply.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        store.send_job(job).unwrap();
+        assert_eq!(
+            reply
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .unwrap(),
+            42
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let value: String = store
+            .read(|db| {
+                db.query_row("SELECT value FROM meta WHERE key='job'", [], |r| r.get(0))
+                    .map_err(OfficeError::storage)
+            })
+            .unwrap();
+        assert_eq!(value, "committed");
     }
 
     // The registry operations the engine's tests drive the writer with. (The engine itself
@@ -724,7 +1071,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("office.db");
         drop(open_in(&dir));
-        let raw = Connection::open(&path).unwrap();
+        let raw = connection_for_test(&path).unwrap();
         raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
         raw.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
@@ -767,7 +1114,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("office.db");
         {
-            let raw = Connection::open(&path).unwrap();
+            let raw = connection_for_test(&path).unwrap();
             raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
             let _: String = raw
                 .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
@@ -938,7 +1285,7 @@ mod tests {
         // A plain (unencrypted) SQLite file is not ours either: SQLCipher cannot read it with
         // any key.
         let plain = dir.path().join("plain.db");
-        Connection::open(&plain)
+        connection_for_test(&plain)
             .unwrap()
             .execute_batch("CREATE TABLE t (x)")
             .unwrap();
@@ -1141,6 +1488,48 @@ mod tests {
         );
     }
 
+    fn sqlite_error_code(error: &OfficeError) -> Option<rusqlite::ErrorCode> {
+        let mut cause = error.source();
+        while let Some(error) = cause {
+            if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref() {
+                return Some(failure.code);
+            }
+            cause = error.source();
+        }
+        None
+    }
+
+    #[test]
+    fn a_busy_transaction_reports_the_sqlite_code_to_every_request() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("busy.db");
+        let mut other_writer = connection_for_test(&path).unwrap();
+        let mut writer = connection_for_test(&path).unwrap();
+        writer.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let lock = other_writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let (send, replies) = mpsc::channel();
+        let jobs = (0..2)
+            .map(|_| {
+                let send = send.clone();
+                WriteJob {
+                    attempt: Box::new(|_| panic!("request ran while BEGIN was blocked")),
+                    abort_batch: |_| false,
+                    reply: Box::new(move |result| send.send(result).unwrap()),
+                }
+            })
+            .collect();
+        drop(send);
+        run_batch(&mut writer, jobs);
+        let codes: Vec<_> = replies
+            .into_iter()
+            .map(|result| sqlite_error_code(&result.unwrap_err()))
+            .collect();
+        assert_eq!(codes, vec![Some(rusqlite::ErrorCode::DatabaseBusy); 2]);
+        lock.rollback().unwrap();
+    }
+
     #[test]
     fn a_failed_commit_fails_every_request_and_undoes_their_effects() {
         let dir = TempDir::new().unwrap();
@@ -1172,10 +1561,11 @@ mod tests {
         gate.join().unwrap();
 
         for worker in workers {
-            assert!(matches!(
-                worker.join().unwrap(),
-                Err(OfficeError::Storage(_))
-            ));
+            let error = worker.join().unwrap().unwrap_err();
+            assert_eq!(
+                sqlite_error_code(&error),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
         }
         assert!(registered_ids(&store).is_empty());
         assert!(
@@ -1307,5 +1697,65 @@ mod tests {
         let name = OrganizationName::parse("Later").unwrap();
         store.create_organization(&name, folders.effect()).unwrap();
         assert_eq!(registered_ids(&store), folders.ids());
+    }
+
+    #[test]
+    fn a_batch_fatal_request_rolls_back_and_replays_its_neighbors() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut writer = connection_for_test(":memory:").unwrap();
+        writer
+            .execute_batch("CREATE TABLE writes (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        let (send, replies) = mpsc::channel();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let undos = Arc::new(AtomicUsize::new(0));
+        let jobs = (1..=3)
+            .map(|id| {
+                let attempts = Arc::clone(&attempts);
+                let undos = Arc::clone(&undos);
+                let send = send.clone();
+                WriteJob {
+                    attempt: Box::new(move |db| {
+                        db.execute("INSERT INTO writes VALUES (?1)", [id])
+                            .map_err(OfficeError::storage)?;
+                        match id {
+                            1 => {
+                                attempts.fetch_add(1, Ordering::Relaxed);
+                                let undos = Arc::clone(&undos);
+                                Ok(Some(Box::new(move || {
+                                    undos.fetch_add(1, Ordering::Relaxed);
+                                })))
+                            }
+                            2 => Err(OfficeError::Invalid("batch is inconsistent")),
+                            _ => Ok(None),
+                        }
+                    }),
+                    abort_batch: |error| matches!(error, OfficeError::Invalid(_)),
+                    reply: Box::new(move |result| send.send((id, result)).unwrap()),
+                }
+            })
+            .collect();
+        drop(send);
+        run_batch(&mut writer, jobs);
+
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(undos.load(Ordering::Relaxed), 1);
+        let replies: Vec<_> = replies.into_iter().collect();
+        assert!(matches!(
+            replies.as_slice(),
+            [
+                (2, Err(OfficeError::Invalid("batch is inconsistent"))),
+                (1, Ok(())),
+                (3, Ok(()))
+            ]
+        ));
+        let mut statement = writer.prepare("SELECT id FROM writes ORDER BY id").unwrap();
+        let committed = statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(committed, [1, 3]);
     }
 }

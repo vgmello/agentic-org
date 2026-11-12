@@ -2,10 +2,10 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 6
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, costs-and-insights-ux]
@@ -19,6 +19,8 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
+**Revision 9 (2026-11-10): before the office runs agents, and the HR lead when it can't run (O-7).** Hire's Review shows How it runs only once the office runs agents; until then it's left out, and agents hired before then get **On call** (U19) when runs arrive (§2, `our-org-in-the-app.md` §7). When the HR lead's run fails to start, hiring doesn't wait for it (§3, `our-org-in-the-app.md` §2a). **Criteria rewritten (same ID):** RUN-1 *(rev 9)*.
+
 **Revision 6 (2026-11-08): limits are organization defaults (ada, from the How it runs build).** The idle and busy limits are the organization's defaults (U20: 5 min idle, 30 min busy in the agent's home, 2 h on a task), and the contract has no per-agent fields today, so How it runs shows them read-only as "Defaults for all agents" (decision 7, §2). `agent-sessions.md` decision 8 allows per-agent limits later; if they arrive, they become editable here. **Criteria rewritten (same ID):** RUN-6 *(rev 6)*.
 
 **Revision 5 (2026-11-08): review fixes.** The built-in hiring agent is always called "HR lead" (`our-org-in-the-app.md` §2a, HRL-1): the mode table's example, How HR lead runs, the wake and failure messages, the screen-reader label, the Run now note and U19 say "HR lead". A45's mention example uses the handle, `@hr`. The user's request is quoted as said. No criteria changed.
@@ -29,9 +31,15 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 **Revision 2 (2026-11-08): aligned with ada's agent-sessions design (rev 3).** Max run time counts **busy time**: 30 min for runs in the agent's home, 2 h for runs on a task. A missing or signed-out runtime raises Needs you at once. One-offs show as "<role> (one-off R-n)" with no member. Stop means Pause. Recommended modes respect the live-session cap. Remy is online (the user started him), and Riley stays Offline. RUN-6, RUN-9 and RUN-12 rewritten.
 
+**Revision 7 (2026-11-09): owner-requested employee supervision.**
+[`employee-supervision-ux.md`](employee-supervision-ux.md) adds deterministic
+supervision, goal delivery, private delegates and memory helpers. These do not add
+run modes, hires or a second main session. Limits remain organization defaults;
+RUN-14/15 clarify how internal work follows lifecycle and accounting.
+
 ## 0. Decisions
 
-1. **Every agent has a run mode,** chosen at hire and changeable later (profile › Settings › **How it runs**):
+1. **Every agent has a run mode,** chosen at hire (once the office runs agents, §2) and changeable later (profile › Settings › **How it runs**):
 
    | Mode | What it means | Keeps memory | Example |
    | --- | --- | --- | --- |
@@ -58,7 +66,7 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 ## 2. Flow · Choosing how an agent runs
 
-At hire (Review step) and in profile › Settings › **How it runs** (a slide-over):
+At hire (Review step) and in profile › Settings › **How it runs** (a slide-over). *(rev 9)* Until the office runs agents, Hire's Review leaves How it runs out, and agents hired before then get **On call** (U19) when runs arrive:
 
 ```
  How HR lead runs
@@ -85,8 +93,8 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
 | Called while asleep | Wakes. The caller sees "Waking HR lead…", then normal replies. A wake taking over 60 s shows "HR lead is still starting…" with **Details**. |
 | Called while running | Queued for the session handling it and delivered at its next turn boundary (ada's per-session routing). No second session. |
 | A scheduled run is due while it's already running (a long run) | That run is skipped and noted on the Runs tab: "Skipped 14:30: still running from 14:00". |
-| A run fails to start (runtime missing, signed out, trust) | The run shows **Failed** with the reason and a fix. A missing or signed-out runtime raises Needs you **at once** (nothing will work until it's fixed). Other failures do so after 3 failed wakes in a row: "HR lead can't wake up: Codex isn't signed in" with the fix and **Run now** to retry. Messages keep waiting. |
-| Paused agent (DEAL-3) | Pausing stops schedules and calls. Messages wait. The card says "Paused" (not Asleep), and Resume restores the mode. |
+| A run fails to start (runtime missing, signed out, trust) | The run shows **Failed** with the reason and a fix. A missing or signed-out runtime raises Needs you **at once** (nothing will work until it's fixed). Other failures do so after 3 failed wakes in a row: "HR lead can't wake up: Codex isn't signed in" with the fix and **Run now** to retry. Messages keep waiting. *(rev 9)* For the HR lead, hiring doesn't wait: its chip says **Can't start**, and Hire and Add agent record work without it (`our-org-in-the-app.md` §2a, HRL-6). |
+| Paused agent (DEAL-3) | HQ durably records Paused; show stop pending at office until acknowledged. Applying Pause stops schedules/wakes and holds messages; current Resume restores the mode. An offline runtime is not shown as stopped merely from HQ acceptance. |
 | The Mac is asleep or the office is stopped at a scheduled time | The run happens when the office is back, once (missed runs don't pile up): "Ran at 09:12 instead of 08:00 (the Mac was asleep)". |
 | Hit Max run time | The session is asked to wrap up (guidance "Time's up: record where you are"), then stopped after 1 min, and the run is marked. |
 | An Always-on agent's session stops | Restarted after 10 s, with backoff. After 3 restarts in 10 min: Needs you "ada keeps stopping" with the last error. |
@@ -98,7 +106,7 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 
 ## 5. UX acceptance criteria (RUN)
 
-- RUN-1 · *(rev 3)* Every agent the office runs has a run mode (Always on, On call, Scheduled), chosen at hire and changeable in profile › Settings › How it runs. An agent someone starts by hand (v1's run mode none) shows **Started by a person**, and the office never starts it.
+- RUN-1 · *(rev 9)* Every agent the office runs has a run mode (Always on, On call, Scheduled), chosen in Hire's Review once the office runs agents (agents hired before then get On call) and changeable in profile › Settings › How it runs. An agent someone starts by hand (v1's run mode none) shows **Started by a person**, and the office never starts it.
 - RUN-2 · An On call or Scheduled agent that isn't running shows **Asleep** with when it wakes ("wakes when called" or "next run <time>"), and an Always-on agent with no session shows **Offline**.
 - RUN-3 · *(rev 3)* A message, an assignment or Run now (and a mention, pending A45) wakes an asleep agent. The caller sees "<name> is asleep. It will wake up to answer", and nothing fails.
 - RUN-4 · *(rev 3)* A message to a running agent is queued for the session handling it and delivered at its next turn boundary, and a second session is never started.
@@ -107,10 +115,13 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-7 · The schedule builder uses plain words and presets, shows the next 3 run times, and never asks for cron.
 - RUN-8 · Missed scheduled runs (Mac asleep, office stopped) run once when the office is back and say so. A run due while the previous one is running is skipped and noted.
 - RUN-9 · *(rev 2)* A missing or signed-out runtime raises a Needs you item at once with the fix. Other failures do so after three failed wakes in a row. Waiting messages are kept.
-- RUN-10 · Pausing an agent stops its schedule and wakes, and Resume restores its mode.
+- RUN-10 · HQ durably accepts Pause with pending office stop if disconnected; the office applies current state before admitting schedules/wakes and acknowledges stopping. Resume restores the mode without stale Pause delivery overriding it (DEAL-3, SRV-28).
 - RUN-11 · The wake-up guidance is shown and editable in How it runs, per agent, and every wake starts with it.
 - RUN-12 · *(rev 2)* One-off agents can be started from a job (review, task). They show as "<role> (one-off R-n)", never appear in the org chart (they aren't members), and their result, cost and duration are attached to the job.
 - RUN-13 · How it runs shows the agent's recent runs and cost, and explains that on-call and scheduled agents only cost while they run.
+
+- RUN-14 · *(new, rev 7)* Every office-managed employee has the supervision state described by EMP-1..14. Sleeping/paused records persist without model monitoring turns. Pause, offboard and placement changes stop/reconcile internal delegates, helpers and subprocesses; recovery never overrides Pause. Person-started sessions show supervision unavailable.
+- RUN-15 · *(new, rev 7)* Internal delegates and memory forks are owned work inside an employee's run, with shared aggregate limits and attributed usage, not members, independent run modes or role-based one-offs. The main-session lock stays; unsupported concurrent helper isolation uses a serialized fallback or reports unavailable.
 
 ## 6. Open questions
 

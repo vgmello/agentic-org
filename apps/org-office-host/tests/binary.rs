@@ -19,9 +19,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_proto::{
-    Empty, ErrorCode, OfficeList, OfficeStatus, OrganizationCreate, OrganizationCreateParams,
-};
+use org_proto::{ErrorCode, OrganizationCreate};
 use serde_json::json;
 use support::{alive, eventually, fake_server, has_hex_run, hq, Client, TestHome};
 
@@ -82,6 +80,61 @@ fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
     )
 }
 
+#[cfg(debug_assertions)]
+struct FixtureProcess {
+    child: HostProcess,
+    input: std::process::ChildStdin,
+    output: std::io::BufReader<std::process::ChildStdout>,
+}
+#[cfg(debug_assertions)]
+impl FixtureProcess {
+    fn create(&mut self, name: &str) -> Result<org_proto::Organization, org_proto::ApiError> {
+        use std::io::{BufRead, Write};
+        serde_json::to_writer(&mut self.input, name).unwrap();
+        self.input.write_all(b"\n").unwrap();
+        self.input.flush().unwrap();
+        let mut line = String::new();
+        assert!(self.output.read_line(&mut line).unwrap() > 0);
+        serde_json::from_str::<org_proto::Response>(&line)
+            .unwrap()
+            .into_result::<OrganizationCreate>()
+            .map_err(|e| match e {
+                org_proto::CallError::Api(e) => e,
+                other => panic!("{other}"),
+            })
+    }
+    fn stop(&mut self) -> ExitStatus {
+        use std::io::Write;
+        self.input.write_all(b"STOP\n").unwrap();
+        self.input.flush().unwrap();
+        wait_for_exit(&mut self.child)
+    }
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+}
+#[cfg(debug_assertions)]
+fn spawn_fixture_host(home: &TestHome) -> FixtureProcess {
+    let stderr = File::create(home.path().join("host.err")).unwrap();
+    let mut child = HostProcess(
+        Command::new(env!("CARGO_BIN_EXE_fixture-office-host"))
+            .arg(home.fixture_base())
+            .arg(fake_server())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(stderr)
+            .spawn()
+            .unwrap(),
+    );
+    let input = child.stdin.take().unwrap();
+    let output = std::io::BufReader::new(child.stdout.take().unwrap());
+    FixtureProcess {
+        child,
+        input,
+        output,
+    }
+}
+
 /// A home with one stored office.
 fn home_with_office() -> TestHome {
     let home = TestHome::new();
@@ -94,13 +147,15 @@ fn wait_until_active(home: &TestHome) {
     let socket = home.path().join("host.sock");
     // host.sock can exist a moment before the host listens on it.
     eventually(WAIT, "host.sock", || UnixStream::connect(&socket).is_ok());
-    eventually(WAIT, "the office to be active", || {
-        Client::connect(&socket)
-            .call::<OfficeList>(&Empty {})
-            .unwrap()
-            .offices
-            .iter()
-            .any(|o| o.id == A && o.status == OfficeStatus::Active)
+    let office_socket = org_proto::location::office_socket_path(&home.path(), A).unwrap();
+    eventually(WAIT, "the supervised worker to answer hello", || {
+        if UnixStream::connect(&office_socket).is_err() {
+            return false;
+        }
+        let result = Client::connect(&office_socket)
+            .call::<org_proto::Hello>(&org_proto::HelloParams::default())
+            .unwrap();
+        result.office.is_some_and(|office| office.office.id == A)
     });
 }
 
@@ -224,7 +279,8 @@ fn a_release_host_refuses_the_arguments_that_change_what_it_trusts() {
 #[cfg(debug_assertions)]
 #[test]
 fn the_host_never_logs_a_token() {
-    let home = home_with_office();
+    let home = TestHome::registered();
+    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     // A crash restart, a refused create, a failed create (with its discard) and a good one:
     // every path that logs, each with a token in play.
     home.script(json!({
@@ -235,17 +291,11 @@ fn the_host_never_logs_a_token() {
             {"do": "ready"}
         ]
     }));
-    let mut host = spawn_host(&home, "host.err");
-    wait_until_active(&home);
-    let mut client = Client::connect(&home.path().join("host.sock"));
+    let mut host = spawn_fixture_host(&home);
+    eventually(WAIT, "the stored office ready", || home.runs(A) >= 2);
     let codes: Vec<_> = ["One", "Two", "Three"]
         .into_iter()
-        .map(|name| {
-            client
-                .call::<OrganizationCreate>(&OrganizationCreateParams { name: name.into() })
-                .map(|_| ())
-                .map_err(|e| e.code)
-        })
+        .map(|name| host.create(name).map(|_| ()).map_err(|e| e.code))
         .collect();
     assert_eq!(
         codes,
@@ -257,8 +307,7 @@ fn the_host_never_logs_a_token() {
     );
     assert_eq!(home.runs("create"), 3);
     assert_eq!(home.runs("discard"), 1);
-    signal(&host, libc::SIGTERM);
-    assert!(wait_for_exit(&mut host).success());
+    assert!(host.stop().success());
     let log = fs::read_to_string(home.path().join("host.err")).unwrap();
     assert!(
         log.contains("org-office-host:"),
@@ -278,12 +327,12 @@ fn the_host_never_logs_a_token() {
 #[cfg(debug_assertions)]
 #[test]
 fn servers_inherit_no_host_fds_while_clients_connect() {
-    let home = TestHome::new();
+    let home = TestHome::registered();
     fs::create_dir_all(home.path()).unwrap();
     // Every create fails at once and is discarded: two short-lived servers per create.
     home.script(json!({"create": {"do": "fail", "code": "invalid_name"}}));
-    let mut host = spawn_host(&home, "host.err");
-    let socket = home.path().join("host.sock");
+    let mut host = spawn_fixture_host(&home);
+    let socket = home.runtime().join("host.sock");
     eventually(WAIT, "host.sock", || UnixStream::connect(&socket).is_ok());
     // Clients connecting and leaving all the while, so the host keeps accepting.
     let stop = Arc::new(AtomicBool::new(false));
@@ -297,11 +346,8 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
             })
         })
         .collect();
-    let mut client = Client::connect(&socket);
     for i in 0..100 {
-        let _ = client.call::<OrganizationCreate>(&OrganizationCreateParams {
-            name: format!("Org {i}"),
-        });
+        let _ = host.create(&format!("Org {i}"));
     }
     stop.store(true, Ordering::Relaxed);
     for thread in churn {
@@ -331,8 +377,7 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
             "the host holds {open_logs} office logs open"
         );
     }
-    signal(&host, libc::SIGTERM);
-    assert!(wait_for_exit(&mut host).success());
+    assert!(host.stop().success());
 
     let log = fs::read_to_string(home.path().join("fake.log")).unwrap();
     let reports: Vec<&str> = log.lines().filter(|l| l.starts_with("fds ")).collect();
@@ -357,6 +402,7 @@ fn servers_get_only_the_allowed_environment() {
         "TMPDIR",
         "LANG",
         "ORG_OFFICE_HOME",
+        "ORG_OFFICE_RUNTIME_DIR",
     ];
     let runs = home.env_names(A);
     assert!(!runs.is_empty());

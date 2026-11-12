@@ -1,0 +1,9 @@
+# SQLCipher's EXTRA_INIT must finish before another caller opens a connection.
+disallowed-methods = [
+  { path = "rusqlite::Connection::open", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_with_flags", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory_with_flags", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_with_flags_and_vfs", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory_with_flags_and_vfs", reason = "use the store opener (BUG-100 init fence)" },
+]

@@ -999,6 +999,9 @@ pub struct WorkChangedData {
     pub part: u32,
     pub parts: u32,
     pub changes: Vec<WorkChange>,
+    /// Who made the call (X-02 §4.2). Absent for a cascade, and from servers that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<crate::principal::Actor>,
 }
 
 /// `work.changed`: sent to subscribers for every committed work call.
@@ -1266,6 +1269,7 @@ write_call!(
     /// with its `clear_` flag, or nothing to change, is `invalid_request`. `feature_id` and
     /// `clear_feature` are phase 3: a server before it refuses them with `invalid_request`.
     /// Errors: `not_found`, `invalid_request` (also limits), `conflict`.
+    /// Updating an existing deleted item is `invalid_request`, not `not_found`.
     TaskUpdate, "task.update", TaskUpdateParams {
         item_id: String,
         expected_version: u64,
@@ -1329,7 +1333,8 @@ write_call!(
 /// `work.set_current`: sets (or, with `item` absent, clears) the bound agent's current task.
 /// It isn't an item change: no `change_id`, and its result is [`Empty`]. Errors: `not_found`,
 /// `invalid_request` (not a task; the caller isn't an agent; the caller isn't the task's
-/// assignee).
+/// assignee). Until work reads arrive, `item` must be a canonical uppercase ULID; references
+/// and short ids are refused with `invalid_request`.
 pub struct WorkSetCurrent;
 
 /// Params of `work.set_current`.
@@ -1575,6 +1580,7 @@ write_call!(
     /// `checklist.add`: 1 to [`WORK_MAX_STEPS`] steps after `after_step_id` (absent: at the
     /// end); an item has at most [`WORK_MAX_STEPS`]. Tasks and bugs only. Errors: `not_found`,
     /// `invalid_request` (a request; too many steps; limits), `already_exists`.
+    /// An unknown or removed `after_step_id` is `invalid_request`.
     ChecklistAdd, "checklist.add", ChecklistAddParams {
         item_id: String,
         steps: Vec<NewStep>,
@@ -1640,3 +1646,53 @@ write_call!(
         step_id: String,
     }
 );
+
+#[cfg(test)]
+mod link_kind_inventory_test {
+    use super::LinkKind;
+
+    #[test]
+    fn typed_link_kind_inventory_is_exhaustive() {
+        // A new known variant must update org-office assembly::LINK_KINDS too.
+        // This match is inside the defining crate: a new enum variant must get an index.
+        fn index(kind: LinkKind) -> usize {
+            match kind {
+                LinkKind::Fixes => 0,
+                LinkKind::PartOf => 1,
+                LinkKind::FromRequest => 2,
+                LinkKind::ReportedFrom => 3,
+                LinkKind::RelatesTo => 4,
+                LinkKind::PaysBack => 5,
+                LinkKind::Unknown => 6,
+            }
+        }
+        let kinds = [
+            LinkKind::Fixes,
+            LinkKind::PartOf,
+            LinkKind::FromRequest,
+            LinkKind::ReportedFrom,
+            LinkKind::RelatesTo,
+            LinkKind::PaysBack,
+            LinkKind::Unknown,
+        ];
+        let names: Vec<_> = kinds
+            .iter()
+            .filter(|kind| **kind != LinkKind::Unknown)
+            .map(|kind| serde_json::to_value(kind).unwrap())
+            .collect();
+        assert_eq!(
+            serde_json::Value::Array(names),
+            serde_json::json!([
+                "fixes",
+                "part_of",
+                "from_request",
+                "reported_from",
+                "relates_to",
+                "pays_back"
+            ])
+        );
+        for (i, kind) in kinds.into_iter().enumerate() {
+            assert_eq!(index(kind), i);
+        }
+    }
+}

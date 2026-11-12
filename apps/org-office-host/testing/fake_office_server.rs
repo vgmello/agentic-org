@@ -1,4 +1,4 @@
-//! A fake `org-office-server` for `org-office-host`'s tests. **Never shipped:** it is built
+//! A fake `org-server` for `org-office-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
 //! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key
@@ -69,7 +69,9 @@ use org_office_launch::{
     OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
-use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
+use org_proto::location::{
+    office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
+};
 use org_proto::{
     ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
     OfficeStatus, Request, Response,
@@ -246,7 +248,11 @@ fn main() {
         }
     };
 
-    let socket = office_socket_path(&home, &socket_id).expect("a plain id");
+    let socket = match std::env::var_os(OFFICE_RUNTIME_DIR_ENV) {
+        Some(runtime) => office_socket_in(Path::new(&runtime), &socket_id),
+        None => office_socket_path(&home, &socket_id),
+    }
+    .expect("a plain id");
     let listener = bind(&socket);
     let served = office.clone();
     thread::spawn(move || serve(&listener, &served));

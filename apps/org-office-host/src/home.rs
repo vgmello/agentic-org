@@ -37,12 +37,20 @@ impl Layout {
         }
     }
 
+    pub(crate) fn with_runtime(home: &Path, runtime: &Path) -> Self {
+        Self {
+            run: runtime.to_owned(),
+            host_socket: location::host_socket_path(runtime),
+            ..Self::new(home)
+        }
+    }
+
     /// Every office socket in a home has the same length (12-character handles), so checking
     /// `host.sock` and one sample office socket up front means no create can fail on it later.
     pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
-            location::office_socket_path(&self.home, &sample_id).expect("the sample id is plain");
+            location::office_socket_in(&self.run, &sample_id).expect("the sample id is plain");
         for path in [&self.host_socket, &sample] {
             location::check_socket_path(path).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),
@@ -248,6 +256,14 @@ impl HostLock {
     }
 }
 
+impl Drop for HostLock {
+    fn drop(&mut self) {
+        // A forked child may retain the open file description after this File closes.
+        // Drop cannot report unlock errors; the File still closes afterwards.
+        let _ = self._file.unlock();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +412,55 @@ mod tests {
         ));
         drop(held);
         HostLock::acquire(&layout).unwrap();
+    }
+
+    #[test]
+    fn drop_unlocks_while_a_forked_child_holds_the_descriptor() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout::new(dir.path());
+        let held = HostLock::acquire(&layout).unwrap();
+        // An explicit byte releases the child even if other forks inherit socket copies.
+        let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
+        // SAFETY: the child uses only async-signal-safe close/read/_exit, retaining the lock fd.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: close the parent's socket and wait until its post-drop reacquire attempt.
+            unsafe {
+                libc::close(release_fd);
+                let mut byte = 0u8;
+                let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
+                libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
+            }
+        }
+        assert!(pid > 0, "fork failed");
+        drop(wait);
+        drop(held);
+        // Assert while the child still holds the fd; catch only to guarantee cleanup on failure.
+        let checked = std::panic::catch_unwind(|| {
+            let reopened = HostLock::acquire(&layout);
+            let mut status = 0;
+            // SAFETY: query only our child without waiting or releasing its descriptor.
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }, 0);
+            assert!(
+                reopened.is_ok(),
+                "HostLock drop must release the lock even with an inherited fd: {:?}",
+                reopened.err()
+            );
+        });
+        let released = std::io::Write::write_all(&mut release, &[1]);
+        drop(release);
+        // Reap before assertions so the regression failure never leaves a child behind.
+        let mut status = 0;
+        // SAFETY: wait only for the child this test created.
+        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        released.unwrap();
+        assert_eq!(waited, pid);
+        assert_eq!(status, 0);
+        if let Err(panic) = checked {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
