@@ -234,7 +234,7 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
     let received = receiver
         .receive_with(
             &mut [0],
-            1,
+            DescriptorCount::Exact(1),
             &Mutex::new(()),
             |fd, message, flags| {
                 calls += 1;
@@ -279,7 +279,7 @@ fn mac_fence_covers_recvmsg_through_every_cloexec_operation() {
     let received = receiver
         .receive_with(
             &mut [0],
-            2,
+            DescriptorCount::Exact(2),
             &fence,
             |fd, message, flags| {
                 assert!(matches!(
@@ -329,6 +329,12 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
         "reported-short",
         "reported-control",
         "reported-payload",
+        "bounded-excess",
+        "bounded-control",
+        "bounded-payload",
+        "bounded-zero",
+        "bounded-overflow",
+        "bounded-exact-short",
     ];
     for case in cases {
         run_fatal_child(case);
@@ -348,10 +354,18 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
 }
 
 fn run_fatal_child(case: &str) {
+    // The zero-capacity case can install an unreported fd on macOS. Supply a
+    // parent-observed canary: its last reference must close when the caller exits.
+    let (input, input_peer) = UnixStream::pair().unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "rights::tests::fatal_child", "--nocapture"])
         .env("ORG_SOCKET_FATAL_CASE", case)
-        .stdin(Stdio::null())
+        .stdin(if case == "bounded-zero" {
+            Stdio::from(OwnedFd::from(input))
+        } else {
+            drop(input);
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -371,6 +385,9 @@ fn run_fatal_child(case: &str) {
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success(), "fatal case {case}: {output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("fatal returned; caller terminates"));
+    if case == "bounded-zero" {
+        assert_closed(input_peer);
+    }
 }
 
 #[test]
@@ -462,7 +479,7 @@ fn fatal_child() {
         "io" => {
             let result = receiver.0.receive_with(
                 &mut [0],
-                0,
+                DescriptorCount::Exact(0),
                 &fence,
                 |_, _, _| Err(io::Error::from_raw_os_error(libc::EIO)),
                 close_on_exec,
@@ -480,7 +497,7 @@ fn fatal_child() {
             let mut calls = 0;
             let result = receiver.0.receive_with(
                 &mut [0],
-                2,
+                DescriptorCount::Exact(2),
                 &fence,
                 system_receive,
                 |fd| {
@@ -506,7 +523,7 @@ fn fatal_child() {
             });
             let result = receiver.0.receive_with(
                 &mut [0],
-                0,
+                DescriptorCount::Exact(0),
                 &fence,
                 |_, _, _| panic!("poisoned fence must refuse before recvmsg"),
                 close_on_exec,
@@ -517,7 +534,7 @@ fn fatal_child() {
         "allocation" => {
             let result = receiver.0.receive_with(
                 &mut [0],
-                0,
+                DescriptorCount::Exact(0),
                 &fence,
                 |_, _, _| panic!("allocation failure must refuse before recvmsg"),
                 close_on_exec,
@@ -528,6 +545,11 @@ fn fatal_child() {
         "reported-short" | "reported-extra" | "reported-control" | "reported-payload"
         | "reported-fcntl" | "fcntl-get" | "fcntl-set" => {
             reported_cleanup(&case);
+            println!("fatal returned; caller terminates");
+            return;
+        }
+        _ if case.starts_with("bounded-") => {
+            bounded::fatal_case(&case);
             println!("fatal returned; caller terminates");
             return;
         }
@@ -564,7 +586,7 @@ fn reported_cleanup(case: &str) {
     let length = if case == "reported-payload" { 1 } else { 2 };
     let result = receiver.receive_with(
         &mut payload[..length],
-        expected,
+        DescriptorCount::Exact(expected),
         &Mutex::new(()),
         |fd, message, flags| {
             let bytes = system_receive(fd, message, flags)?;
@@ -630,3 +652,5 @@ fn reported_cleanup(case: &str) {
     assert_closed(peer);
     assert!(receiver.fd().is_none());
 }
+
+mod bounded;

@@ -41,7 +41,7 @@ impl std::error::Error for ReceiveError {}
 pub struct Received {
     /// Bytes written into the caller's buffer.
     pub bytes: usize,
-    /// Exactly the caller's expected number of owned, close-on-exec descriptors.
+    /// Owned, close-on-exec descriptors in the count permitted by the receive call.
     pub descriptors: Vec<OwnedFd>,
 }
 
@@ -67,7 +67,9 @@ impl StreamReceiver {
         fence: &Mutex<()>,
     ) -> Result<(u8, Vec<OwnedFd>), ReceiveError> {
         let mut byte = [0u8; 1];
-        let received = self.0.receive(&mut byte, expected, fence)?;
+        let received = self
+            .0
+            .receive(&mut byte, DescriptorCount::Exact(expected), fence)?;
         if received.bytes == 0 {
             drop(received.descriptors);
             return self
@@ -107,6 +109,24 @@ impl DatagramReceiver {
         self.0.fd()
     }
 
+    /// Receive one datagram with zero through `max_fds` descriptors, in arrival order.
+    ///
+    /// Control storage is sized for `max_fds`; padding never permits extra descriptors.
+    /// Protocols must validate the actual count against the decoded payload before use.
+    /// Empty datagrams are valid here, including with a zero descriptor bound.
+    /// Truncation, excess descriptors or an unrepresentable bound are fatal, close this
+    /// receiver and all reported descriptors, and require the caller to terminate
+    /// (see [`ReceiveError::Fatal`]). Readiness and spawn-fence rules match [`Self::receive`].
+    pub fn receive_up_to(
+        &mut self,
+        payload: &mut [u8],
+        max_fds: usize,
+        fence: &Mutex<()>,
+    ) -> Result<Received, ReceiveError> {
+        self.0
+            .receive(payload, DescriptorCount::AtMost(max_fds), fence)
+    }
+
     /// Receive one datagram into `payload` with exactly `expected` descriptors.
     /// An empty datagram is valid here; it is not a stream EOF.
     pub fn receive(
@@ -115,7 +135,29 @@ impl DatagramReceiver {
         expected: usize,
         fence: &Mutex<()>,
     ) -> Result<Received, ReceiveError> {
-        self.0.receive(payload, expected, fence)
+        self.0
+            .receive(payload, DescriptorCount::Exact(expected), fence)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DescriptorCount {
+    Exact(usize),
+    AtMost(usize),
+}
+
+impl DescriptorCount {
+    fn capacity(self) -> usize {
+        match self {
+            Self::Exact(count) | Self::AtMost(count) => count,
+        }
+    }
+
+    fn accepts(self, actual: usize) -> bool {
+        match self {
+            Self::Exact(expected) => actual == expected,
+            Self::AtMost(maximum) => actual <= maximum,
+        }
     }
 }
 
@@ -134,12 +176,12 @@ impl Receiver {
     fn receive(
         &mut self,
         payload: &mut [u8],
-        expected: usize,
+        count: DescriptorCount,
         fence: &Mutex<()>,
     ) -> Result<Received, ReceiveError> {
         self.receive_with(
             payload,
-            expected,
+            count,
             fence,
             system_receive,
             close_on_exec,
@@ -153,7 +195,7 @@ impl Receiver {
     fn receive_with(
         &mut self,
         payload: &mut [u8],
-        expected: usize,
+        count: DescriptorCount,
         fence: &Mutex<()>,
         mut receive: impl FnMut(RawFd, &mut libc::msghdr, i32) -> io::Result<usize>,
         mut set_flags: impl FnMut(RawFd) -> io::Result<()>,
@@ -163,7 +205,7 @@ impl Receiver {
             return Err(ReceiveError::Fatal(invalid("receiver is closed")));
         };
         let fd = socket.as_raw_fd();
-        let Some(space) = control_space(expected) else {
+        let Some(space) = control_space(count.capacity()) else {
             return self.fatal(invalid("descriptor count is too large"));
         };
         let mut control = match allocate(space) {
@@ -204,7 +246,7 @@ impl Receiver {
                 drop(descriptors);
                 return self.fatal(invalid("truncated descriptor message"));
             }
-            if descriptors.len() != expected {
+            if !count.accepts(descriptors.len()) {
                 drop(descriptors);
                 return self.fatal(invalid("unexpected descriptor count"));
             }
