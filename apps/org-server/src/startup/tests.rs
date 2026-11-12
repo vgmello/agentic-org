@@ -178,6 +178,7 @@ fn stdout_is_empty(mut output: File) {
 
 #[test]
 fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for op in [FirstLine::Create, FirstLine::Start] {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, op));
@@ -236,7 +237,9 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
         // The header reader stops before the marker, and the marker reader stops after it.
         control
             .rendezvous
-            .as_mut()
+            .as_ref()
+            .unwrap()
+            .lock()
             .unwrap()
             .read_exact(&mut bytes[..1])
             .unwrap();
@@ -254,6 +257,7 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
 
 #[test]
 fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for key in [false, true] {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
@@ -285,6 +289,7 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
 
 #[test]
 fn v2_and_empty_first_lines_keep_the_legacy_transport() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for message in [
         HostMessage::Create(CreateOffice {
             org_id: ID.into(),
@@ -333,6 +338,7 @@ fn v2_and_empty_first_lines_keep_the_legacy_transport() {
 // which exits on any startup error, never in a process that continues serving other work.
 #[test]
 fn handoff_fault_child() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let Ok(case) = std::env::var("KAI_STARTUP_FAULT") else {
         return;
     };
@@ -518,18 +524,20 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
         "ctrunc",
         "wrong_marker",
     ] {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "startup::tests::handoff_fault_child",
-                "--nocapture",
-            ])
-            .env("KAI_STARTUP_FAULT", case)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = crate::transfer::tests::spawn_process(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "startup::tests::handoff_fault_child",
+                    "--nocapture",
+                ])
+                .env("KAI_STARTUP_FAULT", case)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .unwrap();
         let start = std::time::Instant::now();
+        let _spawn = crate::transfer::tests::without_process_spawn();
         loop {
             if child.try_wait().unwrap().is_some() {
                 break;
@@ -552,6 +560,7 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
 
 #[test]
 fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     assert_eq!(HANDOFF_HEADER_MAX_BYTES, 1024);
     for size in [1024, 1025] {
         let (_dir, listener, path) = listener();
@@ -593,6 +602,7 @@ fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
 
 #[test]
 fn first_line_refusal_precedes_connect_and_connection_failures_are_propagated() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (_dir, listener, path) = listener();
     drop(listener);
     let (mut control, _) = launch(&first(&path, FirstLine::Start));
@@ -611,6 +621,7 @@ fn first_line_refusal_precedes_connect_and_connection_failures_are_propagated() 
 
 #[test]
 fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (stream, mut peer) = UnixStream::pair().unwrap();
     peer.write_all(b"ready").unwrap();
     let mut calls = 0;
@@ -634,6 +645,7 @@ fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
 
 #[test]
 fn event_writer_errors_are_propagated_on_both_transports() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let input = tempfile::tempfile().unwrap();
     let output = tempfile::NamedTempFile::new().unwrap();
     let mut control = Control::new(
@@ -652,7 +664,7 @@ fn event_writer_errors_are_propagated_on_both_transports() {
     // by inherited copies and deterministically forces this writer's error path.
     stream.shutdown(std::net::Shutdown::Write).unwrap();
     drop(peer);
-    control.rendezvous = Some(stream);
+    control.rendezvous = Some(Arc::new(Mutex::new(stream)));
     assert!(matches!(
         control.emit(&ServerEvent::Discarded),
         Err(LaunchError::Frame(FrameError::Io(_)))
@@ -661,6 +673,7 @@ fn event_writer_errors_are_propagated_on_both_transports() {
 
 #[test]
 fn interrupted_polls_retry_but_other_poll_errors_end_reception() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let calls = std::cell::Cell::new(0);
     let polls = std::cell::Cell::new(0);
     assert_eq!(
@@ -707,6 +720,7 @@ fn interrupted_polls_retry_but_other_poll_errors_end_reception() {
 
 #[test]
 fn handoff_framing_uses_the_move_one_header_cap_vector() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let vectors: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../crates/org-office-launch/test-vectors/v3/transfer-records.json"
@@ -751,6 +765,7 @@ fn handoff_framing_uses_the_move_one_header_cap_vector() {
 
 #[test]
 fn unparsed_drain_retries_interrupts_and_stops_at_eof_or_error() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     struct Script {
         steps: std::collections::VecDeque<io::Result<usize>>,
         reads: usize,
@@ -780,6 +795,7 @@ fn unparsed_drain_retries_interrupts_and_stops_at_eof_or_error() {
 
 #[test]
 fn lifetime_probe_child() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let Ok(case) = std::env::var("KAI_LIFETIME_PROBE") else {
         return;
     };
@@ -792,7 +808,7 @@ fn lifetime_probe_child() {
         },
         Arc::clone(&fence),
     );
-    control.rendezvous = Some(stream.try_clone().unwrap());
+    control.rendezvous = Some(Arc::new(Mutex::new(stream.try_clone().unwrap())));
     control.receiver = Some(StreamReceiver::new(stream.try_clone().unwrap()));
     let mut lifetime = control.lifetime().unwrap();
     if case == "empty" {
@@ -829,32 +845,37 @@ fn lifetime_probe_child() {
 
 #[test]
 fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
-    let mut file = tempfile::tempfile().unwrap();
-    file.write_all(b"X").unwrap();
-    file.rewind().unwrap();
-    let mut pipe = Lifetime::Pipe(file);
-    assert_eq!(pipe.read(&mut []).unwrap(), 0);
-    let mut byte = [0];
-    assert_eq!(pipe.read(&mut byte).unwrap(), 1);
-    assert_eq!(byte, [b'X']);
+    {
+        let _spawn = crate::transfer::tests::without_process_spawn();
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"X").unwrap();
+        file.rewind().unwrap();
+        let mut pipe = Lifetime::Pipe(file);
+        assert_eq!(pipe.read(&mut []).unwrap(), 0);
+        let mut byte = [0];
+        assert_eq!(pipe.read(&mut byte).unwrap(), 1);
+        assert_eq!(byte, [b'X']);
+    }
     for case in [
         ("empty", 0),
         ("drop", 0),
         #[cfg(target_os = "macos")]
         ("poison", 1),
     ] {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "startup::tests::lifetime_probe_child",
-                "--nocapture",
-            ])
-            .env("KAI_LIFETIME_PROBE", case.0)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = crate::transfer::tests::spawn_process(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "startup::tests::lifetime_probe_child",
+                    "--nocapture",
+                ])
+                .env("KAI_LIFETIME_PROBE", case.0)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .unwrap();
         let start = std::time::Instant::now();
+        let _spawn = crate::transfer::tests::without_process_spawn();
         loop {
             if child.try_wait().unwrap().is_some() {
                 break;
@@ -879,6 +900,7 @@ fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
 
 #[test]
 fn only_eof_and_connection_reset_are_host_disappearance_not_protocol_or_other_io_faults() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for kind in [
         io::ErrorKind::UnexpectedEof,
         io::ErrorKind::ConnectionReset,
@@ -904,6 +926,7 @@ fn only_eof_and_connection_reset_are_host_disappearance_not_protocol_or_other_io
 
 #[test]
 fn transfer_is_taken_once_with_the_same_owned_fd_and_spawn_fence() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (host, child) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let raw = child.as_raw_fd();
     let fence = Arc::new(Mutex::new(()));
@@ -920,6 +943,7 @@ fn transfer_is_taken_once_with_the_same_owned_fd_and_spawn_fence() {
 
 #[test]
 fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for unread in [false, true] {
         let (host, mut worker) = UnixStream::pair().unwrap();
         if unread {
@@ -958,4 +982,183 @@ fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
             error.raw_os_error()
         );
     }
+}
+
+#[test]
+fn rendezvous_writer_poison_refuses_without_writing_an_event() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let writer = Arc::new(Mutex::new(socket));
+    let poisoned = Arc::clone(&writer);
+    assert!(std::thread::spawn(move || {
+        let _guard = poisoned.lock().unwrap();
+        panic!("synthetic poisoned event writer");
+    })
+    .join()
+    .is_err());
+    assert!(matches!(
+        write_event(
+            &writer,
+            &RendezvousEvent::FdsReceived { of: "owned".into() }
+        ),
+        Err(LaunchError::Invalid("rendezvous writer poisoned"))
+    ));
+    assert!(!org_socket::poll_readable(peer.as_raw_fd(), Duration::from_millis(10)).unwrap());
+}
+#[test]
+fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_frames() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    let (mut control, mut stdout) = control(b"");
+    control.rendezvous = Some(Arc::new(Mutex::new(socket)));
+    let writer = control.writer().unwrap();
+    assert!(Arc::ptr_eq(&writer, control.rendezvous.as_ref().unwrap()));
+    let reader = std::thread::spawn(move || {
+        let mut peer = BufReader::new(peer);
+        let mut values = Vec::new();
+        for _ in 0..33 {
+            let value: Value = frame::read_message(&mut peer).unwrap().unwrap();
+            assert_eq!(value["v"], 3);
+            values.push(value);
+        }
+        values
+    });
+    let mut writers = Vec::new();
+    let barrier = Arc::new(std::sync::Barrier::new(5));
+    for lane in 0..4 {
+        let writer = Arc::clone(&writer);
+        let barrier = Arc::clone(&barrier);
+        writers.push(std::thread::spawn(move || {
+            barrier.wait();
+            for n in 0..8 {
+                write_event(
+                    &writer,
+                    &RendezvousEvent::FdsReceived {
+                        of: format!("{lane}:{n}:{}", "x".repeat(64 * 1024)),
+                    },
+                )
+                .unwrap();
+            }
+        }));
+    }
+    barrier.wait();
+    control.emit(&ServerEvent::Discarded).unwrap();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let values = reader.join().unwrap();
+    assert_eq!(
+        values.iter().filter(|v| v["event"] == "discarded").count(),
+        1
+    );
+    let ids: std::collections::HashSet<_> = values
+        .iter()
+        .filter_map(|v| v["of"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(ids.len(), 32);
+    for lane in 0..4 {
+        for n in 0..8 {
+            assert!(ids.contains(&format!("{lane}:{n}:{}", "x".repeat(64 * 1024))));
+        }
+    }
+    stdout.rewind().unwrap();
+    assert_eq!(stdout.metadata().unwrap().len(), 0);
+}
+
+#[test]
+fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finishes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: this test owns the live socket and the correctly sized int buffer.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    let writer = Arc::new(Mutex::new(socket));
+    let owned = Arc::clone(&writer);
+    let writing = std::thread::spawn(move || {
+        write_event(
+            &owned,
+            &RendezvousEvent::FdsReceived {
+                of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
+            },
+        )
+    });
+    assert!(org_socket::poll_readable(peer.as_raw_fd(), Duration::from_secs(2)).unwrap());
+    // A response larger than the tiny send buffer is now blocked; the entire
+    // event must still own the shared lock, not just a temporary clone operation.
+    let held_for_frame = writer.try_lock().is_err();
+    drop(peer);
+    assert!(writing.join().unwrap().is_err());
+    assert!(
+        held_for_frame,
+        "writer released serialization before completing its frame"
+    );
+}
+#[test]
+fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: owned live socket, correctly sized int.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    let writer = Arc::new(Mutex::new(socket));
+    let (cancel, cancelled) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        // A broken deadline is released by closing the peer after seven seconds.
+        // The elapsed-time assertion catches it without an external harness timeout.
+        let _ = cancelled.recv_timeout(Duration::from_secs(7));
+        drop(peer);
+    });
+    let start = std::time::Instant::now();
+    let error = write_event(
+        &writer,
+        &RendezvousEvent::FdsReceived {
+            of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
+        },
+    )
+    .unwrap_err();
+    let elapsed = start.elapsed();
+    let _ = cancel.send(());
+    watchdog.join().unwrap();
+    assert!(
+        matches!(error, LaunchError::Frame(FrameError::Io(ref error)) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)),
+        "unexpected bounded write outcome: {error}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(4) && elapsed < Duration::from_millis(6500),
+        "write deadline was not five seconds: {elapsed:?}"
+    );
+}
+
+#[test]
+fn writer_is_available_only_for_the_authenticated_rendezvous_transport() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (mut control, _) = control(b"");
+    assert!(control.writer().is_none());
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let writer = Arc::new(Mutex::new(socket));
+    control.rendezvous = Some(Arc::clone(&writer));
+    assert!(Arc::ptr_eq(&control.writer().unwrap(), &writer));
 }

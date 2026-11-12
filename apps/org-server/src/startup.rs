@@ -30,7 +30,7 @@ pub(super) enum Request {
 
 pub(super) struct Control {
     pipe: ControlPipe,
-    rendezvous: Option<UnixStream>,
+    rendezvous: Option<EventWriter>,
     receiver: Option<StreamReceiver>,
     // Owned before the handoff ACK; moved to the service after Ready.
     transfer: Option<OwnedFd>,
@@ -86,8 +86,14 @@ impl Control {
                     .spawn(move || drain(pipe))
                     .map_err(io_error)?;
                 let stream = UnixStream::connect(&office.rendezvous).map_err(io_error)?;
-                self.rendezvous = Some(stream);
-                let stream = self.rendezvous.as_mut().expect("just connected");
+                self.rendezvous = Some(Arc::new(Mutex::new(stream)));
+                let mut writer = self
+                    .rendezvous
+                    .as_ref()
+                    .expect("just connected")
+                    .lock()
+                    .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
+                let stream = &mut *writer;
                 frame::write_message(stream, &v3::ReadyForSecrets).map_err(LaunchError::Frame)?;
                 let receiver = self
                     .receiver
@@ -149,9 +155,13 @@ impl Control {
         })
     }
 
+    pub fn writer(&self) -> Option<EventWriter> {
+        self.rendezvous.as_ref().map(Arc::clone)
+    }
+
     pub fn emit(&mut self, event: &ServerEvent) -> Result<(), LaunchError> {
-        match &mut self.rendezvous {
-            Some(stream) => v3::write_server_event(stream, event),
+        match &self.rendezvous {
+            Some(writer) => write_event(writer, &RendezvousEvent::Server(event.clone())),
             None => org_office_launch::write_server_event(&mut self.pipe.to_host, event),
         }
     }
@@ -172,7 +182,10 @@ pub(super) fn drain(mut source: impl Read) {
 impl Drop for Control {
     fn drop(&mut self) {
         if let Some(stream) = &self.rendezvous {
-            let _ = stream.shutdown(std::net::Shutdown::Both);
+            let _ = stream
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .shutdown(std::net::Shutdown::Both);
         }
     }
 }
@@ -279,4 +292,16 @@ fn host_disappeared(kind: io::ErrorKind) -> bool {
         kind,
         io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset
     )
+}
+
+pub(super) type EventWriter = Arc<Mutex<UnixStream>>;
+pub(super) fn write_event(
+    writer: &EventWriter,
+    event: &RendezvousEvent,
+) -> Result<(), LaunchError> {
+    let stream = writer
+        .lock()
+        .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
+    let mut output = crate::bounded::writer(&stream, std::time::Duration::from_secs(5));
+    v3::write_rendezvous_event(&mut output, event)
 }

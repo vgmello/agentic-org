@@ -50,3 +50,11 @@ pub fn write_message<T: Serialize>(
         message,
     )
 }
+
+/// Use the same whole-frame deadline with a protocol-owned encoder.
+pub(super) fn writer(stream: &UnixStream, limit: Duration) -> impl Write + '_ {
+    Bounded {
+        stream,
+        deadline: Instant::now() + limit,
+    }
+}
