@@ -20,7 +20,7 @@ use org_proto::{AppToken, OfficeStatusReason};
 use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
-use crate::keys::{KeyStore, KeyStoreError};
+use crate::keys::KeyStore;
 use crate::logs::RotatingLog;
 use crate::timings::Timings;
 
@@ -163,23 +163,26 @@ impl OfficeRunner {
         taken
     }
 
+    fn key_missing(&self) -> Ending {
+        host_log::log(&format!(
+            "office {} has no usable key in the host's key store; it isn't started \
+             (office.restart tries again)",
+            self.office_id
+        ));
+        Ending::Ended {
+            reason: OfficeStatusReason::KeyMissing,
+            fatal: true,
+            uptime: None,
+        }
+    }
+
     /// Loads the office's key, then starts its server (already marked `starting`) and watches
     /// it. Without its key, nothing is started.
     fn start(&self, generation: &mut u64) -> Ending {
         let key = match self.keys.load(&self.office_id) {
             Ok(Some(key)) => key,
-            Ok(None) | Err(KeyStoreError::Corrupt) => {
-                host_log::log(&format!(
-                    "office {} has no usable key in the host's key store; it isn't started \
-                     (office.restart tries again)",
-                    self.office_id
-                ));
-                return Ending::Ended {
-                    reason: OfficeStatusReason::KeyMissing,
-                    fatal: true,
-                    uptime: None,
-                };
-            }
+            Ok(None) => return self.key_missing(),
+            Err(e) if e.means_key_missing() => return self.key_missing(),
             Err(e) => {
                 host_log::log(&format!(
                     "couldn't load the key of office {}: {e}",

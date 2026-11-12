@@ -67,10 +67,13 @@ pub(crate) trait KeyStore: Send + Sync {
 #[derive(Debug)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Exists,
     /// `load`: the item isn't a key.
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     Corrupt,
     /// The office id isn't a plain id.
+    #[cfg(any(target_os = "macos", debug_assertions, test))]
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
     #[cfg(any(target_os = "macos", test))]
@@ -79,11 +82,27 @@ pub(crate) enum KeyStoreError {
     Io(io::Error),
 }
 
+impl KeyStoreError {
+    pub(crate) fn means_key_missing(&self) -> bool {
+        #[cfg(any(target_os = "macos", debug_assertions, test))]
+        {
+            matches!(self, Self::Corrupt)
+        }
+        #[cfg(not(any(target_os = "macos", debug_assertions, test)))]
+        {
+            false
+        }
+    }
+}
+
 impl fmt::Display for KeyStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
             #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
@@ -96,6 +115,7 @@ impl std::error::Error for KeyStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             KeyStoreError::Io(e) => Some(e),
+            #[cfg(any(target_os = "macos", debug_assertions, test))]
             _ => None,
         }
     }
@@ -295,6 +315,19 @@ mod tests {
         assert!(!home_b.join("orphan-keys.json").exists());
         b.delete(office).unwrap();
         assert!(b.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_a_corrupt_item_means_the_key_is_missing() {
+        assert!(KeyStoreError::Corrupt.means_key_missing());
+        for error in [
+            KeyStoreError::Exists,
+            KeyStoreError::NotPlainId,
+            KeyStoreError::Os(-25308),
+            KeyStoreError::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+        ] {
+            assert!(!error.means_key_missing(), "{error:?}");
+        }
     }
 
     #[test]
