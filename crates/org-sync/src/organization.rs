@@ -16,7 +16,7 @@ const _: () = assert!(
         <= org_sync_proto::MAX_ENCODED_FRAME_BYTES
 );
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OrgEvent {
     pub org_id: OrgId,
     pub position: Position,
@@ -24,6 +24,18 @@ pub struct OrgEvent {
     pub digest: Digest,
     pub codec: Codec,
     pub payload: Arc<[u8]>,
+}
+impl std::fmt::Debug for OrgEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OrgEvent")
+            .field("org_id", &self.org_id)
+            .field("position", &self.position)
+            .field("previous", &self.previous)
+            .field("digest", &self.digest)
+            .field("codec", &self.codec)
+            .field("payload_bytes", &self.payload.len())
+            .finish()
+    }
 }
 impl OrgEvent {
     pub fn new(
@@ -61,7 +73,7 @@ impl OrgEvent {
         )
         .map_err(|_| Refusal::InvalidInput)?;
         if expected != self.digest {
-            return Err(Refusal::Divergence);
+            return Err(Refusal::IntegrityFailure);
         }
         Ok(())
     }
@@ -456,7 +468,12 @@ pub fn install_snapshot(
         current.restore_pending = false;
         current.pending_restore_base = None;
         tx.install_snapshot(&snapshot, &current)
-            .map_err(classify_apply_error)?;
+            .map_err(|error| match error {
+                // The core already checked the trusted staging reference. An adapter
+                // that cannot find it lost local accepted state, not peer history.
+                SyncError::Refused(Refusal::InvalidInput) => Refusal::IntegrityFailure.into(),
+                error => classify_apply_error(error),
+            })?;
         Ok(OrgOutput::SnapshotInstalled)
     }))
 }

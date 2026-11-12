@@ -8,12 +8,19 @@ immutable authenticated peer facts. Neither replication crate performs filesyste
 `org-sync-proto` owns the validated organization identifiers, epoch, position, codec, and
 event digest and canonical authority signing preimage. Reproduce the independent digest vectors from the workspace root with
 `python3 crates/org-sync-proto/test-vectors/generate.py`.
+The event tests assert the frozen SHA-256 answers; the authority-record tests also
+assert the complete signing preimage. See the protocol crate's
+[test-vector notes](../org-sync-proto/test-vectors/README.md) for the exact coverage.
 
 ## Writer contract
 
 `OrgStore::transact` runs a replayable attempt in one writer job with a consistent view
 of state. Roll back any error; integrity, divergence, and invariant failures abort the
-whole batch. Retry only busy or locked storage errors, at most three times after the
+whole batch. An event whose bytes do not match its digest, or accepted snapshot staging
+that has disappeared, is an integrity failure. Valid content conflicting with retained
+history remains divergence. Event and published-output Debug include payload length,
+never payload bytes.
+Retry only busy or locked storage errors, at most three times after the
 first attempt. Return the output, including any ACK, only after durable commit.
 
 Apply native organization effects, the event log, and the cursor together. The native
