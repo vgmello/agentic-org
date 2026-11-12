@@ -4,6 +4,12 @@ use org_mailbox::testkit::fixture::{ADA_ID, OWNER_ID, PAT_ID, POSITION};
 use org_proto::inbox::{InboxCounts, InboxItem, InboxList, InboxListParams};
 use serde_json::{json, Value};
 
+#[path = "inbox_hint.rs"]
+mod hint;
+
+#[path = "inbox_acceptance.rs"]
+mod acceptance;
+
 struct Rows {
     name: &'static str,
     items: Vec<InboxItem>,

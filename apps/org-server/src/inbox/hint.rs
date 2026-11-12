@@ -20,6 +20,9 @@ struct State {
     pending: Option<InboxChangedData>,
 }
 
+#[cfg(test)]
+mod tests;
+
 impl Hint {
     pub(crate) fn new(org: Position, mailbox: u64) -> Self {
         Self(Mutex::new(State {

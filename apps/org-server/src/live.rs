@@ -216,6 +216,42 @@ mod tests {
     }
 
     #[test]
+    fn mailbox_change_counter_ignores_secondary_notifications_presence_and_its_own_hint() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
+        let live = LiveEvents::new(Box::new(|| {}));
+        let Live::StateChanged(data) = state("M1") else {
+            unreachable!()
+        };
+        live.publish(MessageEvent::StateChanged(data));
+        assert_eq!(live.mailbox_head(), 1);
+        live.publish(MessageEvent::DeliveryFailed(
+            org_proto::msg::MessageDeliveryFailedData {
+                id: "notice".into(),
+                original_id: "M1".into(),
+                thread_id: "T".into(),
+                from_member_id: "owner".into(),
+                recipient_id: "agent".into(),
+                recipient_name: "Agent".into(),
+                reason: org_proto::msg::DeliveryFailedReason::Expired,
+            },
+        ));
+        live.publish_presence(presence("agent", "working"));
+        live.publish_live(Live::InboxChanged(org_proto::inbox::InboxChangedData {
+            counts: Default::default(),
+            as_of: org_proto::inbox::InboxPosition {
+                epoch: "instance".into(),
+                seq: 1,
+            },
+            degraded: vec![],
+        }));
+        assert_eq!(
+            live.mailbox_head(),
+            1,
+            "one transition, no recursive hint trigger"
+        );
+    }
+
+    #[test]
     fn a_subscriber_sees_only_what_is_published_after_its_head_and_each_publish_wakes() {
         let _spawn = crate::transfer::tests::without_process_spawn();
         let woken = Arc::new(AtomicUsize::new(0));

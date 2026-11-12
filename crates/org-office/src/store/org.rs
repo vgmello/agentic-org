@@ -728,7 +728,7 @@ pub(crate) fn head(db: &Connection) -> Result<Position, OfficeError> {
 }
 
 /// Test seam: the organization as `members` (and nothing else) applied up to `position`.
-#[cfg(test)]
+#[cfg(any(test, feature = "testkit"))]
 pub(crate) fn seed_for_test(
     db: &Connection,
     members: &[Member],

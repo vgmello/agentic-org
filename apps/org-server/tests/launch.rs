@@ -942,6 +942,7 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
 
 #[test]
 fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_restart() {
+    let _processes = process_isolation();
     use org_proto::inbox::{InboxCounts, InboxList, InboxListParams, InboxState};
     let world = World::new();
     let mut first = create(&world);

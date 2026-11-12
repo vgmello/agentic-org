@@ -682,15 +682,11 @@ impl Office {
         &self.stores.org
     }
 
-    /// Test seam: replaces the organization's members with `members`, as an organization applied
+    /// Test fixtures only: replaces the organization's members with `members`, as an organization applied
     /// up to `position` (the members are written raw, as a damaged or foreign organization could
     /// hold them).
-    #[cfg(test)]
-    pub(crate) fn seed_organization_for_test(
-        &self,
-        members: &[org_proto::Member],
-        position: Position,
-    ) {
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn seed_organization_for_test(&self, members: &[org_proto::Member], position: Position) {
         let members = members.to_vec();
         self.stores
             .org

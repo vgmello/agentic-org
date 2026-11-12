@@ -38,6 +38,7 @@ fn hint_before(sub: &org_client::Subscription, deadline: Instant) -> InboxChange
 
 #[test]
 fn inbox_hint_real_mailbox_commit_advances_once_and_filters_the_same_hint_per_delivery() {
+    let _processes = process_isolation();
     let world = World::new();
     let _server = create(&world);
     let receiver = owner(&world);
@@ -88,4 +89,81 @@ fn inbox_hint_real_mailbox_commit_advances_once_and_filters_the_same_hint_per_de
         receiver.call::<InboxList>(&open()).unwrap().as_of,
         hint.as_of
     );
+}
+
+/// Build the org-owned fixture before any worker starts; SQL stays inside org-office.
+fn unplaced(world: &World) -> String {
+    use org_proto::org::{AgentProfile, AgentRuntime, AgentStatus};
+    let office = org_office::Office::create(
+        world.folder(OFFICE),
+        &org_office::NewOffice {
+            office_id: OFFICE.into(),
+            office_name: "HQ".into(),
+            role: org_office::OfficeRole::Hq,
+            org_id: ORG.into(),
+            org_name: "Acme".into(),
+        },
+        org_office::Key::from_db_key(db_key()),
+    )
+    .unwrap();
+    let snapshot = office.org_snapshot().unwrap();
+    let owner = snapshot
+        .members
+        .into_iter()
+        .find(|member| member.owner)
+        .unwrap();
+    let mut agent = owner.clone();
+    agent.id = command_id(72);
+    agent.name = "Unplaced agent".into();
+    agent.kind = org_proto::MemberKind::Agent;
+    agent.owner = false;
+    agent.office_id = None;
+    agent.agent = Some(AgentProfile {
+        role: "engineer".into(),
+        title: "Engineer".into(),
+        focus: None,
+        runtime: AgentRuntime::ClaudeCode,
+        model: None,
+        run_mode: None,
+        schedule: None,
+        home: None,
+        messaging_name: "unplaced-probe".into(),
+        status: AgentStatus::Active,
+        offboarded_at: None,
+    });
+    let id = agent.id.clone();
+    office.seed_organization_for_test(&[owner, agent], snapshot.position);
+    drop(office);
+    id
+}
+
+#[test]
+fn inbox_hint_real_second_owner_offboard_clears_the_seeded_problem_within_one_second() {
+    let _processes = process_isolation();
+    let world = World::new();
+    let id = unplaced(&world);
+    let mut server = world.spawn(&["--office", OFFICE]);
+    server.send(&start_message());
+    assert!(matches!(server.event(), ServerEvent::Ready { .. }));
+    let receiver = owner(&world);
+    let actor = owner(&world);
+    let before = receiver.call::<InboxList>(&open()).unwrap();
+    assert_eq!((before.counts.problems, before.counts.total), (1, 1));
+    let sub = receiver.subscribe().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    actor
+        .call::<org_proto::org::MemberOffboard>(&org_proto::org::MemberOffboardParams {
+            command_id: command_id(73),
+            member_id: id,
+            expected_version: 1,
+        })
+        .unwrap();
+    let hint = hint_before(&sub, deadline);
+    assert_eq!((hint.counts.problems, hint.counts.total), (0, 0));
+    assert_eq!(hint.as_of.epoch, before.as_of.epoch);
+    assert_eq!(hint.as_of.seq, before.as_of.seq + 1);
+    assert!(hint.degraded.is_empty());
+    let after = receiver.call::<InboxList>(&open()).unwrap();
+    assert_eq!(after.counts, hint.counts);
+    assert!(after.items.is_empty());
 }
