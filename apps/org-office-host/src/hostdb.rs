@@ -156,8 +156,7 @@ impl HostDb {
         }
         checkpoint(7)?; // A failure before COMMIT must roll back DDL and metadata together.
         tx.commit()?;
-        let mode: String = db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
-        require_wal(&mode)?;
+        enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         #[cfg(test)]
         assert!(!db.db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)?);
@@ -199,8 +198,7 @@ impl HostDb {
         if version != 1 {
             return Err(Error::Version);
         }
-        let mode: String = db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
-        require_wal(&mode)?;
+        enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {
             connection: Mutex::new(db),
@@ -214,6 +212,10 @@ fn absent(path: &Path, present: Error) -> Result<(), Error> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
     }
+}
+fn enter_wal(db: &Connection) -> Result<(), Error> {
+    let mode: String = db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+    require_wal(&mode)
 }
 fn require_wal(mode: &str) -> Result<(), Error> {
     // A VFS can return its unchanged mode instead of accepting WAL.
@@ -278,14 +280,18 @@ fn connect(path: &Path, key: &Value) -> Result<Connection, Error> {
     let cipher: String = db
         .query_row("PRAGMA cipher_version", [], |r| r.get(0))
         .unwrap_or_default();
-    if cipher.is_empty() {
-        return Err(Error::NoCipher);
-    }
+    require_cipher(&cipher)?;
     db.query_row("SELECT count(*) FROM sqlite_schema", [], |r| {
         r.get::<_, i64>(0)
     })?;
     db.execute_batch("PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON; PRAGMA foreign_keys=ON;")?;
     Ok(db)
+}
+fn require_cipher(version: &str) -> Result<(), Error> {
+    if version.is_empty() {
+        return Err(Error::NoCipher);
+    }
+    Ok(())
 }
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

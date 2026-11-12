@@ -8,9 +8,15 @@ thread_local! {
     static FAIL: RefCell<Option<u8>> = const { RefCell::new(None) };
     static CRASH: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
     static SWAP: RefCell<Option<(PathBuf, PathBuf)>> = const { RefCell::new(None) };
+    static TEMP_SYMLINK: RefCell<Option<(PathBuf, PathBuf)>> = const { RefCell::new(None) };
     static RESIDUAL: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 pub(super) fn checkpoint(step: u8) -> Result<(), Error> {
+    if step == 3 {
+        if let Some((path, target)) = TEMP_SYMLINK.with(|r| r.borrow_mut().take()) {
+            symlink(target, path).unwrap();
+        }
+    }
     if step == 4 {
         if let Some(path) = RESIDUAL.with(|r| r.borrow_mut().take()) {
             fs::write(path, b"uncheckpointed temp").unwrap();
@@ -276,8 +282,13 @@ fn refusals_preserve_existing_database_and_wal_bytes() {
         let stored = other.load(&Name::parse("registry").unwrap()).unwrap();
         if stored.as_ref().is_some_and(|k| k.expose().len() != 32) {
             assert!(matches!(result, Err(Error::KeyLength)));
+        } else if stored.is_none() {
+            assert!(matches!(result, Err(Error::KeyMissing)));
         } else {
-            assert!(result.is_err());
+            assert!(matches!(
+                result,
+                Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
+            ));
         }
         let after = bytes(home.path());
         // Opening a WAL reader may update its shared-memory read marks; the durable files stay exact.
@@ -342,7 +353,10 @@ fn missing_empty_nonregular_symlink_plaintext_and_sidecar_aliases_refuse() {
         .unwrap();
     drop(plain);
     let before = fs::read(home.path().join(DB)).unwrap();
-    assert!(HostDb::open(home.path(), &secrets).is_err());
+    assert!(matches!(
+        HostDb::open(home.path(), &secrets),
+        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
+    ));
     assert_eq!(fs::read(home.path().join(DB)).unwrap(), before);
     let (home, secrets, db) = fixture();
     drop(db);
@@ -752,12 +766,19 @@ fn database_fds(path: &Path) -> Vec<i32> {
 #[test]
 fn sqlite_file_descriptors_are_close_on_exec() {
     let (home, _, db) = fixture();
-    let fds = database_fds(&home.path().join(DB));
-    assert!(!fds.is_empty(), "SQLite owns a main-file fd");
-    for fd in fds {
-        // SAFETY: F_GETFD examines a descriptor retained by this SQLite connection.
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        assert_ne!(flags & libc::FD_CLOEXEC, 0);
+    db.connection
+        .lock()
+        .unwrap()
+        .execute("INSERT INTO meta VALUES ('fd-probe','written')", [])
+        .unwrap();
+    for name in [DB, "host-registry.db-wal", "host-registry.db-shm"] {
+        let fds = database_fds(&home.path().join(name));
+        assert!(!fds.is_empty(), "SQLite owns a {name} fd");
+        for fd in fds {
+            // SAFETY: F_GETFD examines a descriptor retained by this SQLite connection.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert_ne!(flags & libc::FD_CLOEXEC, 0, "{name}");
+        }
     }
     drop(db);
 }
@@ -1191,6 +1212,14 @@ fn committed_wal_recovers_after_real_process_death() {
 
 #[test]
 fn non_directory_home_and_fifo_database_are_refused_before_sqlite() {
+    const CHILD_HOME: &str = "SAGE_HOSTDB_FIFO_PROBE";
+    if let Some(home) = std::env::var_os(CHILD_HOME) {
+        assert!(matches!(
+            HostDb::open(Path::new(&home), &Secrets::default()),
+            Err(Error::Unsafe)
+        ));
+        return;
+    }
     let home = home();
     let file = home.path().join("not-a-directory");
     fs::write(&file, b"x").unwrap();
@@ -1201,10 +1230,32 @@ fn non_directory_home_and_fifo_database_are_refused_before_sqlite() {
     let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: live NUL-terminated path; owner-only FIFO in an isolated temporary directory.
     assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
-    assert!(matches!(
-        HostDb::open(home.path(), &Secrets::default()),
-        Err(Error::Unsafe)
-    ));
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostdb::tests::non_directory_home_and_fifo_database_are_refused_before_sqlite",
+        ])
+        .env(CHILD_HOME, home.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap(); // Reap even when the mutant blocks on the FIFO.
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "FIFO probe blocked or returned the wrong error"
+    );
 }
 
 #[test]
@@ -1521,4 +1572,136 @@ fn orphan_cleanup_logs_only_the_fixed_sidecar_names() {
     }
     assert!(!text.contains("private-test-sidecar-content"));
     assert!(!text.contains("/"));
+}
+
+// Rollback-mode fixtures make WAL conversion (and its refusal ordering) observable.
+fn delete_mode_fixture(version: i64) -> (tempfile::TempDir, Secrets) {
+    let (home, secrets, db) = fixture();
+    drop(db);
+    let key = secrets
+        .load(&Name::parse("registry").unwrap())
+        .unwrap()
+        .unwrap();
+    let raw = connect(&home.path().canonicalize().unwrap().join(DB), &key).unwrap();
+    let mode: String = raw
+        .pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
+    raw.pragma_update(None, "user_version", version).unwrap();
+    raw.close().unwrap();
+    assert!(!home.path().join("host-registry.db-journal").exists());
+    (home, secrets)
+}
+
+#[test]
+fn open_enters_wal_for_a_valid_delete_mode_registry() {
+    let (home, secrets) = delete_mode_fixture(1);
+    let db = HostDb::open(home.path(), &secrets).unwrap();
+    let c = db.connection.lock().unwrap();
+    let mode: String = c
+        .pragma_query_value(None, "journal_mode", |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+}
+
+#[test]
+fn incompatible_delete_mode_versions_refuse_without_changing_bytes() {
+    for version in [0, 2, -1] {
+        let (home, secrets) = delete_mode_fixture(version);
+        let before = fs::read(home.path().join(DB)).unwrap();
+        assert!(
+            matches!(HostDb::open(home.path(), &secrets), Err(Error::Version)),
+            "{version}"
+        );
+        assert_eq!(
+            fs::read(home.path().join(DB)).unwrap(),
+            before,
+            "version {version}"
+        );
+        assert!(!home.path().join("host-registry.db-wal").exists());
+    }
+}
+
+#[test]
+fn enter_wal_refuses_a_vfs_that_returns_memory_mode() {
+    let db = Connection::open_in_memory().unwrap();
+    assert_eq!(enter_wal(&db), Err(Error::Unsafe));
+}
+
+#[test]
+fn cipher_capability_guard_refuses_plain_sqlite() {
+    assert_eq!(require_cipher(""), Err(Error::NoCipher));
+    assert_eq!(require_cipher("4.5.0"), Ok(()));
+}
+
+#[test]
+fn temp_symlink_planted_after_key_storage_cannot_clobber_its_target() {
+    let home = home();
+    let secrets = Secrets::default();
+    let target = home.path().join("precious");
+    fs::write(&target, b"keep these bytes").unwrap();
+    TEMP_SYMLINK.with(|r| *r.borrow_mut() = Some((home.path().join(TMP), target.clone())));
+    let result = HostDb::create(home.path(), &secrets, &init(false));
+    TEMP_SYMLINK.with(|r| *r.borrow_mut() = None);
+    assert!(matches!(
+        result,
+        Err(Error::Io(io::ErrorKind::AlreadyExists))
+    ));
+    assert_eq!(fs::read(&target).unwrap(), b"keep these bytes");
+    assert!(fs::symlink_metadata(home.path().join(TMP))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(!home.path().join(DB).exists());
+}
+
+#[test]
+fn journal_states_form_a_closed_enum_with_kind_and_result_constraints() {
+    let (_home, _secrets, db) = fixture();
+    let mut c = db.connection.lock().unwrap();
+    for state in [
+        "completed",
+        "rejected",
+        "reserved",
+        "linked",
+        "abandoned",
+        "unknown",
+        "garbage",
+        "",
+        "pending",
+        "failed",
+        "Completed",
+    ] {
+        for kind in ["account.create", "organization.create"] {
+            for result in [None, Some("{}".to_string())] {
+                let allowed = match state {
+                    "completed" => kind != "organization.create" && result.is_some(),
+                    "rejected" => result.is_some(),
+                    "reserved" => kind == "organization.create" && result.is_none(),
+                    "linked" | "abandoned" => kind == "organization.create" && result.is_some(),
+                    _ => false,
+                };
+                let tx = c
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .unwrap();
+                let outcome = tx.execute(
+                    "INSERT INTO op_journal VALUES (?1,?2,?3,'actor',?4,?5,0)",
+                    (
+                        "01J00000000000000000000003",
+                        kind,
+                        &[1u8; 32][..],
+                        state,
+                        &result,
+                    ),
+                );
+                assert_eq!(outcome.is_ok(), allowed, "{kind}/{state}/{result:?}");
+                if !allowed {
+                    assert_eq!(
+                        outcome.unwrap_err().sqlite_error_code(),
+                        Some(rusqlite::ErrorCode::ConstraintViolation)
+                    );
+                }
+            }
+        }
+    }
 }
