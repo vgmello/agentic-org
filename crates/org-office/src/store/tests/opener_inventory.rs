@@ -47,6 +47,7 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
             .collect(),
         root,
     };
+    scope.require(&scope.root.join("clippy.toml"));
     for path in &scope.files {
         scope.require(path);
         if opener_policy_config(path) {
@@ -124,6 +125,7 @@ fn sqlcipher_tracked_inventory_covers_all_names_and_config_classes() {
         ("src/lib.rs", "pub struct Allowed;"),
         ("build/source.rs", "pub struct Build;"),
         ("dist/Cargo.toml", "[package]\nname='nested'"),
+        ("nested/.cargo/config", "[build]\nrustflags='-Dclippy::all'"),
         (
             "target/.cargo/config.toml",
             "[build]\nrustflags='-Dclippy::all'",
@@ -224,7 +226,7 @@ fn sqlcipher_inventory_refuses_real_directory_and_config_symlinks() {
             .args(["add", "linked_source"]),
         "symlink index",
     );
-    assert!(std::panic::catch_unwind(|| tracked(directory.path())).is_err());
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err());
     for name in [
         ".cargo",
         "src/.cargo",
@@ -234,7 +236,7 @@ fn sqlcipher_inventory_refuses_real_directory_and_config_symlinks() {
         let directory = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
         symlink(source.path(), directory.path().join(name)).unwrap();
         assert!(
-            std::panic::catch_unwind(|| tracked(directory.path())).is_err(),
+            std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err(),
             "symlink {name}"
         );
     }
@@ -245,7 +247,7 @@ fn sqlcipher_inventory_refuses_real_directory_and_config_symlinks() {
         directory.path().join("src/lib.rs"),
     )
     .unwrap();
-    assert!(std::panic::catch_unwind(|| tracked(directory.path())).is_err());
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err());
     let directory = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
     std::fs::rename(
         directory.path().join("src"),
@@ -257,7 +259,29 @@ fn sqlcipher_inventory_refuses_real_directory_and_config_symlinks() {
         directory.path().join("src"),
     )
     .unwrap();
-    assert!(std::panic::catch_unwind(|| tracked(directory.path())).is_err());
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err());
+    let directory = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
+    symlink(
+        directory.path().join("src/lib.rs"),
+        directory.path().join("alias.rs"),
+    )
+    .unwrap();
+    bounded_output(
+        command("git")
+            .current_dir(directory.path())
+            .args(["add", "alias.rs"]),
+        "alias index",
+    );
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err());
+    let config = tempfile::tempdir().unwrap();
+    std::fs::write(
+        config.path().join("config.toml"),
+        "[build]\nrustflags='-Aclippy::all'",
+    )
+    .unwrap();
+    let directory = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
+    symlink(config.path(), directory.path().join(".cargo")).unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(directory.path())).is_err());
 }
 
 #[test]
@@ -277,6 +301,34 @@ fn sqlcipher_inventory_requires_regular_tracked_inputs_and_a_git_repository() {
     assert!(std::panic::catch_unwind(|| scope.require(&path)).is_err());
     let directory = fixture(&[(".cargo", "a file cannot be a config directory")]);
     assert!(std::panic::catch_unwind(|| tracked(directory.path())).is_err());
+    let directory = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
+    bounded_output(
+        command("git")
+            .current_dir(directory.path())
+            .args(["rm", "--cached", "clippy.toml"]),
+        "remove root config",
+    );
+    std::fs::remove_file(directory.path().join("clippy.toml")).unwrap();
+    assert!(std::panic::catch_unwind(|| tracked(directory.path())).is_err());
+    let empty = fixture(&[]);
+    bounded_output(
+        command("git")
+            .current_dir(empty.path())
+            .args(["rm", "--cached", "clippy.toml"]),
+        "empty index",
+    );
+    assert!(std::panic::catch_unwind(|| tracked(empty.path())).is_err());
+    assert!(std::panic::catch_unwind(|| {
+        bounded_output(
+            command("git").arg("--definitely-invalid"),
+            "failed inventory command",
+        );
+    })
+    .is_err());
+    assert!(std::panic::catch_unwind(|| {
+        bounded_output(command("printf").arg(r"\377"), "non-UTF8 inventory output");
+    })
+    .is_err());
     let output = bounded_output(&mut command("env"), "policy command environment");
     let names = output
         .lines()

@@ -158,12 +158,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
 }
 
 fn check_source_inventory(root: &Path) {
-    assert!(
-        root.join("clippy.toml").is_file(),
-        "workspace Clippy fence is missing"
-    );
     let scope = opener_inventory::tracked(root);
-    assert!(scope.files.contains(&scope.root.join("clippy.toml")));
     for path in &scope.files {
         if path.extension().is_some_and(|extension| extension == "rs") {
             check_rust_file(&scope.root, path, &std::fs::read_to_string(path).unwrap());
