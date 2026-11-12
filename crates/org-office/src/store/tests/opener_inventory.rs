@@ -434,6 +434,14 @@ fn sqlcipher_cargo_metadata_rejects_invalid_shape_members_and_source_kinds() {
             "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")}]}]
     });
     let (manifests, roots) = super::opener_sources::metadata(&scope, &value);
+    let mut local_and_remote = value.clone();
+    local_and_remote["packages"][0]["dependencies"] = serde_json::json!([
+        {"path": root, "rename": "self_reference"}, {"name": "remote", "source": "registry"}
+    ]);
+    assert_eq!(
+        super::opener_sources::metadata(&scope, &local_and_remote),
+        (manifests.clone(), roots.clone())
+    );
     assert!(manifests.contains(&root.join("Cargo.toml")));
     assert_eq!(roots, BTreeSet::from([root.join("src/lib.rs")]));
     for (pointer, replacement) in [
@@ -1052,4 +1060,34 @@ fn sqlcipher_rust_source_kind_refuses_noncanonical_extension_aliases() {
             alias.display()
         );
     }
+}
+
+#[test]
+fn sqlcipher_metadata_requires_the_tracked_virtual_workspace_manifest() {
+    let dir = fixture(&[
+        (
+            "helper/Cargo.toml",
+            "[package]\nname='helper'\nversion='0.1.0'",
+        ),
+        ("helper/src/lib.rs", "pub struct Helper;"),
+    ]);
+    let scope = tracked(dir.path());
+    let value = serde_json::json!({"version":1,"workspace_root":scope.root,"workspace_members":["helper"],"packages":[{
+        "id":"helper","manifest_path":scope.root.join("helper/Cargo.toml"),"dependencies":[],"targets":[{"src_path":scope.root.join("helper/src/lib.rs")}]
+    }]});
+    assert!(std::panic::catch_unwind(|| super::opener_sources::metadata(&scope, &value)).is_err());
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[workspace]\nmembers=['helper']",
+    )
+    .unwrap();
+    bounded_output(
+        command("git")
+            .current_dir(dir.path())
+            .args(["add", "Cargo.toml"]),
+        "track workspace root",
+    );
+    let scope = tracked(dir.path());
+    let (manifests, _) = super::opener_sources::metadata(&scope, &value);
+    assert!(manifests.contains(&scope.root.join("Cargo.toml")));
 }
