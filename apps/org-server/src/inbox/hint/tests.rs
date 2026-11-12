@@ -276,3 +276,5 @@ fn head_snapshot_bounds_concurrent_commits_and_multiple_pages_share_one_recount(
     assert_eq!(events(&live)[1].as_of.seq, 105);
     assert_eq!(counts.reads.load(Ordering::SeqCst), 2);
 }
+
+mod mailbox;

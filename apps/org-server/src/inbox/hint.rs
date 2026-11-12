@@ -1,4 +1,4 @@
-//! One HQ pump consumes committed changes independently of subscriber count.
+//! Enabled hints are at least once: committed changes reach a visible recount/hint within2s.
 use super::{recount, Hq, Source};
 use crate::{
     follow::OrgFeed,
@@ -33,7 +33,7 @@ impl Hint {
         }))
     }
 
-    /// Snapshot the head to bound a wake, advance once per change, recount once per wake.
+    /// Seq is monotonic; duplicate notifications may overcount. Recount once per wake.
     /// The clock parameter controls only throttling; source reads use the real HQ clock.
     pub(crate) fn poll(
         &self,
