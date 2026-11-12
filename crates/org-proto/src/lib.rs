@@ -86,6 +86,7 @@
 pub mod directory;
 pub mod frame;
 pub mod gateway;
+pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
