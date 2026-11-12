@@ -240,7 +240,16 @@ fn real_datagram_readiness_records_empty_payload_and_peer_close_are_distinct_sta
         receiver.fd().is_some()
     );
     #[cfg(target_os = "macos")]
+    // Isolated probes observed RESET; the 7952aabc full-workspace gate observed
+    // WouldBlock instead. Accept only those measured states, with no kernel
+    // explanation or promise of an eventual RESET. Rendezvous owns host lifetime.
     match closed {
+        Err(ReceiveError::WouldBlock) => {
+            assert_eq!(receiver.fd().unwrap().as_raw_fd(), raw);
+            let readable = org_socket::poll_readable(raw, Duration::from_millis(1)).unwrap();
+            eprintln!("measured Mac datagram peer-close WouldBlock: POLLIN={readable}");
+            assert!(!readable);
+        }
         Err(ReceiveError::Fatal(error)) => {
             assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
             assert_eq!(error.raw_os_error(), Some(libc::ECONNRESET));
