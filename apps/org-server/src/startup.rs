@@ -79,6 +79,12 @@ impl Control {
                 if id.is_some_and(|id| office.office_id != id) {
                     return Err(LaunchError::Invalid("office id differs from flag"));
                 }
+                // Drain before blocking on the handoff so host stdin writes cannot stall it.
+                let pipe = self.pipe.from_host.try_clone().map_err(io_error)?;
+                std::thread::Builder::new()
+                    .name("org-stdin-drain".into())
+                    .spawn(move || drain(pipe))
+                    .map_err(io_error)?;
                 let stream = UnixStream::connect(&office.rendezvous).map_err(io_error)?;
                 self.rendezvous = Some(stream);
                 let stream = self.rendezvous.as_mut().expect("just connected");
@@ -125,14 +131,9 @@ impl Control {
     }
 
     pub fn lifetime(&mut self) -> io::Result<Lifetime> {
-        let pipe = self.pipe.from_host.try_clone()?;
         let Some(receiver) = self.receiver.take() else {
-            return Ok(Lifetime::Pipe(pipe));
+            return self.pipe.from_host.try_clone().map(Lifetime::Pipe);
         };
-        // V3 stdin is drained unparsed, independently of the authoritative rendezvous EOF.
-        std::thread::Builder::new()
-            .name("org-stdin-drain".into())
-            .spawn(move || drain(pipe))?;
         Ok(Lifetime::Rendezvous {
             receiver,
             fence: Arc::clone(&self.fence),

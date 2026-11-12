@@ -99,6 +99,19 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
         line(&mut reader),
         json!({"v":3,"event":"ready_for_secrets"})
     );
+    // The host may fill stdin before supplying secrets. Handoff must not gate draining.
+    let mut stdin = run.stdin.take().unwrap();
+    let (sent, complete) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let result = (0..512).try_for_each(|_| stdin.write_all(&[b'x'; 4096]));
+        let _ = sent.send((stdin, result));
+    });
+    let (stdin, result) = complete
+        .recv_timeout(WAIT)
+        .expect("stdin blocked before the secrets handoff");
+    result.unwrap();
+    writer.join().unwrap();
+    run.stdin = Some(stdin);
     let (transfer, host_end) = UnixDatagram::pair().unwrap();
     transfer.shutdown(std::net::Shutdown::Write).unwrap();
     let handoff = Handoff::Create {
