@@ -65,41 +65,6 @@ pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
     }
 }
 
-/// The uid of the process at the other end of a Unix socket.
-pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let (mut uid, mut gid) = (0, 0);
-        // SAFETY: a valid socket fd and two valid out-pointers.
-        let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-        if rc == 0 {
-            Ok(uid)
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: zeroed ucred is valid; getsockopt writes at most `len` bytes into it.
-        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let rc = unsafe {
-            libc::getsockopt(
-                stream.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                (&mut cred as *mut libc::ucred).cast(),
-                &mut len,
-            )
-        };
-        if rc == 0 {
-            Ok(cred.uid)
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-}
-
 /// The peer's audit token, which the code-signing check identifies the caller by. Unlike a pid,
 /// it names one process for its whole life and is never reused.
 #[cfg(target_os = "macos")]

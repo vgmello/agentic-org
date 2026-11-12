@@ -71,7 +71,7 @@ pub(crate) trait Peer {
     /// Whether the process `token` names satisfies the designated requirement `requirement`
     /// and runs hardened code (see [`code_signing::hardened_and_clean`]).
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool;
-    /// The caller's uid (the development fallback).
+    /// The effective UID when the kernel confirms a matching peer, otherwise None (development fallback).
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32>;
     /// The path of the caller's executable (the development fallback).
@@ -283,9 +283,12 @@ impl Peer for SocketPeer<'_> {
         code_signing::satisfies_hardened(token, requirement)
     }
 
+    /// Returns the effective UID only when the peer matches it, otherwise None.
+    /// A foreign peer's UID is not reported by this adapter.
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32> {
-        crate::peer::peer_uid(self.stream).ok()
+        let uid = org_socket::effective_uid();
+        org_socket::peer_allowed(self.stream, uid).then_some(uid)
     }
 
     #[cfg(debug_assertions)]
@@ -530,6 +533,44 @@ mod tests {
         assert!(!peer(&a, 1).nothing_after_request());
         (&b).write_all(b"x").unwrap();
         assert!(!peer(&a, 0).nothing_after_request());
+    }
+
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[test]
+    fn a_socket_peer_reports_the_effective_uid_after_shared_admission() {
+        let (stream, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let peer = SocketPeer {
+            stream: &stream,
+            accepted: crate::peer::Accepted {
+                token: None,
+                buffered: 0,
+            },
+            received: crate::peer::Received {
+                sent_at: 0,
+                buffered_after: 0,
+            },
+        };
+        assert_eq!(crate::home::euid(), org_socket::effective_uid());
+        assert_eq!(peer.uid(), Some(crate::home::euid()));
+    }
+
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    #[test]
+    fn a_socket_peer_refuses_a_failed_credential_query() {
+        let file = std::fs::File::open("/dev/null").unwrap();
+        let stream = std::os::unix::net::UnixStream::from(std::os::fd::OwnedFd::from(file));
+        let peer = SocketPeer {
+            stream: &stream,
+            accepted: crate::peer::Accepted {
+                token: None,
+                buffered: 0,
+            },
+            received: crate::peer::Received {
+                sent_at: 0,
+                buffered_after: 0,
+            },
+        };
+        assert_eq!(peer.uid(), None);
     }
 
     #[cfg(debug_assertions)]
