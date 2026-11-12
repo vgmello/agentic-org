@@ -82,6 +82,7 @@
 	const asList = $derived((chosen ?? (narrow.current ? 'list' : 'chart')) === 'list');
 	let fit = $state(true);
 	let fitBlocked = $state(false);
+	let viewMenuOpen = $state(false);
 	const onPeopleFitBlocked = (blocked: boolean) => (fitBlocked = blocked);
 	const collapsed = new SvelteSet<string>();
 	const collapsedReports = new SvelteSet<string>();
@@ -366,13 +367,14 @@
 {#snippet plus()}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>{/snippet}
 
 {#snippet viewMenu()}
-	<DropdownMenu>
+	<DropdownMenu bind:open={viewMenuOpen}>
 		<DropdownMenuTrigger>
 			{#snippet child({ props })}
 				<Button {...props} variant="outline" size="sm">View <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg></Button>
 			{/snippet}
 		</DropdownMenuTrigger>
-		<DropdownMenuContent align="end" class="w-48 max-w-[calc(100vw-2rem)]">
+		<!-- Closed content remains mounted for its exit animation; reject stale focus into it. -->
+		<DropdownMenuContent inert={!viewMenuOpen} align="end" class="w-48 max-w-[calc(100vw-2rem)]">
 			{#if tab === 'teams'}
 				<DropdownMenuItem onSelect={() => (chosen = asList ? 'chart' : 'list')}>{asList ? 'Chart' : 'List'}</DropdownMenuItem>
 			{/if}
