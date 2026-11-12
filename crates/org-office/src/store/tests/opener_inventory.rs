@@ -1123,3 +1123,44 @@ fn sqlcipher_source_inventory_records_only_the_supported_kinds() {
         );
     }
 }
+
+#[test]
+fn sqlcipher_cargo_validates_declarations_in_already_seen_members() {
+    let member = "[package]\nname='member'\nversion='0.1.0'\nedition='2021'";
+    let dir = fixture(&[
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers=['member']\nresolver='2'",
+        ),
+        (
+            "Cargo.lock",
+            "version=4\n[[package]]\nname='member'\nversion='0.1.0'",
+        ),
+        ("member/Cargo.toml", member),
+        ("member/src/lib.rs", "pub struct Member;"),
+    ]);
+    super::check_source_inventory(dir.path());
+    // Cargo ignores a patch in a member; the source policy still rejects the whole family.
+    std::fs::write(
+        dir.path().join("member/Cargo.toml"),
+        format!("{member}\n[patch.crates-io]\nunused={{path='untracked'}}"),
+    )
+    .unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err());
+}
+
+#[test]
+fn sqlcipher_cargo_refuses_a_separate_nested_workspace() {
+    let dir = fixture(&[
+        ("Cargo.toml", "[workspace]\nexclude=['nested']\n[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'"),
+        ("Cargo.lock", "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'"), ("src/lib.rs", "pub struct Allowed;"),
+        ("nested/Cargo.toml", "[workspace]\n[package]\nname='nested'\nversion='0.1.0'\nedition='2021'"),
+        ("nested/Cargo.lock", "version=4\n[[package]]\nname='nested'\nversion='0.1.0'"), ("nested/src/lib.rs", "pub struct Nested;"),
+    ]);
+    let before = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err());
+    assert_eq!(
+        std::fs::read(dir.path().join("Cargo.lock")).unwrap(),
+        before
+    );
+}
