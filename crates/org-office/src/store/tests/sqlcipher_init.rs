@@ -1,5 +1,9 @@
+#[path = "opener_inventory.rs"]
+mod opener_inventory;
 #[path = "opener_policy.rs"]
 mod opener_policy;
+#[path = "opener_scope.rs"]
+mod opener_scope;
 
 use super::*;
 use std::io::{BufRead, BufReader, Write};
@@ -150,40 +154,16 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
         .unwrap()
         .parent()
         .unwrap();
-    assert!(
-        root.join("clippy.toml").is_file(),
-        "workspace Clippy fence is missing"
-    );
-    let mut directories = vec![root.to_owned()];
-    let mut configs = 0;
-    while let Some(directory) = directories.pop() {
-        for entry in std::fs::read_dir(directory).unwrap() {
-            let entry = entry.unwrap();
-            let name = entry.file_name();
-            if entry.file_type().unwrap().is_dir() {
-                if !skip_policy_directory(entry.path().strip_prefix(root).unwrap()) {
-                    directories.push(entry.path());
-                }
-            } else if entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "rs")
-            {
-                let source = std::fs::read_to_string(entry.path()).unwrap();
-                check_rust_file(root, &entry.path(), &source);
-            } else if opener_policy_config(&entry.path()) {
-                check_opener_config(
-                    &entry.path(),
-                    &std::fs::read_to_string(entry.path()).unwrap(),
-                );
-            } else if name == "clippy.toml" || name == ".clippy.toml" {
-                configs += 1;
-                let config = std::fs::read_to_string(entry.path()).unwrap();
-                check_clippy_config(&entry.path(), &config);
-            }
+    check_source_inventory(root);
+}
+
+fn check_source_inventory(root: &Path) {
+    let scope = opener_inventory::tracked(root);
+    for path in &scope.files {
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            check_rust_file(&scope.root, path, &std::fs::read_to_string(path).unwrap());
         }
     }
-    assert!(configs > 0);
 }
 
 #[test]
@@ -755,6 +735,11 @@ impl Drop for BoundedChild {
     }
 }
 fn bounded_child(command: &mut Command, label: &str) {
+    bounded_output(command, label);
+}
+
+// Capture is bounded in time, not output size.
+fn bounded_output(command: &mut Command, label: &str) -> String {
     let dir = TempDir::new().unwrap();
     let out = dir.path().join("stdout");
     let err = dir.path().join("stderr");
@@ -769,6 +754,7 @@ fn bounded_child(command: &mut Command, label: &str) {
         std::fs::read_to_string(out).unwrap(),
         std::fs::read_to_string(err).unwrap()
     );
+    std::fs::read_to_string(out).unwrap()
 }
 
 static DENY_PRAGMA: AtomicUsize = AtomicUsize::new(0);
