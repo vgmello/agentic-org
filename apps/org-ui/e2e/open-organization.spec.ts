@@ -4,7 +4,7 @@ import { shot } from './shot';
 
 const rows = (page: import('@playwright/test').Page) => page.getByTestId('organization-row');
 
-test('the welcome screen lists the organizations this Mac already has, and opening one enters it', async ({ page }) => {
+test('the welcome screen lists the organizations this Mac already has, and opening one enters it', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/welcome');
 	await expect(page.getByText('Looking for organizations on this Mac')).toBeVisible();
 	await expect(rows(page)).toHaveCount(2);
@@ -23,7 +23,7 @@ test('the welcome screen lists the organizations this Mac already has, and openi
 	await expect(page.getByText('Globex Research', { exact: true })).toBeVisible();
 });
 
-test('Switch organization returns to the list, marks the current one, and opens another', async ({ page }) => {
+test('Switch organization returns to the list, marks the current one, and opens another', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/welcome');
 	await page.getByRole('button', { name: 'Open Northwind Labs' }).click();
 	await expect(page).toHaveURL(/\/agents$/);

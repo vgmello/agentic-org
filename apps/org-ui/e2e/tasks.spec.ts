@@ -33,7 +33,7 @@ test('TSK-1: the board has To do, In progress, Blocked and Done columns', async 
 	await expect(page.getByTestId('no-tasks')).toBeVisible();
 });
 
-test('TSK-5 and TSK-10: New task needs only a title, starts in To do with Normal priority (not shown), owner first in the assignee list', async ({ page }) => {
+test('TSK-5 and TSK-10: New task needs only a title, starts in To do with Normal priority (not shown), owner first in the assignee list', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await page.getByRole('button', { name: 'New task' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New task' });
@@ -56,7 +56,7 @@ test('TSK-5 and TSK-10: New task needs only a title, starts in To do with Normal
 	await shot(page, 'tasks-board');
 });
 
-test('TSK-2 and TSK-3: a card moves with Move to…, announced; Blocked asks for a reason and the card shows it', async ({ page }) => {
+test('TSK-2 and TSK-3: a card moves with Move to…, announced; Blocked asks for a reason and the card shows it', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await newTask(page, 'Write docs');
 	await move(page, card(page, 'Write docs'), 'In progress');
@@ -71,7 +71,7 @@ test('TSK-2 and TSK-3: a card moves with Move to…, announced; Blocked asks for
 	await shot(page, 'tasks-blocked');
 });
 
-test('CHK: the task page assigns, keeps a checklist and moves the task to Done', async ({ page }) => {
+test('CHK: the task page assigns, keeps a checklist and moves the task to Done', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await newTask(page, 'Ship it');
 	await card(page, 'Ship it').getByRole('button', { name: /Ship it/ }).click();
