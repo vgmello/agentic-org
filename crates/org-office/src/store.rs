@@ -650,34 +650,50 @@ fn initialized(
         .map_err(|message| failure(message.clone()))
 }
 
+static READY: OnceLock<Result<(), String>> = OnceLock::new();
+
 /// Completes process-wide SQLCipher initialization before any keyed connection opens (BUG-100).
 ///
 /// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
 /// All openers must pass this fence, including host storage that shares this process.
-/// Initialization failure is cached for the process lifetime; no caller retries it.
+/// Initialization failure is cached for the process lifetime; restart after fixing its cause.
 #[allow(clippy::disallowed_methods)] // The initializer must open its own probe connection.
 pub fn sqlcipher_ready() -> Result<(), OfficeError> {
-    static READY: OnceLock<Result<(), String>> = OnceLock::new();
     initialized(&READY, || {
         initialize_sqlcipher(
             || {
-                // SAFETY: SQLite's initialization API is thread-safe. Our OnceLock also
-                // waits for SQLCipher's EXTRA_INIT callback before admitting openers.
+                // SAFETY: all process openers must cross this fence before their first
+                // SQLite use. Our first initializer waits for SQLCipher's EXTRA_INIT
+                // callback before admitting other openers; a late fence cannot repair
+                // initialization that an unfenced caller has already started.
                 unsafe { rusqlite::ffi::sqlite3_initialize() }
             },
             || {
                 let db = Connection::open_in_memory().map_err(key_failure_reason)?;
-                // This fixed public probe key protects no data; actual keys keep their path.
-                let key = Key::from_db_key(org_proto::DbKey::from_bytes([0; 32]));
-                let pragma = KeyPragma::new(&key);
-                let applied = db.execute_batch(pragma.as_str());
-                drop(pragma);
-                applied.map_err(key_failure_reason)?;
-                db.query_row("PRAGMA cipher_version", (), |row| row.get(0))
-                    .map_err(|_| "this SQLite build has no encryption (SQLCipher)".to_owned())
+                keyed_cipher_version(&db)
             },
         )
     })
+}
+
+fn keyed_cipher_version(db: &Connection) -> Result<String, String> {
+    // This fixed public probe key protects no data; actual keys keep their path.
+    let key = Key::from_db_key(org_proto::DbKey::from_bytes([0; 32]));
+    let pragma = KeyPragma::new(&key);
+    let applied = db.execute_batch(pragma.as_str());
+    drop(pragma);
+    applied.map_err(key_failure_reason)?;
+    db.query_row("PRAGMA cipher_version", (), |row| row.get(0))
+        .map_err(cipher_failure_reason)
+}
+
+fn cipher_failure_reason(error: rusqlite::Error) -> String {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => {
+            "this SQLite build has no encryption (SQLCipher)".to_owned()
+        }
+        other => key_failure_reason(other),
+    }
 }
 
 // Keep the initialization ordering and its required postcondition independent of the FFI.
@@ -736,7 +752,6 @@ fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
 /// `create` may SQLite make the file if it is missing. Until the key is proved, closing the
 /// connection must not checkpoint (that would write the log into a file this key can't
 /// read); with `checkpoint_on_close` false it never does, for a connection that only looks.
-#[allow(clippy::disallowed_methods)] // The one durable SQLCipher opener; fenced below.
 fn connect(
     db_path: &Path,
     key: &Key,
@@ -749,6 +764,7 @@ fn connect(
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
     }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
+    #[allow(clippy::disallowed_methods)] // The one durable opener; fenced above.
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(OfficeError::storage)?;
