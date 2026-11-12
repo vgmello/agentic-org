@@ -1,11 +1,9 @@
 //! FIFO transfer control service, independent of Office and work execution.
-mod revocations;
-use crate::startup;
+use crate::{revocations::Revocations, startup};
 use org_office_launch::v3::{self, TransferRecord};
 #[cfg(not(test))]
 use org_socket::poll_readable;
 use org_socket::rights::ReceiveError;
-pub(super) use revocations::Revocations;
 use std::io;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};

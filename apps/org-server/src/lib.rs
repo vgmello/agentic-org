@@ -21,6 +21,7 @@ mod follow;
 mod launch;
 mod live;
 mod msg_calls;
+mod revocations;
 mod serve;
 mod signals;
 mod startup;
@@ -420,7 +421,7 @@ fn serve_office(
         },
     );
 
-    let revocations = Arc::new(std::sync::Mutex::new(transfer::Revocations::default()));
+    let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
     let transfers = match control
         .transfer()
         .map(|transport| transfer::Service::start(transport, revocations))

@@ -539,3 +539,100 @@ fn staged_channel_refuses_before_any_later_revocation_can_be_applied() {
     drop(source);
     assert_eq!(peer.read(&mut [0]).unwrap(), 0);
 }
+
+#[test]
+fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_prefix() {
+    use org_office_launch::v3::{self, TransferRecord};
+    use std::os::unix::net::UnixDatagram;
+    use std::sync::{atomic::AtomicBool, Arc, Mutex};
+    let state = Arc::new(Mutex::new(Revocations::default()));
+    state
+        .lock()
+        .unwrap()
+        .apply_batch((0..4094).map(|n| format!("id-{n}")).collect())
+        .unwrap();
+    let (host, child) = UnixDatagram::pair().unwrap();
+    for ids in [
+        vec!["first".into(), "id-1".into(), "first".into()],
+        vec!["second".into()],
+        vec![
+            "overflow-prefix".into(),
+            "second".into(),
+            "overflow-tail".into(),
+        ],
+        vec!["unreachable-after-overflow".into()],
+    ] {
+        let body =
+            v3::encode_transfer_record(&TransferRecord::Revoked { session_ids: ids }).unwrap();
+        host.send(&body).unwrap();
+    }
+    host.send(b"terminal-invalid").unwrap();
+    let transport = crate::startup::Transfer {
+        receiver: org_socket::rights::DatagramReceiver::new(child),
+        fence: Arc::default(),
+    };
+    let result = run(
+        transport,
+        Arc::clone(&state),
+        Arc::new(AtomicBool::new(false)),
+    );
+    assert!(result.is_err());
+    let mut observed = state.lock().unwrap();
+    assert!(observed.apply_batch(vec!["capacity-probe".into()]).is_err());
+    observed
+        .apply_batch(vec![
+            "first".into(),
+            "second".into(),
+            "id-0".into(),
+            "id-4093".into(),
+        ])
+        .unwrap();
+    for absent in [
+        "overflow-prefix",
+        "overflow-tail",
+        "unreachable-after-overflow",
+    ] {
+        assert!(observed.apply_batch(vec![absent.into()]).is_err());
+    }
+}
+
+#[test]
+fn stream_handoff_with_concatenated_records_refuses_without_applying_a_prefix() {
+    use org_office_launch::v3::{self, TransferRecord};
+    use std::io::Write;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::{UnixDatagram, UnixStream};
+    use std::sync::{atomic::AtomicBool, Arc, Mutex};
+    let (mut host, child) = UnixStream::pair().unwrap();
+    let mut body = Vec::new();
+    for id in ["prefix", "tail"] {
+        body.extend(
+            v3::encode_transfer_record(&TransferRecord::Revoked {
+                session_ids: vec![id.into()],
+            })
+            .unwrap(),
+        );
+    }
+    // Deliberately violate the trusted-host datagram precondition. Queue both
+    // records before receiving; EOF bounds the test if only a prefix is decoded.
+    host.write_all(&body).unwrap();
+    host.shutdown(std::net::Shutdown::Write).unwrap();
+    let state = Arc::new(Mutex::new(Revocations::default()));
+    let transport = crate::startup::Transfer {
+        receiver: org_socket::rights::DatagramReceiver::new(UnixDatagram::from(OwnedFd::from(
+            child,
+        ))),
+        fence: Arc::default(),
+    };
+    let result = run(
+        transport,
+        Arc::clone(&state),
+        Arc::new(AtomicBool::new(false)),
+    );
+    assert!(result.is_err());
+    state
+        .lock()
+        .unwrap()
+        .apply_batch((0..4096).map(|n| format!("empty-probe-{n}")).collect())
+        .expect("a concatenated stream applied a prefix");
+}
