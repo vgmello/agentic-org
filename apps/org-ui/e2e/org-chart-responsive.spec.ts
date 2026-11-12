@@ -766,7 +766,8 @@ for (const width of [320, 390, 960, 1440]) for (const root of [20, 40]) {
 		const attempt = () => page.evaluate(() => (window as unknown as { bug129Attempt?: { before: boolean; closed: boolean; connected: boolean; after: boolean } }).bug129Attempt);
 		await expect.poll(attempt, { timeout: 5_000 }).toBeDefined();
 		expect(await attempt(), 'stale focus must not leave View during its closing animation').toEqual({ before: true, closed: true, connected: true, after: true });
-		await expect(page.getByRole('menu')).toHaveCount(0);
+		// Inert content is hidden from default role queries before its exit animation unmounts it.
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
 		await expect(trigger).toBeFocused({ timeout: 5_000 });
 		await shot(page, `bug129-escape-view-${width}-${root}`);
 		// Opening again must remove the closed-state focus guard.
@@ -776,7 +777,7 @@ for (const width of [320, 390, 960, 1440]) for (const root of [20, 40]) {
 		await item.press('ArrowDown');
 		await expect(page.getByRole('menuitem', { name: 'Expand all', exact: true })).toBeFocused({ timeout: 5_000 });
 		await page.keyboard.press('Escape');
-		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
 		await expect(trigger).toBeFocused({ timeout: 5_000 });
 	});
 }
@@ -793,12 +794,12 @@ for (const view of ['Teams', 'People', 'Reporting lines']) {
 		await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
 		await shot(page, `bug129-${view.replaceAll(' ', '-')}-first-arrow`);
 		await page.getByRole('menuitem', { name: 'Collapse all', exact: true }).click();
-		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
 		await expect(trigger).toBeFocused({ timeout: 5_000 });
 		await trigger.press('ArrowDown');
 		await expect(page.getByRole('menuitem').first()).toBeFocused({ timeout: 5_000 });
 		await page.keyboard.press('Tab');
-		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
 		await expect(page.getByRole('region', { name: view === 'Reporting lines' ? 'Reporting chart' : `${view} chart`, exact: true })).toBeFocused({ timeout: 5_000 });
 		await shot(page, `bug129-${view.replaceAll(' ', '-')}-tab-focus`);
 	});
@@ -820,7 +821,7 @@ test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the ope
 	await expect(fit).toBeFocused({ timeout: 5_000 });
 	await shot(page, 'bug129-first-escape-keeps-fit');
 	await page.keyboard.press('Escape');
-	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
 	await expect(trigger).toBeFocused({ timeout: 5_000 });
 	await shot(page, 'bug129-second-escape-returns-view');
 });
