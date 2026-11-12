@@ -393,7 +393,7 @@ mod tests {
         bad.payload = Arc::from(b"changed".as_slice());
         assert!(matches!(
             apply(&sat, &peer, bad),
-            Err(SyncError::Refused(Refusal::Divergence))
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         let mut wrong = peer.clone();
         wrong.0.role = PeerRole::Satellite;
@@ -403,6 +403,7 @@ mod tests {
         ));
         sat.inject(Fault::DomainRefusal);
         let error = apply(&sat, &peer, event.clone()).unwrap_err();
+        assert!(matches!(error, SyncError::Refused(Refusal::Divergence)));
         assert!(error.aborts_batch());
         assert!(sat.applied().is_empty());
         assert_eq!(sat.checkpoint().position.seq, 0);
@@ -1190,3 +1191,6 @@ mod authority_signature_and_bootstrap_tests {
 }
 
 mod message_adapter;
+
+#[cfg(test)]
+mod org_followups;
