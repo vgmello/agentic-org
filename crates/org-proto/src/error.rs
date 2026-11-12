@@ -112,6 +112,8 @@ pub enum ErrorCode {
     /// different principal than the stored one. Use a new id for a different operation
     /// (X-02 §4.2).
     OperationReused,
+    /// A reserved organization create was cancelled or abandoned after its window expired.
+    Cancelled,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
