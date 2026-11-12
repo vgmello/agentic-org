@@ -22,6 +22,7 @@ pub mod inbox;
 mod launch;
 mod live;
 mod msg_calls;
+mod revocations;
 mod serve;
 mod signals;
 mod startup;
@@ -200,7 +201,14 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
     );
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
-    serve_office(control, from_host, runtime, office, create.auth)
+    serve_office(
+        control,
+        from_host,
+        runtime,
+        office,
+        create.auth,
+        create.instance,
+    )
 }
 
 fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -> i32 {
@@ -237,7 +245,7 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    serve_office(control, from_host, runtime, office, auth)
+    serve_office(control, from_host, runtime, office, auth, instance)
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
@@ -283,6 +291,7 @@ fn serve_office(
     runtime: &Path,
     office: Office,
     auth: serve::LaunchAuth,
+    instance: Option<String>,
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
@@ -421,15 +430,26 @@ fn serve_office(
         },
     );
 
-    let revocations = Arc::new(std::sync::Mutex::new(transfer::Revocations::default()));
+    let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
     let transfers = match control
         .transfer()
-        .map(|transport| transfer::Service::start(transport, revocations))
+        .map(|transport| {
+            let mut channels = transfer::Channels::new(
+                Arc::clone(&shared),
+                instance.expect("verified v3 instance"),
+                control.writer().expect("v3 rendezvous writer"),
+                Arc::clone(&revocations),
+            );
+            transfer::Service::start(transport, revocations, move |channel| {
+                channels.open(channel)
+            })
+        })
         .transpose()
     {
         Ok(service) => service,
         Err(_) => {
             let _ = std::fs::remove_file(&socket);
+            eprintln!("org-server: cannot start transfer service");
             return 1;
         }
     };
@@ -601,9 +621,11 @@ fn fail_code(error: &OfficeError) -> FailCode {
 mod tests {
     use super::*;
     use org_office::{Key, NewOffice};
+    mod transfer_composition;
 
     #[test]
     fn c1_production_work_adapter_preserves_committed_refused_and_replayed_answers() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_proto::ErrorCode;
         use org_work::{StoreError, TxnOutput};
         let accepted: org_proto::work::WorkAccepted = serde_json::from_value(serde_json::json!({
@@ -645,6 +667,7 @@ mod tests {
 
     #[test]
     fn explicit_runtime_is_required_in_release_and_invalid_values_never_fall_back() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let home = Path::new("/very/long/data/root");
         assert!(runtime_dir_from(home, None, false).is_err());
         assert_eq!(
@@ -665,6 +688,7 @@ mod tests {
 
     #[test]
     fn a_publish_on_the_live_events_wakes_the_offices_followers() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         // The production wiring: publishing moves the office's change token, which is what a
         // follower asleep in `wait_for_org_change` is waiting on.
         let dir = tempfile::Builder::new().prefix("lv").tempdir().unwrap();
@@ -697,6 +721,7 @@ mod tests {
 
     #[test]
     fn every_office_error_has_its_code() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_office::NameError;
         let storage = || OfficeError::Storage("disk".into());
         for (error, code) in [
@@ -718,6 +743,7 @@ mod tests {
 
     #[test]
     fn the_three_modes_and_nothing_else() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         assert_eq!(parse_args(&args(&["--create"])), Ok(Mode::Create));
         assert_eq!(
             parse_args(&args(&["--office", "ABC"])),

@@ -84,6 +84,7 @@ fn assert_auth(auth: &LaunchAuth, version: u8) {
 }
 #[test]
 fn versions_preserve_create_identity_keys_and_typed_recovery() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for version in [2, 3] {
         let Launch::Create(c) = Launch::from_request(request(version, 0, true)).unwrap() else {
             panic!("not create")
@@ -116,6 +117,7 @@ fn versions_preserve_create_identity_keys_and_typed_recovery() {
 }
 #[test]
 fn versions_preserve_start_keys_authority_and_instance() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for version in [2, 3] {
         let Launch::Start { key, auth, office } =
             Launch::from_request(request(version, 1, true)).unwrap()
@@ -135,6 +137,7 @@ fn versions_preserve_start_keys_authority_and_instance() {
 }
 #[test]
 fn versions_preserve_discard_null_and_present_key() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for version in [2, 3] {
         for present in [false, true] {
             let Launch::Discard { key, office } =
@@ -155,6 +158,7 @@ fn versions_preserve_discard_null_and_present_key() {
 }
 #[test]
 fn unknown_or_mismatched_requests_never_normalize() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for line in [
         HostFirstLine::Create(create()),
         HostFirstLine::Start(office()),
@@ -176,6 +180,7 @@ fn unknown_or_mismatched_requests_never_normalize() {
 
 #[test]
 fn every_mismatched_v3_pair_and_unknown_legacy_request_is_refused() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     assert!(Launch::from_request(Request::V2(HostMessage::Unknown)).is_err());
     for first_op in 0..3 {
         for handoff_op in 0..3 {
@@ -195,6 +200,7 @@ fn every_mismatched_v3_pair_and_unknown_legacy_request_is_refused() {
 
 #[test]
 fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for version in [2, 3] {
         for role in [OfficeRole::Satellite, OfficeRole::Unknown] {
             let mut request = request(version, 0, true);
@@ -216,6 +222,7 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
 
 #[test]
 fn distinct_v3_identities_are_preserved_on_every_operation() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     const OTHER_INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
     const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
     for op in 0..3 {

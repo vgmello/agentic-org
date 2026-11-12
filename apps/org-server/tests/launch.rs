@@ -23,6 +23,16 @@ const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
 const WAIT: Duration = Duration::from_secs(30);
 
+// Every launch case owns descriptors while it creates its own worker. Keep the
+// whole case exclusive: taking a shared guard then upgrading during spawn would
+// deadlock. This binary has its own process-wide fence, separate from lib tests.
+static TEST_PROCESS_ISOLATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn process_isolation() -> std::sync::MutexGuard<'static, ()> {
+    TEST_PROCESS_ISOLATION
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 /// A temporary office home.
 struct World {
     _dir: TempDir,
@@ -54,7 +64,7 @@ impl World {
             .unwrap();
         let stdout = child.stdout.take().unwrap();
         let (tx, events) = mpsc::channel();
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             while let Ok(Some(event)) = read_server_event(&mut reader) {
                 if tx.send(event).is_err() {
@@ -67,6 +77,7 @@ impl World {
             child,
             stdin,
             events,
+            reader: Some(reader),
         }
     }
 }
@@ -75,6 +86,7 @@ struct Run {
     child: Child,
     stdin: Option<ChildStdin>,
     events: Receiver<ServerEvent>,
+    reader: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Run {
@@ -117,6 +129,14 @@ impl Drop for Run {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // The case's process fence must outlive the pipe owned by this thread.
+        if let Some(reader) = self.reader.take() {
+            reader.join().unwrap_or_else(|panic| {
+                if !std::thread::panicking() {
+                    std::panic::resume_unwind(panic);
+                }
+            });
+        }
     }
 }
 
@@ -199,6 +219,7 @@ fn failed_code(event: ServerEvent) -> FailCode {
 
 #[test]
 fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = create(&world);
 
@@ -224,6 +245,7 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
 
 #[test]
 fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
+    let _process = process_isolation();
     // X-02 §3: "unsupported_version and close" before the next request; this
     // B1-07.1 phase is V1-only until instance-aware launch can enable V2.
     let world = World::new();
@@ -250,6 +272,7 @@ fn srv_32_unsupported_range_closes_before_a_pipelined_call() {
 
 #[test]
 fn srv_32_legacy_first_call_locks_the_socket_to_version_one() {
+    let _process = process_isolation();
     // X-02 §3: "A first request that isn't hello ... fixes the connection at v1".
     let world = World::new();
     let mut run = create(&world);
@@ -301,6 +324,7 @@ fn assert_unsupported_version_and_closed(reader: &mut BufReader<UnixStream>, req
 
 #[test]
 fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
+    let _process = process_isolation();
     // X-02 §3: malformed api/non-string client is "invalid_request, never
     // answered as v1". The strict shared HelloParams decoder owns these shapes.
     let world = World::new();
@@ -356,6 +380,7 @@ fn x02_s3_malformed_hello_is_invalid_request_before_normal_dispatch() {
 
 #[test]
 fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
+    let _process = process_isolation();
     // X-02 §3: "api: null is the same as an absent api"; unknown outer hints
     // remain additive, while the nested api range has exactly min/max.
     let world = World::new();
@@ -396,6 +421,7 @@ fn x02_s3_null_api_and_unknown_outer_fields_preserve_legacy_hello() {
 
 #[test]
 fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -452,6 +478,7 @@ fn initial_replica_snapshot_is_unavailable_through_the_real_worker() {
 
 #[test]
 fn a_restart_with_the_same_key_serves_the_same_office() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -465,6 +492,7 @@ fn a_restart_with_the_same_key_serves_the_same_office() {
 
 #[test]
 fn creating_an_office_that_exists_is_already_exists_and_changes_nothing() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -483,6 +511,7 @@ fn creating_an_office_that_exists_is_already_exists_and_changes_nothing() {
 
 #[test]
 fn a_bad_name_is_invalid_name_and_leaves_nothing() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = world.spawn(&["--create"]);
     let HostMessage::Create(mut create) = create_message() else {
@@ -497,6 +526,7 @@ fn a_bad_name_is_invalid_name_and_leaves_nothing() {
 
 #[test]
 fn the_first_line_must_match_the_flag() {
+    let _process = process_isolation();
     let world = World::new();
     // --create given a start message.
     let mut run = world.spawn(&["--create"]);
@@ -540,6 +570,7 @@ fn the_first_line_must_match_the_flag() {
 
 #[test]
 fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = world.spawn(&["--create"]);
     let status = run.host_goes_away();
@@ -549,6 +580,7 @@ fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
 
 #[test]
 fn discard_removes_an_unfinished_create_and_only_that() {
+    let _process = process_isolation();
     let world = World::new();
     // An unfinished create: a folder with the lock file, no office.json, no database. The host
     // may hold a key for it or not; either way nothing is there to check.
@@ -575,6 +607,7 @@ fn discard_removes_an_unfinished_create_and_only_that() {
 
 #[test]
 fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -606,6 +639,7 @@ fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing(
 
 #[test]
 fn a_key_that_does_not_open_the_databases_is_key_missing_and_nothing_changes() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -637,6 +671,7 @@ fn a_key_that_does_not_open_the_databases_is_key_missing_and_nothing_changes() {
 
 #[test]
 fn a_server_given_no_key_line_does_nothing() {
+    let _process = process_isolation();
     // The host going away before the first line is a clean exit for every mode, discard too.
     let world = World::new();
     std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
@@ -660,6 +695,7 @@ fn signal(run: &Run, signal: libc::c_int) {
 
 #[test]
 fn a_stop_signal_closes_the_office_and_exits_clean() {
+    let _process = process_isolation();
     for stop in [libc::SIGTERM, libc::SIGINT] {
         let world = World::new();
         let mut run = create(&world);
@@ -676,6 +712,7 @@ fn a_stop_signal_closes_the_office_and_exits_clean() {
 
 #[test]
 fn a_server_still_waiting_for_its_first_line_can_be_terminated() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = world.spawn(&["--create"]);
     // Give it time to reach the read, then ask it to stop until it does. A server that handled
@@ -695,6 +732,7 @@ fn a_server_still_waiting_for_its_first_line_can_be_terminated() {
 
 #[test]
 fn the_host_going_away_in_the_middle_of_the_first_line_is_a_clean_exit_with_no_line() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = world.spawn(&["--create"]);
     std::io::Write::write_all(run.stdin.as_mut().unwrap(), b"{\"op\":\"crea").unwrap();
@@ -705,6 +743,7 @@ fn the_host_going_away_in_the_middle_of_the_first_line_is_a_clean_exit_with_no_l
 
 #[test]
 fn the_socket_is_owner_only_and_other_methods_are_unknown() {
+    let _process = process_isolation();
     use std::os::unix::fs::PermissionsExt;
     let world = World::new();
     let mut run = create(&world);
@@ -727,6 +766,7 @@ fn the_socket_is_owner_only_and_other_methods_are_unknown() {
 
 #[test]
 fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -751,6 +791,7 @@ fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
 
 #[test]
 fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = create(&world);
     // Lines of any shape, and a lot of them: read and thrown away, unparsed.
@@ -768,6 +809,7 @@ fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does
 
 #[test]
 fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
+    let _process = process_isolation();
     let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
     let long = dir.path().join("x".repeat(90));
     std::fs::create_dir_all(long.join("offices")).unwrap();
@@ -794,6 +836,7 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
 
 #[test]
 fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = create(&world);
     let pid = run.child.id();
@@ -821,6 +864,7 @@ fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
 
 #[test]
 fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_request() {
+    let _process = process_isolation();
     // Disk state, not a bad argument: the host must be able to restart it once repaired.
     let world = World::new();
     std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
@@ -837,6 +881,7 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
 
 #[test]
 fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
+    let _process = process_isolation();
     let world = World::new();
     for (org_name, office_name) in [(" Acme", "HQ"), ("Acme", "HQ ")] {
         let mut run = world.spawn(&["--create"]);
@@ -853,6 +898,7 @@ fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
 
 #[test]
 fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     let client = Client::connect(socket(&world)).unwrap();
@@ -896,6 +942,7 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
 
 #[test]
 fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
+    let _process = process_isolation();
     let world = World::new();
     let mut run = create(&world);
     // A client that stays connected and silent: shutdown must close it, not wait for it.
@@ -953,6 +1000,7 @@ fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
 
 #[test]
 fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_restart() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     let command = command_id(1);
@@ -1089,6 +1137,7 @@ fn next_event(sub: &org_client::Subscription) -> org_proto::Event {
 
 #[test]
 fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
+    let _process = process_isolation();
     let world = World::new();
     let mut first = create(&world);
     let app = Client::connect(socket(&world)).unwrap();
@@ -1163,6 +1212,7 @@ fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_r
 
 #[test]
 fn the_app_hires_an_agent_into_the_office_and_it_survives_a_restart() {
+    let _process = process_isolation();
     use org_proto::org::{
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
         MemberOffboard, MemberOffboardParams,
@@ -1255,6 +1305,7 @@ fn the_app_hires_an_agent_into_the_office_and_it_survives_a_restart() {
 
 #[test]
 fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connection() {
+    let _process = process_isolation();
     use org_proto::directory::{Who, WhoParams};
     use org_proto::org::{
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberKind,
@@ -1372,6 +1423,7 @@ fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connect
 
 #[test]
 fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_survives_a_restart() {
+    let _process = process_isolation();
     use org_proto::msg::{
         MsgBind, MsgBindParams, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend,
         MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG,
@@ -1486,6 +1538,7 @@ fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_surv
 
 #[test]
 fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
+    let _process = process_isolation();
     use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
     use org_proto::msg::{MsgBind, MsgBindParams};
     use org_proto::org::{
@@ -1563,6 +1616,7 @@ fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
 
 #[test]
 fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_office() {
+    let _process = process_isolation();
     use org_proto::directory::{StatusSet, StatusSetParams};
     use org_proto::msg::{MsgBind, MsgBindParams, MsgSend, MsgSendParams, KIND_MSG};
     use org_proto::org::{
@@ -1639,6 +1693,7 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
 
 #[test]
 fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
+    let _process = process_isolation();
     use org_proto::msg::{MsgBind, MsgBindParams};
     use org_proto::org::{
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
