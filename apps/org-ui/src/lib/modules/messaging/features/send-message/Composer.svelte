@@ -37,7 +37,10 @@
 		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
 	} = $props();
 
+	const attachmentFocus = 'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
 	const drafts: Record<string, string> = {};
+	let attached = $state<HTMLUListElement>();
+	let attachButton = $state<HTMLButtonElement>();
 	let text = $state('');
 	let caret = $state(0);
 	let picked = $state(0);
@@ -109,6 +112,18 @@
 		});
 		picked = 0;
 	}
+	async function removeAttachment(name: string) {
+		const index = attachments.indexOf(name), key = resetKey;
+		const next = attachments[index + 1], previous = attachments[index - 1];
+		attachments = attachments.filter((attachment) => attachment !== name);
+		await tick();
+		if (key !== resetKey) return;
+		const buttons = [...(attached?.querySelectorAll<HTMLButtonElement>('button[data-attachment]') ?? [])];
+		const nextButton = buttons.find((button) => button.dataset.attachment === next);
+		const previousButton = buttons.find((button) => button.dataset.attachment === previous);
+		(nextButton ?? previousButton ?? attachButton)?.focus();
+	}
+
 	function pickSlash(name: string) {
 		text = `/${name} `;
 		draft?.write(text);
@@ -239,12 +254,12 @@
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
-			<ul class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
+			<ul bind:this={attached} class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
 				{#each attachments as a (a)}
 					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
 						<HeroIcon variant="micro" name="paper-clip" />
 						<span class="min-w-0 truncate" title={a}>{a}</span>
-						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" title="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}><HeroIcon variant="mini" name="x-mark" /></button>
+						<button type="button" data-attachment={a} class="shrink-0 text-gray-400 hover:text-white {attachmentFocus}" aria-label="Remove {a}" title="Remove {a}" onclick={() => void removeAttachment(a)}><HeroIcon class="text-current" variant="mini" name="x-mark" /></button>
 					</li>
 				{/each}
 			</ul>
@@ -252,7 +267,7 @@
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-gray-400">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
-				<button type="button" class="inline-flex items-center gap-x-1 hover:text-white" onclick={() => files?.click()}><HeroIcon variant="mini" name="paper-clip" /> Attach</button>
+				<button type="button" bind:this={attachButton} class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}" onclick={() => files?.click()}><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button>
 				<input bind:this={files} type="file" multiple class="hidden" aria-label="Attach files" onchange={(e) => { attachments = [...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])].slice(0, 10); e.currentTarget.value = ''; }} />
 				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
 				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}

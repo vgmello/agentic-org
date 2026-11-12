@@ -6,12 +6,13 @@ import expectedIcons from './fixtures/heroicons-v2.2.0.json' with { type: 'json'
 declare global { interface Window { noEmojiReactions: Record<string, unknown>[]; } }
 
 
-async function iconIs(icon: Locator, key: keyof typeof expectedIcons) {
+async function iconIs(icon: Locator, key: keyof typeof expectedIcons, sidebar = false) {
 	const expected = expectedIcons[key];
 	await expect(icon).toHaveCount(1);
 	for (const [name, value] of Object.entries(expected.attributes)) await expect(icon).toHaveAttribute(name, value);
 	const scale = await icon.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize) / 16);
-	const size = Number(expected.attributes.viewBox.split(' ')[2]) * scale;
+	const naturalSize = Number(expected.attributes.viewBox.split(' ')[2]) * scale;
+	const size = sidebar ? Math.min(naturalSize, 32) : naturalSize;
 	await expect(icon).toHaveCSS('width', `${size}px`);
 	await expect(icon).toHaveCSS('height', `${size}px`);
 	expect(await icon.locator('path').evaluateAll((paths) => paths.map((path) => Object.fromEntries([...path.attributes].map((a) => [a.name, a.value]))))).toEqual(expected.paths);
@@ -75,10 +76,10 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 1.25, 2]) {
 			const icon = nav.getByTestId(id).locator('svg');
 			await expect(icon).toHaveCount(1);
 			await expect(icon).toHaveAttribute('aria-hidden', 'true');
-			await iconIs(icon, name);
+			await iconIs(icon, name, true);
 		}
-		await iconIs(nav.locator('[data-conversation="c-general"] svg'), 'outline:hashtag');
-		await iconIs(nav.locator('[data-conversation="c-group"] svg'), 'outline:user-group');
+		await iconIs(nav.locator('[data-conversation="c-general"] svg'), 'outline:hashtag', true);
+		await iconIs(nav.locator('[data-conversation="c-group"] svg'), 'outline:user-group', true);
 		await shot(page, `no-emoji-nav-${width}-${scale}`, { context: nav });
 		await nav.getByTestId('needs-you-link').click();
 		await noEmoji(page.getByTestId('ask-card').first());

@@ -11,9 +11,9 @@
 		"maxChromiumSeconds": 300,
 		"measured": { "tests": 55, "chromiumSeconds": 190, "workers": 2, "date": "2026-11-11" }
 	},
-	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font" },
+	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
@@ -81,8 +81,8 @@
 	],
 	"categories": {
 		"chat": {
-			"specs": ["chat.spec.ts", "chat-*.spec.ts"],
-			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json"]
+			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
+			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json", "e2e/chat-followups.ts"]
 		},
 		"org-chart": {
 			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],
