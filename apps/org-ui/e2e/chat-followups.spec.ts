@@ -387,3 +387,37 @@ test('BUG-136 BUG-70: creation columns remain readable in the BUG119 240px Chat 
  await openChat(page,960,2.5);const nav=await navigation(page);await creationGeometry(nav);
  await nav.getByRole('button',{name:'New message',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug136-240px-pane-root40',{context:nav});
 });
+
+
+test('BUG-134 BUG-70: long conversation titles wrap at 320/root40 while fixed labels keep whole words', async ({ page }) => {
+ await openChat(page);
+ // The form accepts 60 characters; the existing channel slug contract keeps the first 40.
+ const name = 'a'.repeat(60), expectedTitle = `#${'a'.repeat(40)}`, title = page.getByTestId('conversation-title');
+ await (await navigation(page)).getByRole('button', { name: 'Add channel', exact: true }).click();
+ const dialog = page.getByRole('dialog', { name: 'Add a channel', exact: true });
+ await expect(dialog.getByLabel('Name', { exact: true })).toHaveAttribute('maxlength', '60');
+ await dialog.getByLabel('Name', { exact: true }).fill(name);
+ await dialog.getByRole('button', { name: 'Add channel', exact: true }).click();
+ await expect(dialog).toBeHidden(); await expect(title).toHaveText(expectedTitle);
+ const conversationId = new URL(page.url()).searchParams.get('c'); expect(conversationId).toBeTruthy();
+ await page.setViewportSize({ width: 320, height: 900 });
+ await page.evaluate(async () => { document.documentElement.style.setProperty('font-size', '40px', 'important'); await document.fonts.ready; });
+ await shot(page, 'bug134-long-title-320-root40');
+ const geometry = await title.evaluate(e => {
+  const header = e.closest('section')!.firstElementChild!, box = e.getBoundingClientRect();
+  const range = document.createRange(); range.selectNodeContents(e); const lines = [...range.getClientRects()].filter(r => r.width > 0);
+  const probe = document.createElement('span'); Object.assign(probe.style, { position: 'absolute', font: getComputedStyle(e).font, width: '6ch' }); document.body.append(probe); const minimum = probe.getBoundingClientRect().width; probe.remove();
+  return { width: box.width, minimum, lines: lines.length, fits: lines.every(r => r.left >= Math.max(0, box.left) - .5 && r.right <= Math.min(innerWidth, box.right) + .5), headerWidth: header.clientWidth, headerScroll: header.scrollWidth };
+ });
+ expect(geometry.width).toBeGreaterThan(0); expect(geometry.width).toBeGreaterThanOrEqual(geometry.minimum - .5);
+ expect(geometry.lines).toBeGreaterThan(1); expect(geometry, JSON.stringify(geometry)).toMatchObject({ fits: true });
+ expect(geometry.headerScroll).toBeLessThanOrEqual(geometry.headerWidth + 1);
+ await expect(title).toHaveCSS('overflow-wrap', 'anywhere');
+ await page.getByRole('searchbox', { name: 'Search chat', exact: true }).fill('no-such-title-134');
+ await expect(title).toHaveText('Search'); expect(new URL(page.url()).searchParams.get('c')).toBe(conversationId);
+ await expect(title).toHaveCSS('overflow-wrap', 'normal'); await headerGeometry(page); await shot(page, 'bug134-search-over-conversation-320-root40');
+ for (const [url, label] of [['/chat', 'Needs you'], ['/chat?v=mentions', 'Mentions'], ['/chat?v=threads', 'Threads']]) {
+  await visit(page, url); await page.evaluate(() => document.documentElement.style.setProperty('font-size', '40px', 'important')); await expect(title).toHaveText(label); await expect(title).toHaveCSS('overflow-wrap', 'normal');
+  await headerGeometry(page); await shot(page, `bug134-fixed-${label.replaceAll(' ', '-')}-320-root40`);
+ }
+});

@@ -599,7 +599,7 @@
 								{#if bar.needsYou.length}<span class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" aria-hidden="true">{bar.needsYou.length}</span>{/if}
 							</Button>
 						{/if}
-						<h2 bind:this={heading} tabindex="-1" class="min-w-0 max-w-full whitespace-normal text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="conversation-title">
+						<h2 bind:this={heading} tabindex="-1" class="min-w-0 max-w-full whitespace-normal {conversation && !searching ? '[overflow-wrap:anywhere]' : ''} text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="conversation-title">
 							{viewTitle}
 						</h2>
 					</div>
