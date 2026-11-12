@@ -8,6 +8,7 @@
 //! wakes the followers, which are asleep on the organization's change signal.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use org_mailbox::{MessageEvent, MessageEvents};
@@ -22,6 +23,7 @@ pub(crate) const CAPACITY: usize = 1024;
 pub(crate) enum Live {
     Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
+    InboxChanged(org_proto::inbox::InboxChangedData),
 }
 
 /// What a reader got from [`LiveEvents::since`].
@@ -53,6 +55,7 @@ pub(crate) struct LiveEvents {
     ring: Mutex<Ring>,
     presence: Mutex<Presence>,
     wake: Box<dyn Fn() + Send + Sync>,
+    mailbox_changes: AtomicU64,
 }
 
 impl LiveEvents {
@@ -68,7 +71,12 @@ impl LiveEvents {
                 latest: HashMap::new(),
             }),
             wake,
+            mailbox_changes: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn mailbox_head(&self) -> u64 {
+        self.mailbox_changes.load(Ordering::Acquire)
     }
 
     pub(crate) fn publish_live(&self, event: Live) {
@@ -158,6 +166,10 @@ pub(crate) struct Head {
 /// The mailbox publishes its events here.
 impl MessageEvents for LiveEvents {
     fn publish(&self, event: MessageEvent) {
+        // DeliveryFailed is an additional notification for the same Received commit.
+        if !matches!(&event, MessageEvent::DeliveryFailed(_)) {
+            self.mailbox_changes.fetch_add(1, Ordering::Release);
+        }
         match event {
             MessageEvent::Received(data) => self.publish_live(Live::Received(data)),
             MessageEvent::StateChanged(data) => self.publish_live(Live::StateChanged(data)),

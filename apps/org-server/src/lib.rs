@@ -416,6 +416,14 @@ fn serve_office(
         auth,
     );
     shared.register_inbox(inbox);
+    if shared.enable_inbox_hints().is_err() {
+        let _ = std::fs::remove_file(&socket);
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "cannot initialize inbox hint cursor",
+        );
+    }
     let shared = Arc::new(shared);
     // The launch transport selects stdin for v2, authenticated rendezvous for v3.
     // The fixed-buffer watcher never parses later input.
