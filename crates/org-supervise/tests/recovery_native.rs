@@ -4,7 +4,9 @@ mod core_limit;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::sync::mpsc;
+#[cfg(target_os = "linux")]
+use std::sync::RwLockWriteGuard;
+use std::sync::{mpsc, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
 use org_supervise::recovery::{
@@ -42,6 +44,24 @@ impl RecoveryCheckpoint for Row {
         self.0 = self.0.clone().with_inventory(inventory.to_vec())?;
         Ok(())
     }
+}
+
+/// Native scans take one descriptor per visible process. The fd-limit fixtures fork
+/// rlim_cur*3/5 children (614 under the 1024 cap), a storm that pushes a parallel sibling's scan
+/// past its own NOFILE: those fixtures run alone, and every other scanning test shares the lock.
+static NATIVE_SCANS: RwLock<()> = RwLock::new(());
+
+fn shared_scans() -> RwLockReadGuard<'static, ()> {
+    NATIVE_SCANS
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(target_os = "linux")]
+fn exclusive_scans() -> RwLockWriteGuard<'static, ()> {
+    NATIVE_SCANS
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn unique_mark() -> String {
@@ -157,6 +177,7 @@ fn hold_fixture() {
 
 #[test]
 fn native_recovery_signals_the_recorded_child_without_reaping_it() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut marked, _) = fixture(root.path(), &unique_mark(), "hold");
     let (mut unrelated, _) = fixture(root.path(), &unique_mark(), "hold");
@@ -186,6 +207,7 @@ fn native_recovery_signals_the_recorded_child_without_reaping_it() {
 
 #[test]
 fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let mark = unique_mark();
     let (mut owner, tool) = fixture(root.path(), &mark, "delegate");
@@ -318,6 +340,7 @@ fn capture_under_low_fd_limit(exhaust: bool) {
 #[cfg(target_os = "linux")]
 #[test]
 fn native_recovery_fits_one_descriptor_per_process() {
+    let _scans = exclusive_scans();
     let root = tempfile::tempdir().unwrap();
     let (_child, _) = fixture(root.path(), &unique_mark(), "fd-limit");
 }
@@ -325,6 +348,7 @@ fn native_recovery_fits_one_descriptor_per_process() {
 #[cfg(target_os = "linux")]
 #[test]
 fn native_recovery_explains_descriptor_exhaustion() {
+    let _scans = exclusive_scans();
     let root = tempfile::tempdir().unwrap();
     let (_child, _) = fixture(root.path(), &unique_mark(), "fd-exhausted");
 }
@@ -378,6 +402,7 @@ fn hold_partial_environment() -> ! {
 #[cfg(target_os = "linux")]
 #[test]
 fn native_capture_quarantines_a_nul_terminated_partial_environment() {
+    let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     for recorded_job in [false, true] {
         let root = tempfile::tempdir().unwrap();
@@ -491,6 +516,7 @@ extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
 #[cfg(target_os = "linux")]
 #[test]
 fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut child, _) = fixture(root.path(), &unique_mark(), "leader-exit");
     let identity = child.identity().clone();
@@ -532,6 +558,7 @@ fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut child, _) = fixture(root.path(), &unique_mark(), "hold");
     let exact = ProcessIdentity {
@@ -706,6 +733,7 @@ fn native_fixture_mark(
 #[cfg(target_os = "macos")]
 #[test]
 fn native_capture_documents_the_mutated_argv_trust_boundary() {
+    let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     let mark = unique_mark();
     let argument = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
@@ -730,6 +758,7 @@ fn native_capture_documents_the_mutated_argv_trust_boundary() {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
+    let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     let mark = std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
     let conflicting =
@@ -760,6 +789,7 @@ fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
 
 #[test]
 fn native_capture_accepts_identical_duplicate_environment_marks() {
+    let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     let mark = unique_mark();
     let entry = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
@@ -832,6 +862,7 @@ fn hold_restricted_job(escape: bool) {
 #[cfg(target_os = "macos")]
 #[test]
 fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-job");
     let child = child.unwrap();
@@ -869,6 +900,7 @@ fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader()
 #[cfg(target_os = "macos")]
 #[test]
 fn native_recovery_warns_and_skips_unknown_restricted_setsid_escape() {
+    let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-escape");
     let child = child.unwrap();
