@@ -124,9 +124,39 @@ impl Running {
     }
 }
 
+/// `EAFNOSUPPORT`: the kernel has no IPv6 at all.
+#[cfg(target_os = "linux")]
+const NO_ADDRESS_FAMILY: i32 = 97;
+#[cfg(not(target_os = "linux"))]
+const NO_ADDRESS_FAMILY: i32 = 47;
+
+/// The IPv6 loopback listener, or `None` only where this host has no IPv6 loopback (no address
+/// family, or `::1` not configured). The skip goes to stderr directly, not through the test
+/// harness's captured output, so it shows in every run's log. Any other bind error fails.
+fn ipv6_loopback_listener(test: &str) -> Option<TcpListener> {
+    match TcpListener::bind("[::1]:0") {
+        Ok(listener) => Some(listener),
+        Err(error)
+            if error.kind() == io::ErrorKind::AddrNotAvailable
+                || error.raw_os_error() == Some(NO_ADDRESS_FAMILY) =>
+        {
+            let _ = writeln!(
+                io::stderr(),
+                "SKIPPED {test}: this host has no IPv6 loopback ({error})"
+            );
+            None
+        }
+        Err(error) => panic!("binding [::1]:0 failed: {error}"),
+    }
+}
+
 #[test]
 fn plaintext_listener_accepts_its_exact_ipv6_loopback_origin() {
-    let listener = TcpListener::bind("[::1]:0").unwrap();
+    let Some(listener) =
+        ipv6_loopback_listener("plaintext_listener_accepts_its_exact_ipv6_loopback_origin")
+    else {
+        return;
+    };
     let server = Running::start_on(listener, ListenMode::HttpLoopback, HttpLimits::default());
     let mut stream = server.connect();
     stream.write_all(REQUEST).unwrap();
