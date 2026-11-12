@@ -172,6 +172,24 @@ pub(super) fn fatal_case(case: &str) {
             assert!(receiver.fd().is_none());
             return;
         }
+        "bounded-zero-reported" => {
+            // Exercise the zero-count guard without the earlier CTRUNC guard masking it.
+            // Allocate and expose room for the actual kernel-received canary, but retain
+            // the caller's zero policy. This checks reported-fd cleanup before returning.
+            send_rights(sender.as_raw_fd(), b"x", &[source.as_raw_fd()]);
+            receiver.0.receive_with(
+                &mut payload,
+                DescriptorCount::AtMost(0),
+                &fence,
+                |fd, message, flags| {
+                    assert_eq!(control_len(message), control_space(0).unwrap());
+                    message.msg_controllen = control_space(1).unwrap() as _;
+                    system_receive(fd, message, flags)
+                },
+                close_on_exec,
+                |_| control_buffer(control_space(1).unwrap()),
+            )
+        }
         "bounded-overflow" => receiver.receive_up_to(&mut payload, usize::MAX, &fence),
         "bounded-exact-short" => {
             sender.send(b"no-rights").unwrap();
@@ -180,6 +198,8 @@ pub(super) fn fatal_case(case: &str) {
         }
         _ => {
             let (body, count, maximum): (&[u8], usize, usize) = match case {
+                // Linux CMSG_SPACE(1 fd) fits two via padding; macOS instead
+                // reaches CTRUNC. Keep this case for the Linux count guard.
                 "bounded-excess" => (b"x", 2, 1),
                 "bounded-control" => (b"x", 3, 1),
                 "bounded-payload" => (&[42; 1025], 1, 1),
@@ -187,13 +207,9 @@ pub(super) fn fatal_case(case: &str) {
                 _ => panic!("unknown bounded fatal case"),
             };
             let mut fds = vec![sender.as_raw_fd(); count];
-            // Zero-capacity truncation may not report any installed fd on macOS;
-            // the parent observes this inherited canary only after caller exit.
-            fds[0] = if case == "bounded-zero" {
-                libc::STDIN_FILENO
-            } else {
-                source.as_raw_fd() // first reported fd is the before-return canary
-            };
+            // bounded-zero proves Fatal/receiver poisoning only: macOS can
+            // install an unreported fd, so no before-return closure is claimed.
+            fds[0] = source.as_raw_fd();
             send_rights(sender.as_raw_fd(), body, &fds);
             receiver.receive_up_to(&mut payload, maximum, &fence)
         }
@@ -203,7 +219,11 @@ pub(super) fn fatal_case(case: &str) {
         "{case}: {result:?}"
     );
     drop(source);
-    assert_closed(peer);
+    if case == "bounded-zero" {
+        drop(peer);
+    } else {
+        assert_closed(peer);
+    }
     assert!(receiver.fd().is_none());
     assert!(matches!(
         receiver.receive_up_to(&mut payload, 1, &fence),

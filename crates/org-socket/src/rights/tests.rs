@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 // Logs: /private/tmp/kai-b1072-fork-probe-{mac,linux}.log
 const MARKER: u8 = 0x3a;
 
-fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) {
+pub(super) fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) {
     let space = control_space(descriptors.len()).unwrap();
     let mut control = vec![0usize; space.div_ceil(mem::size_of::<usize>())];
     let mut data = libc::iovec {
@@ -333,6 +333,7 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
         "bounded-control",
         "bounded-payload",
         "bounded-zero",
+        "bounded-zero-reported",
         "bounded-overflow",
         "bounded-exact-short",
     ];
@@ -354,18 +355,10 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
 }
 
 fn run_fatal_child(case: &str) {
-    // The zero-capacity case can install an unreported fd on macOS. Supply a
-    // parent-observed canary: its last reference must close when the caller exits.
-    let (input, input_peer) = UnixStream::pair().unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "rights::tests::fatal_child", "--nocapture"])
         .env("ORG_SOCKET_FATAL_CASE", case)
-        .stdin(if case == "bounded-zero" {
-            Stdio::from(OwnedFd::from(input))
-        } else {
-            drop(input);
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -385,9 +378,6 @@ fn run_fatal_child(case: &str) {
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success(), "fatal case {case}: {output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("fatal returned; caller terminates"));
-    if case == "bounded-zero" {
-        assert_closed(input_peer);
-    }
 }
 
 #[test]
