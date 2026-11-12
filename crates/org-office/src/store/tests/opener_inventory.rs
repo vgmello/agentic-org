@@ -1091,3 +1091,35 @@ fn sqlcipher_metadata_requires_the_tracked_virtual_workspace_manifest() {
     let (manifests, _) = super::opener_sources::metadata(&scope, &value);
     assert!(manifests.contains(&scope.root.join("Cargo.toml")));
 }
+
+#[test]
+fn sqlcipher_source_inventory_records_only_the_supported_kinds() {
+    let dir = fixture(&[
+        ("Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'"),
+        ("src/lib.rs", "pub struct Allowed;"),
+        ("build/script.rs", "pub struct Build;"),
+        (".cargo/config", ""),
+        ("src/unsupported.RS", ""),
+        ("readme.txt", ""),
+    ]);
+    let scope = tracked(dir.path());
+    for (name, kind) in [
+        ("Cargo.toml", SourceKind::Config),
+        ("clippy.toml", SourceKind::Config),
+        (".cargo/config", SourceKind::Config),
+        ("src/lib.rs", SourceKind::Rust),
+        ("build/script.rs", SourceKind::Rust),
+    ] {
+        assert_eq!(
+            scope.files.get(&scope.root.join(name)),
+            Some(&kind),
+            "wrong source kind: {name}"
+        );
+    }
+    for name in ["src/unsupported.RS", "readme.txt"] {
+        assert!(
+            !scope.files.contains_key(&scope.root.join(name)),
+            "unsupported input selected: {name}"
+        );
+    }
+}
