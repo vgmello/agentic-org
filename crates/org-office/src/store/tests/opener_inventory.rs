@@ -531,6 +531,8 @@ fn sqlcipher_manifest_source_declarations_validate_every_local_spelling() {
     for source in [
         "[workspace]\nmembers=['member']\ndefault-members=['member']\nexclude=['member']",
         "workspace={members=['member'],default-members=['member'],exclude=['member']}",
+        "workspace.members=['member',]",
+        "package.metadata={}",
         "workspace.members=['member']",
         "workspace.default-members=['member']",
         "workspace.exclude=['member']",
@@ -574,6 +576,7 @@ fn sqlcipher_manifest_source_declarations_validate_every_local_spelling() {
         "replace={'member:0.1.0'={path='member'}}",
         "[dependencies]\nmember={git='file:///tmp/repo'}",
         "[dependencies.member]\ngit='FILE:///tmp/repo'",
+        "[dependencies]\nhelper={git='file:/tmp/repo'}",
         "[workspace]\nmembers=['*']",
         "workspace.default-members=['member?']",
         "workspace.exclude=['[ab]']",
@@ -966,6 +969,7 @@ fn sqlcipher_cargo_metadata_queries_each_workspace_once_and_refuses_omitted_mani
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn sqlcipher_manifest_glob_refusal_is_independent_of_tracked_path_membership() {
     let dir = fixture(&[
