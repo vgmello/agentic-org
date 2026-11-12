@@ -124,21 +124,41 @@ fn missing_accepted_snapshot_stage_is_integrity_failure_without_state_changes() 
 
 #[test]
 fn malformed_snapshot_reference_remains_invalid_input_before_adapter_lookup() {
-    let (hq, satellite, _) = offices();
+    let (_, satellite, _) = offices();
     let before = satellite.checkpoint();
-    let snapshot = ValidatedSnapshot {
+    let stages = satellite.data.borrow().staging.clone();
+    let events = satellite.data.borrow().events.clone();
+    let mut snapshot = ValidatedSnapshot {
         org_id: before.org_id.clone(),
         authority: before.highest_epoch,
         position: before.position,
         digest: before.digest,
         codec: Codec::new("conformance", 1).unwrap(),
-        staging_id: "invalid-stage".into(),
+        staging_id: String::new(),
         protocol_level: 1,
     };
-    let error = install_snapshot(&satellite, snapshot).unwrap_err();
-    assert!(matches!(error, SyncError::Refused(Refusal::InvalidInput)));
-    assert!(!error.aborts_batch());
-    assert_eq!(satellite.checkpoint(), before);
-    assert!(satellite.applied().is_empty());
-    assert!(hq.applied().is_empty());
+    for staging_id in [String::new(), "A".repeat(65), "invalid-stage".into()] {
+        snapshot.staging_id = staging_id;
+        let error = install_snapshot(&satellite, snapshot.clone()).unwrap_err();
+        assert!(
+            matches!(error, SyncError::Refused(Refusal::InvalidInput)),
+            "staging_id={:?}: {error}",
+            snapshot.staging_id
+        );
+        assert!(!error.aborts_batch());
+        let reopened = satellite.restart();
+        assert_eq!(reopened.checkpoint(), before);
+        assert!(reopened.applied().is_empty());
+        assert_eq!(reopened.data.borrow().staging, stages);
+        assert_eq!(reopened.data.borrow().events, events);
+    }
+    // The maximum accepted length must reach the adapter and install real staged data.
+    snapshot.staging_id = "A".repeat(64);
+    let payload = Arc::from(b"boundary snapshot contents".as_slice());
+    satellite.stage(snapshot.staging_id.clone(), vec![Arc::clone(&payload)]);
+    assert_eq!(
+        install_snapshot(&satellite, snapshot).unwrap(),
+        OrgOutput::SnapshotInstalled
+    );
+    assert_eq!(satellite.restart().applied(), vec![payload]);
 }
