@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn revocations_are_exact_idempotent_retained_and_batch_overflow_is_atomic() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let mut state = Revocations::default();
     state.apply_batch(vec![]).unwrap();
     assert!(state.0.is_empty());

@@ -1260,6 +1260,7 @@ mod tests {
 
     #[test]
     fn launch_auth_accepts_only_the_matching_legacy_app_token() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let matching = AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]);
         let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
         let grants = LaunchAuth::Grants {
@@ -1275,6 +1276,7 @@ mod tests {
 
     #[test]
     fn grants_invalid_binds_clear_each_prior_binding_without_directory_lookup() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         struct ForbiddenDirectory;
         impl MemberDirectory for ForbiddenDirectory {
             fn resolve_member(
@@ -1345,6 +1347,7 @@ mod tests {
 
     #[test]
     fn grants_mode_keeps_v1_hello_and_allows_the_tokenless_agent_path() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let legacy = shared(Path::new("/unused"));
         let request = Request::new::<MsgBind>(
             1,
@@ -1391,6 +1394,7 @@ mod tests {
 
     #[test]
     fn grants_authority_allows_agents_but_refuses_app_and_person_binds_on_the_live_socket() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let shared = Arc::new(Shared::new(
@@ -1485,6 +1489,7 @@ mod tests {
 
     #[test]
     fn an_unbind_preserves_a_racing_watcher_revocation() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let control = Arc::new(Control::default());
         let bound = Mutex::new(HashMap::from([(
             1,
@@ -1508,6 +1513,7 @@ mod tests {
 
     #[test]
     fn ticked_reader_repolls_a_missed_eof_at_the_server_call_site() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let (stream, peer) = UnixStream::pair().unwrap();
         drop(peer);
         let shared = shared(Path::new("/unused-test-socket"));
@@ -1533,6 +1539,7 @@ mod tests {
 
     #[test]
     fn ticked_reader_observes_server_stop_without_a_shutdown_wakeup() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let (stream, _peer) = UnixStream::pair().unwrap();
         let shared = shared(Path::new("/unused-test-socket"));
         let stopping = AtomicBool::new(false);
@@ -1554,6 +1561,7 @@ mod tests {
 
     #[test]
     fn ticked_reader_clears_a_revoked_idle_member_registration() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let (stream, mut peer) = UnixStream::pair().unwrap();
         let shared = shared(Path::new("/unused-test-socket"));
         let request = Request::new::<MsgBind>(
@@ -1591,6 +1599,7 @@ mod tests {
 
     #[test]
     fn a_revoked_connection_answers_a_call_that_arrives_before_the_tick_then_closes() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let (stream, mut peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
         let shared = shared(Path::new("/unused-test-socket"));
@@ -1647,6 +1656,7 @@ mod tests {
 
     #[test]
     fn a_rebind_cannot_revive_a_connection_revoked_during_its_directory_lookup() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         struct RevokingDirectory {
             inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
             revoke: Mutex<Option<Arc<Control>>>,
@@ -1738,6 +1748,7 @@ mod tests {
 
     #[test]
     fn hello_cannot_bypass_a_removed_members_per_call_revocation() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::POSITION;
         // X-02 §3 leaves v1 binding revocation intact. No watcher runs here:
         // the hello call itself must discover the missing member and close.
@@ -1810,6 +1821,7 @@ mod tests {
 
     #[test]
     fn hello_cannot_bypass_a_failed_lookup_reset_and_cancellation() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         // X-02 §3 preserves legacy binding failure handling before hello.
         // Drive the real connection directly, without the background watcher.
         let (mailbox, memory) = messaging();
@@ -1961,6 +1973,7 @@ mod tests {
 
     #[test]
     fn org_operation_get_for_an_absent_row_is_not_found_on_a_legacy_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::TempDir::new().unwrap();
         let shared = shared(&dir.path().join("office.sock"));
         let request = Request::new::<org_proto::OperationGet>(
@@ -1977,6 +1990,7 @@ mod tests {
 
     #[test]
     fn operation_get_decodes_kind_and_id_before_dispatch_and_sanitizes_storage_errors() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use serde_json::json;
         let dir = tempfile::TempDir::new().unwrap();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
@@ -2078,6 +2092,7 @@ mod tests {
 
     #[test]
     fn operation_get_returns_stored_outcomes_for_each_legacy_binding() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use serde_json::json;
         for outcome in [
             org_proto::OperationOutcome::Committed {
@@ -2270,6 +2285,7 @@ mod tests {
 
     #[test]
     fn only_so_many_connections_are_served_and_a_closed_one_gives_its_slot_back() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let listener = bind(&path).unwrap();
@@ -2350,6 +2366,7 @@ mod tests {
 
     #[test]
     fn run_does_not_return_while_a_connection_is_still_working_and_does_when_it_is_done() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         // A snapshot that blocks until released: a connection thread busy inside the office.
@@ -2383,6 +2400,7 @@ mod tests {
 
     #[test]
     fn a_connection_thread_that_panics_closes_its_socket_and_the_server_goes_on() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let shared = shared_with(&path, Box::new(|| panic!("a bug in a handler")));
@@ -2407,6 +2425,7 @@ mod tests {
 
     #[test]
     fn an_answer_too_large_for_a_frame_is_an_error_not_a_dropped_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let shared = shared_with(
@@ -2457,6 +2476,7 @@ mod tests {
 
     #[test]
     fn a_live_socket_is_not_replaced_and_a_stale_one_is() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let live = bind(&path).unwrap();
@@ -2638,6 +2658,7 @@ mod tests {
     #[test]
     fn an_organization_command_from_a_connection_that_is_not_the_apps_is_refused_before_it_is_read()
     {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (submitted, stop, server) = serving(&path, committed);
@@ -2669,6 +2690,7 @@ mod tests {
 
     #[test]
     fn a_connection_bound_with_the_app_token_runs_commands_and_a_wrong_token_binds_nothing() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (submitted, stop, server) = serving(&path, committed);
@@ -2703,6 +2725,7 @@ mod tests {
 
     #[test]
     fn a_failed_bind_unbinds_the_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (submitted, stop, server) = serving(&path, committed);
@@ -2726,6 +2749,7 @@ mod tests {
 
     #[test]
     fn binds_this_office_does_not_do_are_refused_and_bind_nothing() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_submitted, stop, server) = serving(&path, committed);
@@ -2790,6 +2814,7 @@ mod tests {
 
     #[test]
     fn what_the_office_answers_is_what_the_app_gets() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let calls = Arc::new(AtomicUsize::new(0));
@@ -2817,6 +2842,7 @@ mod tests {
 
     #[test]
     fn the_bound_app_is_told_a_garbled_command_and_an_unknown_method_apart() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (submitted, stop, server) = serving(&path, committed);
@@ -2849,6 +2875,7 @@ mod tests {
 
     #[test]
     fn every_organization_command_is_refused_to_a_connection_that_is_not_the_apps() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_proto::org::*;
         use org_proto::Call;
         let methods = [
@@ -2899,6 +2926,7 @@ mod tests {
 
     #[test]
     fn snapshot_pending_is_unavailable_only_after_binding() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let shared = shared_with(&path, Box::new(|| Err(SnapshotFailure::Unavailable)));
@@ -2919,6 +2947,7 @@ mod tests {
 
     #[test]
     fn the_organization_is_read_only_by_a_bound_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         // The fake office cannot read (`Err`), so reaching it shows as a storage error.
@@ -2994,6 +3023,7 @@ mod tests {
 
     #[test]
     fn subscribing_needs_a_binding_and_says_nothing_else_to_a_connection_without_one() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3016,6 +3046,7 @@ mod tests {
 
     #[test]
     fn live_events_start_after_the_answer_and_count_from_one_on_the_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3044,6 +3075,7 @@ mod tests {
 
     #[test]
     fn resuming_sends_what_the_client_missed_in_order_then_goes_live_without_a_repeat() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3076,6 +3108,7 @@ mod tests {
 
     #[test]
     fn a_position_the_log_cannot_resume_from_is_snapshot_required_and_subscribes_nothing() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3116,6 +3149,7 @@ mod tests {
 
     #[test]
     fn a_second_subscribe_is_refused_and_does_not_double_the_events() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3139,6 +3173,7 @@ mod tests {
 
     #[test]
     fn a_bind_ends_the_subscription_and_the_client_subscribes_again() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3173,6 +3208,7 @@ mod tests {
 
     #[test]
     fn a_log_that_cannot_be_read_closes_the_subscribers_connection_instead_of_leaving_it_silent() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3193,6 +3229,7 @@ mod tests {
 
     #[test]
     fn stopping_with_a_subscribed_connection_open_returns_and_closes_it() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_feed, stop, server) = following(&path);
@@ -3213,6 +3250,7 @@ mod tests {
 
     #[test]
     fn a_commit_wakes_the_subscriber_without_waiting_for_the_idle_poll() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         // The poll is far longer than the delivery is allowed to take: only the commit's wake-up
@@ -3241,6 +3279,7 @@ mod tests {
 
     #[test]
     fn a_client_that_does_not_read_is_dropped_after_the_write_deadline() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use std::io::Read;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -3282,6 +3321,7 @@ mod tests {
 
     #[test]
     fn a_client_that_reads_a_trickle_is_dropped_by_the_deadline_of_the_whole_frame() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use std::io::Read;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -3322,6 +3362,7 @@ mod tests {
 
     #[test]
     fn binding_and_subscribing_in_a_loop_never_leaves_more_than_two_followers_on_a_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let timing = Timing {
@@ -3348,6 +3389,7 @@ mod tests {
 
     #[test]
     fn a_rebind_in_the_middle_of_a_replay_leaves_no_gap_in_the_numbers() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (feed, stop, server) = following(&path);
@@ -3455,6 +3497,7 @@ mod tests {
 
     #[test]
     fn who_is_for_a_bound_connection_and_an_unbound_one_is_not_bound_before_its_params_are_read() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (asked, stop, server) = asking(&path, |_| Ok(Ok(WhoResult { members: vec![] })));
@@ -3493,6 +3536,7 @@ mod tests {
 
     #[test]
     fn what_who_answers_is_what_the_caller_gets() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let calls = Arc::new(AtomicUsize::new(0));
@@ -3637,6 +3681,7 @@ mod tests {
 
     #[test]
     fn an_agent_binds_without_a_token_by_handle_or_id_and_is_told_who_it_is() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3654,6 +3699,7 @@ mod tests {
 
     #[test]
     fn a_bind_that_the_contract_refuses_says_which_way_and_leaves_the_connection_unbound() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3709,6 +3755,7 @@ mod tests {
 
     #[test]
     fn an_office_run_agent_cannot_bind_yet_and_a_member_removed_after_binding_is_not_bound() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::{members, POSITION};
         use org_proto::RunMode;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -3750,6 +3797,7 @@ mod tests {
 
     #[test]
     fn a_connection_closes_when_its_member_stops_being_bindable() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::{members, POSITION};
         use org_proto::{AgentStatus, RunMode};
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -3807,6 +3855,7 @@ mod tests {
 
     #[test]
     fn a_removed_members_id_that_is_another_members_handle_does_not_keep_the_connection_bound() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -3825,6 +3874,7 @@ mod tests {
 
     #[test]
     fn a_person_bound_with_the_token_acts_as_that_person_and_may_send_organization_commands() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3846,6 +3896,7 @@ mod tests {
 
     #[test]
     fn a_message_goes_from_the_bound_member_to_the_other_and_reads_once() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3883,6 +3934,7 @@ mod tests {
 
     #[test]
     fn who_a_call_acts_as_is_the_binding_and_never_a_field_of_the_call() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3922,6 +3974,7 @@ mod tests {
 
     #[test]
     fn messaging_needs_a_member_binding_and_an_app_wide_one_is_not_a_member() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3948,6 +4001,7 @@ mod tests {
 
     #[test]
     fn a_bad_param_is_told_in_fixed_words_that_do_not_echo_the_body() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (_mailbox, stop, server) = messaging_server(&path);
@@ -3971,6 +4025,7 @@ mod tests {
 
     #[test]
     fn a_held_wait_is_answered_when_a_message_arrives_while_the_connection_keeps_answering() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (mailbox, stop, server) = messaging_server(&path);
@@ -4003,6 +4058,7 @@ mod tests {
 
     #[test]
     fn a_bind_ends_the_held_wait_of_the_binding_before_it_with_not_bound() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (mailbox, stop, server) = messaging_server(&path);
@@ -4035,6 +4091,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_closes_with_waits_held_leaves_none_behind_and_the_server_stops() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (mailbox, stop, server) = messaging_server(&path);
@@ -4060,6 +4117,7 @@ mod tests {
 
     #[test]
     fn rebinding_gives_the_held_places_back_at_once() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (mailbox, stop, server) = messaging_server(&path);
@@ -4098,6 +4156,7 @@ mod tests {
 
     #[test]
     fn the_places_of_held_calls_are_counted_freed_and_cancelled_with_their_guard() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let held = Held::default();
         let mut cancellations = Vec::new();
         for _ in 0..MAX_HELD {
@@ -4126,6 +4185,7 @@ mod tests {
 
     #[test]
     fn at_most_sixteen_waits_are_held_on_a_connection() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (mailbox, stop, server) = messaging_server(&path);
@@ -4188,6 +4248,7 @@ mod tests {
 
     #[test]
     fn an_agent_sets_its_own_status_and_the_member_is_the_binding_not_the_call() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (log, stop, server) = status_server(&path);
@@ -4228,6 +4289,7 @@ mod tests {
     #[test]
     fn only_an_agent_bound_connection_may_set_a_status_and_the_binding_is_checked_before_the_params(
     ) {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let (log, stop, server) = status_server(&path);
@@ -4307,6 +4369,7 @@ mod tests {
 
     #[test]
     fn an_app_subscriber_is_told_of_a_message_and_of_its_reading_after_it_subscribed() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let live = Arc::new(LiveEvents::new(Box::new(|| {})));
@@ -4348,6 +4411,7 @@ mod tests {
 
     #[test]
     fn a_rebind_ends_the_live_events_too_and_a_new_subscriber_starts_from_now() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let live = Arc::new(LiveEvents::new(Box::new(|| {})));
@@ -4395,6 +4459,7 @@ mod tests {
 
     #[test]
     fn a_published_event_wakes_a_follower_that_would_otherwise_sleep_its_whole_idle_time() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let feed = Arc::new(FakeFeed::default());
@@ -4440,6 +4505,7 @@ mod tests {
 
     #[test]
     fn presence_goes_at_once_then_at_most_once_a_gap_and_the_last_state_is_never_lost() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let feed = Arc::new(FakeFeed::default());
@@ -4498,6 +4564,7 @@ mod tests {
 
     #[test]
     fn a_subscriber_that_fell_more_than_a_ring_behind_is_disconnected_to_list_again() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use std::io::Read;
         let live = LiveEvents::new(Box::new(|| {}));
         for n in 0..crate::live::CAPACITY + 5 {
@@ -4597,6 +4664,7 @@ mod tests {
     #[test]
     fn a_held_wait_ends_not_bound_at_once_when_its_member_is_offboarded_made_office_run_or_removed()
     {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::{members, POSITION};
         use org_proto::{AgentStatus, RunMode};
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -4650,6 +4718,7 @@ mod tests {
 
     #[test]
     fn a_connection_that_bound_as_someone_else_since_is_left_alone() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::{members, POSITION};
         use org_proto::AgentStatus;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -4673,6 +4742,7 @@ mod tests {
 
     #[test]
     fn a_subscription_ends_when_its_person_stops_being_bindable() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -4731,6 +4801,7 @@ mod tests {
 
     #[test]
     fn a_directory_failure_preserves_connections_but_restoring_a_revoked_member_does_not() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -4826,6 +4897,7 @@ mod tests {
 
     #[test]
     fn a_pass_that_could_not_decide_is_repeated_on_a_quiet_log() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");

@@ -30,6 +30,7 @@ fn host_pair() -> (std::io::BufReader<UnixStream>, std::thread::JoinHandle<()>) 
 }
 #[test]
 fn host_hello_checks_both_range_edges_and_malformed_params_before_version_lock() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for range in [
         serde_json::json!({"min":1,"max":1}),
         serde_json::json!({"min":3,"max":3}),

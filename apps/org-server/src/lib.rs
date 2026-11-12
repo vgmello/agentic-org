@@ -624,6 +624,7 @@ mod tests {
 
     #[test]
     fn c1_production_work_adapter_preserves_committed_refused_and_replayed_answers() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_proto::ErrorCode;
         use org_work::{StoreError, TxnOutput};
         let accepted: org_proto::work::WorkAccepted = serde_json::from_value(serde_json::json!({
@@ -665,6 +666,7 @@ mod tests {
 
     #[test]
     fn explicit_runtime_is_required_in_release_and_invalid_values_never_fall_back() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let home = Path::new("/very/long/data/root");
         assert!(runtime_dir_from(home, None, false).is_err());
         assert_eq!(
@@ -685,6 +687,7 @@ mod tests {
 
     #[test]
     fn a_publish_on_the_live_events_wakes_the_offices_followers() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         // The production wiring: publishing moves the office's change token, which is what a
         // follower asleep in `wait_for_org_change` is waiting on.
         let dir = tempfile::Builder::new().prefix("lv").tempdir().unwrap();
@@ -717,6 +720,7 @@ mod tests {
 
     #[test]
     fn every_office_error_has_its_code() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         use org_office::NameError;
         let storage = || OfficeError::Storage("disk".into());
         for (error, code) in [
@@ -738,6 +742,7 @@ mod tests {
 
     #[test]
     fn the_three_modes_and_nothing_else() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         assert_eq!(parse_args(&args(&["--create"])), Ok(Mode::Create));
         assert_eq!(
             parse_args(&args(&["--office", "ABC"])),

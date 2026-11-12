@@ -17,14 +17,16 @@ const PROBE: &str = "KAI_ROOT_TRANSFER_TEST_CHILD";
 
 fn isolated(case: &str, test: &str) {
     if std::env::var(PROBE).ok().as_deref() == Some(case) {
+        let _spawn = transfer::tests::without_process_spawn();
         probe(case == "failure");
         return;
     }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--nocapture", "--test-threads=1"])
-        .env(PROBE, case)
-        .output()
-        .unwrap();
+    let output = transfer::tests::process_output(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(PROBE, case),
+    )
+    .unwrap();
     assert!(
         output.status.success(),
         "isolated root probe failed: {:?}\n{}\n{}",
@@ -61,6 +63,7 @@ fn probe(failure: bool) {
     let folder = dir.path().join(ID);
     let runtime = dir.path().join("run");
     std::fs::create_dir(&runtime).unwrap();
+    let office_socket = socket_path(&runtime, ID).unwrap();
     let info = NewOffice {
         office_id: ID.into(),
         office_name: "HQ".into(),
@@ -92,6 +95,7 @@ fn probe(failure: bool) {
         },
         Arc::default(),
     );
+    let expected_socket = office_socket.clone();
     let host = std::thread::spawn(move || {
         assert!(org_socket::poll_readable(listener.as_raw_fd(), Duration::from_secs(5)).unwrap());
         let (mut stream, _) = listener.accept().unwrap();
@@ -129,10 +133,17 @@ fn probe(failure: bool) {
             })
         );
         drop(worker);
-        assert!(matches!(
-            v3::read_server_event(&mut reader).unwrap(),
-            Some(RendezvousEvent::Server(ServerEvent::Ready { .. }))
-        ));
+        let Some(RendezvousEvent::Server(ServerEvent::Ready { socket, .. })) =
+            v3::read_server_event(&mut reader).unwrap()
+        else {
+            panic!("host did not receive Ready");
+        };
+        assert_eq!(std::path::Path::new(&socket), expected_socket);
+        if !failure {
+            // The refusal path may already have unlinked after emitting Ready.
+            // The normal host still holds the control connection open here.
+            assert!(expected_socket.exists(), "Ready socket was never bound");
+        }
         if failure {
             assert!(v3::read_server_event(&mut reader).unwrap().is_none());
             return (transfer, None);
@@ -174,6 +185,25 @@ fn probe(failure: bool) {
     if failure {
         transfer::tests::refuse_next_spawn();
     }
+    let joining = if failure {
+        None
+    } else {
+        let (entered, at_exit) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        transfer::tests::hold_service_exit(entered, released);
+        let socket = office_socket.clone();
+        Some(std::thread::spawn(move || {
+            // The receiver exits only after Service::drop sets stop. Hold its
+            // actual thread exit so the root must still be joining it here.
+            at_exit.recv_timeout(Duration::from_secs(5)).unwrap();
+            let still_bound = socket.exists();
+            release.send(()).unwrap();
+            assert!(
+                still_bound,
+                "root unlinked its socket before joining the transfer service"
+            );
+        }))
+    };
     let code = serve_office(
         control,
         lifetime,
@@ -184,10 +214,13 @@ fn probe(failure: bool) {
         },
         Some(ID.into()),
     );
+    if let Some(joining) = joining {
+        joining.join().unwrap();
+    }
     let (_host_transfer, peer) = host.join().unwrap();
     assert_eq!(code, i32::from(failure));
     assert_eq!(stdout.metadata().unwrap().len(), 0);
-    assert!(!runtime.join(format!("{ID}.sock")).exists());
+    assert!(!office_socket.exists());
     if let Some(mut peer) = peer {
         assert_eq!(
             peer.read(&mut [0]).unwrap(),

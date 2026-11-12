@@ -3,8 +3,42 @@ use super::*;
 use org_office_launch::v3::ChannelKind;
 use std::os::unix::net::UnixDatagram;
 
+// A fork temporarily copies unrelated tests' descriptors, even with CLOEXEC.
+// Fence all test process creation against exact descriptor-lifetime assertions.
+static TEST_PROCESS_SPAWN: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+pub(crate) fn without_process_spawn() -> std::sync::RwLockReadGuard<'static, ()> {
+    TEST_PROCESS_SPAWN
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+pub(crate) fn spawn_process(
+    command: &mut std::process::Command,
+) -> io::Result<std::process::Child> {
+    let _spawn = TEST_PROCESS_SPAWN
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    // spawn returns after the exec handshake; never hold the exclusive lock
+    // while waiting for a running child to finish.
+    command.spawn()
+}
+
+pub(crate) fn process_output(
+    command: &mut std::process::Command,
+) -> io::Result<std::process::Output> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = spawn_process(command)?;
+    let _assertions = without_process_spawn();
+    child.wait_with_output()
+}
+
 #[test]
 fn decoding_checks_strict_json_bounds_and_each_record_descriptor_count_directly() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let revoked = v3::encode_transfer_record(&TransferRecord::Revoked {
         session_ids: vec![],
     })
@@ -52,6 +86,7 @@ fn decoding_checks_strict_json_bounds_and_each_record_descriptor_count_directly(
 
 #[test]
 fn service_drop_joins_the_receiver_and_closes_the_owned_transport() {
+    let _spawn = without_process_spawn();
     let (host, child) = UnixDatagram::pair().unwrap();
     let state = Arc::new(Mutex::new(Revocations::default()));
     let transport = startup::Transfer {
@@ -92,6 +127,7 @@ pub(super) fn poll_readable(fd: std::os::fd::RawFd, tick: Duration) -> io::Resul
 
 #[test]
 fn interrupted_poll_retries_before_receiving_but_other_poll_errors_refuse() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for kind in [io::ErrorKind::Interrupted, io::ErrorKind::PermissionDenied] {
         let (host, child) = UnixDatagram::pair().unwrap();
         NEXT_POLL.with(|next| {
@@ -132,6 +168,7 @@ fn interrupted_poll_retries_before_receiving_but_other_poll_errors_refuse() {
 
 #[test]
 fn a_poisoned_revocations_mutex_refuses_before_applying_the_record() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let state = Arc::new(Mutex::new(Revocations::default()));
     let poison = Arc::clone(&state);
     assert!(std::thread::spawn(move || {
@@ -170,6 +207,7 @@ fn a_poisoned_revocations_mutex_refuses_before_applying_the_record() {
 
 #[test]
 fn drop_requests_stop_and_waits_for_the_thread_to_finish() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use std::sync::mpsc;
     let stop = Arc::new(AtomicBool::new(false));
     let stopping = Arc::clone(&stop);
@@ -213,6 +251,7 @@ fn drop_requests_stop_and_waits_for_the_thread_to_finish() {
 
 #[test]
 fn real_datagram_readiness_records_empty_payload_and_peer_close_are_distinct_states() {
+    let _spawn = without_process_spawn();
     let (host, child) = UnixDatagram::pair().unwrap();
     let raw = child.as_raw_fd();
     let mut receiver = org_socket::rights::DatagramReceiver::new(child);
@@ -267,6 +306,7 @@ fn real_datagram_readiness_records_empty_payload_and_peer_close_are_distinct_sta
 
 #[test]
 fn real_datagram_sender_full_buffer_and_oversize_report_distinct_errors() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (host, child) = UnixDatagram::pair().unwrap();
     host.set_nonblocking(true).unwrap();
     let payload = [b'x'; 866];
@@ -316,14 +356,13 @@ fn real_datagram_sender_full_buffer_and_oversize_report_distinct_errors() {
 #[test]
 fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
     if std::env::var_os("ORG_B1_RECEIPT_CHILD").is_none() {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = process_output(std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "transfer::tests::receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them",
                 "--nocapture",
             ])
-            .env("ORG_B1_RECEIPT_CHILD", "1")
-            .output()
+            .env("ORG_B1_RECEIPT_CHILD", "1"))
             .unwrap();
         assert!(
             output.status.success(),
@@ -334,6 +373,7 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
         );
         return;
     }
+    let _spawn = without_process_spawn();
     // Ancillary truncation may install unreported rights on macOS. Isolate this
     // refusal so process exit releases those rights, as the production policy requires.
     use std::io::Read;
@@ -434,6 +474,7 @@ pub(crate) fn send_rights(
 
 #[test]
 fn every_poll_result_retries_receipt_and_fatal_receipt_stops_before_later_records() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for ready in [false, true] {
         let (host, child) = UnixDatagram::pair().unwrap();
         NEXT_POLL.with(|next| {
@@ -504,6 +545,7 @@ fn every_poll_result_retries_receipt_and_fatal_receipt_stops_before_later_record
 
 #[test]
 fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
+    let _spawn = without_process_spawn();
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     let (host, child) = UnixDatagram::pair().unwrap();
@@ -546,6 +588,7 @@ fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
 
 #[test]
 fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_prefix() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_office_launch::v3::{self, TransferRecord};
     use std::os::unix::net::UnixDatagram;
     use std::sync::{atomic::AtomicBool, Arc, Mutex};
@@ -602,6 +645,7 @@ fn actual_transfer_applies_fifo_records_then_refuses_atomic_overflow_without_a_p
 
 #[test]
 fn stream_handoff_with_concatenated_records_refuses_without_applying_a_prefix() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_office_launch::v3::{self, TransferRecord};
     use std::io::Write;
     use std::os::fd::OwnedFd;
@@ -651,6 +695,15 @@ fn run(
     super::run(transport, revocations, stop, &mut |_| Err(invalid()))
 }
 
+type ServiceExitGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+thread_local! { static HOLD_SERVICE_EXIT: std::cell::RefCell<Option<ServiceExitGate>> = const { std::cell::RefCell::new(None) }; }
+pub(crate) fn hold_service_exit(
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) {
+    HOLD_SERVICE_EXIT.with(|gate| *gate.borrow_mut() = Some((entered, release)));
+}
+
 thread_local! { static REFUSE_SERVICE_SPAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 pub(crate) fn refuse_next_spawn() {
     REFUSE_SERVICE_SPAWN.with(|fail| fail.set(true));
@@ -669,6 +722,13 @@ impl Builder {
         if REFUSE_SERVICE_SPAWN.with(|fail| fail.replace(false)) {
             return Err(io::Error::other("synthetic service thread refusal"));
         }
-        self.0.spawn(work)
+        let hold = HOLD_SERVICE_EXIT.with(|gate| gate.borrow_mut().take());
+        self.0.spawn(move || {
+            work();
+            if let Some((entered, release)) = hold {
+                entered.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+        })
     }
 }

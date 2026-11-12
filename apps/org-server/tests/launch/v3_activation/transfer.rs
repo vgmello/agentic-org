@@ -129,6 +129,7 @@ fn attempt_send(socket: &UnixDatagram, message: &libc::msghdr) -> std::io::Resul
 
 #[test]
 fn sender_retries_injected_eintr_but_refuses_other_errors_without_sending() {
+    let _process = process_isolation();
     for raw in [libc::EINTR, libc::EACCES] {
         let (host, child) = UnixDatagram::pair().unwrap();
         child.set_nonblocking(true).unwrap();
@@ -157,6 +158,7 @@ fn sender_retries_injected_eintr_but_refuses_other_errors_without_sending() {
 
 #[test]
 fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset() {
+    let _process = process_isolation();
     let world = World::new();
     let session = handshake(&world, FirstLine::Create, INSTANCE, Some(db_key()));
     assert!(
@@ -197,6 +199,7 @@ fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset(
 
 #[test]
 fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live_ids() {
+    let _process = process_isolation();
     let world = World::new();
     let mut session = ready_create(&world);
     let mut live_peer = None;
@@ -294,6 +297,7 @@ fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live
 
 #[test]
 fn malformed_and_wrong_rights_records_are_fatal_without_any_revoked_ack() {
+    let _process = process_isolation();
     for case in [
         "empty",
         "unknown",
@@ -343,6 +347,7 @@ fn malformed_and_wrong_rights_records_are_fatal_without_any_revoked_ack() {
 
 #[test]
 fn valid_revocations_have_no_ack_and_overflow_is_fatal_after_fifo_application() {
+    let _process = process_isolation();
     use std::io::Read;
     let world = World::new();
     let mut session = ready_create(&world);
@@ -395,6 +400,7 @@ fn valid_revocations_have_no_ack_and_overflow_is_fatal_after_fifo_application() 
 
 #[test]
 fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
+    let _process = process_isolation();
     let world = World::new();
     let path = world.home.join("r.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -468,6 +474,7 @@ fn fill_sender(socket: &UnixDatagram) -> usize {
 
 #[test]
 fn sender_retries_actual_backpressure_then_refuses_oversize_and_expired_deadline() {
+    let _process = process_isolation();
     let (host, child) = UnixDatagram::pair().unwrap();
     let queued = fill_sender(&host);
     let (observed, retry) = std::sync::mpsc::channel();
@@ -532,6 +539,7 @@ fn sender_retries_actual_backpressure_then_refuses_oversize_and_expired_deadline
 
 #[test]
 fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db() {
+    let _process = process_isolation();
     let world = World::new();
     let session = ready_create(&world);
     let Session {
@@ -602,6 +610,7 @@ fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufR
 }
 #[test]
 fn real_channel_limits_accept_boundary_and_refuse_next_without_ack_then_reap_every_live_peer() {
+    let _process = process_isolation();
     for case in [
         "eighth-gateway",
         "ninth-local",
@@ -672,6 +681,7 @@ fn real_channel_limits_accept_boundary_and_refuse_next_without_ack_then_reap_eve
 }
 #[test]
 fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_without_ack() {
+    let _process = process_isolation();
     for case in ["empty-id", "handoff-id", "wrong-office", "datagram", "file"] {
         let world = World::new();
         let mut session = ready_create(&world);

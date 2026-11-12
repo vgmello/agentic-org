@@ -149,6 +149,7 @@ mod tests {
 
     #[test]
     fn the_shared_wipe_overwrites_every_byte() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let mut secret = [0xb3; 4096];
         wipe_bytes(&mut secret);
         assert!(secret.iter().all(|byte| *byte == 0));
@@ -156,6 +157,7 @@ mod tests {
 
     #[test]
     fn secret_storage_is_wiped_on_success_error_and_unwind() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         for outcome in 0..3 {
             let before = WIPES.with(std::cell::Cell::get);
             let result = std::panic::catch_unwind(|| {
@@ -195,6 +197,7 @@ mod tests {
 
     #[test]
     fn it_reads_lines_and_a_line_longer_than_its_buffer() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let mut file = tempfile::tempfile().unwrap();
         let long = "x".repeat(3000);
         file.write_all(format!("{long}\nshort\n").as_bytes())
@@ -213,6 +216,7 @@ mod tests {
 
     #[test]
     fn taking_the_file_wipes_the_buffer_in_place() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let mut reader = reader_after_one_line();
         let _file = reader.take_inner();
         assert!(reader.buffer_is_zero());
@@ -220,6 +224,7 @@ mod tests {
 
     #[test]
     fn dropping_the_reader_wipes_its_buffer() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let reader = reader_after_one_line();
         let before = WIPES.with(std::cell::Cell::get);
         drop(reader);

@@ -178,6 +178,7 @@ fn stdout_is_empty(mut output: File) {
 
 #[test]
 fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for op in [FirstLine::Create, FirstLine::Start] {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, op));
@@ -256,6 +257,7 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
 
 #[test]
 fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for key in [false, true] {
         let (_dir, listener, path) = listener();
         let (mut control, output) = launch(&first(&path, FirstLine::Discard));
@@ -287,6 +289,7 @@ fn discard_gets_no_transfer_or_receipt_and_events_still_use_rendezvous() {
 
 #[test]
 fn v2_and_empty_first_lines_keep_the_legacy_transport() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for message in [
         HostMessage::Create(CreateOffice {
             org_id: ID.into(),
@@ -335,6 +338,7 @@ fn v2_and_empty_first_lines_keep_the_legacy_transport() {
 // which exits on any startup error, never in a process that continues serving other work.
 #[test]
 fn handoff_fault_child() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let Ok(case) = std::env::var("KAI_STARTUP_FAULT") else {
         return;
     };
@@ -520,18 +524,20 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
         "ctrunc",
         "wrong_marker",
     ] {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "startup::tests::handoff_fault_child",
-                "--nocapture",
-            ])
-            .env("KAI_STARTUP_FAULT", case)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = crate::transfer::tests::spawn_process(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "startup::tests::handoff_fault_child",
+                    "--nocapture",
+                ])
+                .env("KAI_STARTUP_FAULT", case)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .unwrap();
         let start = std::time::Instant::now();
+        let _spawn = crate::transfer::tests::without_process_spawn();
         loop {
             if child.try_wait().unwrap().is_some() {
                 break;
@@ -554,6 +560,7 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
 
 #[test]
 fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     assert_eq!(HANDOFF_HEADER_MAX_BYTES, 1024);
     for size in [1024, 1025] {
         let (_dir, listener, path) = listener();
@@ -595,6 +602,7 @@ fn handoff_header_accepts_exact_cap_and_refuses_one_byte_more() {
 
 #[test]
 fn first_line_refusal_precedes_connect_and_connection_failures_are_propagated() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (_dir, listener, path) = listener();
     drop(listener);
     let (mut control, _) = launch(&first(&path, FirstLine::Start));
@@ -613,6 +621,7 @@ fn first_line_refusal_precedes_connect_and_connection_failures_are_propagated() 
 
 #[test]
 fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (stream, mut peer) = UnixStream::pair().unwrap();
     peer.write_all(b"ready").unwrap();
     let mut calls = 0;
@@ -636,6 +645,7 @@ fn receive_waits_after_would_block_and_fatal_diagnostics_are_fixed() {
 
 #[test]
 fn event_writer_errors_are_propagated_on_both_transports() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let input = tempfile::tempfile().unwrap();
     let output = tempfile::NamedTempFile::new().unwrap();
     let mut control = Control::new(
@@ -663,6 +673,7 @@ fn event_writer_errors_are_propagated_on_both_transports() {
 
 #[test]
 fn interrupted_polls_retry_but_other_poll_errors_end_reception() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let calls = std::cell::Cell::new(0);
     let polls = std::cell::Cell::new(0);
     assert_eq!(
@@ -709,6 +720,7 @@ fn interrupted_polls_retry_but_other_poll_errors_end_reception() {
 
 #[test]
 fn handoff_framing_uses_the_move_one_header_cap_vector() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let vectors: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../crates/org-office-launch/test-vectors/v3/transfer-records.json"
@@ -753,6 +765,7 @@ fn handoff_framing_uses_the_move_one_header_cap_vector() {
 
 #[test]
 fn unparsed_drain_retries_interrupts_and_stops_at_eof_or_error() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     struct Script {
         steps: std::collections::VecDeque<io::Result<usize>>,
         reads: usize,
@@ -782,6 +795,7 @@ fn unparsed_drain_retries_interrupts_and_stops_at_eof_or_error() {
 
 #[test]
 fn lifetime_probe_child() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let Ok(case) = std::env::var("KAI_LIFETIME_PROBE") else {
         return;
     };
@@ -831,32 +845,37 @@ fn lifetime_probe_child() {
 
 #[test]
 fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
-    let mut file = tempfile::tempfile().unwrap();
-    file.write_all(b"X").unwrap();
-    file.rewind().unwrap();
-    let mut pipe = Lifetime::Pipe(file);
-    assert_eq!(pipe.read(&mut []).unwrap(), 0);
-    let mut byte = [0];
-    assert_eq!(pipe.read(&mut byte).unwrap(), 1);
-    assert_eq!(byte, [b'X']);
+    {
+        let _spawn = crate::transfer::tests::without_process_spawn();
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"X").unwrap();
+        file.rewind().unwrap();
+        let mut pipe = Lifetime::Pipe(file);
+        assert_eq!(pipe.read(&mut []).unwrap(), 0);
+        let mut byte = [0];
+        assert_eq!(pipe.read(&mut byte).unwrap(), 1);
+        assert_eq!(byte, [b'X']);
+    }
     for case in [
         ("empty", 0),
         ("drop", 0),
         #[cfg(target_os = "macos")]
         ("poison", 1),
     ] {
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "startup::tests::lifetime_probe_child",
-                "--nocapture",
-            ])
-            .env("KAI_LIFETIME_PROBE", case.0)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = crate::transfer::tests::spawn_process(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "startup::tests::lifetime_probe_child",
+                    "--nocapture",
+                ])
+                .env("KAI_LIFETIME_PROBE", case.0)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .unwrap();
         let start = std::time::Instant::now();
+        let _spawn = crate::transfer::tests::without_process_spawn();
         loop {
             if child.try_wait().unwrap().is_some() {
                 break;
@@ -881,6 +900,7 @@ fn lifetime_empty_reads_preserve_bytes_and_control_drop_wakes_the_reader() {
 
 #[test]
 fn only_eof_and_connection_reset_are_host_disappearance_not_protocol_or_other_io_faults() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for kind in [
         io::ErrorKind::UnexpectedEof,
         io::ErrorKind::ConnectionReset,
@@ -906,6 +926,7 @@ fn only_eof_and_connection_reset_are_host_disappearance_not_protocol_or_other_io
 
 #[test]
 fn transfer_is_taken_once_with_the_same_owned_fd_and_spawn_fence() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (host, child) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let raw = child.as_raw_fd();
     let fence = Arc::new(Mutex::new(()));
@@ -922,6 +943,7 @@ fn transfer_is_taken_once_with_the_same_owned_fd_and_spawn_fence() {
 
 #[test]
 fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for unread in [false, true] {
         let (host, mut worker) = UnixStream::pair().unwrap();
         if unread {
@@ -964,6 +986,7 @@ fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
 
 #[test]
 fn rendezvous_writer_poison_refuses_without_writing_an_event() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
     let writer = Arc::new(Mutex::new(socket));
     let poisoned = Arc::clone(&writer);
@@ -984,6 +1007,7 @@ fn rendezvous_writer_poison_refuses_without_writing_an_event() {
 }
 #[test]
 fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_frames() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(WAIT)).unwrap();
     let (mut control, mut stdout) = control(b"");
@@ -1044,6 +1068,7 @@ fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_f
 
 #[test]
 fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finishes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
     let small: libc::c_int = 4096;
     // SAFETY: this test owns the live socket and the correctly sized int buffer.
@@ -1082,6 +1107,7 @@ fn event_writer_holds_the_shared_lock_until_the_whole_backpressured_frame_finish
 }
 #[test]
 fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
     let small: libc::c_int = 4096;
     // SAFETY: owned live socket, correctly sized int.
@@ -1128,6 +1154,7 @@ fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
 
 #[test]
 fn writer_is_available_only_for_the_authenticated_rendezvous_transport() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (mut control, _) = control(b"");
     assert!(control.writer().is_none());
     let (socket, _peer) = UnixStream::pair().unwrap();

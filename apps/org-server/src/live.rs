@@ -205,6 +205,7 @@ mod tests {
 
     #[test]
     fn a_subscriber_sees_only_what_is_published_after_its_head_and_each_publish_wakes() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let woken = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&woken);
         let live = LiveEvents::new(Box::new(move || {
@@ -241,6 +242,7 @@ mod tests {
 
     #[test]
     fn a_flood_of_presence_cannot_push_message_events_out() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let live = LiveEvents::new(Box::new(|| {}));
         live.publish_live(state("urgent"));
         for n in 0..CAPACITY * 3 {
@@ -260,6 +262,7 @@ mod tests {
 
     #[test]
     fn a_reader_that_fell_behind_the_ring_is_told_it_lost_events() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let live = LiveEvents::new(Box::new(|| {}));
         for n in 0..CAPACITY + 10 {
             live.publish_live(state(&n.to_string()));

@@ -3,6 +3,7 @@ use std::os::fd::AsRawFd;
 
 #[test]
 fn registry_rejects_each_identity_fault_and_tracks_only_live_opaque_ids() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let registry: Registry = Arc::default();
     let (socket, _peer) = UnixStream::pair().unwrap();
     for id in ["", "handoff"] {
@@ -27,6 +28,7 @@ fn registry_rejects_each_identity_fault_and_tracks_only_live_opaque_ids() {
 
 #[test]
 fn total_and_gateway_bounds_are_independent_and_release_on_drop() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, _peer) = UnixStream::pair().unwrap();
     for local in [true, false] {
         let registry: Registry = Arc::default();
@@ -158,6 +160,7 @@ fn owned_channel(stream: UnixStream, office: &str, id: &str) -> Channel {
 }
 #[test]
 fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use std::io::Read;
     let (mut channels, events, _, _) = manager();
@@ -192,6 +195,7 @@ fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack
 }
 #[test]
 fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_joined_shutdown() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     let (mut channels, events, shared, policy) = manager();
     let (stream, peer) = UnixStream::pair().unwrap();
@@ -234,6 +238,7 @@ fn admission_ack_keeps_owned_stream_registry_thread_and_shared_policy_until_join
 }
 #[test]
 fn event_write_failure_propagates_after_ownership_then_shutdown_releases_all_handles() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     let (mut channels, _events, _, policy) = manager();
     channels
@@ -290,6 +295,7 @@ impl Builder {
 }
 #[test]
 fn thread_creation_refusal_drops_owned_closure_registration_and_fd_before_any_ack() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use std::io::Read;
     let (mut channels, events, shared, policy) = manager();
@@ -318,6 +324,7 @@ fn thread_creation_refusal_drops_owned_closure_registration_and_fd_before_any_ac
 
 #[test]
 fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_ack() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use org_proto::frame;
     use serde_json::{json, Value};
@@ -452,6 +459,7 @@ fn blocked_office_snapshot_does_not_block_fifo_revocation_or_channel_ownership_a
 
 #[test]
 fn blocked_ack_writer_observes_registry_and_a_serving_owner_before_ack_is_possible() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use org_mailbox::testkit::fixture::OFFICE_ID;
     use org_proto::frame;
     use std::io::BufReader;
@@ -505,6 +513,7 @@ fn blocked_ack_writer_observes_registry_and_a_serving_owner_before_ack_is_possib
 }
 #[test]
 fn poisoned_registry_refuses_registration_and_ack_while_cleanup_still_recovers() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (mut channels, events, _, _) = manager();
     let registry = Arc::clone(&channels.registry);
     assert!(std::thread::spawn(move || {
@@ -534,7 +543,65 @@ fn poisoned_registry_refuses_registration_and_ack_while_cleanup_still_recovers()
 
 #[test]
 #[allow(unsafe_code)]
+fn nonblocking_source_delivers_a_complete_reply_larger_than_its_send_buffer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use std::io::Write;
+    use std::time::Duration;
+    let (mut channels, _events, _, _) = manager();
+    channels.hello.server_version = "x".repeat(org_proto::MAX_FRAME_BYTES / 2);
+    let (entered, at_exit) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    HOLD_THREAD_EXIT.with(|gate| *gate.borrow_mut() = Some((entered, released)));
+    let (socket, mut peer) = UnixStream::pair().unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: this test owns the live socket and passes a correctly sized int.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    channels
+        .open(owned_channel(
+            socket,
+            org_mailbox::testkit::fixture::OFFICE_ID,
+            "backpressured",
+        ))
+        .unwrap();
+    peer.write_all(b"{\"id\":1,\"method\":\"hello\",\"params\":{\"api\":{\"min\":2,\"max\":2}}}\n")
+        .unwrap();
+    assert!(
+        org_socket::poll_readable(peer.as_raw_fd(), Duration::from_secs(2)).unwrap(),
+        "channel never entered its large response write"
+    );
+    let early_exit = at_exit.recv_timeout(Duration::from_millis(100));
+    release.send(()).unwrap();
+    assert!(
+        matches!(early_exit, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+        "the channel abandoned the backpressured reply before its peer drained it"
+    );
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let mut peer = std::io::BufReader::new(peer);
+    let response: serde_json::Value = org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+    assert_eq!(
+        response["result"]["server_version"],
+        channels.hello.server_version
+    );
+    assert_eq!(response["result"]["api_version"], 2);
+    drop(channels);
+}
+
+#[test]
+#[allow(unsafe_code)]
 fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use std::io::Write;
     use std::time::Duration;
     let (mut channels, _events, _, _) = manager();
@@ -585,6 +652,7 @@ fn shutdown_interrupts_a_channel_blocked_writing_before_joining_it() {
 
 #[test]
 fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gone() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use std::time::Duration;
     let (mut channels, _events, _, _) = manager();
     let (entered, at_exit) = std::sync::mpsc::channel();
@@ -624,6 +692,7 @@ fn channel_drop_waits_for_the_actual_thread_exit_even_after_its_captures_are_gon
 
 #[test]
 fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (mut channels, _events, _, _) = manager();
     let registry = Arc::clone(&channels.registry);
     assert!(std::thread::spawn(move || {
@@ -649,6 +718,7 @@ fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
 }
 #[test]
 fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (mut channels, events, _, _) = manager();
     let (socket, peer) = UnixStream::pair().unwrap();
     peer.shutdown(std::net::Shutdown::Both).unwrap();
@@ -671,6 +741,7 @@ fn already_closed_peer_is_adopted_and_acknowledged_then_reaped_normally() {
 }
 #[test]
 fn admission_reaps_finished_handles_but_retains_every_still_live_thread() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     use std::time::{Duration, Instant};
     let (mut channels, _events, _, _) = manager();
     let (socket, peer) = UnixStream::pair().unwrap();

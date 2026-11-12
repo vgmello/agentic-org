@@ -57,6 +57,7 @@ pub(super) fn with_principal(id: u64, method: &str, params: Value, principal: Va
 
 #[test]
 fn operation_lookup_refuses_agents_and_anonymous_without_calling_owner_port_in_both_modes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for grants in [false, true] {
         for stored_principal in [Some("owner"), None] {
             let calls = Arc::new(AtomicUsize::new(0));
@@ -140,6 +141,7 @@ fn operation_lookup_refuses_agents_and_anonymous_without_calling_owner_port_in_b
 
 #[test]
 fn principal_envelopes_are_refused_before_each_special_dispatch_in_both_modes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for grants in [false, true] {
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -173,6 +175,7 @@ fn principal_envelopes_are_refused_before_each_special_dispatch_in_both_modes() 
 
 #[test]
 fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generation() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
     let path = dir.path().join("s.sock");
     let feed = Arc::new(FakeFeed::default());
@@ -239,6 +242,7 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
 
 #[test]
 fn accepted_office_socket_serves_only_matching_peer_uid_in_both_modes() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let uid = org_socket::effective_uid();
     for grants in [false, true] {
         for expected in [uid, uid.wrapping_add(1)] {
@@ -283,6 +287,7 @@ fn accepted_office_socket_serves_only_matching_peer_uid_in_both_modes() {
 
 #[test]
 fn principal_refusal_precedes_even_the_live_member_lookup() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     struct Directory {
         inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
         forbidden: Arc<AtomicBool>,
@@ -346,6 +351,7 @@ fn principal_refusal_precedes_even_the_live_member_lookup() {
 
 #[test]
 fn failed_principal_refusal_write_ends_before_polling_another_request() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for grants in [false, true] {
         let (stream, mut peer) = UnixStream::pair().unwrap();
         frame::write_message(
