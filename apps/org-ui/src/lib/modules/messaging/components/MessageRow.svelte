@@ -97,7 +97,7 @@
 				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} draft={askDraft} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : (opener) => onthread?.(message, opener)} />
 			</div>
 		{:else}
-			<div class="mt-0.5" data-testid="message-body">
+			<div class="mt-0.5 min-w-0 [&_a]:whitespace-normal" data-testid="message-body">
 				<Rich body={expanded ? message.body : long.shown} />
 				{#if long.hidden > 0}
 					<button type="button" class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button>
