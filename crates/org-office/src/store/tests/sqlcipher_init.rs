@@ -738,6 +738,7 @@ fn bounded_child(command: &mut Command, label: &str) {
     bounded_output(command, label);
 }
 
+// Capture is bounded in time, not output size.
 fn bounded_output(command: &mut Command, label: &str) -> String {
     let dir = TempDir::new().unwrap();
     let out = dir.path().join("stdout");

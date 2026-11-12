@@ -4,6 +4,15 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
+const POLICY_NAMES: &[&str] = &[
+    "Cargo.toml",
+    ".cargo",
+    ".cargo/config",
+    ".cargo/config.toml",
+    "clippy.toml",
+    ".clippy.toml",
+];
+
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
     command.env_clear();
@@ -28,9 +37,19 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
     for path in &paths {
         assert!(
             !path.is_dir(),
-            "tracked directory symlink: {}",
+            "tracked input resolves to a directory (symlink or gitlink): {}",
             path.display()
         );
+        for relative in path.strip_prefix(&root).unwrap().ancestors() {
+            let folded = std::path::PathBuf::from(relative.to_string_lossy().to_ascii_lowercase());
+            for &name in POLICY_NAMES {
+                assert!(
+                    !folded.ends_with(name.to_ascii_lowercase()) || relative.ends_with(name),
+                    "case-variant policy name: {}",
+                    path.display()
+                );
+            }
+        }
     }
     let scope = SourceScope {
         files: paths
@@ -38,10 +57,7 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
             .filter(|path| {
                 path.extension().is_some_and(|ext| ext == "rs")
                     || opener_policy_config(path)
-                    || matches!(
-                        path.file_name().and_then(|s| s.to_str()),
-                        Some("clippy.toml" | ".clippy.toml")
-                    )
+                    || POLICY_NAMES.iter().any(|name| path.ends_with(name))
             })
             .cloned()
             .collect(),
@@ -66,13 +82,7 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
         })
         .collect::<BTreeSet<_>>();
     for directory in directories {
-        for name in [
-            ".cargo",
-            ".cargo/config",
-            ".cargo/config.toml",
-            "clippy.toml",
-            ".clippy.toml",
-        ] {
+        for &name in POLICY_NAMES {
             let path = directory.join(name);
             match std::fs::symlink_metadata(&path) {
                 Ok(metadata) => {
@@ -182,6 +192,8 @@ fn sqlcipher_tracked_inventory_covers_all_names_and_config_classes() {
     std::fs::write(untracked, "#![allow(clippy::all)]").unwrap();
     super::check_source_inventory(allowed.path());
     for name in [
+        "Cargo.toml",
+        "nested/Cargo.toml",
         "nested/.cargo/config",
         "nested/.cargo/config.toml",
         "nested/clippy.toml",
@@ -209,6 +221,44 @@ fn sqlcipher_tracked_inventory_covers_all_names_and_config_classes() {
     super::check_source_inventory(&inner);
     let missing = tempfile::tempdir().unwrap();
     assert!(std::panic::catch_unwind(|| tracked(missing.path())).is_err());
+}
+
+#[test]
+fn sqlcipher_inventory_refuses_policy_name_case_variants_on_every_filesystem() {
+    let clippy = include_str!("../../../../../clippy.toml");
+    let canonical = fixture(&[
+        ("nested/Cargo.toml", ""),
+        ("nested/.cargo/config", ""),
+        ("nested/.cargo/config.toml", ""),
+        ("nested/clippy.toml", clippy),
+        ("nested/.clippy.toml", clippy),
+        ("nested/NotCargo.toml", "not a policy input"),
+        ("nested/Cargo.toml.extra", "not a policy input"),
+    ]);
+    tracked(canonical.path());
+    for (name, source) in [
+        (
+            "nested/cargo.toml",
+            "[lints.clippy]\ndisallowed_methods='allow'",
+        ),
+        (
+            "nested/CARGO.TOML",
+            "[lints.clippy]\ndisallowed_methods='allow'",
+        ),
+        ("nested/.Cargo/config.toml", ""),
+        ("nested/.CARGO/config", ""),
+        ("nested/.Cargo/asset.txt", "not a policy input"),
+        ("nested/.cargo/Config.toml", ""),
+        ("nested/.cargo/CONFIG", ""),
+        ("nested/Clippy.toml", clippy),
+        ("nested/.Clippy.toml", clippy),
+    ] {
+        let directory = fixture(&[(name, source)]);
+        assert!(
+            std::panic::catch_unwind(|| tracked(directory.path())).is_err(),
+            "accepted case-variant policy name {name}"
+        );
+    }
 }
 
 #[cfg(unix)]
