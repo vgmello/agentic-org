@@ -1017,9 +1017,12 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
         result: serde_json::to_value(accepted).unwrap(),
     };
     assert_eq!(lookup(&client, &command).unwrap(), expected);
-    // Before grants, even a legacy-first unbound connection acts as the owner for lookup.
+    // Owner/NULL rows are private even to a legacy-first unbound connection.
     let reader = Client::connect(socket(&world)).unwrap();
-    assert_eq!(lookup(&reader, &command).unwrap(), expected);
+    assert_eq!(
+        api_code(lookup(&reader, &command).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
     assert_eq!(
         api_code(lookup(&reader, "bad").unwrap_err()),
         org_proto::ErrorCode::InvalidRequest
@@ -1034,8 +1037,17 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
         panic!("expected a domain refusal")
     };
     let rejected = org_proto::OperationOutcome::Rejected { refusal };
-    assert_eq!(lookup(&reader, &refusal_id).unwrap(), rejected);
+    assert_eq!(
+        api_code(lookup(&reader, &refusal_id).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
     reader.hello().unwrap();
+    assert_eq!(
+        api_code(lookup(&reader, &command).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
+    bind(&reader, token()).unwrap();
+    assert_eq!(lookup(&reader, &refusal_id).unwrap(), rejected);
     assert_eq!(lookup(&reader, &command).unwrap(), expected);
     drop(reader);
     let after = snapshot(&client);
@@ -1049,9 +1061,13 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     let client = Client::connect(socket(&world)).unwrap();
+    assert_eq!(
+        api_code(lookup(&client, &command).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
+    bind(&client, token()).unwrap();
     assert_eq!(lookup(&client, &command).unwrap(), expected);
     assert_eq!(lookup(&client, &refusal_id).unwrap(), rejected);
-    bind(&client, token()).unwrap();
     assert_eq!(snapshot(&client), after);
     assert_eq!(
         team_create(&client, &command, "Platform").unwrap(),

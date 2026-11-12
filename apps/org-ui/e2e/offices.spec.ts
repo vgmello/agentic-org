@@ -850,7 +850,7 @@ test('OFC-1 OFC-13 BUG-70 OF-2 OF-3 OF-4 OF-5: Offices and Unplaced use flat qui
 	await expect(rows(page).first()).toHaveCSS('padding-left', '32px');
 	const normalRow = rows(page).first();
 	expect(await normalRow.evaluate(element => {
-	 const pill = element.querySelector('[data-status-icon]')!.getBoundingClientRect(), chevron = element.querySelector(':scope > svg')!.getBoundingClientRect();
+	 const pill = element.querySelector('[data-status-icon]')!.getBoundingClientRect(), chevron = element.querySelector(':scope > svg, [data-testid=office-actions] > svg')!.getBoundingClientRect();
 	 return Math.abs((pill.top + pill.bottom) / 2 - (chevron.top + chevron.bottom) / 2);
 	})).toBeLessThanOrEqual(1);
 	await expect(rows(page).first().locator(':scope > span[aria-hidden=true]').filter({ hasText: /^HQ$/ })).toHaveCount(0);
@@ -935,7 +935,7 @@ async function expectReadableOfficeName(row: Locator) {
 async function expectFullStatusWord(row: Locator, chevronOnNextLine = false) {
  const geometry = await row.evaluate(element => {
   const pill = element.querySelector('[data-status-icon]')!, label = pill.lastElementChild!, group = element.querySelector('[data-testid=office-actions]')!;
-  const css = getComputedStyle(element), chevron = element.querySelector(':scope > svg')!;
+  const css = getComputedStyle(element), chevron = element.querySelector(':scope > svg, [data-testid=office-actions] > svg')!;
   const box = element.getBoundingClientRect(), arrow = chevron.getBoundingClientRect();
   return { rootFont: getComputedStyle(document.documentElement).fontSize, rowWidth: box.width, paddingLeft: css.paddingLeft, paddingRight: css.paddingRight, labelWidth: label.clientWidth, labelScroll: label.scrollWidth, pillBottom: pill.getBoundingClientRect().bottom, chevronTop: arrow.top, chevronEndGap: box.right - parseFloat(css.paddingRight) - arrow.right, chevronWidth: arrow.width, chevronFits: arrow.left >= box.left && arrow.right <= box.right, rowFits: element.scrollWidth <= element.clientWidth };
  });
@@ -1066,7 +1066,7 @@ test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a n
  await expectReadableOfficeName(row);
  const opener = row.locator('button[aria-haspopup]');
  await expect(row.getByRole('button')).toHaveCount(1);
- const arrow = await row.locator(':scope > svg').boundingBox();
+ const arrow = await row.locator(':scope > svg, [data-testid=office-actions] > svg').boundingBox();
  expect(arrow).not.toBeNull();
  await page.mouse.click(arrow!.x + arrow!.width / 2, arrow!.y + arrow!.height / 2);
  await expect(page.getByRole('dialog')).toBeVisible();
@@ -1163,35 +1163,38 @@ for (const rootFont of [20, 40]) for (const width of [300, 304, 960]) {
 
 async function expectTrailingOfficeChevron(row: Locator, retryExpected: boolean, mayWrap = false) {
 	expect(await row.locator('[data-status-icon]').evaluate(e => e.closest('[aria-hidden="true"]'))).not.toBeNull();
-	await expect(row.locator(':scope > svg')).toHaveAttribute('aria-hidden', 'true');
+	await expect(row.locator('[data-testid=office-actions] > svg')).toHaveAttribute('aria-hidden', 'true');
 	await expect(row.getByTestId('retry-office')).toHaveCount(retryExpected ? 1 : 0);
 	if (retryExpected) {
 		await expect(row.getByRole('button', { name: /Retry/ })).toHaveCount(1);
 		expect(await row.getByTestId('retry-office').evaluate(e => e.closest('[aria-hidden="true"]'))).toBeNull();
 	}
 	const layout = await row.evaluate(element => {
-		const pill = element.querySelector('[data-status-icon]')!, group = element.querySelector('[data-testid=office-actions]')!, arrow = element.querySelector(':scope > svg')!;
+		const pill = element.querySelector('[data-status-icon]')!, group = element.querySelector('[data-testid=office-actions]')!, arrow = group.querySelector(':scope > svg')!;
 		const retry = element.querySelector('[data-testid=retry-office]');
-		const box = element.getBoundingClientRect(), status = pill.getBoundingClientRect(), end = arrow.getBoundingClientRect(), pair = group.getBoundingClientRect();
-		const css = getComputedStyle(element);
-		return { rowStart: box.left + parseFloat(css.paddingLeft), rowEnd: box.right - parseFloat(css.paddingRight), rowBottom: box.bottom, gap: parseFloat(css.columnGap), pairStart: pair.left, pairEnd: pair.right, pairWidth: pair.width, pairBottom: pair.bottom, pillStart: status.left, pillEnd: status.right, pillBottom: status.bottom, pillMid: (status.top + status.bottom) / 2, arrowStart: end.left, arrowEnd: end.right, arrowTop: end.top, arrowBottom: end.bottom, arrowWidth: end.width, arrowMid: (end.top + end.bottom) / 2, last: element.lastElementChild === arrow, retry: retry ? { left: retry.getBoundingClientRect().left, right: retry.getBoundingClientRect().right, top: retry.getBoundingClientRect().top, mid: (retry.getBoundingClientRect().top + retry.getBoundingClientRect().bottom) / 2, width: retry.getBoundingClientRect().width, height: retry.getBoundingClientRect().height } : null };
+		const box = (item: Element) => { const b = item.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height, mid: (b.top + b.bottom) / 2 }; };
+		const row = element.getBoundingClientRect(), css = getComputedStyle(element);
+		return { rowStart: row.left + parseFloat(css.paddingLeft), rowEnd: row.right - parseFloat(css.paddingRight), rowBottom: row.bottom, gap: parseFloat(css.columnGap), pill: box(pill), arrow: box(arrow), last: element.lastElementChild === group && group.lastElementChild === arrow, retry: retry ? box(retry) : null };
 	});
 	expect(layout.last).toBe(true);
-	expect(layout.arrowEnd, JSON.stringify(layout)).toBeCloseTo(layout.rowEnd, 0);
-	expect(layout.arrowBottom).toBeLessThanOrEqual(layout.rowBottom);
-	const fits = layout.pairWidth + layout.gap + layout.arrowWidth <= layout.rowEnd - layout.rowStart + 0.5;
+	expect(layout.arrow.right, JSON.stringify(layout)).toBeCloseTo(layout.rowEnd, 0);
+	expect(layout.arrow.bottom).toBeLessThanOrEqual(layout.rowBottom);
+	const previous = layout.retry ?? layout.pill;
+	const fits = previous.width + layout.gap + layout.arrow.width <= layout.rowEnd - layout.rowStart + 0.5;
+	// BUG-150: the chevron joins Retry's line whenever that pair fits, even if the pill wrapped.
 	if (!mayWrap || fits) {
-		expect(Math.abs(layout.arrowMid - layout.pillMid), JSON.stringify(layout)).toBeLessThanOrEqual(1);
-		expect(layout.arrowStart).toBeGreaterThanOrEqual(layout.pillEnd);
-		expect(layout.arrowStart - layout.pairEnd).toBeCloseTo(layout.gap, 0);
-	} else expect(layout.arrowTop, JSON.stringify(layout)).toBeGreaterThanOrEqual(layout.pairBottom);
+		expect(Math.abs(layout.arrow.mid - previous.mid), JSON.stringify(layout)).toBeLessThanOrEqual(1);
+		expect(layout.arrow.left - previous.right).toBeCloseTo(layout.gap, 0);
+	} else expect(layout.arrow.top, JSON.stringify(layout)).toBeGreaterThanOrEqual(previous.bottom);
 	if (layout.retry) {
 		expect(layout.retry.width).toBeGreaterThanOrEqual(24);
 		expect(layout.retry.height).toBeGreaterThanOrEqual(24);
 		expect(layout.retry.left).toBeGreaterThanOrEqual(layout.rowStart);
 		expect(layout.retry.right).toBeLessThanOrEqual(layout.rowEnd);
-		if (layout.retry.top >= layout.pillBottom) expect(layout.retry.left).toBeCloseTo(layout.pairStart, 0);
-		else expect(layout.retry.left).toBeGreaterThanOrEqual(layout.pillEnd);
+		expect(layout.retry.top).toBeGreaterThanOrEqual(layout.pill.top);
+		const overlap = Math.min(layout.retry.bottom, layout.pill.bottom) - Math.max(layout.retry.top, layout.pill.top);
+		if (overlap > 1) expect(layout.retry.left).toBeGreaterThanOrEqual(layout.pill.right);
+		else expect(layout.retry.top).toBeGreaterThanOrEqual(layout.pill.bottom);
 	}
 	await expectReadableOfficeName(row);
 	await expectVisibleStatusText(row);
@@ -1333,5 +1336,46 @@ for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 		// Ada01M77C980: preserve the deferred full-word requirement, not a silent pass.
 		test.fail(true, 'BUG-119: shell leaves too little content width at 960px/root40; remove once fixed.');
 		expect(text.width, JSON.stringify(text)).toBe(text.natural);
+	});
+}
+
+for (const [width, rootFont] of [[320, 16], [390, 16], [1280, 16], [320, 32], [320, 40], [390, 40], [1100, 40]] as const) {
+	test(`OFC-12 OFC-13 BUG-70 BUG-150: status flow ends every line at ${width}px root${rootFont}`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 1100 });
+		await openOffices(page);
+		await visit(page, '/offices?mock=unreachable');
+		const row = rows(page).first(), retry = row.getByTestId('retry-office');
+		await expect(row.locator('[data-status-icon]')).toHaveText('Unreachable');
+		await expect(retry).toHaveText('Retry');
+		await page.addStyleTag({ content: `html { font-size: ${rootFont === 32 ? '200%' : `${rootFont}px`} !important; }` });
+		await expect(page.locator('html')).toHaveCSS('font-size', `${rootFont}px`);
+		await shot(page, `bug150-flow-${width}-${rootFont}`, { context: row });
+		await expectFullStatusWord(row);
+		expect(await retry.evaluate(element => element.closest('[aria-hidden="true"]'))).toBeNull();
+		const layout = await row.evaluate(element => {
+			const box = (item: Element) => { const b = item.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, width: b.width, height: b.height }; };
+			const pill = element.querySelector('[data-status-icon]')!, retry = element.querySelector('[data-testid=retry-office]')!, arrow = element.querySelector(':scope > svg, [data-testid=office-actions] > svg')!;
+			const bounds = element.getBoundingClientRect(), css = getComputedStyle(element);
+			const group = element.querySelector('[data-testid=office-actions]')!, groupCss = getComputedStyle(group);
+			return { start: bounds.left + parseFloat(css.paddingLeft), end: bounds.right - parseFloat(css.paddingRight), gap: parseFloat(groupCss.columnGap), rowGap: parseFloat(css.columnGap), pill: box(pill), retry: box(retry), arrow: box(arrow), retryLabel: { width: retry.clientWidth, natural: retry.scrollWidth }, ordered: !!(pill.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(retry.compareDocumentPosition(arrow) & Node.DOCUMENT_POSITION_FOLLOWING) };
+		});
+		expect(layout.ordered).toBe(true);
+		expect(layout.retryLabel.width).toBeGreaterThan(0);
+		expect(layout.retryLabel.width).toBeGreaterThanOrEqual(layout.retryLabel.natural);
+		const lines: { bottom: number; top: number; end: number }[] = [];
+		for (const item of [layout.pill, layout.retry, layout.arrow]) {
+			expect(item.left, JSON.stringify(layout)).toBeGreaterThanOrEqual(layout.start - 1);
+			expect(item.right, JSON.stringify(layout)).toBeLessThanOrEqual(layout.end + 1);
+			const line = lines.find(line => Math.min(line.bottom, item.bottom) - Math.max(line.top, item.top) > 1);
+			if (line) line.end = item.right;
+			else lines.push({ top: item.top, bottom: item.bottom, end: item.right });
+		}
+		for (const line of lines) expect(Math.abs(line.end - layout.end), JSON.stringify(layout)).toBeLessThanOrEqual(1);
+		expect(Math.abs(layout.arrow.right - layout.end), JSON.stringify(layout)).toBeLessThanOrEqual(1);
+		if (layout.retry.width + layout.gap + layout.arrow.width <= layout.end - layout.start) {
+			expect(Math.min(layout.retry.bottom, layout.arrow.bottom) - Math.max(layout.retry.top, layout.arrow.top), JSON.stringify(layout)).toBeGreaterThan(1);
+			expect(Math.abs((layout.retry.top + layout.retry.bottom) / 2 - (layout.arrow.top + layout.arrow.bottom) / 2), JSON.stringify(layout)).toBeLessThanOrEqual(1);
+			expect(Math.abs(layout.arrow.left - layout.retry.right - layout.rowGap), 'Preserve the original chevron gap: ' + JSON.stringify(layout)).toBeLessThanOrEqual(1);
+		}
 	});
 }

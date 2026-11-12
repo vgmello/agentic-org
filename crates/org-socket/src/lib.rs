@@ -4,7 +4,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+mod peer;
 pub mod rights;
+
+pub use peer::{effective_uid, peer_allowed};
 
 use std::io::{self, BufRead, BufReader, Read};
 use std::os::fd::{AsRawFd, RawFd};
