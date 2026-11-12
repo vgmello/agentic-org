@@ -74,19 +74,41 @@ fn current_task_set_restart_done_and_clear_keep_the_status_halves_independent() 
     assert_eq!(event.current_task_id.as_deref(), Some(ITEM));
     assert_eq!(event.status, None);
     assert_eq!(current(&office).as_deref(), Some(ITEM));
-    let set = office
-        .set_status(
-            AGENT,
-            &StatusSetParams {
-                text: Some("Working".into()),
-                ttl_ms: None,
-            },
-        )
-        .unwrap()
-        .unwrap();
+    let status = StatusSetParams {
+        text: Some("Working".into()),
+        ttl_ms: None,
+    };
+    let set = office.set_status(AGENT, &status).unwrap().unwrap();
     let event = crate::presence_after_status(AGENT, &set.0, set.1);
     assert_eq!(event.status.as_deref(), Some("Working"));
     assert_eq!(event.current_task_id.as_deref(), Some(ITEM));
+    office
+        .local_store()
+        .run_sql_for_test("UPDATE member_status SET expires_at='2000-01-01T00:00:00.000Z';");
+    let expired = rows(&office);
+    let who = office
+        .who_with_status(&WhoParams::default())
+        .unwrap()
+        .unwrap();
+    let card = who
+        .members
+        .iter()
+        .find(|member| member.id == AGENT)
+        .unwrap();
+    assert_eq!(card.status, None);
+    assert_eq!(card.current_task_id.as_deref(), Some(ITEM));
+    assert_eq!(rows(&office), expired, "expiry is checked without a write");
+    let set = office
+        .set_status(AGENT, &StatusSetParams::default())
+        .unwrap()
+        .unwrap();
+    let event = crate::presence_after_status(AGENT, &set.0, set.1);
+    assert_eq!(event.status, None);
+    assert_eq!(event.current_task_id.as_deref(), Some(ITEM));
+    assert_eq!(rows(&office)[0].2.as_deref(), Some(ITEM));
+    assert_eq!(rows(&office)[0].4, None);
+    let set = office.set_status(AGENT, &status).unwrap().unwrap();
+    assert_eq!(set.1.as_deref(), Some(ITEM));
     let folder = folder_of(&dir, ID);
     drop(office);
     let office = Office::open(&folder, key).unwrap();
