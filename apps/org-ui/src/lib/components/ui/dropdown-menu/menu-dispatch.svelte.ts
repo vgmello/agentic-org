@@ -1,3 +1,7 @@
+export type MenuValidityProps = {
+	isValidEvent?: (event: PointerEvent, node: HTMLElement) => boolean;
+};
+
 type Snapshot = {
 	node: HTMLElement; path: EventTarget[]; target: Element | null; button: number; pointerType: string;
 	x: number; y: number; rect: DOMRect; insideTree: boolean;
@@ -30,7 +34,7 @@ export function createMenuDispatch(content: () => HTMLElement | null) {
 		const node = content();
 		if (!node) return;
 		const document = node.ownerDocument;
-		function captureMenuDispatch(event: Event) {
+		const captureMenuDispatch = (event: Event) => {
 			const path = event.composedPath(), root = resolveMenuRoot(node);
 			const pointer = event as PointerEvent;
 			const insideTree = !root || path.some(target => {
@@ -41,7 +45,7 @@ export function createMenuDispatch(content: () => HTMLElement | null) {
 			snapshots.set(event, { node, path, target: event.target instanceof Element ? event.target : null, button: pointer.button,
 				pointerType: pointer.pointerType, x: pointer.clientX, y: pointer.clientY,
 				rect: node.getBoundingClientRect(), insideTree });
-		}
+		};
 		document.addEventListener("pointerdown", captureMenuDispatch, true);
 		document.addEventListener("click", captureMenuDispatch, true);
 		return () => {

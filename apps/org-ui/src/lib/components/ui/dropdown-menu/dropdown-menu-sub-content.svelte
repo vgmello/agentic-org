@@ -2,7 +2,7 @@
 	import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";
 	import DropdownMenuPortal from "./dropdown-menu-portal.svelte";
-	import { createMenuDispatch } from "./menu-dispatch.svelte";
+	import { createMenuDispatch, type MenuValidityProps } from "./menu-dispatch.svelte";
 	import type { ComponentProps } from "svelte";
 
 	let {
@@ -13,10 +13,11 @@
 		alignOffset = -3,
 		portalProps,
 		...restProps
-	}: DropdownMenuPrimitive.SubContentProps & {
+	}: DropdownMenuPrimitive.SubContentProps & MenuValidityProps & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DropdownMenuPortal>>;
 	} = $props();
 	const dispatch = createMenuDispatch(() => ref);
+	const validity: MenuValidityProps = { isValidEvent: (event, node) => isValidEvent?.(event, node) || dispatch.valid(event, node) };
 </script>
 
 <DropdownMenuPortal {...portalProps}>
@@ -24,7 +25,7 @@
 		bind:ref
 		data-slot="dropdown-menu-sub-content"
 		{align}
-		isValidEvent={(event, node) => isValidEvent?.(event, node) || dispatch.valid(event, node)}
+		{...validity}
 		{alignOffset}
 		class={cn(
 			"data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ring-foreground/10 bg-popover text-popover-foreground min-w-[96px] rounded-md p-1 shadow-lg ring-1 duration-100 z-50 origin-(--bits-dropdown-menu-content-transform-origin) overflow-hidden",

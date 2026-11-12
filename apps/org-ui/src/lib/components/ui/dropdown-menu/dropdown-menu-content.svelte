@@ -2,7 +2,7 @@
 	import { DropdownMenu as DropdownMenuPrimitive } from "bits-ui";
 	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";
 	import DropdownMenuPortal from "./dropdown-menu-portal.svelte";
-	import { createMenuDispatch } from "./menu-dispatch.svelte";
+	import { createMenuDispatch, type MenuValidityProps } from "./menu-dispatch.svelte";
 	import { tick, type ComponentProps } from "svelte";
 
 	let {
@@ -16,11 +16,12 @@
 		portalProps,
 		class: className,
 		...restProps
-	}: DropdownMenuPrimitive.ContentProps & {
+	}: DropdownMenuPrimitive.ContentProps & MenuValidityProps & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DropdownMenuPortal>>;
 	} = $props();
 
 	const dispatch = createMenuDispatch(() => ref);
+	const validity: MenuValidityProps = { isValidEvent: (event, node) => isValidEvent?.(event, node) || dispatch.valid(event, node) };
 	let pointerClose: { content: HTMLElement; target: HTMLElement | null; trigger: HTMLElement | null } | undefined;
 	function interactOutside(event: PointerEvent) {
 		pointerClose = undefined;
@@ -56,7 +57,7 @@
 		{sideOffset}
 		{align}
 		{preventScroll}
-		isValidEvent={(event, node) => isValidEvent?.(event, node) || dispatch.valid(event, node)}
+		{...validity}
 		onInteractOutside={interactOutside}
 		onCloseAutoFocus={closeAutoFocus}
 		class={cn(

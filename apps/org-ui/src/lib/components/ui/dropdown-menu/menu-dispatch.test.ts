@@ -46,3 +46,27 @@ it('fails conservatively for a detached parent menu', () => {
 it('fails conservatively for a cyclic control relationship', () => {
  const g=menuGraph(), root=g.menu('root'), sub=g.menu('sub',root); g.triggers.get('root')!.closest=()=>sub; expect(resolveMenuRoot(sub)).toBeNull();
 });
+
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+it('pins the Bits2.20.6 runtime-only validity bridge until its public types are rechecked', () => {
+ const installed = JSON.parse(readFileSync(new URL('../package.json', import.meta.resolve('bits-ui')), 'utf8'));
+ expect(installed.version).toBe('2.20.6');
+ const probe = fileURLToPath(new URL('./bits-validity-pin.ts', import.meta.url));
+ const source = 'import type { DropdownMenu } from "bits-ui"; type Content = DropdownMenu.ContentProps; type SubContent = DropdownMenu.SubContentProps;';
+ const options = { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, skipLibCheck: true, noEmit: true };
+ const host = ts.createCompilerHost(options), read = host.readFile.bind(host), exists = host.fileExists.bind(host);
+ host.readFile = file => file === probe ? source : read(file);
+ host.fileExists = file => file === probe || exists(file);
+ const program = ts.createProgram([probe], options, host), checker = program.getTypeChecker();
+ expect(ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([]);
+ const aliases = program.getSourceFile(probe)!.statements.filter(ts.isTypeAliasDeclaration);
+ expect(aliases).toHaveLength(2);
+ for (const alias of aliases) {
+  const props = checker.getTypeAtLocation(alias);
+  expect(props.getProperty('onInteractOutside')).toBeDefined();
+  expect(props.getProperty('isValidEvent')).toBeUndefined();
+ }
+});
