@@ -590,16 +590,16 @@
 		<ChatSidebar bind:this={conversationNavigation} {bar} {view} {ctx} {officeRunning} container={chatEl} id={conversationsId} bind:inline={sidebarInline} bind:open={sidebarOpen} onCloseFocus={closeSidebarFocus} onselect={select} onnewchannel={(opener) => startSidebarDialog('channel', opener)} onnewmessage={(opener) => startSidebarDialog('dm', opener)} />
 
 		<section bind:this={conversationEl} inert={(compactPanels && !!panelKind) || sidebarOpen} class="flex min-w-0 flex-1 flex-col overflow-y-auto" aria-label="Conversation">
-			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
-				<div class="min-w-0">
-					<div class="flex min-w-0 items-center gap-2">
+			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3 max-[640px]:px-[8px]">
+				<div class="min-w-0 max-w-full">
+					<div class="flex min-w-0 flex-wrap items-center gap-2">
 						{#if !sidebarInline}
-							<Button bind:ref={sidebarToggle} variant="outline" size="sm" aria-haspopup="dialog" aria-expanded={sidebarOpen} aria-controls={conversationsId} aria-label={`Conversations${bar.needsYou.length ? `, ${bar.needsYou.length} ${bar.needsYou.length === 1 ? 'needs' : 'need'} you` : ''}`} onclick={() => { sidebarReturn = 'toggle'; sidebarOpen = true; }}>
+							<Button bind:ref={sidebarToggle} variant="outline" size="sm" class="h-auto min-h-8 max-w-full flex-wrap px-[min(.625rem,8px)] py-1.5" aria-haspopup="dialog" aria-expanded={sidebarOpen} aria-controls={conversationsId} aria-label={`Conversations${bar.needsYou.length ? `, ${bar.needsYou.length} ${bar.needsYou.length === 1 ? 'needs' : 'need'} you` : ''}`} onclick={() => { sidebarReturn = 'toggle'; sidebarOpen = true; }}>
 								Conversations
 								{#if bar.needsYou.length}<span class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" aria-hidden="true">{bar.needsYou.length}</span>{/if}
 							</Button>
 						{/if}
-						<h2 bind:this={heading} tabindex="-1" class="min-w-0 flex-1 truncate text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="conversation-title">
+						<h2 bind:this={heading} tabindex="-1" class="min-w-0 max-w-full whitespace-normal {conversation && !searching ? '[overflow-wrap:anywhere]' : ''} text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="conversation-title">
 							{viewTitle}
 						</h2>
 					</div>

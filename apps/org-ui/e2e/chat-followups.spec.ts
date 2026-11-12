@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { shot } from './shot';
 import { visit } from './ready';
-import { attachmentGeometry, focusOutline, inheritsColour, keyboardFocus, kindGeometry, navigation, openChat, sidebarGeometry } from './chat-followups';
+import { largeTextFlow, optionGeometry, announcementGeometry, creationGeometry, headerGeometry, labelGeometry, attachmentGeometry, focusOutline, inheritsColour, keyboardFocus, kindGeometry, navigation, openChat, sidebarGeometry } from './chat-followups';
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 	test(`BUG-94 BUG-70: sidebar icon labels and counts stay together at ${width}/${scale * 100}`, async ({ page }) => {
@@ -300,4 +300,124 @@ test('BUG-94 BUG-70: geometry oracle rejects an overlapping count inside row bou
   Object.assign(count.style,{position:'absolute',left:`${label.left-box.left}px`,top:`${label.top-box.top}px`});
  });
  await expect(sidebarGeometry(nav)).rejects.toThrow(/noOverlap/);
+});
+
+// Native failing-first cases; screenshots are taken before geometry assertions.
+test('BUG-134 BUG-70: header reflows at 320/40px root',async({page})=>{
+ await openChat(page,320,2.5,'/chat?c=c-general');await shot(page,'bug134-header-320-40');await headerGeometry(page);
+});
+test('BUG-135 BUG-70: Ask option shows its full label at 320/200',async({page})=>{
+ await openChat(page,320,2,'/chat?c=c-project-atlas');await expect(page.getByTestId('conversation-title')).toHaveText('#atlas');const card=page.getByTestId('ask-card').filter({hasText:'Block bug reports'});
+ const option=card.getByRole('button',{name:'No, allow (default)',exact:true});await option.scrollIntoViewIfNeeded();await shot(page,'bug135-ask-320-200',{context:card});
+ const geometry=await labelGeometry(option,card);expect(geometry.target).toBe(true);
+});
+test('BUG-135 BUG-70: Announcement link stays in its body at 320/40px root',async({page})=>{
+ await openChat(page,320,2.5,'/chat?c=c-general');const row=page.getByTestId('message').filter({hasText:'Ready for review: create-org'});await row.getByRole('link',{name:'the branch',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug135-link-320-40',{context:row.getByRole('link',{name:'the branch',exact:true})});await announcementGeometry(page);
+});
+test('BUG-136 BUG-70: creation icons share the first label line at 320/40px root',async({page})=>{
+ await openChat(page,320,2.5);const nav=await navigation(page);await nav.getByRole('button',{name:'New message',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug136-creation-320-40',{context:nav});await creationGeometry(nav);
+});
+test('BUG-134 BUG-135 BUG-136 BUG-70: wide ordinary controls remain readable',async({page})=>{
+ await openChat(page,1280,1,'/chat?c=c-general');await headerGeometry(page);await announcementGeometry(page);const nav=await navigation(page);await creationGeometry(nav);await shot(page,'bug134-136-wide-control',{context:nav});
+});
+
+for(const width of [320,640,960,1280]) for(const scale of [1,2]) {
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: all layout paths at ${width}/${scale*100}`,async({page})=>{
+  test.setTimeout(120_000);await largeTextFlow(page,width,scale);
+ });
+}
+for(const width of [320,640,1280]) {
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: native40px layout paths at ${width}`,async({page})=>{
+  test.setTimeout(120_000);await largeTextFlow(page,width,2.5);
+ });
+}
+for(const width of [320,640,960,1280]) for(const scale of [1,2]) {
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: retained states and actions at ${width}/${scale*100}`,async({page})=>{
+  test.setTimeout(120_000);await openChat(page,width,scale,'/chat?c=c-project-atlas');
+  const approvalForm=page.getByTestId('ask-card').filter({hasText:'Publish the 0.2'});await optionGeometry(approvalForm);await approvalForm.getByRole('button',{name:'Reject…',exact:true}).click();await approvalForm.getByRole('textbox').fill('Needs a correction before release.');await optionGeometry(approvalForm);await shot(page,`bug135-rejection-form-${width}-${scale}`,{context:approvalForm.getByRole('textbox')});
+  const row=page.getByTestId('message').filter({hasText:'Block bug reports'}),id=await row.getAttribute('data-id');expect(id).toBeTruthy();
+  await visit(page,`/chat?c=c-project-atlas&thread=${encodeURIComponent(id!)}`);
+  const panel=page.getByTestId('thread-panel'),card=panel.getByTestId('ask-card');await optionGeometry(card);
+  const option=card.getByRole('button',{name:'No, allow (default)',exact:true});await keyboardFocus(page,option);await focusOutline(option);
+  await page.evaluate(async()=>{
+   const path='/src/lib/modules/messaging/legacy-api.ts';const {chatApi}=await import(path);const command=chatApi.command.bind(chatApi);
+   let started!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>started=resolve),gate=new Promise<void>(resolve=>release=resolve);
+   (window as typeof window & {__largeTextAnswer:{started:Promise<void>;release:()=>void}}).__largeTextAnswer={started:began,release};
+   chatApi.command=async(id:string,call:{method:string})=>{if(call.method==='chat.answer'){chatApi.command=command;started();await gate;throw new Error('Answer was refused. Try again.');}return command(id,call);};
+  });
+  await option.press('Enter');await page.evaluate(()=>(window as typeof window & {__largeTextAnswer:{started:Promise<void>}}).__largeTextAnswer.started);
+  await expect(option).toBeDisabled();await optionGeometry(card);await shot(page,`bug135-busy-${width}-${scale}`,{context:option});
+  await page.evaluate(()=>(window as typeof window & {__largeTextAnswer:{release:()=>void}}).__largeTextAnswer.release());
+  await expect(card.getByRole('alert')).toHaveText('Answer was refused. Try again.');await expect(option).toBeEnabled();await expect(option).toBeFocused();await optionGeometry(card);await shot(page,`bug135-refused-${width}-${scale}`,{context:option});
+  await option.press('Enter');
+  await expect(card.getByTestId('answered')).toContainText('No, allow (default)');await expect(card.getByRole('button',{name:'No, allow (default)',exact:true})).toHaveCount(0);
+  await shot(page,`bug135-thread-answered-${width}`,{context:card});
+  for(const [state,extra] of [['bridge','surface=bridge'],['stopped','chat=offline']]) {
+   await visit(page,`/chat?c=c-project-atlas&${extra}`);await headerGeometry(page);
+   const approval=page.getByTestId('ask-card').filter({hasText:'Publish the 0.2'});
+   await expect(approval.getByRole('button')).toHaveCount(0);
+   await expect(state==='bridge'?approval.getByTestId('app-only'):page.getByTestId('office-down')).toBeVisible();
+   await shot(page,`bug135-${state}-${width}`,{context:approval});
+   if(state==='stopped') {const nav=await navigation(page);for(const name of ['Add channel','New message']) await expect(nav.getByRole('button',{name,exact:true})).toBeDisabled();await creationGeometry(nav);}
+  }
+  await visit(page,'/chat');
+  for(const [name,title] of [['Add channel','Add a channel'],['New message','New message']]) {
+   const nav=await navigation(page),button=nav.getByRole('button',{name,exact:true});const drawer=await page.getByRole('dialog',{name:'Conversations',exact:true}).isVisible();await keyboardFocus(page,button);await button.press('Enter');
+   const dialog=page.getByRole('dialog',{name:title,exact:true});await expect(dialog).toBeVisible();await shot(page,`bug136-dialog-${name.replaceAll(' ','-')}-${width}`,{context:dialog});
+   await page.keyboard.press('Escape');await expect(dialog).toBeHidden();if(drawer) await expect(page.getByRole('button',{name:/^Conversations(?:,|$)/})).toBeFocused();else await expect(button).toBeFocused();
+  }
+ });
+}
+
+test('BUG-134 BUG-136 BUG-70: geometry guards catch zero columns and unusable search width',async({page})=>{
+ await openChat(page,320,2.5,'/chat?c=c-general');await headerGeometry(page);
+ const search=page.getByRole('searchbox',{name:'Search chat',exact:true});await search.evaluate(e=>(e as HTMLElement).style.setProperty('width','0px','important'));
+ await expect(headerGeometry(page)).rejects.toThrow(/GreaterThanOrEqual/);await search.evaluate(e=>(e as HTMLElement).style.removeProperty('width'));await headerGeometry(page);
+ const nav=await navigation(page);await creationGeometry(nav);
+ for(const name of ['Add channel','New message']) {
+  const column=nav.getByRole('button',{name,exact:true}).locator(':scope > span');const style=await column.getAttribute('style');
+  await column.evaluate(e=>Object.assign((e as HTMLElement).style,{flex:'0 0 0px',width:'0px',overflow:'hidden'}));
+  await expect(creationGeometry(nav)).rejects.toThrow(/GreaterThan/);
+  if(style===null) await column.evaluate(e=>e.removeAttribute('style'));else await column.evaluate((e,value)=>e.setAttribute('style',value),style);
+  await creationGeometry(nav);
+ }
+});
+
+test('BUG-136 BUG-70: creation columns remain readable in the BUG119 240px Chat pane',async({page})=>{
+ await openChat(page,960,2.5);const nav=await navigation(page);await creationGeometry(nav);
+ await nav.getByRole('button',{name:'New message',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug136-240px-pane-root40',{context:nav});
+});
+
+
+test('BUG-134 BUG-70: long conversation titles wrap at 320/root40 while fixed labels keep whole words', async ({ page }) => {
+ await openChat(page);
+ // The form accepts 60 characters; the existing channel slug contract keeps the first 40.
+ const name = 'a'.repeat(60), expectedTitle = `#${'a'.repeat(40)}`, title = page.getByTestId('conversation-title');
+ await (await navigation(page)).getByRole('button', { name: 'Add channel', exact: true }).click();
+ const dialog = page.getByRole('dialog', { name: 'Add a channel', exact: true });
+ await expect(dialog.getByLabel('Name', { exact: true })).toHaveAttribute('maxlength', '60');
+ await dialog.getByLabel('Name', { exact: true }).fill(name);
+ await dialog.getByRole('button', { name: 'Add channel', exact: true }).click();
+ await expect(dialog).toBeHidden(); await expect(title).toHaveText(expectedTitle);
+ const conversationId = new URL(page.url()).searchParams.get('c'); expect(conversationId).toBeTruthy();
+ await page.setViewportSize({ width: 320, height: 900 });
+ await page.evaluate(async () => { document.documentElement.style.setProperty('font-size', '40px', 'important'); await document.fonts.ready; });
+ await shot(page, 'bug134-long-title-320-root40');
+ const geometry = await title.evaluate(e => {
+  const header = e.closest('section')!.firstElementChild!, box = e.getBoundingClientRect();
+  const range = document.createRange(); range.selectNodeContents(e); const lines = [...range.getClientRects()].filter(r => r.width > 0);
+  const probe = document.createElement('span'); Object.assign(probe.style, { position: 'absolute', font: getComputedStyle(e).font, width: '6ch' }); document.body.append(probe); const minimum = probe.getBoundingClientRect().width; probe.remove();
+  return { width: box.width, minimum, lines: lines.length, fits: lines.every(r => r.left >= Math.max(0, box.left) - .5 && r.right <= Math.min(innerWidth, box.right) + .5), headerWidth: header.clientWidth, headerScroll: header.scrollWidth };
+ });
+ expect(geometry.width).toBeGreaterThan(0); expect(geometry.width).toBeGreaterThanOrEqual(geometry.minimum - .5);
+ expect(geometry.lines).toBeGreaterThan(1); expect(geometry, JSON.stringify(geometry)).toMatchObject({ fits: true });
+ expect(geometry.headerScroll).toBeLessThanOrEqual(geometry.headerWidth + 1);
+ await expect(title).toHaveCSS('overflow-wrap', 'anywhere');
+ await page.getByRole('searchbox', { name: 'Search chat', exact: true }).fill('no-such-title-134');
+ await expect(title).toHaveText('Search'); expect(new URL(page.url()).searchParams.get('c')).toBe(conversationId);
+ await expect(title).toHaveCSS('overflow-wrap', 'normal'); await headerGeometry(page); await shot(page, 'bug134-search-over-conversation-320-root40');
+ for (const [url, label] of [['/chat', 'Needs you'], ['/chat?v=mentions', 'Mentions'], ['/chat?v=threads', 'Threads']]) {
+  await visit(page, url); await page.evaluate(() => document.documentElement.style.setProperty('font-size', '40px', 'important')); await expect(title).toHaveText(label); await expect(title).toHaveCSS('overflow-wrap', 'normal');
+  await headerGeometry(page); await shot(page, `bug134-fixed-${label.replaceAll(' ', '-')}-320-root40`);
+ }
 });
