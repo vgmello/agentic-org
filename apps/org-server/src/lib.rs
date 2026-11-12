@@ -313,7 +313,18 @@ fn serve_office(
             return fail_with(&mut control, &e);
         }
     };
-    let shared = Arc::new(serve::Shared::new(
+    let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
+        Ok(inbox) => inbox,
+        Err(_) => {
+            let _ = std::fs::remove_file(&socket);
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "cannot initialize inbox clock",
+            );
+        }
+    };
+    let mut shared = serve::Shared::new(
         &info,
         &socket,
         serve::OfficePorts {
@@ -391,7 +402,9 @@ fn serve_office(
             },
         },
         auth,
-    ));
+    );
+    shared.register_inbox(inbox);
+    let shared = Arc::new(shared);
     // The launch transport selects stdin for v2, authenticated rendezvous for v3.
     // The fixed-buffer watcher never parses later input.
     let host_gone = Arc::new(AtomicBool::new(false));

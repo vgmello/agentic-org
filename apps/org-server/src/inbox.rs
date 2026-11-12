@@ -3,6 +3,32 @@
 use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxState};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod list;
+mod org_source;
+
+/// HQ's real source registration and the clock also used by hint delivery.
+pub(crate) struct Hq {
+    pub(crate) sources: Vec<std::sync::Arc<dyn Source>>,
+    pub(crate) clock: Clock,
+}
+
+impl Hq {
+    pub(crate) fn for_office(office: std::sync::Arc<org_office::Office>) -> std::io::Result<Self> {
+        use std::io::Read;
+        let mut epoch = [0; 16];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
+        let office_id = office.info().office_id.clone();
+        let source = org_source::OrgSource::new(
+            Box::new(move || office.org_snapshot().map_err(|_| SourceFailure)),
+            office_id,
+        );
+        Ok(Self {
+            sources: vec![std::sync::Arc::new(source)],
+            clock: Clock::new(format!("{:032x}", u128::from_be_bytes(epoch))),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keyset {
     pub created_at_ms: Option<u64>,

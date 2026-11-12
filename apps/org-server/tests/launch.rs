@@ -895,6 +895,77 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
 }
 
 #[test]
+fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_restart() {
+    use org_proto::inbox::{InboxCounts, InboxList, InboxListParams, InboxState};
+    let world = World::new();
+    let mut first = create(&world);
+    let client = Client::connect(socket(&world)).unwrap();
+    assert!(client.hello().unwrap().supports("inbox.list"));
+    assert!(!client.hello().unwrap().supports("inbox.changed"));
+    let params = InboxListParams {
+        state: InboxState::Open,
+        kinds: None,
+        project: None,
+        team: None,
+        cursor: None,
+        limit: None,
+    };
+    assert_eq!(
+        api_code(client.call::<InboxList>(&params).unwrap_err()),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    bind(&client, token()).unwrap();
+    assert_eq!(
+        api_code(client.call::<InboxList>(&params).unwrap_err()),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    let before = client
+        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+        .unwrap();
+    let owner = before.members.iter().find(|member| member.owner).unwrap();
+    client
+        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
+            member: Some(owner.id.clone()),
+            app_token: Some(token()),
+        })
+        .unwrap();
+    let page = client.call::<InboxList>(&params).unwrap();
+    assert_eq!(page.counts, InboxCounts::default());
+    assert!(page.items.is_empty() && page.next_cursor.is_none() && page.degraded.is_empty());
+    assert_eq!(page.as_of.seq, 0);
+    assert_eq!(page.as_of.epoch.len(), 32);
+    assert_eq!(
+        client
+            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+            .unwrap(),
+        before
+    );
+    drop(client);
+    assert!(first.host_goes_away().success());
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let client = Client::connect(socket(&world)).unwrap();
+    client
+        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
+            member: Some(owner.id.clone()),
+            app_token: Some(token()),
+        })
+        .unwrap();
+    let later = client.call::<InboxList>(&params).unwrap();
+    assert_ne!(later.as_of.epoch, page.as_of.epoch);
+    assert_eq!(later.as_of.seq, 0);
+    assert_eq!(
+        client
+            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+            .unwrap(),
+        before
+    );
+    drop(client);
+    assert!(again.host_goes_away().success());
+}
+
+#[test]
 fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     let world = World::new();
     let mut run = create(&world);
