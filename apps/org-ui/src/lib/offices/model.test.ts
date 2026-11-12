@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, sampleRestartDeadlines, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
+import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, repairLocation, sampleRestartDeadlines, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -96,12 +96,12 @@ describe('OFC-13 each status has its icon, and a row says everything to a screen
 	});
 
 	it('the row label has the name, HQ, where it runs, the status and the agents', () => {
-		expect(rowLabel(hq, 6, true, 'active')).toBe("Main office, HQ, the office's machine, Online, 6 agents, opens details");
+		expect(rowLabel(hq, 6, true, 'active')).toBe("Main office, HQ, This Mac (you're here), Online, 6 agents, opens details");
 		expect(rowLabel(office('s', 'Studio', { host: '192.168.1.31', status: 'offline' }), 1, false, 'offline')).toBe('Studio, 192.168.1.31, Offline, 1 agent, opens details');
 	});
 
 	it('leaves the count out while the agents are still being counted', () => {
-		expect(rowLabel(hq, undefined, false, 'active')).toBe("Main office, HQ, the office's machine, Online, opens details");
+		expect(rowLabel(hq, undefined, false, 'active')).toBe("Main office, HQ, This Mac, Online, opens details");
 	});
 });
 
@@ -128,7 +128,7 @@ describe('OFC-12 status is never shown stale', () => {
 
 	it('the row label says the verified status, not the saved one', () => {
 		expect(rowLabel(hq, 1, true, 'unreachable')).toBe("Main office, HQ, Can't reach this office, Unreachable, 1 agent, opens details");
-		expect(rowLabel(hq, 1, false, 'status_unknown')).toBe("Main office, HQ, the office's machine, Status unknown, 1 agent, opens details");
+		expect(rowLabel(hq, 1, false, 'status_unknown')).toBe("Main office, HQ, This Mac, Status unknown, 1 agent, opens details");
 	});
 });
 
@@ -189,7 +189,7 @@ describe('OFC-11..13 why an office stopped', () => {
 		expect(text('storage_error')).toBe("It can't read or write its data on this Mac");
 		expect(text('unsupported_version')).toBe("The release components on hq-machine don't match. Run diagnostics and repair the selected instance there.");
 		expect(whyStopped({ ...stopped('unsupported_version'), host: 'This Mac' }, NOW))
-			.toBe("The release components on the office's machine don't match. Run diagnostics and repair the selected instance there.");
+			.toBe("The release components on This Mac don't match. Run diagnostics and repair the selected instance there.");
 		expect(text('invalid_request')).toBe("It couldn't start because of an internal error");
 		expect(text('in_use')).toContain('still in use');
 		for (const r of ['unknown', 'from_the_future', 'constructor', 'toString']) expect(text(r)).toBe("It stopped for a reason this version doesn't know");
@@ -211,7 +211,7 @@ describe('OFC-11..13 why an office stopped', () => {
 
 	it('a stopped row’s label keeps where it runs and puts the reason after the status', () => {
 		const o = office('hq', 'HQ', { role: 'hq', status: 'unavailable' });
-		expect(rowLabel(o, 7, true, 'unavailable', 'it stopped unexpectedly, restarting shortly')).toBe("HQ, HQ, the office's machine, Stopped: it stopped unexpectedly, restarting shortly, 7 agents, opens details");
+		expect(rowLabel(o, 7, true, 'unavailable', 'it stopped unexpectedly, restarting shortly')).toBe("HQ, HQ, This Mac (you're here), Stopped: it stopped unexpectedly, restarting shortly, 7 agents, opens details");
 	});
 
 	it('an office on this Mac never reads Offline: the connected office that the host reports offline is Stopped', () => {
@@ -286,5 +286,19 @@ describe('OFC-11 a live status update from the host', () => {
 	it('takes the whole list as the truth, keeping only this organization’s offices', () => {
 		const stranger = office('x', 'Elsewhere', { organization_id: 'other' });
 		expect(applyStatusUpdate(known, 'org', { kind: 'offices', offices: [sat, stranger] })).toEqual([sat]);
+	});
+});
+
+
+describe('BUG-81 BUG-25 machine labels and actionable repair targeting', () => {
+	it.each([
+		['This Mac', undefined, 'This Mac'],
+		['This Mac', '/tmp/test-office.sock', 'This Mac'],
+		['studio.local', undefined, 'studio.local'],
+		['studio.local', '/tmp/test-office.sock', 'This Mac (reported as studio.local)']
+	])('keeps host %s with endpoint %s identifiable', (host, endpoint, expected) => {
+		expect(repairLocation(host, endpoint)).toBe(expected);
+		expect(whyStopped({ host, endpoint, status: 'unavailable', status_reason: 'unsupported_version' }, new Date()))
+			.toBe(`The release components on ${expected} don't match. Run diagnostics and repair the selected instance there.`);
 	});
 });

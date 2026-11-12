@@ -1,17 +1,24 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
 	import { createProbe } from '$lib/offices/probe';
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import DividedRow from '$lib/components/DividedRow.svelte';
+	import Callout from '$lib/components/Callout.svelte';
 	import OfficeDetailsSheet from '$lib/components/OfficeDetailsSheet.svelte';
 	import OfficeStatusBadge from '$lib/components/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, sampleRestartDeadlines, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck, type RestartDeadlineSample } from '$lib/offices/model';
+	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, repairReasonCopy, rowLabel, sampleRestartDeadlines, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck, type RestartDeadlineSample } from '$lib/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
+
+	// Cap gutters only in a very narrow list; viewport breakpoints can leave little room at enlarged text.
+	const rowGutters = '@max-[300px]:px-[min(1rem,5cqi)]';
 
 	let { data } = $props();
 
@@ -100,7 +107,7 @@
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
-// A new deadline gets an immediate sample, which anchors its stable screen-reader label.
+// A new deadline gets an immediate sample, which anchors its stable live-status announcement.
 let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
 let countdownClock = $state(Date.now());
 // Capture the new deadline before rendering its visible and accessible text.
@@ -201,7 +208,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 
 <svelte:head><title>Offices · Agentic Org</title></svelte:head>
 
-<div class="space-y-5 px-8 py-6">
+<div class="space-y-5 px-4 py-6 sm:px-6 lg:px-8">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="max-w-xl space-y-2">
 			<p class="text-sm/6 text-gray-400">
@@ -216,7 +223,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 		</div>
 		<div class="text-right">
 			<!-- Phase 1 has HQ only; more offices arrive with the local satellite. -->
-			<Button disabled aria-describedby="add-reason"><Plus aria-hidden="true" /> Add office</Button>
+			<Button variant="outline" disabled aria-describedby="add-reason"><Plus aria-hidden="true" /> Add office</Button>
 			<p id="add-reason" class="mt-1 text-xs/5 text-gray-400">Available in a later release.</p>
 		</div>
 	</div>
@@ -224,45 +231,48 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
 	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}</p>
 
-	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
+	<ul class="@container -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<li data-testid="office-row" data-office={office.id} class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-				<span class="flex h-6 w-10 shrink-0 items-center justify-center rounded text-xs font-semibold {isHq(office) ? 'bg-indigo-500/20 text-indigo-200' : 'text-transparent'}" aria-hidden="true">
-					{isHq(office) ? 'HQ' : ''}
-				</span>
+			<DividedRow data-testid="office-row" data-office={office.id} class="{rowGutters} flex flex-wrap items-center gap-x-4 gap-y-2 hover:bg-white/[0.025]">
 				<button
 					type="button"
-					class="min-w-0 flex-1 basis-32 text-left focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:order-first max-[640px]:w-full max-[640px]:flex-none"
-					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
+					class="min-w-0 flex-1 basis-32 text-left [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
+					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), whyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={(event) => open(office.id, event.currentTarget)}
 				>
-					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400 max-[640px]:whitespace-normal max-[640px]:[overflow-wrap:anywhere]" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
+					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span class="font-normal text-gray-400">{' · HQ'}</span>{/if}</span>
+					<span class="mt-3 inline-block max-w-full text-xs/5 text-gray-400 [overflow-wrap:anywhere]" title={whyOf(office.id)}>
+						{#if office.status_reason === 'unsupported_version' && whyOf(office.id)}
+							{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}
+						{:else}{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}{/if}
+					</span>
+					<span class="mx-2 text-xs/5 text-gray-400" aria-hidden="true">·</span>
+					<span class="text-xs/5 text-gray-400" data-testid="agent-count" aria-hidden="true">
+						{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
+						{:else if countError}—
+						{:else}<span class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none" data-testid="count-skeleton"></span>{/if}
+					</span>
+					<span class="absolute inset-0" aria-hidden="true"></span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
-				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
+				<span class="inline-flex min-w-0 max-w-full items-center gap-x-4 @max-[300px]:flex-wrap @max-[300px]:justify-end @max-[300px]:gap-y-2" aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /><ChevronRight class="size-5 shrink-0 text-gray-400" aria-hidden="true" /></span>
 				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
 					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
 					<Button
 						variant="outline"
 						size="xs"
 						data-testid="retry-office"
-						class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+						class="relative z-10 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
 						aria-label="{check === 'checking' ? 'Retrying…' : 'Retry'} reaching {office.name}"
 						aria-disabled={check === 'checking'}
 						aria-busy={check === 'checking'}
 						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
-				<span class="w-20 text-right text-xs/5 text-gray-400" data-testid="agent-count" aria-hidden="true">
-					{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
-					{:else if countError}—
-					{:else}<span class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none" data-testid="count-skeleton"></span>{/if}
-				</span>
-			</li>
+			</DividedRow>
 		{:else}
-			<li class="px-4 py-3 text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</li>
+			<DividedRow class="{rowGutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
 		{/each}
 	</ul>
 
@@ -275,19 +285,22 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	{/if}
 
 	{#if unplaced.length > 0}
-		<section aria-labelledby="unplaced" class="rounded-xl bg-amber-500/10 p-4 outline-1 -outline-offset-1 outline-amber-400/20" data-testid="unplaced-note">
-			<h2 id="unplaced" class="text-sm/6 font-semibold text-amber-100">Unplaced · {unplaced.length} {unplaced.length === 1 ? 'agent' : 'agents'}</h2>
-			<p class="text-xs/5 text-amber-100/80">These agents aren't placed in an office, so they don't run anywhere.</p>
-			<ul class="mt-2 space-y-1">
+		<section aria-labelledby="unplaced" class="space-y-3" data-testid="unplaced-note">
+			<h2 id="unplaced" class="text-xs/6 font-semibold text-gray-400">Unplaced · {unplaced.length} {unplaced.length === 1 ? 'agent' : 'agents'}</h2>
+			<Callout data-testid="unplaced-explanation">
+				{#snippet icon()}<CircleAlert class="size-4 text-amber-400" aria-hidden="true" />{/snippet}
+				<p class="text-sm/6">These agents aren't placed in an office, so they don't run anywhere.</p>
+			</Callout>
+			<ul class="@container -mx-4 sm:-mx-6 lg:-mx-8">
 				{#each unplaced as agent (agent.id)}
-					<li class="flex items-center justify-between gap-x-3 text-sm/6 text-amber-50">
+					<DividedRow class="{rowGutters} flex items-center justify-between gap-x-3 text-sm/6 text-white">
 						<span class="min-w-0 [overflow-wrap:anywhere]">{agent.name}</span>
 						<!-- Placing an agent is its own flow, which comes later: shown, not hidden, so nobody looks for it. -->
 						<Button variant="outline" size="xs" disabled aria-label="Place… {agent.name}" aria-describedby="place-reason">Place…</Button>
-					</li>
+					</DividedRow>
 				{/each}
 			</ul>
-			<p id="place-reason" class="mt-2 text-xs/5 text-amber-100/80">Placing agents is available in a later release.</p>
+			<p id="place-reason" class="text-xs/5 text-gray-400">Placing agents is available in a later release.</p>
 		</section>
 	{/if}
 	<p class="text-xs/5 text-gray-400">Shown from HQ. Statuses include last-seen information.</p>
