@@ -54,3 +54,99 @@ fn peer_closed_stream_is_adopted_with_queued_bytes_then_eof() {
         assert_eq!(adopted.read(&mut [0]).unwrap(), 0);
     }
 }
+
+#[test]
+fn bound_peer_closed_streams_preserve_ownership_bytes_and_eof() {
+    assert_named_peer_closed("bound");
+}
+
+#[test]
+fn accepted_peer_closed_streams_preserve_ownership_bytes_and_eof() {
+    assert_named_peer_closed("accepted");
+}
+
+fn assert_named_peer_closed(kind: &str) {
+    let directory = private_directory();
+    for (index, pending) in [b"".as_slice(), b"queued".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        let path = directory.0.join(format!("{kind}-{index}"));
+        let (stream, mut peer) = if kind == "bound" {
+            use std::os::unix::ffi::OsStrExt;
+            let (stream, peer) = UnixStream::pair().unwrap();
+            let bytes = path.as_os_str().as_bytes();
+            // SAFETY: zero initializes every byte, including the UNIX path terminator.
+            let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+            assert!(bytes.len() < address.sun_path.len());
+            address.sun_family = libc::AF_UNIX as _;
+            #[cfg(target_os = "macos")]
+            {
+                address.sun_len = std::mem::size_of_val(&address).try_into().unwrap();
+            }
+            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
+                *slot = *byte as _;
+            }
+            // SAFETY: stream owns fd; the initialized address is covered by the supplied length.
+            assert_eq!(
+                unsafe {
+                    libc::bind(
+                        stream.as_raw_fd(),
+                        (&address as *const libc::sockaddr_un).cast(),
+                        std::mem::size_of_val(&address) as _,
+                    )
+                },
+                0
+            );
+            (stream, peer)
+        } else {
+            let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+            let peer =
+                UnixStream::connect(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            (stream, peer)
+        };
+        let raw = stream.as_raw_fd();
+        // SAFETY: F_GETFD only queries the test-owned stream.
+        let flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
+        // macOS returned EINVAL when configuring these peer-closed sockets.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        peer.write_all(pending).unwrap();
+        drop(peer);
+        let mut adopted = connected_unix_stream(stream.into()).unwrap();
+        assert_eq!(
+            adopted.as_raw_fd(),
+            raw,
+            "{kind}: adoption duplicated the fd"
+        );
+        // SAFETY: adopted owns the same live descriptor; F_GETFD only queries it.
+        assert_eq!(unsafe { libc::fcntl(raw, libc::F_GETFD) }, flags);
+        let mut received = vec![0; pending.len()];
+        adopted.read_exact(&mut received).unwrap();
+        assert_eq!(received, pending, "{kind}: queued bytes changed");
+        assert_eq!(adopted.read(&mut [0]).unwrap(), 0, "{kind}: EOF lost");
+    }
+}
+
+struct PrivateDirectory(std::path::PathBuf);
+impl Drop for PrivateDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+fn private_directory() -> PrivateDirectory {
+    use std::os::unix::fs::DirBuilderExt;
+    for suffix in 0u64.. {
+        let path =
+            std::env::temp_dir().join(format!("org-public-adopt-{}-{suffix}", std::process::id()));
+        match std::fs::DirBuilder::new().mode(0o700).create(&path) {
+            Ok(()) => return PrivateDirectory(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("private socket fixture: {error}"),
+        }
+    }
+    unreachable!("temporary directory suffix exhausted")
+}
