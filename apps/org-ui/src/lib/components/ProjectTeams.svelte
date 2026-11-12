@@ -45,8 +45,9 @@
 		};
 	}
 	async function removed(r: { message?: string }) {
+		const restore = restoreLast;
 		await done(r);
-		if (r.message) await restoreLast?.();
+		if (r.message) await restore?.();
 	}
 	async function take(teamId: string, teamName: string) {
 		const restore = removalFocus(teamId);

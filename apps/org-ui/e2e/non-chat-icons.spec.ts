@@ -413,3 +413,65 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 		await shot(page, `bug115-${screen}-missing-neighbour`, { context: next });
 	});
 }
+
+for (const screen of ['projects', 'profile'] as const) {
+	test(`PROJ-2/3 TEAM-8 BUG-70 BUG-115: ${screen} confirmed unlink retains its own plan across live reassignment and a later Cancel`, async ({ page }) => {
+		await create(page, 1280);
+		await visit(page, screen === 'profile' ? '/projects/beacon' : '/projects');
+		const first = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
+		await focusTarget(page, first);
+		await first.press('Enter');
+		await expect(first).toHaveCount(0);
+		const last = page.getByRole('button', { name: 'Remove Beacon from Design', exact: true });
+		await last.focus();
+		await last.press('Enter');
+		const oldDialog = page.getByRole('dialog', { name: 'Remove Beacon from Design?', exact: true });
+		await expect(oldDialog).toBeVisible();
+		await page.evaluate(async () => {
+			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+			const connection = connections[connections.length - 1];
+			const modulePath = '/e2e/fakes/org-api.ts';
+			const { orgApi, createMockOrg } = await import(modulePath) as typeof import('../src/lib/org/api') & { orgApi: import('../src/lib/org/api').OrgApi };
+			const hooks = window as unknown as { __mockOrgChange(id: string, command: object): Promise<unknown>; __projectRefresh: { entered: boolean; id: string; release(): void } };
+			// A second fake instance installs its remote hook; preserve the mounted session's live event source.
+			const remote = hooks.__mockOrgChange;
+			const quiet = createMockOrg(async () => connection.office.id);
+			hooks.__mockOrgChange = remote;
+			const command = orgApi.command, view = orgApi.view;
+			let pending = false, heldOnce = false, release!: () => void;
+			const held = new Promise<void>((resolve) => { release = resolve; });
+			hooks.__projectRefresh = { entered: false, id: connection.organization.id, release };
+			orgApi.command = async (id, input) => {
+				if (input.method !== 'project.remove_team') return command(id, input);
+				const result = await quiet.command(id, input);
+				pending = true;
+				return result;
+			};
+			orgApi.view = async (id) => {
+				if (pending && !heldOnce) { heldOnce = true; hooks.__projectRefresh.entered = true; await held; }
+				return view(id);
+			};
+		});
+		await oldDialog.getByRole('button', { name: 'Remove', exact: true }).click();
+		await expect(oldDialog).toBeHidden();
+		await page.waitForFunction(() => (window as unknown as { __projectRefresh: { entered: boolean } }).__projectRefresh.entered);
+		await page.evaluate(async () => {
+			const hooks = window as unknown as { __mockOrgChange(id: string, command: object): Promise<unknown>; __projectRefresh: { id: string } };
+			await hooks.__mockOrgChange(hooks.__projectRefresh.id, { method: 'project.add_team', params: { project_team_id: 'late-web', project_id: 'beacon', team_id: 'web' } });
+		});
+		const later = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
+		await expect(last).toHaveCount(0);
+		await expect(later).toBeVisible();
+		await later.focus();
+		await later.press('Enter');
+		const newDialog = page.getByRole('dialog', { name: 'Remove Beacon from Web?', exact: true });
+		await expect(newDialog).toBeVisible();
+		await newDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+		await expect(newDialog).toBeHidden();
+		await expect(later).toBeFocused();
+		await page.evaluate(() => (window as unknown as { __projectRefresh: { release(): void } }).__projectRefresh.release());
+		await expect(page.getByText('Removed Beacon from Design.', { exact: true })).toBeVisible();
+		await shot(page, `bug115-${screen}-live-reassignment-plan`, { context: later });
+		await expect(later).toBeFocused();
+	});
+}
