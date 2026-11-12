@@ -123,16 +123,16 @@ fn sqlcipher_key_errors_keep_only_the_extended_code_and_never_key_text() {
 #[test]
 fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
     let source = rust_code(include_str!("../../store.rs"));
-    let initializer = &source[source.find("pubfnsqlcipher_ready()").unwrap()
-        ..source.find("fninitialize_sqlcipher(").unwrap()];
+    let initializer = &source[source.find("pubfn sqlcipher_ready()").unwrap()
+        ..source.find("fn initialize_sqlcipher(").unwrap()];
     assert!(source.contains("staticREADY:OnceLock<Result<(),String>>"));
     assert!(
         initializer.find("initialized(&READY").unwrap()
             < initializer.find("Connection::open_in_memory").unwrap()
     );
     for (function, open) in [
-        ("fnconnect(", "Connection::open_with_flags"),
-        ("fnconnection_for_test(", "Connection::open("),
+        ("fn connect(", "Connection::open_with_flags"),
+        ("fn connection_for_test(", "Connection::open("),
     ] {
         let body = &source[source.find(function).unwrap()..];
         assert!(body.find("sqlcipher_ready()?").unwrap() < body.find(open).unwrap());
@@ -356,8 +356,8 @@ fn sqlcipher_cold_parallel_open_stress_guard() {
     }
 }
 
-// Strip Rust comments and quoted literals before checking actual code identifiers. This
-// handles nested block comments, raw strings and escaped strings without reading paths/SQL.
+// Strip comments, quoted literals and whitespace, retaining the fn keyword boundary.
+// Nested comments, raw strings and escaped strings cannot masquerade as actual code.
 fn rust_code(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut code = String::new();
@@ -431,6 +431,23 @@ fn rust_code(source: &str) -> String {
                 i += 1;
             }
             i = (i + 1).min(bytes.len());
+        } else if bytes[i..].starts_with(b"fn")
+            && (i == 0
+                || source[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_whitespace() || "{}[]();,:=!<>+-*/&|".contains(c)))
+            && (source[i + 2..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+                || bytes[i + 2..].starts_with(b"/*")
+                || bytes[i + 2..].starts_with(b"//"))
+        {
+            // Preserve this keyword boundary: `fn wrongfnconnect` must not become
+            // indistinguishable from the declaration `fn connect` or a call named fnconnect.
+            code.push_str("fn ");
+            i += 2;
         } else {
             let c = source[i..].chars().next().unwrap();
             if !c.is_whitespace() {
@@ -460,7 +477,7 @@ fn override_policy(path: &Path, code: &str) {
         for (function, statement) in office_opener_statements() {
             require_exception_statement(code, function, &plain, statement);
         }
-        assert!(code.contains("#[cfg(test)]fnconnection_for_test("));
+        assert!(code.contains("#[cfg(test)]fn connection_for_test("));
     } else if path == Path::new("crates/org-supervise/src/lib.rs") {
         assert_eq!(code.matches(lint).count(), 1);
         assert!(code.contains(&format!("#![deny(clippy::{lint})]")));
@@ -468,11 +485,12 @@ fn override_policy(path: &Path, code: &str) {
         // Preserve the existing test-only Command::status exception, not a SQL opener.
         assert_eq!(code.matches(lint).count(), 1);
         require_exception_statement(code,
-            "fnevery_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec(",
+            "fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec(",
             &format!("#[expect(clippy::{lint},reason=)]"),
             "letstatus=std::process::Command::new().env_clear().args([,,,]).args(descriptors.map(|fd|fd.to_string())).status().unwrap();");
-        assert!(code
-            .contains("#[test]fnevery_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec("));
+        assert!(code.contains(
+            "#[test]fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec("
+        ));
         assert!(!code.contains("rusqlite") && !code.contains("Connection"));
     } else {
         assert!(
@@ -505,10 +523,8 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
     }
     let plain = format!("#[allow(clippy::{lint})]");
     let source = office_policy_fixture(&plain);
-    override_policy(
-        Path::new("crates/org-office/src/store.rs"),
-        &rust_code(&source),
-    );
+    // This fixture already uses the canonical token form.
+    override_policy(Path::new("crates/org-office/src/store.rs"), &source);
     for bad in [
         source.replacen(&plain, &format!("#[expect(clippy::{lint})]"), 1),
         format!("//{plain}\n{plain}{plain}"),
@@ -840,15 +856,15 @@ fn sqlcipher_probe_compiler_honors_explicit_paths_without_shell_parsing() {
 fn office_opener_statements() -> [(&'static str, &'static str); 3] {
     [
         (
-            "pubfnsqlcipher_ready(",
+            "pubfn sqlcipher_ready(",
             "letdb=Connection::open_in_memory().map_err(key_failure_reason)?;",
         ),
         (
-            "fnconnect(",
+            "fn connect(",
             "letdb=Connection::open_with_flags(db_path,flags).map_err(OfficeError::storage)?;",
         ),
         (
-            "fnconnection_for_test(",
+            "fn connection_for_test(",
             "letdb=Connection::open(path).map_err(OfficeError::storage)?;",
         ),
     ]
@@ -886,7 +902,7 @@ fn require_exception_statement(code: &str, function: &str, attribute: &str, stat
 fn office_policy_fixture(attribute: &str) -> String {
     office_opener_statements()
         .map(|(function, statement)| {
-            let prefix = if function == "fnconnection_for_test(" {
+            let prefix = if function == "fn connection_for_test(" {
                 "#[cfg(test)]"
             } else {
                 ""
@@ -1002,20 +1018,56 @@ fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
 #[test]
 fn sqlcipher_exception_statement_requires_one_attribute_on_the_named_statement() {
     let attr = "#[allow(clippy::disallowed_methods)]";
-    let code = format!("fnallowed(){{{attr}letx=op();}}");
-    require_exception_statement(&code, "fnallowed(", attr, "letx=op();");
+    let code = format!("fn allowed(){{{attr}letx=op();}}");
+    require_exception_statement(&code, "fn allowed(", attr, "letx=op();");
     for code in [
-        format!("fnallowed(){{{attr}letx=op();{attr}lety=op();}}"),
-        format!("fnallowed(){{{attr}letx={{extra();op()}};}}"),
-        format!("{attr}fnallowed(){{letx=op();}}"),
-        format!("fnother(){{{attr}letx=op();}}"),
+        format!("fn allowed(){{{attr}letx=op();{attr}lety=op();}}"),
+        format!("fn allowed(){{{attr}letx={{extra();op()}};}}"),
+        format!("{attr}fn allowed(){{letx=op();}}"),
+        format!("fn other(){{{attr}letx=op();}}"),
     ] {
         assert!(std::panic::catch_unwind(|| require_exception_statement(
             &code,
-            "fnallowed(",
+            "fn allowed(",
             attr,
             "letx=op();"
         ))
         .is_err());
+    }
+}
+
+#[test]
+fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
+    let attr = "#[allow(clippy::disallowed_methods)]";
+    for name in [
+        "wrongfnconnect",
+        "_fnconnect",
+        "fnconnect",
+        "éfnconnect",
+        "e\u{301}fnconnect",
+        "r#fnconnect",
+    ] {
+        let source = format!("fn {name}(){{{attr}let x=op();}}");
+        assert!(
+            std::panic::catch_unwind(|| require_exception_statement(
+                &rust_code(&source),
+                "fn connect(",
+                attr,
+                "letx=op();"
+            ))
+            .is_err(),
+            "accepted function {name}"
+        );
+        let source = format!("fn {name}(){{}} fn connect(){{{attr}let x=op();}}");
+        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+    }
+    for declaration in [
+        "fn connect",
+        "fn/**/connect",
+        "pub fn connect",
+        "pub/**/fn/**/connect",
+    ] {
+        let source = format!("{declaration}(){{{attr}let x=op();}}");
+        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
     }
 }
