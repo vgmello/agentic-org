@@ -762,13 +762,16 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
         ("", "printf invalid-json", true, false),
         ("", "printf '{} invalid-json'", true, false),
         ("", "change-lock", true, true),
+        ("", "manifest-invalid", false, false),
     ] {
         for toolchain in [false, true] {
+            let manifest = if script == "manifest-invalid" {
+                "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[workspace.dependencies]\nunused={path='untracked'}"
+            } else {
+                "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'"
+            };
             let dir = fixture(&[
-                (
-                    "Cargo.toml",
-                    "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'",
-                ),
+                ("Cargo.toml", manifest),
                 (
                     "Cargo.lock",
                     "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
