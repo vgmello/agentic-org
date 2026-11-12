@@ -66,6 +66,7 @@ struct Calls {
     shared_accept_checks: usize,
     socket_queries: usize,
     invalid_options: usize,
+    accept_order: Vec<&'static str>,
 }
 
 impl<'ast> Visit<'ast> for Calls {
@@ -87,6 +88,21 @@ impl<'ast> Visit<'ast> for Calls {
             if self.in_accept && function.qself.is_none() && names == ["org_socket", "peer_allowed"]
             {
                 self.shared_accept_checks += 1;
+                self.accept_order.push("admission");
+            }
+            if self.in_accept && function.qself.is_none() {
+                match names.as_slice() {
+                    [owner, method] if owner == "Accepted" && method == "sample" => {
+                        self.accept_order.push("sample");
+                    }
+                    [owner, method] if owner == "Connection" && method == "new" => {
+                        self.accept_order.push("connection");
+                    }
+                    _ if names == ["thread", "spawn"] || names == ["std", "thread", "spawn"] => {
+                        self.accept_order.push("spawn");
+                    }
+                    _ => {}
+                }
             }
             if names.last().is_some_and(|name| name == "getsockopt") {
                 self.socket_queries += 1;
@@ -107,6 +123,43 @@ impl<'ast> Visit<'ast> for Calls {
         }
         syn::visit::visit_expr_call(self, call);
     }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if self.in_accept && call.method.unraw() == "spawn" {
+            self.accept_order.push("spawn");
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+}
+
+fn admission_precedes_setup(calls: &Calls) -> bool {
+    let admission = calls
+        .accept_order
+        .iter()
+        .position(|step| *step == "admission");
+    ["sample", "connection", "spawn"].iter().all(|setup| {
+        let setup = calls.accept_order.iter().position(|step| step == setup);
+        matches!((admission, setup), (Some(admission), Some(setup)) if admission < setup)
+    })
+}
+
+fn invalid_query_report(path: &Path, source: &str, calls: &Calls) -> Option<String> {
+    (calls.invalid_options > 0).then(|| {
+        // Syntax above decides validity. Numbered excerpts only locate the offending
+        // file's query spellings, including aliases and opaque macro bodies.
+        let lines: Vec<_> = source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.contains("getsockopt"))
+            .map(|(index, line)| format!("{}:{}: {line}", path.display(), index + 1))
+            .collect();
+        format!(
+            "{}: {} unapproved socket queries\n{}",
+            path.display(),
+            calls.invalid_options,
+            lines.join("\n")
+        )
+    })
 }
 
 fn socket_queries(source: &str) -> Calls {
@@ -156,16 +209,24 @@ fn host_peer_uid_checks_have_one_owner() {
         duplicates.is_empty(),
         "host duplicates kernel UID queries instead of using org-socket: {duplicates:?}"
     );
-    let queries: Vec<_> = files
-        .iter()
-        .map(|path| socket_queries(&fs::read_to_string(path).unwrap()))
-        .collect();
-    assert_eq!(
-        queries
-            .iter()
-            .map(|query| query.invalid_options)
-            .sum::<usize>(),
-        0
+    let mut queries = Vec::new();
+    let mut invalid = Vec::new();
+    for path in &files {
+        let source = fs::read_to_string(path).unwrap();
+        let calls = socket_queries(&source);
+        if let Some(report) = invalid_query_report(path, &source, &calls) {
+            invalid.push(report);
+        }
+        if calls.shared_accept_checks > 0 {
+            assert!(admission_precedes_setup(&calls),
+                "{}: admission must precede Accepted::sample, Connection::new and thread spawn: {:?}",
+                path.display(), calls.accept_order);
+        }
+        queries.push(calls);
+    }
+    assert!(
+        invalid.is_empty(),
+        "host has unapproved socket queries: {invalid:#?}"
     );
     assert_eq!(
         queries
@@ -262,4 +323,74 @@ fn source_guard_scans_multiple_files_and_nested_directories() {
     assert_eq!(duplicates.len(), 1);
     assert_eq!(duplicates[0].0, bad);
     assert_eq!(duplicates[0].1, BTreeSet::from(["getpeereid".into()]));
+}
+
+#[test]
+fn admission_order_requires_every_setup_step_after_the_check() {
+    let admission = "org_socket::peer_allowed(stream, uid);";
+    let setup = [
+        "Accepted::sample(stream);",
+        "Connection::new(stream);",
+        "builder.spawn(work);",
+    ];
+    let source = |body: &str| format!("fn accept_loop() {{ {body} }}");
+    assert!(admission_precedes_setup(&socket_queries(&source(
+        &format!("{admission} {}", setup.join(" "))
+    ))));
+    for spawn in [
+        "thread::spawn(work);",
+        "std::thread::spawn(work);",
+        "builder.r#spawn(work);",
+    ] {
+        assert!(admission_precedes_setup(&socket_queries(&source(
+            &format!("{admission} {} {} {spawn}", setup[0], setup[1])
+        ))));
+    }
+    for index in 0..setup.len() {
+        let rest: Vec<_> = setup
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, step)| *step)
+            .collect();
+        for body in [
+            format!("{} {admission} {}", setup[index], rest.join(" ")),
+            format!("{admission} {}", rest.join(" ")),
+        ] {
+            assert!(
+                !admission_precedes_setup(&socket_queries(&source(&body))),
+                "accepted {body}"
+            );
+        }
+    }
+    assert!(!admission_precedes_setup(&socket_queries(&source(
+        &setup.join(" ")
+    ))));
+    for (correct, wrong) in [
+        ("Accepted::sample", "WrongAccepted::sample"),
+        ("Accepted::sample", "Accepted::wrong_sample"),
+        ("Accepted::sample", "<T as Accepted>::sample"),
+        ("Connection::new", "WrongConnection::new"),
+        ("Connection::new", "Connection::wrong_new"),
+        ("Connection::new", "<T as Connection>::new"),
+        ("builder.spawn", "builder.wrong_spawn"),
+    ] {
+        let body = format!("{admission} {}", setup.join(" ")).replace(correct, wrong);
+        assert!(
+            !admission_precedes_setup(&socket_queries(&source(&body))),
+            "accepted {body}"
+        );
+    }
+    let nested = format!("{admission} fn nested() {{ {} }}", setup.join(" "));
+    assert!(!admission_precedes_setup(&socket_queries(&source(&nested))));
+}
+
+#[test]
+fn invalid_socket_query_diagnostics_name_the_file_and_line() {
+    let path = Path::new("nested/peer.rs");
+    let source = "fn query() {\n    libc::getsockopt(fd, level, 17, value, len);\n}";
+    let report = invalid_query_report(path, source, &socket_queries(source)).unwrap();
+    assert_eq!(report, "nested/peer.rs: 1 unapproved socket queries\nnested/peer.rs:2:     libc::getsockopt(fd, level, 17, value, len);");
+    let allowed = "fn query() { libc::getsockopt(fd, level, libc::LOCAL_PEERPID, value, len); }";
+    assert!(invalid_query_report(path, allowed, &socket_queries(allowed)).is_none());
 }
