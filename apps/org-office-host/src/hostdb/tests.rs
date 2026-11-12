@@ -4,6 +4,70 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::Mutex;
 
+// Only plaintext test fixtures may proceed after a completed initializer reports
+// NoCipher. This module is cfg(test); production connect always propagates it.
+fn fixture_ready(result: Result<(), Error>) -> Result<(), Error> {
+    match result {
+        Ok(()) | Err(Error::NoCipher) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+pub(super) fn connection_for_test(
+    path: impl AsRef<Path>,
+    flags: OpenFlags,
+) -> Result<Connection, Error> {
+    fixture_ready(sqlcipher::ready())?;
+    #[allow(clippy::disallowed_methods)] // Raw fixtures cross initialization completion.
+    let db = Connection::open_with_flags(path, flags).map_err(Error::from)?;
+    Ok(db)
+}
+
+#[test]
+fn only_test_fixture_admission_accepts_nocipher_and_other_failures_refuse() {
+    assert_eq!(fixture_ready(Ok(())), Ok(()));
+    assert_eq!(fixture_ready(Err(Error::NoCipher)), Ok(()));
+    for error in [Error::Unsafe, Error::Sql(rusqlite::ErrorCode::OutOfMemory)] {
+        let expected = format!("{error:?}");
+        assert_eq!(
+            format!("{:?}", fixture_ready(Err(error)).unwrap_err()),
+            expected
+        );
+    }
+    let source = include_str!("../hostdb.rs");
+    assert!(source.contains("#[cfg(test)]\nmod tests;"));
+    let body =
+        &source[source.find("fn connect(").unwrap()..source.find("fn require_cipher(").unwrap()];
+    assert!(body.contains("sqlcipher::ready()?;"));
+    assert!(!body.contains("fixture_ready"));
+    let source = include_str!("tests.rs");
+    let helper =
+        &source[source.find("fn connection_for_test(").unwrap()..source.find("#[test]").unwrap()];
+    assert!(
+        helper.find("fixture_ready(sqlcipher::ready())?").unwrap()
+            < helper.find("Connection::open_with_flags").unwrap()
+    );
+    let allowed = ["#[allow(", "clippy::disallowed_methods)]"].concat();
+    assert_eq!(source.matches(&allowed).count(), 1);
+}
+
+#[test]
+fn raw_fixture_opens_after_nocipher_but_initialization_failure_never_opens() {
+    sqlcipher::tests::fail_with(Error::NoCipher);
+    let opened = connection_for_test(":memory:", OpenFlags::default());
+    assert!(opened.is_ok());
+    drop(opened);
+    let home = home();
+    let path = home.path().join("never-created.db");
+    sqlcipher::tests::fail_with(Error::Sql(rusqlite::ErrorCode::OutOfMemory));
+    assert_eq!(
+        connection_for_test(&path, OpenFlags::default()).err(),
+        Some(Error::Sql(rusqlite::ErrorCode::OutOfMemory))
+    );
+    assert!(!path.exists());
+}
+
 thread_local! {
     static FAIL: RefCell<Option<u8>> = const { RefCell::new(None) };
     static CRASH: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
@@ -183,7 +247,7 @@ fn encrypted_schema_metadata_tls_and_pragmas_survive_reopen() {
         3
     );
     // Independently opens with a raw hex key, not SQLCipher's passphrase KDF.
-    let c = Connection::open(home.path().join(DB)).unwrap();
+    let c = connection_for_test(home.path().join(DB), OpenFlags::default()).unwrap();
     c.execute_batch(&format!("PRAGMA key=\"x'{}'\";", hex(key.expose())))
         .unwrap();
     assert_eq!(scalar(&c, "user_version"), 1);
@@ -347,7 +411,7 @@ fn missing_empty_nonregular_symlink_plaintext_and_sidecar_aliases_refuse() {
     assert_eq!(fs::read(target).unwrap(), b"outside");
     fs::remove_file(home.path().join(DB)).unwrap();
     fs::remove_file(home.path().join("host-registry.db-wal")).unwrap();
-    let plain = Connection::open(home.path().join(DB)).unwrap();
+    let plain = connection_for_test(home.path().join(DB), OpenFlags::default()).unwrap();
     plain
         .execute_batch("CREATE TABLE plain(x); PRAGMA user_version=1")
         .unwrap();
@@ -824,7 +888,7 @@ fn sqlite_drop_releases_locks_while_a_forked_child_retains_its_fds() {
 
 #[test]
 fn sqlcipher_build_encrypts_and_a_plain_sqlite_build_refuses_creation() {
-    let probe = Connection::open_in_memory().unwrap();
+    let probe = connection_for_test(":memory:", OpenFlags::default()).unwrap();
     let cipher: Option<String> = probe
         .query_row("PRAGMA cipher_version", [], |r| r.get(0))
         .ok();
@@ -837,9 +901,10 @@ fn sqlcipher_build_encrypts_and_a_plain_sqlite_build_refuses_creation() {
             .unwrap()
             .starts_with(b"SQLite format 3"));
     } else {
+        assert_eq!(sqlcipher::ready(), Err(Error::NoCipher));
         assert!(matches!(result, Err(Error::NoCipher)));
         assert!(!home.path().join(DB).exists());
-        let c = Connection::open(home.path().join(DB)).unwrap();
+        let c = connection_for_test(home.path().join(DB), OpenFlags::default()).unwrap();
         c.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
             .unwrap();
         c.pragma_update(None, "journal_mode", "WAL").unwrap();
@@ -969,7 +1034,7 @@ fn hot_rollback_journal_refusal_preserves_the_database_and_journal() {
     const TEST: &str =
         "hostdb::tests::hot_rollback_journal_refusal_preserves_the_database_and_journal";
     if let Some(path) = std::env::var_os(CHILD) {
-        let c = Connection::open(Path::new(&path)).unwrap();
+        let c = connection_for_test(Path::new(&path), OpenFlags::default()).unwrap();
         c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", "12".repeat(32)))
             .unwrap();
         let version: i64 = std::env::var("SAGE_HOSTDB_HOT_VERSION")
@@ -1037,7 +1102,7 @@ fn creation_publishes_wal_before_first_open_and_cleans_temp_sidecars() {
     let path = home.path().canonicalize().unwrap().join(DB);
     let before = fs::read(&path).unwrap();
     assert!(!before.starts_with(b"SQLite format 3")); // Header bytes are encrypted too.
-    let c = Connection::open_with_flags(
+    let c = connection_for_test(
         &path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )
@@ -1155,7 +1220,7 @@ fn creation_refuses_to_publish_if_either_temp_sidecar_survives_close() {
 fn committed_wal_recovers_after_real_process_death() {
     const CHILD: &str = "SAGE_HOSTDB_WAL_CRASH";
     if let Some(path) = std::env::var_os(CHILD) {
-        let c = Connection::open(Path::new(&path)).unwrap();
+        let c = connection_for_test(Path::new(&path), OpenFlags::default()).unwrap();
         c.execute_batch(&format!("PRAGMA key=\"x'{}'\";", "12".repeat(32)))
             .unwrap();
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
@@ -1408,8 +1473,15 @@ fn create_retains_sqlites_shared_file_lock() {
     drop(db);
     assert_eq!(waited, pid);
     assert_eq!(
-        status, 0,
-        "child found no SQLite shared lock (exit41) or failed fcntl (exit42)"
+        status,
+        0,
+        "child_pid={pid} raw_status={status} signal={:?} observed_unix_ms={}; \
+         no SQLite shared lock (exit41) or failed fcntl (exit42)",
+        libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
     );
 }
 
@@ -1624,7 +1696,7 @@ fn incompatible_delete_mode_versions_refuse_without_changing_bytes() {
 
 #[test]
 fn enter_wal_refuses_a_vfs_that_returns_memory_mode() {
-    let db = Connection::open_in_memory().unwrap();
+    let db = connection_for_test(":memory:", OpenFlags::default()).unwrap();
     assert_eq!(enter_wal(&db), Err(Error::Unsafe));
 }
 

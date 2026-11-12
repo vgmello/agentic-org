@@ -598,6 +598,24 @@ fn override_policy(path: &Path, code: &str) {
             "#[test]fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec("
         ));
         assert!(!code.contains("rusqlite") && !code.contains("Connection"));
+    } else if let Some((_, function, statement)) = host_opener_statements()
+        .into_iter()
+        .find(|(file, _, _)| path == Path::new(file))
+    {
+        assert_eq!(
+            code.matches(lint).count(),
+            1,
+            "host override identifier count"
+        );
+        require_exception_statement(
+            code,
+            function,
+            &format!("#[allow(clippy::{lint}s)]"),
+            statement,
+        );
+        if function == "pub(super)fn connection_for_test(" {
+            assert!(code.contains("#[cfg(test)]pub(super)fn connection_for_test("));
+        }
     } else {
         assert!(
             !code.contains(lint),
@@ -1207,5 +1225,75 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
     ] {
         let source = format!("{declaration}(){{{attr}let x=op();}}");
         require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+    }
+}
+// Each process-private host opener has one statement-scoped exception.
+fn host_opener_statements() -> [(&'static str, &'static str, &'static str); 3] {
+    [
+        ("apps/org-office-host/src/hostdb.rs", "fn connect(",
+         "letdb=Connection::open_with_flags(path,OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NOFOLLOW,)?;"),
+        ("apps/org-office-host/src/hostdb/sqlcipher.rs", "pub(super)fn ready(",
+         "letdb=Connection::open_in_memory()?;"),
+        ("apps/org-office-host/src/hostdb/tests.rs", "pub(super)fn connection_for_test(",
+         "letdb=Connection::open_with_flags(path,flags).map_err(Error::from)?;"),
+    ]
+}
+
+#[test]
+fn host_override_inventory_accepts_only_three_exact_statements() {
+    let lint = "disallowed_methods";
+    let plain = format!("#[allow(clippy::{lint})]");
+    for (file, function, statement) in host_opener_statements() {
+        let prefix = if function == "pub(super)fn connection_for_test(" {
+            "#[cfg(test)]"
+        } else {
+            ""
+        };
+        let accepted = format!("{prefix}{function}){{{plain}{statement}}}");
+        override_policy(Path::new(file), &accepted);
+        let wrong_function = function.replace("fn ", "fn wrongfn");
+        let wrong_name = accepted.replace(function, &wrong_function);
+        assert!(
+            std::panic::catch_unwind(|| override_policy(Path::new(file), &wrong_name)).is_err()
+        );
+        override_policy(Path::new(file), &format!("{wrong_function}){{}}{accepted}"));
+        let wrong_path = format!(
+            "unapproved/{}",
+            Path::new(file).file_name().unwrap().to_str().unwrap()
+        );
+        assert!(
+            std::panic::catch_unwind(|| override_policy(Path::new(&wrong_path), &accepted))
+                .is_err()
+        );
+        for bad in [
+            format!("{accepted}{plain}fn extra(){{}}"),
+            format!("{accepted}#[expect(clippy::{lint})]fn extra(){{}}"),
+            format!("{accepted}#[allow(clippy::disallowed_method)]fn extra(){{}}"),
+            accepted.replace(&plain, "#[allow(clippy::disallowed_method)]"),
+            accepted.replace(
+                &plain,
+                "#[allow(renamed_and_removed_lints,clippy::disallowed_method)]",
+            ),
+            accepted.replace(&plain, ""),
+            accepted.replace(&plain, &format!("{plain}{plain}")),
+            accepted.replace(&plain, &format!("#[expect(clippy::{lint})]")),
+            accepted.replace(&plain, &format!("#[allow(clippy::{lint},dead_code)]")),
+            format!("{plain}{prefix}{function}){{{statement}}}"),
+            format!("{plain}mod bypass{{{prefix}{function}){{{statement}}}}}"),
+            format!("{prefix}fn wrong(){{{plain}{statement}}}"),
+            accepted.replace(statement, "letdb={extra();Connection::open_in_memory()?;};"),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| override_policy(Path::new(file), &bad)).is_err(),
+                "{file}: {bad}"
+            );
+        }
+        if !prefix.is_empty() {
+            assert!(std::panic::catch_unwind(|| override_policy(
+                Path::new(file),
+                &accepted.replace(prefix, "")
+            ))
+            .is_err());
+        }
     }
 }
