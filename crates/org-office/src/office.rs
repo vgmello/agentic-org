@@ -63,7 +63,8 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
 /// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3.
 /// Version 5 adds change results, number counters and a clock, and is closed.
-/// Version 6 decouples current tasks from status lines; it stays open until B1-11's final slice.
+/// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
+/// reads (B1-12); it stays open until B1-11's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     version: 6,
     create: |tx| {
@@ -72,7 +73,8 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         status::create_table(tx)?;
         origin::create_tables(tx)?;
         work::create_tables(tx)?;
-        work::create_v5_tables(tx)
+        work::create_v5_tables(tx)?;
+        crate::store::owned_processes::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -89,6 +91,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 5 {
             work::create_v5_tables(tx)?;
+        }
+        if from < 6 {
+            crate::store::owned_processes::create_table(tx)?;
         }
         Ok(())
     },
