@@ -153,10 +153,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
             let entry = entry.unwrap();
             let name = entry.file_name();
             if entry.file_type().unwrap().is_dir() {
-                if !matches!(
-                    name.to_str(),
-                    Some("target" | "node_modules" | ".git" | ".svelte-kit" | "dist" | "build")
-                ) {
+                if !skip_policy_directory(entry.path().strip_prefix(root).unwrap()) {
                     directories.push(entry.path());
                 }
             } else if entry
@@ -178,6 +175,11 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
                         entry.path().display()
                     );
                 }
+            } else if opener_policy_config(&entry.path()) {
+                check_opener_config(
+                    &entry.path(),
+                    &std::fs::read_to_string(entry.path()).unwrap(),
+                );
             } else if name == "clippy.toml" || name == ".clippy.toml" {
                 configs += 1;
                 let config = std::fs::read_to_string(entry.path()).unwrap();
@@ -459,9 +461,113 @@ fn rust_code(source: &str) -> String {
     code
 }
 
+fn skip_policy_directory(relative: &Path) -> bool {
+    // Generated/dependency trees are irrelevant, but a source module may legally
+    // be named build, dist or target. Never omit a directory beneath src.
+    !relative.components().any(|part| part.as_os_str() == "src")
+        && matches!(
+            relative.file_name().and_then(|name| name.to_str()),
+            Some("target" | "node_modules" | ".git" | ".svelte-kit" | "dist" | "build")
+        )
+}
+
+fn opener_policy_config(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "Cargo.toml")
+        || (path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".cargo")
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("config")))
+}
+
+fn check_opener_config(path: &Path, config: &str) {
+    assert!(
+        !config.contains("disallowed_method"),
+        "{} overrides the SQLCipher opener lint through Cargo configuration",
+        path.display()
+    );
+}
+
+#[test]
+fn sqlcipher_policy_scans_source_directories_and_cargo_configuration() {
+    for name in [
+        "target",
+        "node_modules",
+        ".git",
+        ".svelte-kit",
+        "dist",
+        "build",
+    ] {
+        assert!(skip_policy_directory(Path::new(name)));
+        assert!(skip_policy_directory(&Path::new("apps/org-ui").join(name)));
+        assert!(!skip_policy_directory(
+            &Path::new("crates/org-office/src").join(name)
+        ));
+    }
+    assert!(!skip_policy_directory(Path::new("crates/org-office/tests")));
+    for path in [
+        "Cargo.toml",
+        "crates/org-office/Cargo.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "crates/org-office/.cargo/config.toml",
+    ] {
+        let path = Path::new(path);
+        assert!(opener_policy_config(path));
+        check_opener_config(path, "[lints.clippy]\ntoo_many_arguments = \"allow\"");
+        for lint in ["disallowed_method", "disallowed_methods"] {
+            for config in [
+                format!("[lints.clippy]\n{lint} = \"allow\""),
+                format!("[build]\nrustflags = [\"-A\", \"clippy::{lint}\"]"),
+            ] {
+                assert!(std::panic::catch_unwind(|| check_opener_config(path, &config)).is_err());
+            }
+        }
+    }
+    for path in [
+        "clippy.toml",
+        ".cargo/README.md",
+        "config.toml",
+        "apps/org-ui/package.json",
+    ] {
+        assert!(!opener_policy_config(Path::new(path)));
+    }
+}
+
+#[test]
+fn sqlcipher_override_policy_rejects_renamed_lint_and_preserves_exact_exceptions() {
+    let plain = "#[allow(clippy::disallowed_methods)]";
+    let approved = office_policy_fixture(plain);
+    let store = Path::new("crates/org-office/src/store.rs");
+    override_policy(store, &approved);
+    for lint in ["disallowed_method", "disallowed_methods"] {
+        for attribute in [
+            format!("#[allow(clippy::{lint})]"),
+            format!("#[allow(renamed_and_removed_lints,clippy::{lint})]"),
+        ] {
+            let rogue = rust_code(&format!(
+                "{attribute} pub fn rogue(){{ let _=rusqlite::Connection::open(\"x\"); }}"
+            ));
+            for path in ["crates/org-office/src/lib.rs", "other.rs"] {
+                assert!(
+                    std::panic::catch_unwind(|| override_policy(Path::new(path), &rogue)).is_err()
+                );
+            }
+            assert!(std::panic::catch_unwind(|| override_policy(
+                store,
+                &format!("{approved}{rogue}")
+            ))
+            .is_err());
+        }
+    }
+}
+
 fn override_policy(path: &Path, code: &str) {
     reject_lint_groups(path, code);
-    let lint = "disallowed_methods";
+    let lint = "disallowed_method";
     if path == Path::new("crates/org-office/src/store.rs") {
         assert_eq!(
             code.matches(lint).count(),
@@ -469,24 +575,24 @@ fn override_policy(path: &Path, code: &str) {
             "store override identifier count"
         );
         assert_eq!(
-            code.matches(&format!("#[allow(clippy::{lint})]")).count(),
+            code.matches(&format!("#[allow(clippy::{lint}s)]")).count(),
             3,
             "store overrides must use the plain allow form"
         );
-        let plain = format!("#[allow(clippy::{lint})]");
+        let plain = format!("#[allow(clippy::{lint}s)]");
         for (function, statement) in office_opener_statements() {
             require_exception_statement(code, function, &plain, statement);
         }
         assert!(code.contains("#[cfg(test)]fn connection_for_test("));
     } else if path == Path::new("crates/org-supervise/src/lib.rs") {
         assert_eq!(code.matches(lint).count(), 1);
-        assert!(code.contains(&format!("#![deny(clippy::{lint})]")));
+        assert!(code.contains(&format!("#![deny(clippy::{lint}s)]")));
     } else if path == Path::new("crates/org-supervise/src/spawn.rs") {
         // Preserve the existing test-only Command::status exception, not a SQL opener.
         assert_eq!(code.matches(lint).count(), 1);
         require_exception_statement(code,
             "fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec(",
-            &format!("#[expect(clippy::{lint},reason=)]"),
+            &format!("#[expect(clippy::{lint}s,reason=)]"),
             "letstatus=std::process::Command::new().env_clear().args([,,,]).args(descriptors.map(|fd|fd.to_string())).status().unwrap();");
         assert!(code.contains(
             "#[test]fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec("
@@ -546,6 +652,17 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
         Path::new("crates/org-supervise/src/lib.rs"),
         &rust_code(&format!("#![deny(clippy::{lint})]")),
     );
+    for (path, approved) in [
+        ("crates/org-office/src/store.rs", source.clone()),
+        (
+            "crates/org-supervise/src/lib.rs",
+            format!("#![deny(clippy::{lint})]"),
+        ),
+        ("crates/org-supervise/src/spawn.rs", rust_code(&child)),
+    ] {
+        let extra = format!("{approved}#[allow(clippy::disallowed_method)]fn extra(){{}}");
+        assert!(std::panic::catch_unwind(|| override_policy(Path::new(path), &extra)).is_err());
+    }
     for (path, source) in [
         (
             "crates/org-office/src/lib.rs",
@@ -928,6 +1045,7 @@ fn reject_lint_groups(path: &Path, code: &str) {
                     assert!(
                         ![
                             "warnings",
+                            "renamed_and_removed_lints",
                             "clippy",
                             "clippy::all",
                             "clippy::restriction",
@@ -956,6 +1074,8 @@ fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
     for group in [
         "warnings",
         "r#warnings",
+        "renamed_and_removed_lints",
+        "r#renamed_and_removed_lints",
         "clippy",
         "clippy::all",
         "clippy::restriction",
@@ -984,7 +1104,10 @@ fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
         file,
         &rust_code("#[allow(dead_code,clippy::too_many_arguments,reason=\"warnings\")] fn x(){}"),
     );
-    override_policy(file, &rust_code("#![deny(warnings)]"));
+    override_policy(
+        file,
+        &rust_code("#![deny(warnings,renamed_and_removed_lints)]"),
+    );
     let lint = "disallowed_methods";
     let plain = format!("#[allow(clippy::{lint})]");
     let code = office_policy_fixture(&plain);
@@ -1059,6 +1182,21 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
             "accepted function {name}"
         );
         let source = format!("fn {name}(){{}} fn connect(){{{attr}let x=op();}}");
+        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+    }
+    for prefix in ["wrongfn", "_fn", "r#fn", "éfn", "e\u{301}fn"] {
+        let source = format!("{prefix} connect(){{{attr}let x=op();}}");
+        assert!(
+            std::panic::catch_unwind(|| require_exception_statement(
+                &rust_code(&source),
+                "fn connect(",
+                attr,
+                "letx=op();"
+            ))
+            .is_err(),
+            "accepted non-keyword {prefix}"
+        );
+        let source = format!("{prefix} connect(){{}} fn connect(){{{attr}let x=op();}}");
         require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
     }
     for declaration in [
