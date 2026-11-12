@@ -28,8 +28,12 @@ fn cargo_dependencies_keep_the_two_fences_in_separate_processes() {
         .parent()
         .unwrap();
     let cold_cache = tempfile::tempdir().unwrap();
+    require_separate_fences(&workspace_metadata(root, cold_cache.path()));
+}
+
+fn workspace_metadata(root: &std::path::Path, cold_cache: &std::path::Path) -> serde_json::Value {
     let result = std::process::Command::new(env!("CARGO"))
-        .env("CARGO_HOME", cold_cache.path())
+        .env("CARGO_HOME", cold_cache)
         .current_dir(root)
         .args([
             "metadata",
@@ -46,8 +50,43 @@ fn cargo_dependencies_keep_the_two_fences_in_separate_processes() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let metadata: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    require_separate_fences(&metadata);
+    serde_json::from_slice(&result.stdout).unwrap()
+}
+
+#[test]
+fn cargo_manifest_fixture_rejects_a_transitive_store_edge_with_an_empty_cache() {
+    let workspace = tempfile::tempdir().unwrap();
+    let cold_cache = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers=[\"host\",\"office\",\"bridge\"]\nresolver=\"2\"\n",
+    )
+    .unwrap();
+    for (directory, name) in [
+        ("host", "org-office-host"),
+        ("office", "org-office"),
+        ("bridge", "bridge"),
+    ] {
+        std::fs::create_dir_all(root.join(directory).join("src")).unwrap();
+        std::fs::write(root.join(directory).join("src/lib.rs"), "").unwrap();
+        std::fs::write(
+            root.join(directory).join("Cargo.toml"),
+            format!("[package]\nname=\"{name}\"\nversion=\"0.0.0\"\nedition=\"2021\"\n"),
+        )
+        .unwrap();
+    }
+    let host_manifest = root.join("host/Cargo.toml");
+    let mut host = std::fs::read_to_string(&host_manifest).unwrap();
+    host.push_str("[dependencies]\nbridge={path=\"../bridge\"}\n");
+    std::fs::write(host_manifest, host).unwrap();
+    require_separate_fences(&workspace_metadata(root, cold_cache.path()));
+    let bridge_manifest = root.join("bridge/Cargo.toml");
+    let mut bridge = std::fs::read_to_string(&bridge_manifest).unwrap();
+    bridge.push_str("[dependencies]\norg-office={path=\"../office\"}\n");
+    std::fs::write(bridge_manifest, bridge).unwrap();
+    let metadata = workspace_metadata(root, cold_cache.path());
+    assert!(std::panic::catch_unwind(|| require_separate_fences(&metadata)).is_err());
 }
 
 fn require_separate_fences(metadata: &serde_json::Value) {
