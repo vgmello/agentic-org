@@ -24,6 +24,7 @@
 		gutters: '@max-[21rem]:px-[min(1rem,5cqi)]',
 		name: '@max-[21rem]:w-full @max-[21rem]:flex-none',
 		gap: '@max-[21rem]:gap-x-2',
+		chevron: '@max-[21rem]:ml-0',
 		bleed: '@max-[21rem]:-mx-[min(1rem,5cqi)]'
 	};
 
@@ -267,7 +268,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 					<span class="absolute inset-0" aria-hidden="true"></span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
-				<span class="ml-auto inline-flex max-w-full flex-none flex-wrap items-center gap-x-2 gap-y-2" data-testid="office-actions">
+				<span class="ml-auto inline-flex max-w-full flex-none flex-wrap items-center justify-end gap-x-2 gap-y-2" data-testid="office-actions">
 					<span class="contents" aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
 				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
 					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
@@ -281,8 +282,8 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 						aria-busy={check === 'checking'}
 						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
+					<ChevronRight class="{compactRow.chevron} ml-2 size-5 shrink-0 text-gray-400" aria-hidden="true" />
 				</span>
-				<ChevronRight class="size-5 shrink-0 text-gray-400" aria-hidden="true" />
 			</DividedRow>
 		{:else}
 			<DividedRow class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
