@@ -27,7 +27,9 @@ fn cargo_dependencies_keep_the_two_fences_in_separate_processes() {
         .unwrap()
         .parent()
         .unwrap();
+    let cold_cache = tempfile::tempdir().unwrap();
     let result = std::process::Command::new(env!("CARGO"))
+        .env("CARGO_HOME", cold_cache.path())
         .current_dir(root)
         .args([
             "metadata",
@@ -35,7 +37,7 @@ fn cargo_dependencies_keep_the_two_fences_in_separate_processes() {
             "1",
             "--locked",
             "--offline",
-            "--all-features",
+            "--no-deps",
         ])
         .output()
         .unwrap();
@@ -49,90 +51,115 @@ fn cargo_dependencies_keep_the_two_fences_in_separate_processes() {
 }
 
 fn require_separate_fences(metadata: &serde_json::Value) {
+    // This guards accidental co-linking through workspace path dependencies, including
+    // dev/build/optional/target-specific edges and libraries. Registry crates cannot
+    // depend on these unpublished workspace stores. Unknown local paths fail closed.
     let packages = metadata["packages"].as_array().unwrap();
-    let package_id = |name| {
-        packages.iter().find(|p| p["name"] == name).unwrap()["id"]
-            .as_str()
-            .unwrap()
-    };
-    let host = package_id("org-office-host");
-    let office = package_id("org-office");
-    let nodes = metadata["resolve"]["nodes"].as_array().unwrap();
-    let reachable = |start: &str| {
+    let package_index = |name| packages.iter().position(|p| p["name"] == name).unwrap();
+    let host = package_index("org-office-host");
+    let office = package_index("org-office");
+    let edges: Vec<Vec<usize>> = packages
+        .iter()
+        .map(|package| {
+            package["dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|dependency| dependency["path"].as_str())
+                .map(|path| {
+                    packages
+                        .iter()
+                        .position(|p| {
+                            std::path::Path::new(p["manifest_path"].as_str().unwrap()).parent()
+                                == Some(std::path::Path::new(path))
+                        })
+                        .expect("local dependency absent from workspace co-link inventory")
+                })
+                .collect()
+        })
+        .collect();
+    for member in metadata["workspace_members"].as_array().unwrap() {
+        let start = packages.iter().position(|p| p["id"] == *member).unwrap();
         let mut seen = std::collections::HashSet::new();
-        let mut pending = vec![start.to_owned()];
-        while let Some(id) = pending.pop() {
-            if !seen.insert(id.clone()) {
-                continue;
+        let mut pending = vec![start];
+        while let Some(index) = pending.pop() {
+            if seen.insert(index) {
+                pending.extend(&edges[index]);
             }
-            let node = nodes.iter().find(|node| node["id"] == id).unwrap();
-            pending.extend(
-                node["dependencies"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_owned()),
-            );
         }
-        seen
-    };
-    // If either store starts sharing a process, merge into one fence before linking.
-    assert!(
-        !reachable(host).contains(office),
-        "host now depends on office: share one SQLCipher fence"
-    );
-    let members = metadata["workspace_members"].as_array().unwrap();
-    for package in packages {
-        if !members.contains(&package["id"])
-            || !package["targets"].as_array().unwrap().iter().any(|target| {
-                target["kind"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|kind| kind == "bin")
-            })
-        {
-            continue;
-        }
-        let dependencies = reachable(package["id"].as_str().unwrap());
         assert!(
-            !(dependencies.contains(host) && dependencies.contains(office)),
+            !(seen.contains(&host) && seen.contains(&office)),
             "{} links both SQLCipher fences: merge them before linking",
-            package["name"]
+            packages[start]["name"]
         );
     }
 }
 
 #[test]
-fn dependency_policy_rejects_direct_transitive_and_binary_colinking() {
-    let valid = serde_json::json!({
+fn dependency_policy_covers_all_local_edges_and_library_targets() {
+    let mut valid = serde_json::json!({
         "packages": [
-            {"name":"org-office-host","id":"host","targets":[{"kind":["lib"]}]},
-            {"name":"org-office","id":"office","targets":[{"kind":["lib"]}]},
-            {"name":"bridge","id":"bridge","targets":[{"kind":["lib"]}]},
-            {"name":"consumer","id":"consumer","targets":[{"kind":["bin"]}]}
+            {"name":"org-office-host","id":"host","manifest_path":"/workspace/host/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"]}]},
+            {"name":"org-office","id":"office","manifest_path":"/workspace/office/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"]}]},
+            {"name":"bridge","id":"bridge","manifest_path":"/workspace/bridge/Cargo.toml","dependencies":[],"targets":[{"kind":["lib"]}]},
+            {"name":"consumer","id":"consumer","manifest_path":"/workspace/consumer/Cargo.toml","dependencies":[],"targets":[{"kind":["bin"]}]}
         ],
         "workspace_members":["host","office","bridge","consumer"],
-        "resolve":{"nodes":[
-            {"id":"host","dependencies":[]}, {"id":"office","dependencies":[]},
-            {"id":"bridge","dependencies":[]}, {"id":"consumer","dependencies":["host"]}
-        ]}
+        "resolve":null
     });
-    require_separate_fences(&valid);
-    let mut office_only = valid.clone();
-    office_only["resolve"]["nodes"][3]["dependencies"] = serde_json::json!(["office"]);
-    require_separate_fences(&office_only);
-    for (host, bridge, consumer) in [
-        (vec!["office"], vec![], vec![]),
-        (vec!["bridge"], vec!["office"], vec![]),
-        (vec![], vec![], vec!["host", "office"]),
+    let edge = |path: &str, kind: Option<&str>| {
+        serde_json::json!({
+            "name":"renamed-dependency","path":format!("/workspace/{path}"),
+            "kind":kind,"optional":true,"target":"cfg(target_os = \"linux\")"
+        })
+    };
+    for store in ["host", "office"] {
+        valid["packages"][3]["dependencies"] = serde_json::json!([edge(store, None)]);
+        require_separate_fences(&valid);
+    }
+    for kind in [None, Some("dev"), Some("build")] {
+        for target in ["bin", "lib", "cdylib", "staticlib", "proc-macro"] {
+            let mut invalid = valid.clone();
+            invalid["packages"][3]["targets"][0]["kind"] = serde_json::json!([target]);
+            invalid["packages"][3]["dependencies"] =
+                serde_json::json!([edge("host", kind), edge("bridge", kind)]);
+            invalid["packages"][2]["dependencies"] = serde_json::json!([edge("office", kind)]);
+            assert!(std::panic::catch_unwind(|| require_separate_fences(&invalid)).is_err());
+        }
+    }
+    for (host, bridge) in [
+        (vec![edge("office", None)], vec![]),
+        (
+            vec![edge("bridge", Some("dev"))],
+            vec![edge("office", Some("build"))],
+        ),
     ] {
         let mut invalid = valid.clone();
-        invalid["resolve"]["nodes"][0]["dependencies"] = serde_json::json!(host);
-        invalid["resolve"]["nodes"][2]["dependencies"] = serde_json::json!(bridge);
-        invalid["resolve"]["nodes"][3]["dependencies"] = serde_json::json!(consumer);
+        invalid["packages"][0]["dependencies"] = serde_json::json!(host);
+        invalid["packages"][2]["dependencies"] = serde_json::json!(bridge);
         assert!(std::panic::catch_unwind(|| require_separate_fences(&invalid)).is_err());
     }
+    // A registry dependency has no local path and cannot link an unpublished store.
+    valid["packages"][3]["dependencies"] = serde_json::json!([{"name":"serde","path":null}]);
+    require_separate_fences(&valid);
+    valid["packages"][3]["dependencies"] = serde_json::json!([edge("unlisted", None)]);
+    assert!(std::panic::catch_unwind(|| require_separate_fences(&valid)).is_err());
+}
+
+#[test]
+fn cipher_version_errors_distinguish_missing_cipher_from_sql_failures() {
+    assert_eq!(
+        cipher_version_failure(rusqlite::Error::QueryReturnedNoRows),
+        Failure::NoCipher
+    );
+    let failure = rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
+        Some("private key canary".into()),
+    );
+    assert_eq!(
+        cipher_version_failure(failure),
+        Failure::Sql(rusqlite::ErrorCode::SystemIoFailure)
+    );
 }
 
 #[test]

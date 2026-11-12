@@ -655,7 +655,7 @@ static READY: OnceLock<Result<(), String>> = OnceLock::new();
 /// Completes process-wide SQLCipher initialization before any keyed connection opens (BUG-100).
 ///
 /// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
-/// All openers must pass this fence, including host storage that shares this process.
+/// All office openers must pass this fence.
 /// Initialization failure is cached for the process lifetime; restart after fixing its cause.
 /// Host-only twin: apps/org-office-host/src/hostdb/sqlcipher.rs. If both stores
 /// ever share a process, merge into one fence before linking them together.

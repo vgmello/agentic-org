@@ -1,6 +1,7 @@
 //! BUG-100 initialization fence for the host process, which does not link org-office.
 //! Keep in sync with crates/org-office/src/store.rs::sqlcipher_ready. If these
 //! stores ever share a process, use one shared fence before either store opens.
+//! Failure is cached for the process lifetime; restart after fixing its cause.
 
 use super::{Connection, Error};
 use std::sync::OnceLock;
@@ -67,10 +68,14 @@ fn keyed_cipher_version(db: &Connection) -> Result<String, Failure> {
         "'\";"
     ))?;
     db.query_row("PRAGMA cipher_version", [], |row| row.get(0))
-        .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => Failure::NoCipher,
-            other => other.into(),
-        })
+        .map_err(cipher_version_failure)
+}
+
+fn cipher_version_failure(error: rusqlite::Error) -> Failure {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => Failure::NoCipher,
+        other => other.into(),
+    }
 }
 
 fn initialize(
