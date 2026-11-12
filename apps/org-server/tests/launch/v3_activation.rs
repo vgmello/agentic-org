@@ -94,7 +94,7 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     let mut run = world.spawn(&["--create"]);
     v3::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
     let mut stream = accepted(&listener, &mut run);
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
         json!({"v":3,"event":"ready_for_secrets"})
@@ -136,7 +136,11 @@ fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
     assert_eq!(hello(&world).organization_name, "Acme");
     // Sender closed its passed copy after ACK. The live worker must still own the datagram end.
     host_end.set_nonblocking(true).unwrap();
-    assert_eq!(host_end.send(b"probe").unwrap(), 5);
+    let record = v3::encode_transfer_record(&v3::TransferRecord::Revoked {
+        session_ids: vec![],
+    })
+    .unwrap();
+    assert_eq!(host_end.send(&record).unwrap(), record.len());
     assert!(
         run.events.try_recv().is_err(),
         "v3 authority events leaked onto stdout"
@@ -164,6 +168,7 @@ struct Session {
     run: Run,
     stream: UnixStream,
     reader: BufReader<UnixStream>,
+    transfer: Option<UnixDatagram>,
 }
 impl Session {
     fn event(&mut self) -> Value {
@@ -220,7 +225,7 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
     let mut run = world.spawn(&args);
     v3::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
     let mut stream = accepted(&listener, &mut run);
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
     assert_eq!(
         line(&mut reader),
         json!({"v":3,"event":"ready_for_secrets"})
@@ -245,8 +250,8 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
     let mut bytes = v3::encode_handoff(&header).unwrap();
     stream.write_all(&bytes).unwrap();
     bytes.fill(0);
-    if op != FirstLine::Discard {
-        let (transfer, _host_end) = UnixDatagram::pair().unwrap();
+    let transfer_host = if op != FirstLine::Discard {
+        let (transfer, host_end) = UnixDatagram::pair().unwrap();
         transfer.shutdown(std::net::Shutdown::Write).unwrap();
         pass_fd(&stream, transfer.as_raw_fd());
         assert_eq!(
@@ -254,11 +259,15 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
             json!({"v":3,"event":"fds_received","of":"handoff"})
         );
         drop(transfer);
-    }
+        Some(host_end)
+    } else {
+        None
+    };
     Session {
         run,
         stream,
         reader,
+        transfer: transfer_host,
     }
 }
 fn ready_create(world: &World) -> Session {
@@ -581,7 +590,7 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         let mut run = world.spawn(&["--create"]);
         v3::write_first_line(run.stdin.as_mut().unwrap(), &create_line(&path)).unwrap();
         let mut stream = accepted(&listener, &mut run);
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
         assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
         let header = v3::encode_handoff(&Handoff::Create {
             db_key: db_key(),
@@ -628,3 +637,6 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
         assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
 }
+
+#[path = "v3_activation/transfer.rs"]
+mod transfer;
