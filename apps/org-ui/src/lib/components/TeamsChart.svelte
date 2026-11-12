@@ -1,4 +1,5 @@
 <script lang="ts">
+	import HeroIcon from './HeroIcon.svelte';
 	import './org-tree.css';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import type { Snippet } from 'svelte';
@@ -146,7 +147,8 @@
 							<span class="font-medium break-words text-gray-200">{project.name}</span>
 							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
 							{#if onremoveproject}
-								<button type="button" aria-label="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto rounded px-1 text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400">×</button>
+								<button type="button" aria-label="Remove {project.name} from {team.name}"
+									title="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
 							{/if}
 							{#if others.length > 0}
 								<button

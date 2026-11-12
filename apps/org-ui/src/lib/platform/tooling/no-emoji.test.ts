@@ -9,6 +9,7 @@ import { expect, it } from 'vitest';
 const emoji = /\p{Regional_Indicator}{2}|\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F|[#*0-9]\uFE0F?\u20E3/gu;
 const exclusions = ['lib/modules/copilot/check.test.ts', 'lib/modules/messaging/engine.test.ts', 'lib/modules/employees/urls.test.ts'];
 const root = fileURLToPath(new URL('../../..', import.meta.url));
+const glyphs = (text: string) => [...text.replace(/<!--[\s\S]*?-->/g, '').matchAll(/>\s*([×↳›✓★✕])\s*</gu)].map((match) => match[1]);
 const matches = (text: string) => [...text.matchAll(emoji)].map((match) => match[0]);
 function inspectSource(root: string) {
 	// An exact allowlist of inventory Unicode fixtures; missing files fail loudly.
@@ -19,7 +20,8 @@ function inspectSource(root: string) {
 			const path = join(directory, entry.name), name = relative(root, path);
 			if (entry.isDirectory()) scan(path);
 			else if (!exclusions.includes(name)) {
-				const found = matches(readFileSync(path, 'utf8'));
+				const text = readFileSync(path, 'utf8');
+				const found = [...matches(text), ...(name.endsWith('.svelte') ? glyphs(text) : [])];
 				if (found.length) problems.push(`${name}: ${found.join(' ')}`);
 			}
 		}
@@ -36,7 +38,7 @@ function fixture(check: (root: string, put: (name: string, text: string) => void
 	} finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-it('E1–E3: shipped UI source, sample and mock data contain no emoji codepoints', () => {
+it('E1–E3: shipped UI source, sample and mock data contain no emoji or glyph-only pseudo-icons', () => {
 	expect(inspectSource(root)).toEqual([]);
 });
 it('E3: permits ordinary typography, including bare copyright, registered and trademark', () => {
@@ -61,4 +63,19 @@ it('E3: excludes only the three named Unicode fixtures, including no blanket tes
 it('E3: a removed allowlisted fixture fails rather than silently rotting', () => fixture((root) => {
 	rmSync(join(root, exclusions[0]));
 	expect(() => inspectSource(root)).toThrow(/ENOENT/);
+}));
+
+it.each(['×', '↳', '›', '✓', '★', '✕'])('E3 pseudo-icons: reports a glyph-only Svelte element %s', (glyph) => fixture((root, put) => {
+	put('components/Example.svelte', `<button> \n${glyph}\t </button>`);
+	expect(inspectSource(root)).toEqual([`components/Example.svelte: ${glyph}`]);
+}));
+it('E3 pseudo-icons: permits text-label typography, comments and non-Svelte text', () => fixture((root, put) => {
+	put('components/Example.svelte', '<span>Engineering › Web</span><span>Engineering ›</span><span>› Web</span><span>@owner</span><span>#general</span><!-- <button>×</button> -->');
+	put('lib/example.ts', "const label = '<button>×</button>';");
+	expect(inspectSource(root)).toEqual([]);
+}));
+
+it('E3 pseudo-icons: strips each comment without hiding a glyph between comments', () => fixture((root, put) => {
+	put('components/Example.svelte', '<!-- before --><button>×</button><!-- after -->');
+	expect(inspectSource(root)).toEqual(['components/Example.svelte: ×']);
 }));
