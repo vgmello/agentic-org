@@ -1108,6 +1108,7 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 		await expect(page.locator('html')).toHaveCSS('font-size', `${rootFont}px`);
 		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'update_needed', status_reason: 'unsupported_version' });
 		await expect(row).toContainText('Update needed');
+		await shot(page, `of1-rem-boundary-${rootFont}-${offset}`, { context: row });
 		expect((await row.boundingBox())!.width).toBeCloseTo(column, 0);
 		await expectReadableOfficeName(row);
 		await expectVisibleStatusText(row);
@@ -1127,7 +1128,6 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 			expect(layout.groupWidth).toBeCloseTo(layout.buttonWidth, 0);
 		}
 		expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-		await shot(page, `of1-rem-boundary-${rootFont}-${offset}`, { context: row });
 	});
 }
 
@@ -1141,14 +1141,16 @@ for (const rootFont of [20, 40]) for (const width of [300, 304, 960]) {
 		await expect(row).toContainText('Online');
 		await page.addStyleTag({ content: `html { font-size: ${rootFont}px !important; }` });
 		await expect(page.locator('html')).toHaveCSS('font-size', `${rootFont}px`);
+		// The shared badge animates font-size/padding; measure the settled rendered row.
+		await shot(page, `of1-computed-root-${width}-${rootFont}-online`, { context: row });
 		await expectReadableOfficeName(row);
 		await expectVisibleStatusText(row);
 		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'unavailable', status_reason: 'crashed' });
 		await expect(row).toContainText('Stopped');
+		await shot(page, `of1-computed-root-${width}-${rootFont}`, { context: row });
 		await expectReadableOfficeName(row);
 		await expectVisibleStatusText(row);
 		await expectFullStatusWord(row, width === 960 && rootFont === 40);
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-		await shot(page, `of1-computed-root-${width}-${rootFont}`, { context: row });
 	});
 }
