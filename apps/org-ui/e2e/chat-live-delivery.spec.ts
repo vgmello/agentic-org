@@ -81,7 +81,7 @@ async function holdSend(page: Page) {
 }
 
 for (const place of ['conversation', 'thread'] as const) {
-	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, async ({ page }) => {
+	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, { tag: '@journey' }, async ({ page }) => {
 		await open(page);
 		const root = page.getByTestId('message-list').getByTestId('replies-link').first();
 		const previousCount = await root.innerText();
@@ -221,7 +221,7 @@ test('CHAT-1/8 BUG-66: switching threads mounts a silent new log', async ({ page
 	await shot(page, 'chat-live-silent-thread-switch');
 });
 
-test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', async ({ page }) => {
+test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', { tag: '@journey' }, async ({ page }) => {
 	await page.clock.install();
 	await open(page, 'c-dm-ines');
 	const composer = page.getByTestId('composer');

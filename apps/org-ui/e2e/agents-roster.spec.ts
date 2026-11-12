@@ -28,7 +28,7 @@ test.afterEach(async ({ page }) => {
 });
 
 
-test('AGENT-3: the Agents screen lists every agent A–Z with what it runs on, how it runs, status, teams, office and manager', async ({ page }) => {
+test('AGENT-3: the Agents screen lists every agent A–Z with what it runs on, how it runs, status, teams, office and manager', { tag: '@journey' }, async ({ page }) => {
 	await createOrg(page);
 	await expect(rows(page)).toHaveCount(8);
 	const names = await rows(page).locator('th a').allInnerTexts();
@@ -74,14 +74,14 @@ test('AGENT-3: filters by status, and an agent who left is listed only under For
 	await expect(rows(page)).toHaveCount(6);
 });
 
-test('AGENT-3: a name opens the org chart with that agent selected', async ({ page }) => {
+test('AGENT-3: a name opens the org chart with that agent selected', { tag: '@journey' }, async ({ page }) => {
 	await createOrg(page);
 	await page.locator('[data-testid=agent-row][data-agent=kai] th a').click();
 	await expect(page).toHaveURL(/\/org-chart\?member=kai$/);
 	await expect(page.getByTestId('selected-member')).toContainText('Kai Lindqvist');
 });
 
-test('AGENT-4: Add agent from the Agents screen adds a row', async ({ page }) => {
+test('AGENT-4: Add agent from the Agents screen adds a row', { tag: '@journey' }, async ({ page }) => {
 	await createOrg(page);
 	await page.getByRole('button', { name: 'Add agent' }).first().click();
 	const sheet = page.getByRole('dialog', { name: 'Add an agent' });

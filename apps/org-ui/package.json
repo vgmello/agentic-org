@@ -13,6 +13,12 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
 		"test:e2e": "bun run build && playwright test",
+		"test:e2e:full": "bun run build && playwright test",
+		"test:e2e:journeys": "bun run build && PW_WEBKIT=1 playwright test --grep @journey --project=chromium --project=production --project=webkit",
+		"test:e2e:affected": "bun scripts/ui-gate.ts run",
+		"test:e2e:select": "bun scripts/ui-gate.ts select --explain",
+		"test:e2e:areas": "bun scripts/ui-gate.ts areas",
+		"test:e2e:verify": "bun scripts/ui-gate.ts verify",
 		"test:e2e:csp": "playwright test --config playwright.csp.config.ts",
 		"test:e2e:csp-gateway": "bun scripts/csp-gateway.ts"
 	},

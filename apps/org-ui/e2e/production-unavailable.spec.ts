@@ -11,7 +11,7 @@ const body = (area?: string) => area
 	? `This release of the server doesn't serve ${area} in the browser. Nothing is wrong with your organization. To see what this server can do now, run agentic-org doctor on the HQ machine.`
 	: "This server is running, but this release doesn't serve its pages in the browser yet. To see what it can do now, run agentic-org doctor on the HQ machine.";
 
-test('SRV-18 / BUG-53: unavailable pages explain this release and the next step without sample data or native controls', async ({ page }) => {
+test('SRV-18 / BUG-53: unavailable pages explain this release and the next step without sample data or native controls', { tag: '@journey' }, async ({ page }) => {
 	const apiRequests: string[] = [];
 	page.on('request', (request) => { if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url()); });
 	for (const [path, area] of [
@@ -35,7 +35,7 @@ test('SRV-18 / BUG-53: unavailable pages explain this release and the next step 
 	await shot(page, 'SRV-18-unavailable');
 });
 
-test('SRV-18: browser query parameters, remembered sample data and native globals cannot enable fakes', async ({ page }) => {
+test('SRV-18: browser query parameters, remembered sample data and native globals cannot enable fakes', { tag: '@journey' }, async ({ page }) => {
 	await page.addInitScript(() => {
 		Object.assign(window, { __TAURI_INTERNALS__: {}, __mockOfficeStatus: 'injected' });
 		localStorage.setItem('agentic-org.mock.connections', JSON.stringify([{ organization: { id: 'forged', name: 'Forged sample' } }]));

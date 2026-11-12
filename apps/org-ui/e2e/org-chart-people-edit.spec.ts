@@ -12,7 +12,7 @@ async function openChart(page: Page) {
 }
 const card = (page: Page, id: string) => page.locator(`[data-testid=team-card][data-team=${id}]`);
 
-test('PEOPLE-3: Add person takes a name, contact, teams and a manager; they appear in their teams and are selected', async ({ page }) => {
+test('PEOPLE-3: Add person takes a name, contact, teams and a manager; they appear in their teams and are selected', { tag: '@journey' }, async ({ page }) => {
 	await openChart(page);
 	await page.getByRole('button', { name: 'Add person' }).first().click();
 	const sheet = page.getByRole('dialog', { name: 'Add person' });
@@ -122,7 +122,7 @@ test('REPORT-3: Change manager lists the owner first, never the member, and disa
 	await shot(page, 'change-manager');
 });
 
-test('REPORT-4: a changed manager shows a toast with Undo, and Undo puts it back', async ({ page }) => {
+test('REPORT-4: a changed manager shows a toast with Undo, and Undo puts it back', { tag: '@journey' }, async ({ page }) => {
 	await openChart(page);
 	await card(page, 'people').getByRole('button', { name: /^Leo Brandt/ }).click();
 	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();

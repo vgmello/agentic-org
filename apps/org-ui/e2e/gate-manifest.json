@@ -1,0 +1,152 @@
+{
+	"version": 1,
+	"notes": [
+		"Single source of truth for the tiered UI gate (see e2e/README-gate.md). Paths are relative to apps/org-ui unless a glob starts with ../ (repo root).",
+		"Journeys are the tests tagged @journey in the specs. Each entry names one test declaration (spec + a unique substring of its test( line) and how many Playwright tests it expands to.",
+		"A change that matches a category's sources runs that whole category in addition to the journeys. A path that matches nothing and is not ignored runs the full suite (fail closed).",
+		"webkit: true marks journeys that are also in the WebKit subset; they must be in playwright.config.ts's webkit testMatch and grep."
+	],
+	"budget": {
+		"maxJourneyTests": 60,
+		"maxChromiumSeconds": 300,
+		"measured": { "tests": 55, "chromiumSeconds": 190, "workers": 2, "date": "2026-11-11" }
+	},
+	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
+	"webkitSpecs": ["chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"journeys": [
+		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
+			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
+			{ "spec": "create-organization.spec.ts", "match": "an empty or duplicate name stays on the form", "count": 1 } ] },
+		{ "name": "open-and-switch-organization", "why": "Open an existing organization and switch to another.", "tests": [
+			{ "spec": "open-organization.spec.ts", "match": "the welcome screen lists the organizations", "count": 1 },
+			{ "spec": "open-organization.spec.ts", "match": "Switch organization returns to the list", "count": 1 } ] },
+		{ "name": "shell-navigation", "why": "Every main section opens and is marked current; one main landmark; Back and pointer focus on WebKit.", "tests": [
+			{ "spec": "navigation.spec.ts", "match": "the sidebar lists every section", "count": 1 },
+			{ "spec": "navigation.spec.ts", "match": "opens its page and is marked current", "count": 5 },
+			{ "spec": "shell-landmarks.spec.ts", "match": "one main landmark", "count": 1 },
+			{ "spec": "desktop-navigation-focus.spec.ts", "match": "navigation and Back preserve the retained Chat thread draft", "count": 1, "webkit": true },
+			{ "spec": "desktop-navigation-focus.spec.ts", "match": "Switch organization keeps its non-shell navigation", "count": 1, "webkit": true },
+			{ "spec": "shell-responsive.spec.ts", "match": "browser Back dismisses Menu before leaving the page", "count": 1, "webkit": true } ] },
+		{ "name": "chat-with-agents", "why": "Read a conversation, answer an ask, message an agent, recover from a failed send, and see live delivery once.", "tests": [
+			{ "spec": "chat.spec.ts", "match": "CHAT-1: Chat is in the nav", "count": 1 },
+			{ "spec": "chat.spec.ts", "match": "CHAT-5: an ask is a card", "count": 1 },
+			{ "spec": "chat.spec.ts", "match": "CHAT-7: messaging an asleep agent", "count": 1 },
+			{ "spec": "chat.spec.ts", "match": "states: the office is not running", "count": 1 },
+			{ "spec": "chat-live-delivery.spec.ts", "match": "offers a delivered message once", "count": 2, "webkit": true },
+			{ "spec": "chat-live-delivery.spec.ts", "match": "an incoming open-DM reply is offered once", "count": 1, "webkit": true } ] },
+		{ "name": "agents-roster", "why": "List agents, add an agent, open one in the org chart.", "tests": [
+			{ "spec": "agents-roster.spec.ts", "match": "the Agents screen lists every agent", "count": 1 },
+			{ "spec": "agents-roster.spec.ts", "match": "a name opens the org chart", "count": 1 },
+			{ "spec": "agents-roster.spec.ts", "match": "Add agent from the Agents screen", "count": 1 } ] },
+		{ "name": "org-chart", "why": "Teams tree and reporting tree; add a person, change a manager (with Undo), create and delete a team.", "tests": [
+			{ "spec": "org-chart.spec.ts", "match": "the Teams view draws the ownership tree", "count": 1 },
+			{ "spec": "org-chart-views.spec.ts", "match": "the owner is the root, and everyone appears exactly once", "count": 1 },
+			{ "spec": "org-chart-people-edit.spec.ts", "match": "Add person takes a name, contact", "count": 1 },
+			{ "spec": "org-chart-people-edit.spec.ts", "match": "a changed manager shows a toast with Undo", "count": 1 },
+			{ "spec": "org-chart-teams-edit.spec.ts", "match": "New team takes a name", "count": 1 },
+			{ "spec": "org-chart-teams-edit.spec.ts", "match": "deleting another team names who moves", "count": 1 } ] },
+		{ "name": "projects-work-tasks-bugs", "why": "Projects, a project page, work across projects, create/move/complete a task, report and triage a bug.", "tests": [
+			{ "spec": "projects.spec.ts", "match": "PROJ-1: the list shows every project", "count": 1 },
+			{ "spec": "projects.spec.ts", "match": "PROJ-2: Assign team", "count": 1 },
+			{ "spec": "projects.spec.ts", "match": "PROJ-3: a project page shows its name", "count": 1 },
+			{ "spec": "work.spec.ts", "match": "WORK: tasks and bugs from every project", "count": 1 },
+			{ "spec": "tasks.spec.ts", "match": "TSK-5 and TSK-10: New task needs only a title", "count": 1 },
+			{ "spec": "tasks.spec.ts", "match": "TSK-2 and TSK-3: a card moves", "count": 1 },
+			{ "spec": "tasks.spec.ts", "match": "CHK: the task page assigns", "count": 1 },
+			{ "spec": "bugs.spec.ts", "match": "BUG-1: Report a bug needs a title", "count": 1 },
+			{ "spec": "bugs.spec.ts", "match": "TRI and FIX: triage a New bug", "count": 1 } ] },
+		{ "name": "offices", "why": "Office list and details, connection checking, unreachable, restart a crashed office; pointer focus on WebKit.", "tests": [
+			{ "spec": "offices.spec.ts", "match": "OFC-1: the list shows HQ first", "count": 1 },
+			{ "spec": "offices.spec.ts", "match": "OFC-1: a row opens a slide-over", "count": 1 },
+			{ "spec": "offices.spec.ts", "match": "OFC-12: HQ says Checking", "count": 1 },
+			{ "spec": "offices.spec.ts", "match": "OFC-12: when the office does not answer", "count": 1 },
+			{ "spec": "offices.spec.ts", "match": "OFC-11: Restart office brings a crashed office back", "count": 1 },
+			{ "spec": "offices.spec.ts", "match": "BUG-24: pointer disclosure focuses the repair toggle", "count": 1, "webkit": true },
+			{ "spec": "offices.spec.ts", "match": "BUG-27: pointer activation without focus", "count": 1, "webkit": true } ] },
+		{ "name": "requests", "why": "Create a request and route it; approve it into tasks; send it back or decline it.", "tests": [
+			{ "spec": "requests.spec.ts", "match": "RQS-2/3/5: the words are enough", "count": 1 },
+			{ "spec": "requests.spec.ts", "match": "RQS-9/14: scoped by an agent", "count": 1 },
+			{ "spec": "requests.spec.ts", "match": "RQS-10: asking for changes", "count": 1 } ] },
+		{ "name": "processes", "why": "Effective processes and why a process applies.", "tests": [
+			{ "spec": "processes.spec.ts", "match": "PROC-9: the organization", "count": 1 },
+			{ "spec": "processes.spec.ts", "match": "PROC-8: a process opens with its text", "count": 1 } ] },
+		{ "name": "copilot-drafting", "why": "The copilot drafts a form and nothing is reported until the person confirms.", "tests": [
+			{ "spec": "copilot.spec.ts", "match": "a sentence drafts the fields of the real form", "count": 1 } ] },
+		{ "name": "retired-import", "why": "Existing-team import and native window controls stay absent.", "tests": [
+			{ "spec": "retired-import.spec.ts", "match": "IMP-retired", "count": 1 } ] },
+		{ "name": "production-unavailable", "why": "The static release keeps unserved areas unavailable and fakes cannot be enabled from the browser.", "tests": [
+			{ "spec": "production-unavailable.spec.ts", "match": "SRV-18 / BUG-53: unavailable pages explain", "count": 1 },
+			{ "spec": "production-unavailable.spec.ts", "match": "SRV-18: browser query parameters", "count": 1 } ] }
+	],
+	"categories": {
+		"chat": {
+			"specs": ["chat.spec.ts", "chat-*.spec.ts"],
+			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json"]
+		},
+		"org-chart": {
+			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],
+			"sources": [
+				"src/routes/(shell)/org-chart/**", "src/routes/(shell)/agents/**", "src/lib/modules/employees/**",
+				"src/lib/org/people-edit*", "src/lib/org/team-edit*",
+				"src/lib/components/{AddPersonSheet,AgentStatusIcon,ChangeManagerDialog,ChartFitMenuItem,DeleteTeamDialog,EditMembersDialog,EditMemberTeamsDialog,EditPersonDialog,MemberTile,MoveMemberDialog,MoveTeamDialog,NewTeamSheet,PeopleChart,ProjectTeamDialog,RemovePersonDialog,RemoveProjectDialog,RenameTeamDialog,ReportingChart,SelectedMember,TeamMenu,TeamsChart,TeamsList}.svelte",
+				"src/lib/components/org-tree.css", "src/lib/components/chart-measurement.ts", "e2e/org-chart-menu.ts"
+			]
+		},
+		"offices": {
+			"specs": ["offices.spec.ts", "office-status-refresh.spec.ts"],
+			"sources": ["src/routes/(shell)/offices/**", "src/lib/offices/**", "src/lib/components/Office*.svelte", "src/lib/components/testing/office-status.*"]
+		},
+		"shell-look": {
+			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "shot.spec.ts"],
+			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*"]
+		},
+		"projects-work": {
+			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts"],
+			"sources": [
+				"src/routes/(shell)/projects/**", "src/routes/(shell)/work/**", "src/lib/org/projects*", "src/lib/org/team-edit*", "src/lib/modules/copilot/**",
+				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte"
+			]
+		},
+		"processes": {
+			"specs": ["processes.spec.ts", "processes-bugs.spec.ts"],
+			"sources": ["src/routes/(shell)/processes/**", "src/lib/modules/processes/**"]
+		},
+		"requests-copilot": {
+			"specs": ["requests.spec.ts", "copilot.spec.ts"],
+			"sources": ["src/lib/modules/copilot/**", "src/routes/(shell)/work/**", "src/lib/components/{BugSheet,NewRequestDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet}.svelte"]
+		},
+		"org-lifecycle": {
+			"specs": ["create-organization.spec.ts", "open-organization.spec.ts", "retired-import.spec.ts"],
+			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
+		},
+		"production": {
+			"specs": ["production-unavailable.spec.ts"],
+			"sources": []
+		}
+	},
+	"allowedCoupling": [
+		{ "from": "src/routes/(shell)/+layout.svelte", "to": "src/lib/modules/messaging/index.ts", "why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys." },
+		{ "from": "e2e/*.spec.ts", "to": "src/routes/(onboarding)/*/+page.svelte", "why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages." },
+		{ "from": "e2e/{shell-*,desktop-navigation-focus}.spec.ts", "to": "src/routes/(shell)/{offices,chat}/+page.svelte", "why": "These specs open Offices or Chat mainly for shell chrome (topbar, footer, navigation focus, Back), but they also assert page-owned states (for example a stopped office or an offline chat shown inside the shell). Accepted speed tradeoff: a page change does not re-run them; a shared or unknown change does." },
+		{ "from": "e2e/look-primitives.spec.ts", "to": "src/routes/(shell)/{agents,org-chart}/+page.svelte", "why": "Checks the shared look primitives on the roster and chart pages, and also asserts page-owned roster states and filters. Accepted speed tradeoff: a page change does not re-run it; a primitive change is shared and runs everything." },
+		{ "from": "e2e/{tasks,copilot}.spec.ts", "to": "src/routes/(shell)/{org-chart,projects}/+page.svelte", "why": "tasks pauses an agent through the org chart; copilot opens a project page only to reach the report and task dialogs, which requests-copilot owns too." },
+		{ "from": "e2e/agents-roster.spec.ts", "to": "src/routes/(shell)/projects/+page.svelte", "why": "Opens Projects to check the Agents views navigation leaves the roster." },
+		{ "from": "e2e/org-chart-agents.spec.ts", "to": "src/routes/(shell)/offices/+page.svelte", "why": "Visits Offices to show the mock office keeps an agent change in browser storage." },
+		{ "from": "e2e/production-unavailable.spec.ts", "to": "src/routes/(shell)/org-chart/+page.svelte", "why": "Asserts the static release ignores fake-enabling query flags on the org chart; the production journeys always run." }
+	],
+	"rules": {
+		"ignore": ["**/*.md", "src/**/*.{test,spec}.{js,ts}", "scripts/ui-gate*.ts", ".gitignore"],
+		"noImpact": ["../org-agent/**", "../org-server/**", "../org-office-host/**", "../../docs/**", "../../spikes/**", "../../LICENSE", "../../.github/CODEOWNERS"],
+		"shared": [
+			"src/lib/components/ui/**", "src/app.*", "src/hooks.*", "src/params/**", "src/routes/+*", "src/routes/(shell)/+*", "src/routes/(onboarding)/+*",
+			"src/lib/utils.ts", "src/lib/name.ts", "src/lib/office/**", "src/lib/work/**", "src/lib/org/agents*", "src/lib/org/reporting*", "src/lib/modules/messaging/drafts/**", "src/lib/nav.ts", "src/lib/format.ts", "src/lib/proto*.ts",
+			"src/lib/org/{actions,api,commands,live,live-state.svelte,load,model,reducer,sample,session}.ts",
+			"src/lib/platform/{feature-factory,unavailable-api}.ts", "src/lib/platform/http/**", "src/lib/platform/tooling/**", "src/lib/platform/shell/**",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*", "static/**",
+			"vite.config.ts", "svelte.config.js", "tsconfig.json", "package.json", "bun.lock", "components.json", "playwright.config.ts",
+			"e2e/gate-manifest.json", "e2e/fakes/**", "../../.github/workflows/**", "e2e/ready.ts", "e2e/shot.ts", "e2e/vite-composition.ts"
+		],
+		"cspFull": ["e2e-csp/{collector,teardown,vite-policy}.ts", "e2e-csp/*.spec.ts", "playwright*.config.ts", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock", "src/app.html", "src/hooks.*", "e2e/vite-composition.ts", "scripts/check-build-assets.ts", "../../config/csp/**"],
+		"gateway": ["../org-gateway/**", "../../crates/**", "../../Cargo.toml", "../../Cargo.lock", "../../rust-toolchain.toml", "../../config/csp/**", "e2e-csp-gateway/{control.ts,csp-gateway.spec.ts}", "playwright.csp-gateway.config.ts", "scripts/csp-gateway.ts", "scripts/check-build-assets.ts", "src/app.html", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock"]
+	}
+}

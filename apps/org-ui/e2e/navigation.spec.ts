@@ -3,6 +3,7 @@ import { visit } from './ready';
 import { shot } from './shot';
 
 const SECTIONS = ['Chat', 'Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity', 'Processes', 'Offices', 'Settings'];
+const JOURNEY_SECTIONS = ['Chat', 'Org chart', 'Projects', 'Work', 'Offices'];
 const slug = (name: string) => name.toLowerCase().replace(' ', '-');
 
 test.beforeEach(async ({ page }) => {
@@ -12,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 	await expect(page).toHaveURL(/\/agents$/);
 });
 
-test('the sidebar lists every section, with its icon', async ({ page }) => {
+test('the sidebar lists every section, with its icon', { tag: '@journey' }, async ({ page }) => {
 	const links = page
 		.getByRole('navigation', { name: 'Main' })
 		.getByRole('link')
@@ -22,7 +23,7 @@ test('the sidebar lists every section, with its icon', async ({ page }) => {
 });
 
 for (const name of SECTIONS) {
-	test(`${name} opens its page and is marked current`, async ({ page }) => {
+	test(`${name} opens its page and is marked current`, { tag: JOURNEY_SECTIONS.includes(name) ? '@journey' : [] }, async ({ page }) => {
 		const link = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name });
 		await link.click();
 		await expect(page).toHaveURL(new RegExp(`/${slug(name)}$`));

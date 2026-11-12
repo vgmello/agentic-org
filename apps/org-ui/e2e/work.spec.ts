@@ -38,7 +38,7 @@ test('WORK: with no work yet the screen says so, and it is in the nav', async ({
 	await expect(page.getByTestId('no-match')).toBeVisible();
 });
 
-test('WORK: tasks and bugs from every project with a Project column, saved filters with counts, and what needs the owner', async ({ page }) => {
+test('WORK: tasks and bugs from every project with a Project column, saved filters with counts, and what needs the owner', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await addTask(page, 'atlas', 'Atlas task');
 	await addTask(page, 'beacon', 'Beacon task');
