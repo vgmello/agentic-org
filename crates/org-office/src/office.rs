@@ -62,10 +62,10 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
 /// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
 /// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3.
-/// Version 5 adds change results, number counters and a clock; it stays open until B1-11's
-/// final slice. Later v5 additions belong in the shared fresh/upgrade creation function.
+/// Version 5 adds change results, number counters and a clock, and is closed.
+/// Version 6 decouples current tasks from status lines; it stays open until B1-11's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
-    version: 5,
+    version: 6,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
@@ -80,13 +80,17 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 3 {
             status::create_table(tx)?;
+        } else {
+            status::upgrade(tx)?;
         }
         if from < 4 {
             origin::create_tables(tx)?;
             work::create_tables(tx)?;
         }
-        // Store calls this only for versions below 5; all of them need these tables.
-        work::create_v5_tables(tx)
+        if from < 5 {
+            work::create_v5_tables(tx)?;
+        }
+        Ok(())
     },
 };
 

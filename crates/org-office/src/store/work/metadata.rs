@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::OfficeError;
 
-/// Shared by fresh creation and every pre-v5 upgrade; v5 remains open until B1-11 closes.
+/// Shared by fresh creation and every pre-v5 upgrade; v5 is closed.
 pub(crate) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     let numbered: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM work_items WHERE json_extract(data,'$.number') IS NOT NULL)",

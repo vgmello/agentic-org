@@ -1157,7 +1157,7 @@ fn native_work_v3_upgrade_and_reopen_preserve_existing_message_metadata() {
             assert_eq!(
                 db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                     .unwrap(),
-                5
+                6
             );
             assert_eq!(
                 db.query_row(
