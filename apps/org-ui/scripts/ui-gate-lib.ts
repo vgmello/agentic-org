@@ -62,7 +62,8 @@ export function classify(file: string, m: Manifest): Effect[] {
 	if (csp) out.push({ kind: 'cspFull', rule: `CSP/build ${csp}: full interactive CSP` });
 	const gateway = first(m.rules.gateway);
 	if (gateway) out.push({ kind: 'gateway', rule: `gateway/CSP/build ${gateway}: gateway CSP` });
-	if (out.length) return out;
+	// An alsoRuns effect adds a category to run; it never replaces the file's own mapping, or an unmapped file would under-select.
+	if (out.some((effect) => !effect.also)) return out;
 	const outside = first(m.rules.noImpact);
 	return [outside ? { kind: 'outside', rule: `listed as no UI impact (${outside})` } : { kind: 'unknown', rule: 'unknown UI path: full suite (fail closed)' }];
 }
