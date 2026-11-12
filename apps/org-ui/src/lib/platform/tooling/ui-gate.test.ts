@@ -82,6 +82,17 @@ describe('gate manifest guard', () => {
 		}
 	});
 
+	it('does not let an alsoRuns entry stand in for the file\'s own mapping', () => {
+		// Every file an alsoRuns glob matches must also be mapped by a category, rules.shared or rules.ignore.
+		const files = execFileSync('git', ['ls-files', '-z', '--', '.'], { cwd: app, encoding: 'utf8' }).split('\0').filter(Boolean);
+		for (const extra of manifest.alsoRuns ?? [])
+			for (const file of files.filter((candidate) => extra.files.some((glob) => matches(glob, candidate))))
+				expect(classify(file, manifest).some((effect) => !effect.also), `${file} is only reached through alsoRuns`).toBe(true);
+		// A file that only alsoRuns names is unmapped: the plan fails closed to the full suite.
+		const lone = { ...manifest, alsoRuns: [{ category: 'projects-work', files: ['src/lib/zz-only-also.ts'], why: 'synthetic entry for the guard test' }] };
+		expect(classify(ui('src/lib/zz-only-also.ts'), lone).map((effect) => effect.kind)).toEqual(['unknown']);
+	});
+
 	it('lists every test file that only a dedicated Playwright project runs', () => {
 		const config = read('playwright.config.ts');
 		const dedicated = Object.fromEntries([...config.matchAll(/name: '([^']+)', testMatch: '([^']+)'/g)].filter((m) => !m[2].endsWith('.spec.ts')).map((m) => [m[2], m[1]]));
@@ -353,6 +364,7 @@ describe('selector', () => {
 		const csp = list.find((step) => step.name === 'csp: projects-work')!;
 		expect(csp.cmd).toContain('e2e/non-chat-icons\\.spec\\.ts$');
 		expect(csp.cmd).not.toContain('e2e/non-chat-icons-default-font\\.ts$');
+		for (const step of list.filter((candidate) => !candidate.name.startsWith('ordinary'))) expect(step.cmd, step.name).not.toContain('--project=chromium-default-font');
 		expect(names([ui('e2e/org-chart.spec.ts')])).not.toContain('csp: projects-work');
 		expect(steps(plan([ui('e2e/org-chart.spec.ts')], manifest), manifest, specs).find((step) => step.name === 'ordinary: org-chart')!.cmd).not.toContain('--project=chromium-default-font');
 	});
