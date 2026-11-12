@@ -23,7 +23,6 @@ fn hint_delivery_owner_and_every_denied_binding_share_the_same_payload_without_r
     let mut shared = shared();
     let source = rows(1);
     shared.register_inbox(hq(source.clone()));
-    shared.enable_inbox_hints().unwrap();
     let (stream, peer) = UnixStream::pair().unwrap();
     let out = Mutex::new(stream);
     let generation = AtomicU64::new(1);
@@ -36,6 +35,20 @@ fn hint_delivery_owner_and_every_denied_binding_share_the_same_payload_without_r
         timing: Timing::default(),
     };
     let payload = data();
+    assert!(deliver_hint(
+        &shared,
+        &Subscriber {
+            binding: &owner(),
+            wire: &wire
+        },
+        &payload
+    ));
+    assert_eq!(
+        sent.load(Ordering::SeqCst),
+        0,
+        "a disabled hint capability delivers nothing"
+    );
+    shared.enable_inbox_hints().unwrap();
     for binding in [
         Binding::Anonymous,
         Binding::App,
@@ -67,6 +80,7 @@ fn hint_delivery_owner_and_every_denied_binding_share_the_same_payload_without_r
         },
         &payload
     ));
+    assert_eq!(sent.load(Ordering::SeqCst), 1);
     let mut reader = std::io::BufReader::new(peer);
     let event: org_proto::Event = frame::read_message(&mut reader).unwrap().unwrap();
     assert_eq!(event.event, "inbox.changed");
@@ -118,6 +132,7 @@ fn hint_delivery_rechecks_live_ownership_and_lookup_errors_deliver_nothing() {
     assert!(!org_socket::poll_readable(peer.as_raw_fd(), Duration::from_millis(50)).unwrap());
     directory.failed.store(false, Ordering::SeqCst);
     assert!(deliver_hint(&shared, &subscriber, &data()));
+    assert_eq!(sent.load(Ordering::SeqCst), 1);
     let mut reader = std::io::BufReader::new(peer);
     let event: org_proto::Event = frame::read_message(&mut reader).unwrap().unwrap();
     assert_eq!(event.seq, 1);
@@ -153,4 +168,37 @@ fn hint_capability_and_initial_cursor_are_enabled_only_for_registered_hq() {
             .count(),
         1
     );
+}
+
+#[test]
+fn hint_cursor_failure_is_returned_without_advertising_a_working_capability() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    struct NoHead;
+    impl OrgFeed for NoHead {
+        fn head(&self) -> Result<org_proto::org::Position, String> {
+            Err("injected unavailable head".into())
+        }
+        fn can_resume_from(&self, _: org_proto::org::Position) -> Result<bool, String> {
+            unreachable!()
+        }
+        fn changes_after(
+            &self,
+            _: org_proto::org::Position,
+            _: usize,
+        ) -> Result<Vec<org_proto::org::OrgChangedData>, String> {
+            unreachable!()
+        }
+        fn token(&self) -> u64 {
+            0
+        }
+        fn wait(&self, _: u64, _: Duration) -> u64 {
+            0
+        }
+    }
+    let mut shared = shared();
+    shared.register_inbox(hq(rows(1)));
+    shared.ports.feed = Box::new(NoHead);
+    assert!(shared.enable_inbox_hints().is_err());
+    assert!(!shared.hello.supports("inbox.changed"));
+    assert!(shared.hint.is_none());
 }
