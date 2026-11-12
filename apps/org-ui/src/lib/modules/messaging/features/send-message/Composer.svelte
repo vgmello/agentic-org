@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Paperclip from '@lucide/svelte/icons/paperclip';
+	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
 	import { tick, untrack } from 'svelte';
 	import type { DraftText } from '../../drafts/store';
@@ -10,7 +10,7 @@
 
 	/**
 	 * The message box (CHAT-14): `@` completes a name to the member's handle, `/` lists the commands, Enter adds a line (⌘ or
-	 * Ctrl+Enter sends; "Enter sends" in the corner turns that around), and 📎 attaches files by name in the sample.
+	 * Ctrl+Enter sends; "Enter sends" in the corner turns that around), and Attach adds files by name in the sample.
 	 */
 	let {
 		placeholder,
@@ -242,9 +242,9 @@
 			<ul class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto [@media(max-height:32rem)]:max-h-14 [@media(max-height:32rem)]:overflow-y-auto" aria-label="Attached">
 				{#each attachments as a (a)}
 					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
-						<span aria-hidden="true" class="shrink-0">📎</span>
+						<HeroIcon variant="micro" name="paper-clip" />
 						<span class="min-w-0 truncate" title={a}>{a}</span>
-						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button>
+						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" title="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}><HeroIcon variant="mini" name="x-mark" /></button>
 					</li>
 				{/each}
 			</ul>
@@ -252,7 +252,7 @@
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-gray-400">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
-				<button type="button" class="inline-flex items-center gap-x-1 hover:text-white" onclick={() => files?.click()}><Paperclip class="size-3.5" aria-hidden="true" /> Attach</button>
+				<button type="button" class="inline-flex items-center gap-x-1 hover:text-white" onclick={() => files?.click()}><HeroIcon variant="mini" name="paper-clip" /> Attach</button>
 				<input bind:this={files} type="file" multiple class="hidden" aria-label="Attach files" onchange={(e) => { attachments = [...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])].slice(0, 10); e.currentTarget.value = ''; }} />
 				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
 				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}

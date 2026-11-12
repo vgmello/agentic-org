@@ -11,7 +11,7 @@ async function open(page: Page, path = '/projects') {
 }
 const row = (page: Page, id: string) => page.locator(`[data-testid=project-row][data-project=${id}]`);
 
-test('PROJ-1: the list shows every project A–Z with its teams, Shared, leads and No team', async ({ page }) => {
+test('PROJ-1: the list shows every project A–Z with its teams, Shared, leads and No team', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await expect(page.getByTestId('project-row')).toHaveCount(4);
 	const names = await page.getByTestId('project-row').locator('a').allInnerTexts();
@@ -28,7 +28,7 @@ test('PROJ-1: the list shows every project A–Z with its teams, Shared, leads a
 	await shot(page, 'projects');
 });
 
-test('PROJ-2: Assign team… gives an unassigned project a team; adding a second team shares it', async ({ page }) => {
+test('PROJ-2: Assign team… gives an unassigned project a team; adding a second team shares it', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await row(page, 'scratch').getByRole('button', { name: 'Assign a team to Scratchpad' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Assign a team to Scratchpad' });
@@ -56,7 +56,7 @@ test('PROJ-2: removing a team needs no confirmation while others remain; the las
 	await expect(row(page, 'beacon').getByTestId('no-team')).toBeVisible();
 });
 
-test('PROJ-3: a project page shows its name, teams and leads, and Tasks is a tab and the tabs that come later are disabled', async ({ page }) => {
+test('PROJ-3: a project page shows its name, teams and leads, and Tasks is a tab and the tabs that come later are disabled', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await row(page, 'beacon').getByRole('link', { name: 'Beacon' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon$/);

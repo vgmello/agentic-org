@@ -53,7 +53,6 @@ export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): stri
 export const PRESENCE_WORD: Record<Presence, string> = { working: 'Working', waiting: 'Waiting', asleep: 'Asleep', offline: 'Offline', paused: 'Paused', online: 'Online' };
 
 export const KIND_WORD: Record<MessageKind, string> = { msg: 'Message', request: 'Ask', handoff: 'Hand-off', announcement: 'Announcement', reply: 'Reply', unknown: 'Message' };
-export const KIND_MARK: Partial<Record<MessageKind, string>> = { request: '❓', announcement: '📣', handoff: '🔁' };
 
 // ---- the sidebar (CHAT-1) --------------------------------------------------------------------------
 

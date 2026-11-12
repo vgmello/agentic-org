@@ -81,7 +81,7 @@ async function holdSend(page: Page) {
 }
 
 for (const place of ['conversation', 'thread'] as const) {
-	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, async ({ page }) => {
+	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, { tag: '@journey' }, async ({ page }) => {
 		await open(page);
 		const root = page.getByTestId('message-list').getByTestId('replies-link').first();
 		const previousCount = await root.innerText();
@@ -106,7 +106,7 @@ for (const place of ['conversation', 'thread'] as const) {
 		if (place === 'thread') {
 			await expect(root).not.toHaveText(previousCount);
 			await expect(area.getByTestId('thread-count')).toHaveText('4 replies');
-			await expect(root).toHaveAccessibleName('↳ 4 replies');
+			await expect(root).toHaveAccessibleName('4 replies');
 		}
 		await shot(page, `chat-live-${place}-delivered`);
 		expect.soft(pendingOffers).toEqual([]);
@@ -128,7 +128,7 @@ test('CHAT-8 BUG-66: the first reply adds an accessible counter without announci
 	await composer.fill('First delivered handoff reply');
 	await composer.press('Control+Enter');
 	await expect(pane.getByTestId('message-body').filter({ hasText: 'First delivered handoff reply' })).toBeVisible();
-	await expect(handoff.getByRole('button', { name: '↳ 1 reply', exact: true })).toBeVisible();
+	await expect(handoff.getByRole('button', { name: '1 reply', exact: true })).toBeVisible();
 	await expect(pane.getByTestId('thread-count')).toHaveText('1 reply');
 	const offers = await take(page);
 	expect(offers).toHaveLength(1);
@@ -221,7 +221,7 @@ test('CHAT-1/8 BUG-66: switching threads mounts a silent new log', async ({ page
 	await shot(page, 'chat-live-silent-thread-switch');
 });
 
-test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', async ({ page }) => {
+test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', { tag: '@journey' }, async ({ page }) => {
 	await page.clock.install();
 	await open(page, 'c-dm-ines');
 	const composer = page.getByTestId('composer');

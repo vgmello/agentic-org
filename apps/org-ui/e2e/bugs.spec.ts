@@ -21,7 +21,7 @@ async function report(page: Page, title: string, severity = 'Major') {
 	await expect(dialog).toBeHidden();
 }
 
-test('BUG-1: Report a bug needs a title, what happened and a severity (no default), and lands in New', async ({ page }) => {
+test('BUG-1: Report a bug needs a title, what happened and a severity (no default), and lands in New', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await expect(page.getByTestId('no-bugs')).toBeVisible();
 	await page.getByRole('button', { name: 'Report a bug' }).click();
@@ -52,7 +52,7 @@ test('BUG-4: similar open bugs are suggested while the title is typed', async ({
 	await expect(dialog.getByTestId('similar-bugs')).toContainText('B-1 · Upload fails on large files');
 });
 
-test('TRI and FIX: triage a New bug, mark it fixed, then verify it, and a closed bug can be reopened', async ({ page }) => {
+test('TRI and FIX: triage a New bug, mark it fixed, then verify it, and a closed bug can be reopened', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await report(page, 'Wrong total');
 	await row(page, 'Wrong total').getByRole('button', { name: 'Wrong total' }).click();

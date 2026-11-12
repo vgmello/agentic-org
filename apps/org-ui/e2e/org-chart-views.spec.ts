@@ -1,3 +1,4 @@
+import { viewAction } from './org-chart-menu';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -47,7 +48,7 @@ test.describe('People view', () => {
 		await expect(page.getByTestId('people-not-in-a-team').getByRole('button', { name: 'Avery Stone, person' })).toBeVisible();
 		await page.getByRole('button', { name: /collapse the teams under Engineering/ }).click();
 		await expect(page.getByTestId('people-card')).toHaveCount(3);
-		await page.getByRole('button', { name: 'Expand all' }).click();
+		await viewAction(page, 'Expand all');
 		await expect(page.getByTestId('people-card')).toHaveCount(5);
 	});
 });
@@ -58,7 +59,7 @@ test.describe('Reporting lines view', () => {
 		await tab(page, 'Reporting lines').click();
 	});
 
-	test('REPORT-1: the owner is the root, and everyone appears exactly once', async ({ page }) => {
+	test('REPORT-1: the owner is the root, and everyone appears exactly once', { tag: '@journey' }, async ({ page }) => {
 		await expect(page.getByTestId('report-node').first()).toContainText('Alex Kim');
 		await expect(page.getByTestId('report-node').first()).toContainText('Owner (you)');
 		await expect(page.getByTestId('report-node')).toHaveCount(12); // 11 members + the owner
@@ -86,16 +87,16 @@ test.describe('Reporting lines view', () => {
 	});
 
 	test('Collapse all folds every manager, Expand all unfolds them', async ({ page }) => {
-		await page.getByRole('button', { name: 'Collapse all' }).click();
+		await viewAction(page, 'Collapse all');
 		await expect(page.getByTestId('report-node')).toHaveCount(3); // the owner and the owner's direct reports (Avery, Quinn)
-		await page.getByRole('button', { name: 'Expand all' }).click();
+		await viewAction(page, 'Expand all');
 		await expect(page.getByTestId('report-node')).toHaveCount(12);
 	});
 
 	test('collapsing a manager hides the people under them', async ({ page }) => {
 		await page.getByRole('button', { name: /collapse the people reporting to Sam Okafor/ }).click();
 		await expect(page.getByTestId('report-node')).toHaveCount(9);
-		await page.getByRole('button', { name: 'Expand all' }).click();
+		await viewAction(page, 'Expand all');
 		await expect(page.getByTestId('report-node')).toHaveCount(12);
 	});
 });

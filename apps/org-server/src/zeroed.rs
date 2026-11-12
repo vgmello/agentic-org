@@ -13,6 +13,20 @@ const SIZE: usize = 1024;
 thread_local! {
     /// How many times a buffer was wiped on this thread (tests count it, to know `Drop` wipes).
     static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SECRET_WIPES: std::cell::RefCell<Vec<SecretWipe>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SecretWipe {
+    pub len: usize,
+    pub had_data: bool,
+    pub zeroed: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn take_secret_wipes() -> Vec<SecretWipe> {
+    SECRET_WIPES.with(|records| std::mem::take(&mut *records.borrow_mut()))
 }
 
 pub struct ZeroedReader {
@@ -20,6 +34,48 @@ pub struct ZeroedReader {
     buf: [u8; SIZE],
     pos: usize,
     cap: usize,
+}
+
+/// Fixed-size handoff storage, wiped even when decoding or reception fails.
+pub(crate) struct SecretBuffer(Box<[u8]>);
+
+impl SecretBuffer {
+    pub(crate) fn new(len: usize) -> Self {
+        Self(vec![0; len].into_boxed_slice())
+    }
+}
+
+impl AsMut<[u8]> for SecretBuffer {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl Drop for SecretBuffer {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        let had_data = self.0.iter().any(|byte| *byte != 0);
+        wipe_bytes(&mut self.0);
+        // Observe the actual allocation before deallocation, without retaining secret bytes.
+        #[cfg(test)]
+        SECRET_WIPES.with(|records| {
+            records.borrow_mut().push(SecretWipe {
+                len: self.0.len(),
+                had_data,
+                zeroed: self.0.iter().all(|byte| *byte == 0),
+            })
+        });
+    }
+}
+
+fn wipe_bytes(bytes: &mut [u8]) {
+    #[cfg(test)]
+    WIPES.with(|w| w.set(w.get() + 1));
+    for byte in bytes {
+        // SAFETY: `byte` is a valid, aligned, exclusive reference into the buffer.
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
 impl ZeroedReader {
@@ -41,13 +97,7 @@ impl ZeroedReader {
 
     /// Overwrites the buffer with zeros (volatile writes, so they are not optimized away).
     pub fn wipe(&mut self) {
-        #[cfg(test)]
-        WIPES.with(|w| w.set(w.get() + 1));
-        for byte in &mut self.buf {
-            // SAFETY: `byte` is a valid, aligned, exclusive reference into the array.
-            unsafe { std::ptr::write_volatile(byte, 0) };
-        }
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        wipe_bytes(&mut self.buf);
         self.pos = 0;
         self.cap = 0;
     }
@@ -96,6 +146,39 @@ impl Drop for ZeroedReader {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn the_shared_wipe_overwrites_every_byte() {
+        let mut secret = [0xb3; 4096];
+        wipe_bytes(&mut secret);
+        assert!(secret.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn secret_storage_is_wiped_on_success_error_and_unwind() {
+        for outcome in 0..3 {
+            let before = WIPES.with(std::cell::Cell::get);
+            let result = std::panic::catch_unwind(|| {
+                let mut buffer = SecretBuffer::new(4096);
+                buffer.as_mut().fill(0xb3);
+                match outcome {
+                    0 => Ok(()),
+                    1 => Err(()),
+                    _ => panic!("synthetic failure"),
+                }
+            });
+            assert_eq!(WIPES.with(std::cell::Cell::get), before + 1);
+            assert_eq!(
+                take_secret_wipes(),
+                vec![SecretWipe {
+                    len: 4096,
+                    had_data: true,
+                    zeroed: true
+                }]
+            );
+            assert_eq!(result.is_err(), outcome == 2);
+        }
+    }
 
     fn reader_after_one_line() -> ZeroedReader {
         let mut file = tempfile::tempfile().unwrap();

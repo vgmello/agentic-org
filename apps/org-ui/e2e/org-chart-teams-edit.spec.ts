@@ -1,3 +1,4 @@
+import { viewAction } from './org-chart-menu';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -13,7 +14,7 @@ async function openChart(page: Page) {
 const card = (page: Page, id: string) => page.locator(`[data-testid=team-card][data-team=${id}]`);
 const menu = (page: Page, team: string) => page.getByRole('button', { name: `Actions for ${team}` });
 
-test('TEAM-5: New team takes a name, a Part of team, members and a lead chosen from them; the owner is never offered', async ({ page }) => {
+test('TEAM-5: New team takes a name, a Part of team, members and a lead chosen from them; the owner is never offered', { tag: '@journey' }, async ({ page }) => {
 	await openChart(page);
 	await page.getByRole('button', { name: 'New team' }).click();
 	const sheet = page.getByRole('dialog', { name: 'New team' });
@@ -94,7 +95,7 @@ test('TEAM-9: deleting a team that owns teams is refused up front, naming them, 
 	await expect(card(page, 'eng')).toBeVisible();
 });
 
-test('TEAM-9: deleting another team names who moves to Not in a team and which project is unassigned, then does it', async ({ page }) => {
+test('TEAM-9: deleting another team names who moves to Not in a team and which project is unassigned, then does it', { tag: '@journey' }, async ({ page }) => {
 	await openChart(page);
 	await menu(page, 'People').click();
 	await page.getByRole('menuitem', { name: 'Delete…' }).click();
@@ -144,7 +145,7 @@ test('the team menu works from the keyboard', async ({ page }) => {
 
 test('the list view has the same team menus', async ({ page }) => {
 	await openChart(page);
-	await page.getByRole('button', { name: 'List' }).click();
+	await viewAction(page, 'List');
 	await expect(menu(page, 'Web')).toBeVisible();
 });
 
