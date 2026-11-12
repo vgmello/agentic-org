@@ -80,6 +80,7 @@ impl Office {
             for line in &mut lines {
                 line.current_task_id = status::checked_current(&tx, line)?;
             }
+            // Explicit rollback surfaces a rollback failure; dropping the transaction also rolls back.
             tx.rollback().map_err(OfficeError::storage)?;
             Ok(lines)
         })?;

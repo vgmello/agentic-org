@@ -131,6 +131,10 @@ fn current_task_set_restart_done_and_clear_keep_the_status_halves_independent() 
 fn current_task_refusals_follow_missing_agent_kind_deleted_assignee_order_and_never_sweep() {
     let (_dir, _key, office) = made();
     task(&office);
+    let assert_invalid = |error: org_proto::ApiError, message: &str| {
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.message, message);
+    };
     office.local_store().run_sql_for_test("INSERT INTO member_status VALUES ('expired','keep',NULL,'2000-01-01T00:00:00.000Z','2000-01-02T00:00:00.000Z');");
     let before = rows(&office);
     for agent in [false, true] {
@@ -140,62 +144,53 @@ fn current_task_refusals_follow_missing_agent_kind_deleted_assignee_order_and_ne
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::NotFound);
     }
-    assert_eq!(
+    assert_invalid(
         office
             .set_current(AGENT, false, Some(ITEM))
             .unwrap()
-            .unwrap_err()
-            .message,
-        "the caller isn't an agent"
+            .unwrap_err(),
+        "the caller isn't an agent",
     );
-    assert_eq!(
-        office
-            .set_current(AGENT, false, None)
-            .unwrap()
-            .unwrap_err()
-            .message,
-        "the caller isn't an agent"
+    assert_invalid(
+        office.set_current(AGENT, false, None).unwrap().unwrap_err(),
+        "the caller isn't an agent",
     );
     mutate(&office, |item| {
         item.kind = ItemKind::Bug;
         item.deleted = true;
         item.assignee_id = None;
     });
-    assert_eq!(
+    assert_invalid(
         office
             .set_current(AGENT, false, Some(ITEM))
             .unwrap()
-            .unwrap_err()
-            .message,
-        "the caller isn't an agent"
+            .unwrap_err(),
+        "the caller isn't an agent",
     );
-    assert_eq!(
+    assert_invalid(
         office
             .set_current(AGENT, true, Some(ITEM))
             .unwrap()
-            .unwrap_err()
-            .message,
-        "this call is for a task, and the item is a bug"
+            .unwrap_err(),
+        "this call is for a task, and the item is a bug",
     );
     mutate(&office, |item| item.kind = ItemKind::Task);
-    assert_eq!(
+    assert_invalid(
         office
             .set_current(AGENT, true, Some(ITEM))
             .unwrap()
-            .unwrap_err()
-            .message,
-        "the item is deleted"
+            .unwrap_err(),
+        "the item is deleted",
     );
     mutate(&office, |item| item.deleted = false);
     for assignee in [None, Some(PROJECT.to_owned())] {
         mutate(&office, |item| item.assignee_id = assignee);
-        assert_eq!(
+        assert_invalid(
             office
                 .set_current(AGENT, true, Some(ITEM))
                 .unwrap()
-                .unwrap_err()
-                .message,
-            "the task isn't assigned to you"
+                .unwrap_err(),
+            "the task isn't assigned to you",
         );
     }
     assert_eq!(rows(&office), before, "even expired rows survive a refusal");

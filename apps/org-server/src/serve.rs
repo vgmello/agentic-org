@@ -30,7 +30,7 @@ use org_proto::msg::{
     OFFICE_SENDER,
 };
 use org_proto::org::{CommandAccepted, TeamCreate};
-use org_proto::work::{TaskCreate, WorkAccepted, WorkSetCurrent};
+use org_proto::work::{TaskCreate, WorkAccepted};
 use org_proto::{AgentStatus, MemberKind};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
@@ -74,10 +74,6 @@ pub type StatusFn = Box<
 pub type WorkFn =
     Box<dyn Fn(Caller, WorkCall) -> Result<Result<WorkAccepted, ApiError>, String> + Send + Sync>;
 
-/// Sets the bound member's current task; `agent` is false for app-token bindings.
-pub type CurrentFn =
-    Box<dyn Fn(&str, bool, Option<&str>) -> Result<Result<(), ApiError>, String> + Send + Sync>;
-
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -86,7 +82,6 @@ pub struct OfficePorts {
     pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,
-    pub current: CurrentFn,
     /// The log, for `subscribe`.
     pub feed: Box<dyn OrgFeed>,
     /// Live events for `subscribe` (messages, status lines).
@@ -890,9 +885,6 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if let Some(response) = msg_calls::answer(request, &shared.ports.mailbox, binding.member()) {
         return response;
     }
-    if request.is::<WorkSetCurrent>() {
-        return set_current(request, shared, binding);
-    }
     match WorkCall::parse(request) {
         Ok(None) => {}
         parsed => {
@@ -985,40 +977,6 @@ fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
             Response::ok::<Who>(request.id, &result).unwrap_or_else(|_| internal(request.id))
         }
         Ok(Err(refusal)) => Response::error(request.id, refusal),
-        Err(_) => internal(request.id),
-    }
-}
-
-fn set_current(request: &Request, shared: &Shared, binding: &Binding) -> Response {
-    let Binding::Member { id, with_app_token } = binding else {
-        return bind_error(
-            request.id,
-            ErrorCode::NotBound,
-            "bind as a member to set a current task",
-        );
-    };
-    let Ok(params) = request.params::<WorkSetCurrent>() else {
-        return bind_error(
-            request.id,
-            ErrorCode::InvalidRequest,
-            "the params of `work.set_current` are not valid",
-        );
-    };
-    if params
-        .item
-        .as_deref()
-        .is_some_and(|id| !org_work::is_ulid(id))
-    {
-        return bind_error(
-            request.id,
-            ErrorCode::InvalidRequest,
-            "use the item id (references arrive with work reads)",
-        );
-    }
-    match (shared.ports.current)(id, !with_app_token, params.item.as_deref()) {
-        Ok(Ok(())) => Response::ok::<WorkSetCurrent>(request.id, &org_proto::Empty {})
-            .unwrap_or_else(|_| internal(request.id)),
-        Ok(Err(error)) => Response::error(request.id, error),
         Err(_) => internal(request.id),
     }
 }
@@ -1999,7 +1957,6 @@ mod tests {
             submit: Box::new(|_| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
-            current: Box::new(|_, _, _| Err("none".to_owned())),
             feed: Box::new(Arc::new(FakeFeed::default())),
             live: Arc::new(LiveEvents::new(Box::new(|| {}))),
             mailbox,
@@ -2431,7 +2388,6 @@ mod tests {
                 }),
                 who: Box::new(|_| Err("none".to_owned())),
                 status: Box::new(|_, _| Err("none".to_owned())),
-                current: Box::new(|_, _, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox,
@@ -2899,7 +2855,6 @@ mod tests {
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
-                    current: Box::new(|_, _, _| Err("none".to_owned())),
                     feed: Box::new(Arc::clone(&feed)),
                     live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                     mailbox,
@@ -3364,7 +3319,6 @@ mod tests {
                     answer(params)
                 }),
                 status: Box::new(|_, _| Err("none".to_owned())),
-                current: Box::new(|_, _, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox,
