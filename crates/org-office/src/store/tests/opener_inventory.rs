@@ -523,6 +523,14 @@ fn sqlcipher_manifest_source_declarations_validate_every_local_spelling() {
     for source in [
         "[workspace]\nmembers=['member']\ndefault-members=['member']\nexclude=['member']",
         "workspace={members=['member'],default-members=['member'],exclude=['member']}",
+        "workspace.members=['member']",
+        "workspace.default-members=['member']",
+        "workspace.exclude=['member']",
+        "dependencies={renamed={package='member',path='member'}}",
+        "[target.'cfg(unix)'.dev-dependencies]\nhelper={path='member'}",
+        "[target.'cfg(unix)'.build-dependencies.helper]\npath='member'",
+        "[dev-dependencies.self_ref]\npath='.'",
+        "[[bin]]\nname='custom'\npath='src/main.rs'",
         "[workspace.dependencies]\nunused={path='member'}",
         "workspace.dependencies.unused.path='member'",
         "[dependencies.renamed]\npackage='member'\npath='member'\nversion='0.1.0'",
@@ -787,7 +795,7 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
             };
             let cargo = fake.path().join("cargo");
             std::fs::write(&cargo, format!(
-                "#!/bin/sh\n: > {}\nprintf '%s\\n' \"$@\" > {}\nprintf '%s\\n' \"${{HOME-unset}}\" \"${{RUSTUP_HOME-unset}}\" \"${{RUSTUP_TOOLCHAIN-unset}}\" \"${{RUSTFLAGS-unset}}\" \"${{RUSTC-unset}}\" \"${{CARGO_HOME-unset}}\" \"${{QUINN_UNLISTED-unset}}\" > {}\n{action}\n",
+                "#!/bin/sh\n: > {}\nprintf '%s\\n' \"$@\" > {}\nprintf '%s\\n' \"${{HOME-unset}}\" \"${{PWD-unset}}\" \"${{RUSTUP_HOME-unset}}\" \"${{RUSTUP_TOOLCHAIN-unset}}\" \"${{RUSTFLAGS-unset}}\" \"${{RUSTC-unset}}\" \"${{CARGO_HOME-unset}}\" \"${{QUINN_UNLISTED-unset}}\" > {}\n{action}\n",
                 shell_path(&marker), shell_path(&args), shell_path(&environment),
             )).unwrap();
             std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -831,6 +839,7 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
                     values.lines().collect::<Vec<_>>(),
                     [
                         fake.path().to_str().unwrap(),
+                        root.to_str().unwrap(),
                         if toolchain { "fixture-rustup" } else { "unset" },
                         if toolchain {
                             "fixture-toolchain"
@@ -942,6 +951,105 @@ fn sqlcipher_cargo_metadata_queries_each_workspace_once_and_refuses_omitted_mani
                 .matches("called")
                 .count(),
             if complete { 1 } else { 2 }
+        );
+    }
+}
+
+#[test]
+fn sqlcipher_manifest_glob_refusal_is_independent_of_tracked_path_membership() {
+    let dir = fixture(&[
+        ("Cargo.toml", "[workspace]"),
+        (
+            "star*/Cargo.toml",
+            "[package]\nname='star'\nversion='0.1.0'",
+        ),
+        (
+            "question?/Cargo.toml",
+            "[package]\nname='question'\nversion='0.1.0'",
+        ),
+        (
+            "open[/Cargo.toml",
+            "[package]\nname='open'\nversion='0.1.0'",
+        ),
+        (
+            "close]/Cargo.toml",
+            "[package]\nname='close'\nversion='0.1.0'",
+        ),
+    ]);
+    let scope = tracked(dir.path());
+    for field in ["members", "default-members", "exclude"] {
+        for name in ["star*", "question?", "open[", "close]"] {
+            let manifest = scope.root.join("Cargo.toml");
+            let source = format!("workspace.{field}=['{name}']");
+            assert!(
+                std::panic::catch_unwind(|| super::opener_policy::manifest_paths(
+                    &scope, &manifest, &source
+                ))
+                .is_err(),
+                "accepted tracked glob {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_cargo_uses_disabled_discovery_and_refuses_broken_manifests() {
+    let manifest = "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\nbuild=false\nautobins=false\nautotests=false\nautoexamples=false\nautobenches=false\n[lib]\npath='src/lib.rs'";
+    let dir = fixture(&[
+        ("Cargo.toml", manifest),
+        (
+            "Cargo.lock",
+            "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
+        ),
+        ("src/lib.rs", "pub struct Allowed;"),
+    ]);
+    for name in [
+        "build.rs",
+        "src/bin/automatic.rs",
+        "tests/automatic.rs",
+        "examples/automatic.rs",
+        "benches/automatic.rs",
+    ] {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "#![allow(warnings)]").unwrap();
+    }
+    let scope = tracked(dir.path());
+    assert_eq!(
+        super::opener_sources::cargo_roots(&scope),
+        BTreeSet::from([scope.root.join("src/lib.rs")])
+    );
+    let before = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        manifest.replace("build=false", "build='build.rs'"),
+    )
+    .unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err());
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname='fixture'\nversion='not-a-version'",
+    )
+    .unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err());
+    assert_eq!(
+        std::fs::read(dir.path().join("Cargo.lock")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn sqlcipher_rust_source_kind_refuses_noncanonical_extension_aliases() {
+    let dir = fixture(&[("src/lib.rs", "pub struct Allowed;")]);
+    let scope = tracked(dir.path());
+    let source = scope.root.join("src/lib.rs");
+    assert_eq!(scope.require_rust(&source), source);
+    for extension in ["RS", "Rs", "rS"] {
+        let alias = source.with_extension(extension);
+        assert!(
+            std::panic::catch_unwind(|| scope.require_rust(&alias)).is_err(),
+            "accepted Rust extension alias {}",
+            alias.display()
         );
     }
 }

@@ -15,9 +15,16 @@ pub(super) struct SourceScope {
 
 impl SourceScope {
     pub fn require_rust(&self, path: &Path) -> PathBuf {
+        // APFS canonicalization restores .rs; retain the caller's spelling for kind validation.
+        let requested_rust = path.extension().is_some_and(|extension| extension == "rs");
         let path = self.require(path);
+        let kind = if requested_rust {
+            self.files[&path]
+        } else {
+            SourceKind::Config
+        };
         assert_eq!(
-            self.files[&path],
+            kind,
             SourceKind::Rust,
             "not a Rust source: {}",
             path.display()
