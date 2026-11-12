@@ -600,6 +600,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "org-socket",
+ "org-sync",
  "org-work",
  "serde",
  "serde_json",

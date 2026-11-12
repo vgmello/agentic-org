@@ -670,6 +670,10 @@ pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, 
     })
 }
 
+pub(crate) fn is_replication_hq(db: &Connection) -> Result<bool, OfficeError> {
+    replication::native_binding(db).map(|binding| binding.is_none_or(|(hq, _)| hq))
+}
+
 /// Up to `limit` committed commands after `after`, oldest first, as the `org.changed` events'
 /// data. The log stores each command's changes verbatim, so this is a read, not a rebuild.
 pub(crate) fn changes_after(

@@ -78,10 +78,13 @@ impl Fixture {
         ports.feed = Box::new(feed.clone());
         ports.live = live;
         let mut shared = Shared::new(&test_info(), &path, ports, token());
-        shared.register_inbox(Hq {
-            sources: vec![counts.clone()],
-            clock: Clock::new("acceptance".into()),
-        });
+        shared.register_inbox(
+            Hq {
+                sources: vec![counts.clone()],
+                clock: Clock::new("acceptance".into()),
+            },
+            Ok(true),
+        );
         shared.enable_inbox_hints().unwrap(); // omitted only in the baseline fixture
         let shared = Arc::new(shared);
         let stop = Arc::new(AtomicBool::new(false));

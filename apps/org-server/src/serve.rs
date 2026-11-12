@@ -350,15 +350,18 @@ impl Shared {
     }
 
     /// Only a known HQ composition registers real sources; other offices stay dark.
-    pub(crate) fn register_inbox(&mut self, inbox: crate::inbox::Hq) {
-        if self
-            .hello
-            .office
-            .as_ref()
-            .is_some_and(|office| office.office.role == OfficeRole::Hq)
-        {
-            self.inbox = Some(inbox);
-            self.hello.capabilities.push("inbox.list".into());
+    pub(crate) fn register_inbox(
+        &mut self,
+        inbox: crate::inbox::Hq,
+        authority: Result<bool, org_office::OfficeError>,
+    ) {
+        match authority {
+            Ok(true) => {
+                self.inbox = Some(inbox);
+                self.hello.capabilities.push("inbox.list".into());
+            }
+            Ok(false) => {}
+            Err(_) => eprintln!("org-server: inbox disabled (authority read unavailable)"),
         }
     }
 

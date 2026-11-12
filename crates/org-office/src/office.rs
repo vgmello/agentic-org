@@ -523,6 +523,12 @@ impl Office {
         org_db::replication_checkpoint(&self.stores.org)
     }
 
+    /// Whether this office owns HQ reads, including before federation is bound.
+    /// A local restore fence blocks writes, not reads of the current HQ state.
+    pub fn is_replication_hq(&self) -> Result<bool, OfficeError> {
+        self.stores.org.read(org_db::is_replication_hq)
+    }
+
     /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
     pub fn replication_events_after(
         &self,

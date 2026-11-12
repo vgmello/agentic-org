@@ -27,6 +27,7 @@ hmac.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+org-sync = { path = "../../crates/org-sync" }
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
 org-client = { path = "../../crates/org-client" }

@@ -415,16 +415,7 @@ fn serve_office(
         },
         auth,
     );
-    shared.register_inbox(inbox);
-    if shared.enable_inbox_hints().is_err() {
-        let _ = std::fs::remove_file(&socket);
-        return fail(
-            &mut control,
-            FailCode::StorageError,
-            "cannot initialize inbox hint cursor",
-        );
-    }
-    let shared = Arc::new(shared);
+    shared.register_inbox(inbox, office.is_replication_hq());
     // The launch transport selects stdin for v2, authenticated rendezvous for v3.
     // The fixed-buffer watcher never parses later input.
     let host_gone = Arc::new(AtomicBool::new(false));
@@ -446,13 +437,8 @@ fn serve_office(
         );
     }
 
-    emit(
-        &mut control,
-        &ServerEvent::Ready {
-            socket: socket.display().to_string(),
-            pid: std::process::id(),
-        },
-    );
+    announce_ready(&mut control, &socket, &mut shared);
+    let shared = Arc::new(shared);
 
     let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
     let transfers = match control
@@ -488,6 +474,20 @@ fn serve_office(
     drop(shared);
     drop(office);
     0
+}
+
+/// Optional live hints cannot prevent the worker's Ready acknowledgement.
+fn announce_ready(control: &mut Control, socket: &Path, shared: &mut serve::Shared) {
+    if shared.enable_inbox_hints().is_err() {
+        eprintln!("org-server: inbox hints disabled (cursor unavailable)");
+    }
+    emit(
+        control,
+        &ServerEvent::Ready {
+            socket: socket.display().to_string(),
+            pid: std::process::id(),
+        },
+    );
 }
 
 /// Preserve the organization's retryable availability failure across the read port.

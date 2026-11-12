@@ -106,7 +106,7 @@ fn inbox_only_registered_hq_advertises_and_serves() {
     );
     for role in [OfficeRole::Satellite, OfficeRole::Unknown] {
         shared.hello.office.as_mut().unwrap().office.role = role;
-        shared.register_inbox(hq(rows(1)));
+        shared.register_inbox(hq(rows(1)), Ok(false));
         assert!(shared.inbox.is_none());
         assert!(!shared.hello.supports("inbox.list"));
         assert_eq!(
@@ -115,7 +115,7 @@ fn inbox_only_registered_hq_advertises_and_serves() {
         );
     }
     shared.hello.office.as_mut().unwrap().office.role = OfficeRole::Hq;
-    shared.register_inbox(hq(rows(1)));
+    shared.register_inbox(hq(rows(1)), Ok(true));
     assert!(shared.inbox.is_some());
     assert!(shared.hello.supports("inbox.list"));
     assert!(!shared.hello.supports("inbox.changed"));
@@ -154,7 +154,7 @@ impl MemberDirectory for Directory {
 fn inbox_live_owner_is_one_canonical_person_check_and_fails_closed_without_source_reads() {
     let mut shared = shared();
     let source = rows(1);
-    shared.register_inbox(hq(Arc::clone(&source)));
+    shared.register_inbox(hq(Arc::clone(&source)), Ok(true));
     let req = request(json!({"state":"open"}));
     for mut denied in [
         Binding::Anonymous,
@@ -237,7 +237,7 @@ fn inbox_live_owner_is_one_canonical_person_check_and_fails_closed_without_sourc
 fn inbox_limits_unknown_filters_and_bad_cursors_are_refused_before_reading_sources() {
     let mut shared = shared();
     let source = rows(110);
-    shared.register_inbox(hq(Arc::clone(&source)));
+    shared.register_inbox(hq(Arc::clone(&source)), Ok(true));
     for params in [
         json!({}),
         json!({"state":"future"}),
@@ -310,7 +310,7 @@ fn inbox_limits_unknown_filters_and_bad_cursors_are_refused_before_reading_sourc
 #[test]
 fn inbox_pages_cross_ties_and_unknown_times_and_last_cursor_is_absent() {
     let mut shared = shared();
-    shared.register_inbox(hq(rows(7)));
+    shared.register_inbox(hq(rows(7)), Ok(true));
     let mut cursor = None;
     let mut references = vec![];
     for _ in 0..4 {
@@ -374,10 +374,13 @@ fn inbox_degraded_cursor_survives_then_fresh_list_recovers_earlier_source_rows()
         fail: AtomicBool::new(true),
         reads: AtomicUsize::new(0),
     });
-    shared.register_inbox(Hq {
-        sources: vec![later, early.clone()],
-        clock: Clock::new("test".into()),
-    });
+    shared.register_inbox(
+        Hq {
+            sources: vec![later, early.clone()],
+            clock: Clock::new("test".into()),
+        },
+        Ok(true),
+    );
     let first = answer(
         &request(json!({"state":"open","limit":2})),
         &shared,
