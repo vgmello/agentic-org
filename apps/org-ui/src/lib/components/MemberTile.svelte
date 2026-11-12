@@ -9,6 +9,7 @@
 		member,
 		size = 'md',
 		selected = false,
+		teamLead = false,
 		dimmed = false,
 		highlighted = false,
 		highlightLabel = 'here',
@@ -18,6 +19,8 @@
 		member: Member;
 		size?: 'sm' | 'md';
 		selected?: boolean;
+		/** The member leads this specific team; other views keep their own context. */
+		teamLead?: boolean;
 		dimmed?: boolean;
 		/** Ring and tag from the office filter, and what the tag says (the office's name). */
 		highlighted?: boolean;
@@ -38,6 +41,7 @@
 	// a round avatar; both show initials; screen readers hear "agent" or "person" after the name.
 	const label = $derived(
 		`${member.name}, ${agent ? 'agent' : member.kind === 'person' ? 'person' : 'member'}` +
+			(teamLead ? ', team lead' : '') +
 			(member.agent?.status === 'paused' ? ', paused' : '') +
 			(alsoIn.length ? `, also in ${alsoIn.map((t) => t.name).join(', ')}` : '') +
 			(ringed ? `, highlighted: ${tag}` : '') +
@@ -72,7 +76,7 @@
 </button>
 	<!-- Beside the tile, in the flow: it never covers the next tile. The tile's label already says "also in …". -->
 	{#if alsoIn.length > 0}
-		<span class="rounded-sm bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
+		<span data-fit-text class="rounded-sm bg-gray-700 px-1 text-xs leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
 			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
 		</span>
 	{/if}

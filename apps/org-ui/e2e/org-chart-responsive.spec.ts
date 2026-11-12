@@ -1,3 +1,5 @@
+import type { OrgSnapshot } from '../src/lib/proto';
+import { viewAction, expectViewAction } from './org-chart-menu';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -12,6 +14,8 @@ async function openChart(page: Page, width: number, scale = 1, query = '') {
 	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
 	await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
 	await page.evaluate(() => document.fonts.ready.then(() => undefined));
+	// These legacy chart regressions choose Chart explicitly; OC-9 tests the mobile default separately.
+	if (width < 640) await viewAction(page, 'Chart');
 }
 
 async function expectControlsFit(page: Page, group: Locator) {
@@ -45,7 +49,7 @@ for (const width of [320, 960, 1280]) {
 		await openChart(page, width);
 		const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
 		const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
-		await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all']);
+		await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'View']);
 		await shot(page, `bug2-teams-toolbar-${width}`, { context: actions });
 		await expectControlsFit(page, actions);
 	});
@@ -71,19 +75,19 @@ test('BUG-2: existing zoom, collapse, list and keyboard dialog actions remain fu
 	await openChart(page, 1280);
 	const chart = page.getByTestId('teams-chart');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
-	await page.getByRole('button', { name: 'Actual size', exact: true }).click();
-	await expect(page.getByRole('button', { name: 'Fit to width', exact: true })).toBeVisible();
+	await viewAction(page, 'Actual size');
+	await expectViewAction(page, 'Fit to width');
 	const canvas = chart.locator('xpath=ancestor::div[contains(@class, "overflow-x-auto")][1]');
 	expect(await canvas.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
 	await canvas.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
 	expect(await canvas.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-	await page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+	await viewAction(page, 'Collapse all');
 	await expect(page.getByTestId('team-card')).toHaveCount(3);
-	await page.getByRole('button', { name: 'Expand all', exact: true }).click();
+	await viewAction(page, 'Expand all');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
-	await page.getByRole('button', { name: 'List', exact: true }).click();
+	await viewAction(page, 'List');
 	await expect(chart).toHaveCount(0);
-	await page.getByRole('button', { name: 'Chart', exact: true }).click();
+	await viewAction(page, 'Chart');
 	await expect(chart).toBeVisible();
 	const create = page.getByRole('button', { name: 'New team', exact: true });
 	await create.press('Enter');
@@ -115,20 +119,20 @@ for (const width of [320, 640, 720, 960, 1280]) {
 				expect(box.x).toBeCloseTo(room.left, 0);
 				expect(box.x + box.width).toBeCloseTo(room.right, 0);
 			}
-			await teams.getByRole('button', { name: 'List', exact: true }).click();
+			await viewAction(page, 'List');
 			await expect(page.getByTestId('teams-chart')).toHaveCount(0);
 			await shot(page, `bug2-list-${width}-${scale * 100}`, { context: actions });
 			await expectControlsFit(page, actions);
-			await teams.getByRole('button', { name: 'Chart', exact: true }).click();
+			await viewAction(page, 'Chart');
 			await expect(page.getByTestId('teams-chart')).toBeVisible();
 			await tabs.getByRole('tab', { name: 'People', exact: true }).click();
 			const people = page.getByRole('tabpanel', { name: 'People', exact: true });
-			const peopleControls = people.getByRole('button', { name: /^(Actual size|Fit to width)$/ }).locator('..');
+			const peopleControls = people.getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-people-${width}-${scale * 100}`, { context: peopleControls });
 			await expectControlsFit(page, peopleControls);
 			await expectControlsFit(page, people.getByRole('button', { name: 'Add person', exact: true }).locator('..'));
 			await tabs.getByRole('tab', { name: 'Reporting lines', exact: true }).click();
-			const reportingControls = page.getByRole('tabpanel', { name: 'Reporting lines', exact: true }).getByRole('button', { name: /^(Actual size|Fit to width)$/ }).locator('..');
+			const reportingControls = page.getByRole('tabpanel', { name: 'Reporting lines', exact: true }).getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-reporting-${width}-${scale * 100}`, { context: reportingControls });
 			await expectControlsFit(page, reportingControls);
 		});
@@ -151,7 +155,7 @@ for (const width of [320, 960]) {
 				if (Math.abs(current.y - previous.y) < 1) expect(current.x).toBeGreaterThan(previous.x);
 				else expect(current.y).toBeGreaterThan(previous.y);
 			}
-			const sequence = [search, page.getByRole('tab', { name: 'Teams', exact: true }), page.getByLabel('Office filter', { exact: true }), ...['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all'].map((name) => actions.getByRole('button', { name, exact: true }))];
+			const sequence = [search, page.getByRole('tab', { name: 'Teams', exact: true }), page.getByLabel('Office filter', { exact: true }), ...['New team', 'Add person', 'Add agent', 'View'].map((name) => actions.getByRole('button', { name, exact: true }))];
 			// Start from a user-visible field; focus() alone does not wait for WebKit scrolling.
 			await search.click();
 			for (let index = 0; index < sequence.length; index++) {
@@ -200,7 +204,7 @@ test('BUG-2: a narrow no-match result clears with Escape and retains search focu
 for (const region of ['sample note', 'unassigned-project row', 'empty call-to-action', 'TeamsList header'] as const) {
 	test(`BUG-2: ${region} stays inside its parent at 320px and 200% text`, async ({ page }) => {
 		await openChart(page, 320, 2, region === 'empty call-to-action' ? '?org=empty' : '');
-		if (region === 'TeamsList header') await page.getByRole('button', { name: 'List', exact: true }).click();
+		if (region === 'TeamsList header') await viewAction(page, 'List');
 		const targets = region === 'sample note' ? page.getByTestId('sample-data-note')
 			: region === 'unassigned-project row' ? page.getByTestId('unassigned-projects').locator('li')
 			: region === 'empty call-to-action' ? page.getByRole('button', { name: 'Create your first team', exact: true })
@@ -298,9 +302,9 @@ test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar ke
 	await tabs.getByRole('tab', { name: 'Teams', exact: true }).click();
 	const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
 	const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
-	await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'List', 'Actual size', 'Expand all', 'Collapse all']);
-	await panel.getByRole('button', { name: 'Actual size', exact: true }).click();
-	await expect(panel.getByRole('button', { name: 'Fit to width', exact: true })).toBeVisible();
+	await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'View']);
+	await viewAction(page, 'Actual size');
+	await expectViewAction(page, 'Fit to width');
 	await expect(nav.locator('[aria-current="page"]')).toHaveText('Org chart');
 	await expect(page).toHaveURL(/\/org-chart\?member=noor$/);
 	await shot(page, 'agents-views-inner-tabs-toolbar', { context: tabs });
@@ -390,5 +394,171 @@ for (const path of ['/agents', '/org-chart']) {
 		await page.reload();
 		await expect(page.getByRole('navigation', { name: 'Agents views', exact: true })).toBeVisible();
 		await shot(page, 'agents-views-' + path.slice(1) + '-recovered');
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps name and role lines readable at 320px and ${text * 100}% text`, async ({ page }) => {
+		await openChart(page, 320, text);
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		expect(await chart.locator('h3, p, li > span.truncate').evaluateAll((elements) => elements.length > 0 && elements.every((element) => element.hasAttribute('data-fit-text')))).toBe(true);
+		await expect.poll(() => chart.evaluate((element) => {
+			const scale = new DOMMatrix(getComputedStyle(element).transform).a;
+			return Math.min(...[...element.querySelectorAll('[data-fit-text]')].map((e) => parseFloat(getComputedStyle(e).fontSize) * scale));
+		})).toBeGreaterThanOrEqual(12);
+		// Wait for the observer's measured Fit result, rather than accepting the unmeasured scale=1.
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		const frame = page.getByRole('region', { name: 'People chart', exact: true });
+		await expect(frame).toHaveAttribute('tabindex', '0');
+		await expect(frame).toHaveCSS('overflow-x', 'auto');
+		expect(await frame.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+		await frame.focus();
+		await expect(frame).toBeFocused();
+		await frame.press('ArrowRight');
+		await expect.poll(() => frame.evaluate((e) => e.scrollLeft)).toBeGreaterThan(0);
+		await frame.press('ArrowLeft');
+		await expect.poll(() => frame.evaluate((e) => e.scrollLeft)).toBe(0);
+		await shot(page, `oc1-people-readable-fit-${text}`, { context: frame });
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps collapse-control text readable without leads at ${text * 100}% text`, async ({ page }) => {
+		await openChart(page, 320, text);
+		const response = await page.request.get('/e2e/fakes/org-api.ts');
+		expect(response.ok()).toBe(true);
+		const module = await response.text();
+		await page.route('**/e2e/fakes/org-api.ts*', (route) => route.fulfill({ contentType: 'text/javascript', body: module + `
+			const oc1View = orgApi.view.bind(orgApi);
+			orgApi.view = async (...args) => {
+				const view = await oc1View(...args), snapshot = view.snapshot;
+				const person = snapshot.members.find((member) => member.kind === 'person' && !member.owner);
+				return { ...view, snapshot: { ...snapshot,
+					teams: snapshot.teams.map((team) => ({ ...team, lead_member_id: undefined })),
+					members: [...snapshot.members.filter((member) => member.owner), ...snapshot.teams.map((team) => ({ ...person, id: 'oc1-person-' + team.id, name: 'Person for ' + team.name }))],
+					memberships: snapshot.teams.map((team) => ({ id: 'oc1-membership-' + team.id, team_id: team.id, member_id: 'oc1-person-' + team.id, version: 1 }))
+				} };
+			};` }));
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(5);
+		await expect(chart.getByText('No people', { exact: true })).toHaveCount(0);
+		await expect(chart.getByText(/^Lead:/)).toHaveCount(0);
+		await expect(chart.getByText(/^\+\d+ teams?$/)).toHaveCount(0);
+		const controls = chart.getByRole('button', { name: /teams?: (collapse|expand) the teams under/ });
+		await expect(controls).toHaveCount(1);
+		await expect.poll(() => controls.evaluateAll((elements) => Math.min(...elements.map((e) => parseFloat(getComputedStyle(e).fontSize) * new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a)))).toBeGreaterThanOrEqual(12);
+		await expect(controls.first()).toHaveAttribute('data-fit-text', '');
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		await shot(page, `oc1-readable-collapse-card-${text}`, { context: controls.first().locator('..') });
+		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
+		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
+		await shot(page, `oc1-collapse-control-readable-${text}`);
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: membership refresh remeasures Fit when chart dimensions stay unchanged at ${text * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 640 });
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		const fixture = await page.evaluate(async () => {
+			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+			const id = connections[connections.length - 1].organization.id;
+			const modulePath = '/e2e/fakes/org-api.ts';
+			const { orgApi } = await import(modulePath);
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const people = snapshot.members.filter((member) => member.kind === 'person' && !member.owner);
+			localStorage.setItem('agentic-org.mock.org.' + id, JSON.stringify({ snapshot: { ...snapshot,
+				teams: [{ id: 'small', name: 'Small', version: 1 }, { id: 'large', name: 'Large', version: 1 }],
+				memberships: [
+					{ id: 'small-first', team_id: 'small', member_id: people[0].id, version: 1 },
+					{ id: 'large-first', team_id: 'large', member_id: people[1].id, version: 1 },
+					{ id: 'large-second', team_id: 'large', member_id: people[2].id, version: 1 }
+				]
+			}, answers: {}, order: [] }));
+			return { organizationId: id, memberId: people[1].id };
+		});
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(2);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBeCloseTo(Math.max(.45, 12 / (14 * text)), 5);
+		const before = await chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }));
+		await expect(chart.getByText('+1 team', { exact: true })).toHaveCount(0);
+		await page.evaluate(async ({ organizationId, memberId }) => {
+			await (window as unknown as { __mockOrgChange: (organizationId: string, command: object) => Promise<unknown> }).__mockOrgChange(organizationId, { method: 'team.add_member', params: { membership_id: 'same-size-shared', team_id: 'small', member_id: memberId } });
+		}, fixture);
+		const badges = chart.getByText('+1 team', { exact: true });
+		await expect(badges).toHaveCount(2);
+		await expect.poll(() => chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }))).toEqual(before);
+		console.log('Same-dimension membership refresh', text, before, await badges.first().evaluate((e) => ({ font: getComputedStyle(e).fontSize, scale: new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a })));
+		await shot(page, `oc1-same-size-membership-${text}`, { context: chart.getByTestId('people-card').filter({ has: page.getByRole('heading', { name: 'Small', exact: true }) }) });
+		await expect.poll(() => badges.evaluateAll((elements) => Math.min(...elements.map((e) => parseFloat(getComputedStyle(e).fontSize) * new DOMMatrix(getComputedStyle(e.closest('[data-testid=people-chart]')!).transform).a)))).toBeGreaterThanOrEqual(12);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		await page.getByRole('button', { name: 'View', exact: true }).press('Enter');
+		await expect(page.getByRole('menuitem', { name: text === 1 ? 'Fit to width' : 'Actual size', exact: true })).toHaveAttribute('aria-disabled', text === 1 ? 'true' : 'false');
+	});
+}
+
+for (const text of [1, 2]) {
+	test(`PEOPLE-1 BUG-70 BUG-90: collapse and expand remeasure content at unchanged dimensions with ${text * 100}% text`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 640 });
+		await visit(page, '/create');
+		await page.getByLabel('Organization name').fill('Acme');
+		await page.getByRole('button', { name: 'Create organization' }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.evaluate(async () => {
+			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+			const id = connections[connections.length - 1].organization.id;
+			const modulePath = '/e2e/fakes/org-api.ts';
+			const { orgApi } = await import(modulePath);
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const person = snapshot.members.find((member) => member.kind === 'person' && !member.owner);
+			const assignment = ['anchor', 'anchor', 'anchor-child', 'anchor-child', 'changing', 'changing-child'];
+			localStorage.setItem('agentic-org.mock.org.' + id, JSON.stringify({ snapshot: { ...snapshot,
+				teams: [
+					{ id: 'anchor', name: 'Anchor', version: 1 },
+					{ id: 'anchor-child', name: 'Anchor child', owner_team_id: 'anchor', version: 1 },
+					{ id: 'changing', name: 'Changing', version: 1 },
+					{ id: 'changing-child', name: 'Changing child', owner_team_id: 'changing', version: 1 }
+				],
+				members: [...snapshot.members.filter((member) => member.owner), ...assignment.map((_, index) => ({ ...person, id: 'collapse-person-' + index, name: 'Person ' + index }))],
+				memberships: assignment.map((team_id, index) => ({ id: 'collapse-membership-' + index, team_id, member_id: 'collapse-person-' + index, version: 1 }))
+			}, answers: {}, order: [] }));
+		});
+		await visit(page, '/org-chart');
+		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		const chart = page.getByTestId('people-chart');
+		await expect(chart.getByTestId('people-card')).toHaveCount(4);
+		await expect.poll(() => chart.evaluate((e) => new DOMMatrix(getComputedStyle(e).transform).a)).toBe(1 / text);
+		// Hold the expanded width so child-list padding cannot turn this into a resize test.
+		await chart.evaluate((e) => { e.style.minWidth = `${e.offsetWidth}px`; });
+		await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+		const before = await chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }));
+		await chart.evaluate((element) => {
+			const query = element.querySelectorAll.bind(element);
+			element.dataset.measurements = '0';
+			element.querySelectorAll = ((selector: string) => {
+				if (selector === '[data-fit-text]') element.dataset.measurements = String(Number(element.dataset.measurements) + 1);
+				return query(selector);
+			}) as typeof element.querySelectorAll;
+		});
+		const changing = chart.getByTestId('people-card').filter({ has: page.getByRole('heading', { name: 'Changing', exact: true }) });
+		for (const action of ['collapse', 'expand']) {
+			await chart.evaluate((e) => { e.dataset.measurements = '0'; });
+			await changing.getByRole('button', { name: `1 team: ${action} the teams under Changing`, exact: true }).click();
+			await expect(chart.getByTestId('people-card')).toHaveCount(action === 'collapse' ? 3 : 4);
+			await expect.poll(() => chart.evaluate((e) => ({ width: e.offsetWidth, height: e.offsetHeight }))).toEqual(before);
+			await expect.poll(() => chart.evaluate((e) => Number(e.dataset.measurements))).toBeGreaterThan(0);
+			await shot(page, `oc1-same-size-${action}-${text}`, { context: changing });
+		}
 	});
 }

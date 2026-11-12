@@ -1,20 +1,19 @@
 <script lang="ts">
-	import Crown from '@lucide/svelte/icons/crown';
 	import { Badge } from '$lib/components/ui/badge';
+	import { initialsOf } from '$lib/format';
 	import type { Member } from '$lib/proto';
 
 	let { owner, organization, sample = false }: { owner: Member | undefined; organization: string; /** The data is invented: say so where the owner is shown. */ sample?: boolean } = $props();
 </script>
 
-<!-- The owner is shown once, above every view: never on a team card or in a count (OWNER-1). -->
+<!-- The owner stays above every view, outside team membership and counts (OWNER-1). -->
 {#if owner}
-	<section aria-label="Owner" class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl bg-white/5 px-4 py-3 outline-1 -outline-offset-1 outline-white/10">
-		<span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-amber-400/15 text-amber-200 outline-1 -outline-offset-1 outline-amber-300/30">
-			<Crown class="size-5" aria-hidden="true" />
-		</span>
-		<span class="min-w-0">
-			<span class="block text-sm/6 font-semibold text-white">{owner.name} <span class="font-normal text-gray-400">(you)</span> · Owner of {organization}{#if sample} <Badge variant="secondary" data-testid="owner-sample">Sample data</Badge>{/if}</span>
-			<span class="block text-xs/5 text-gray-400">Full access to every team, member and project. Any agent can message, ask or assign you.</span>
+	<section aria-label="Owner" class="flex min-w-0 items-center gap-x-3">
+		<span aria-hidden="true" class="inline-flex size-10 flex-none items-center justify-center rounded-full bg-gray-800 text-sm font-semibold text-gray-300 outline-1 -outline-offset-1 outline-white/10">{initialsOf(owner.name)}</span>
+		<span class="min-w-0 text-sm/6 text-gray-400">
+			<span class="font-semibold text-white">{owner.name}</span> · Owner
+			{#if sample} <Badge variant="secondary" data-testid="owner-sample">Sample data</Badge>{/if}
+			<span class="sr-only"> of {organization}. Full access to every team, member and project. Any agent can message, ask or assign you.</span>
 		</span>
 	</section>
 {/if}

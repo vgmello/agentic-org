@@ -1,3 +1,4 @@
+import { viewAction } from './org-chart-menu';
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
@@ -144,7 +145,7 @@ test('the team menu works from the keyboard', async ({ page }) => {
 
 test('the list view has the same team menus', async ({ page }) => {
 	await openChart(page);
-	await page.getByRole('button', { name: 'List' }).click();
+	await viewAction(page, 'List');
 	await expect(menu(page, 'Web')).toBeVisible();
 });
 
