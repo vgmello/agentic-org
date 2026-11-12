@@ -376,23 +376,6 @@ test('RQS-4: words that start with @ and a handle go to that agent: the handle i
 	await expect(dialog.getByRole('button', { name: /^Send to / })).not.toHaveText('Send to Sam Okafor');
 });
 
-test('RQS-4: Message instead sends the words to the agent as an ordinary message and makes no request', async ({ page }) => {
-	await open(page);
-	await queue(page);
-	await page.getByTestId('new-request').click();
-	const dialog = page.getByRole('dialog', { name: 'New request' });
-	await dialog.getByLabel('What do you need?').fill('Quick question: is the build cache shared?');
-	await dialog.getByRole('button', { name: 'Message instead' }).click();
-	await expect(dialog).toBeHidden();
-	await expect(page.getByText(/^Message sent to /)).toBeVisible();
-	await expect(page.getByTestId('no-requests')).toBeVisible();
-	// It is in the agent's direct message, which the first suggestion (Juno Park) now has.
-	// (The chat's mock office lives in the page, so go there by the sidebar, not by loading the address.)
-	await page.getByRole('link', { name: 'Chat', exact: true }).click();
-	await page.getByText('Juno Park', { exact: true }).first().click();
-	await expect(page.getByText('Quick question: is the build cache shared?').first()).toBeVisible();
-});
-
 test('RQS-13: while typing, open requests that read alike are offered, and Add to REQ-n puts the words there instead', async ({ page }) => {
 	await open(page);
 	await queue(page);
@@ -432,7 +415,7 @@ test('RQS-7: the queue can be filtered by state, who scopes it and project, and 
 	await expect(rows).toHaveCount(3);
 	await page.getByLabel('People').selectOption({ label: 'Not routed' });
 	await expect(rows).toHaveCount(2);
-	await page.getByLabel('Project').selectOption({ label: 'Atlas' });
+	await page.getByTestId('request-filters').getByLabel('Project').selectOption({ label: 'Atlas' });
 	await expect(rows).toHaveCount(1);
 	await expect(rows.first()).toContainText('Dark mode');
 	await page.getByLabel('Search requests').fill('nothing like this');
@@ -570,7 +553,7 @@ test('RQS-7: the queue can be filtered to what one person raised, and opens on O
 	await expect(page.getByTestId('request-row')).toHaveCount(1);
 });
 
-test('RQS-4: a handle nobody has says so and turns Send off until it is fixed; Message instead says who to choose', async ({ page }) => {
+test('RQS-4: a handle nobody has says so and turns Send off until it is fixed', async ({ page }) => {
 	await open(page);
 	await queue(page);
 	await page.getByTestId('new-request').click();
@@ -579,22 +562,11 @@ test('RQS-4: a handle nobody has says so and turns Send off until it is fixed; M
 	await words.fill('@nobody-here do the thing');
 	await expect(dialog.getByTestId('no-such-handle')).toHaveText('No one called @nobody-here. Pick someone from the list or remove it.');
 	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
-	await expect(dialog.getByRole('button', { name: 'Message instead' })).toBeDisabled();
+	// Without a messaging capability composed (none is yet), there is no Message instead button.
+	await expect(dialog.getByRole('button', { name: 'Message instead' })).toHaveCount(0);
 	await words.fill('do the thing');
 	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
 	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
-});
-
-test('RQS-4: the message confirmation offers Open in Chat', async ({ page }) => {
-	await open(page);
-	await queue(page);
-	await page.getByTestId('new-request').click();
-	const dialog = page.getByRole('dialog', { name: 'New request' });
-	await dialog.getByLabel('What do you need?').fill('A quick question for you');
-	await dialog.getByRole('button', { name: 'Message instead' }).click();
-	await expect(page.getByText(/^Message sent to /)).toBeVisible();
-	await page.getByRole('button', { name: 'Open in Chat' }).click();
-	await expect(page).toHaveURL(/\/chat/);
 });
 
 test('RQS-15: the filters are remembered for the organization', async ({ page }) => {
@@ -661,19 +633,6 @@ test('RQS-4: the handle list belongs to the handle: it is gone once the caret le
 	await words.press('Tab');
 	await expect(words).toHaveValue(/^@\S+$/);
 	await expect(dialog.getByTestId('by-at')).toBeVisible();
-});
-
-test('RQS-4: Message instead sends the words without the @handle', async ({ page }) => {
-	await open(page);
-	await queue(page);
-	await page.getByTestId('new-request').click();
-	const dialog = page.getByRole('dialog', { name: 'New request' });
-	await dialog.getByLabel('What do you need?').fill('@sam: is the cache shared?');
-	await dialog.getByRole('button', { name: 'Message instead' }).click();
-	await expect(page.getByText('Message sent to Sam Okafor')).toBeVisible();
-	await page.getByRole('link', { name: 'Chat', exact: true }).click();
-	await page.getByText('Sam Okafor', { exact: true }).first().click();
-	await expect(page.getByText('is the cache shared?', { exact: true }).first()).toBeVisible();
 });
 
 test('RQS-4: choosing someone in the list settles a handle nobody has: the words stay as typed and Send works', async ({ page }) => {
