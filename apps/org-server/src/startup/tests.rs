@@ -604,6 +604,9 @@ fn event_writer_errors_are_propagated_on_both_transports() {
         Err(LaunchError::Frame(FrameError::Io(_)))
     ));
     let (stream, peer) = UnixStream::pair().unwrap();
+    // A concurrent fork may briefly retain peer despite CLOEXEC. Shutdown is shared
+    // by inherited copies and deterministically forces this writer's error path.
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
     drop(peer);
     control.rendezvous = Some(stream);
     assert!(matches!(

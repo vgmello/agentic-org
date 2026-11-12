@@ -92,6 +92,24 @@ pub struct OfficePorts {
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
 
+/// Launch v3 retains its grant key; grant verification is enabled separately in 2a.5.
+pub(super) enum LaunchAuth {
+    Legacy(AppToken),
+    Grants { _key: org_proto::GrantKey },
+}
+
+impl From<AppToken> for LaunchAuth {
+    fn from(token: AppToken) -> Self {
+        Self::Legacy(token)
+    }
+}
+
+impl LaunchAuth {
+    fn accepts(&self, token: &AppToken) -> bool {
+        matches!(self, Self::Legacy(expected) if token == expected)
+    }
+}
+
 /// Who a connection is, as far as the socket knows.
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Binding {
@@ -268,8 +286,8 @@ pub struct Shared {
     pub hello: HelloResult,
     office_id: String,
     ports: OfficePorts,
-    /// The app's token, given to the server on the launch pipe. Zeroed when `Shared` drops.
-    app_token: AppToken,
+    /// Typed launch authority, retained and zeroed when `Shared` drops.
+    auth: LaunchAuth,
     timing: Timing,
     /// The connections bound as a member, for the watcher.
     bound: Bound,
@@ -288,12 +306,12 @@ impl Shared {
         info: &org_office::OfficeInfo,
         socket: &Path,
         ports: OfficePorts,
-        app_token: AppToken,
+        auth: impl Into<LaunchAuth>,
     ) -> Self {
         Self {
             office_id: info.office_id.clone(),
             ports,
-            app_token,
+            auth: auth.into(),
             timing: Timing::default(),
             bound: Mutex::default(),
             // Part 1 implements only what every server of this api_version has: no capabilities.
@@ -1008,6 +1026,13 @@ fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response
 /// failed one leaves the connection unbound.
 fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     *binding = Binding::Anonymous;
+    if matches!(shared.auth, LaunchAuth::Grants { .. }) {
+        return bind_error(
+            request.id,
+            ErrorCode::NotAuthorized,
+            "grant authorization is not active",
+        );
+    }
     let params = match request.params::<MsgBind>() {
         Ok(params) => params,
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
@@ -1043,7 +1068,7 @@ fn bind_app(
             "bind with an app_token",
         ));
     };
-    if token != shared.app_token {
+    if !shared.auth.accepts(&token) {
         return Err(bind_error(id, ErrorCode::NotAuthorized, "wrong app token"));
     }
     Ok((Binding::App, None))
@@ -1090,7 +1115,7 @@ fn bind_member(
     // Step 3: the credentials.
     if is_person {
         match app_token {
-            Some(token) if token == shared.app_token => {}
+            Some(token) if shared.auth.accepts(&token) => {}
             _ => return Err(refused()),
         }
     } else if app_token.is_some() {
@@ -1187,6 +1212,149 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+
+    #[test]
+    fn grants_bind_refuses_before_params_or_directory_and_clears_each_prior_binding() {
+        struct ForbiddenDirectory;
+        impl MemberDirectory for ForbiddenDirectory {
+            fn resolve_member(
+                &self,
+                _: &str,
+            ) -> Result<
+                Option<(org_proto::Member, org_proto::org::Position)>,
+                org_mailbox::StoreError,
+            > {
+                panic!("grant bind must never query the legacy directory");
+            }
+        }
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.directory = Arc::new(ForbiddenDirectory);
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused"),
+            ports,
+            LaunchAuth::Grants {
+                _key: org_proto::GrantKey::from_bytes([7; 32]),
+            },
+        );
+        assert!(
+            matches!(&shared.auth, LaunchAuth::Grants { _key } if _key == &org_proto::GrantKey::from_bytes([7;32]))
+        );
+        for params in [
+            serde_json::json!({"app_token":"a7".repeat(32)}),
+            serde_json::json!({"app_token":"11".repeat(32)}),
+            serde_json::json!({}),
+            serde_json::json!({"app_token":"not hex"}),
+            serde_json::json!({"member":"ada"}),
+            serde_json::json!({"member":"pat","app_token":"a7".repeat(32)}),
+            serde_json::json!({"member":7}),
+            serde_json::json!({"member":"office"}),
+        ] {
+            for mut binding in [
+                Binding::Anonymous,
+                Binding::App,
+                Binding::Member {
+                    id: "ada".into(),
+                    with_app_token: false,
+                },
+            ] {
+                let request = Request {
+                    id: 1,
+                    method: "msg.bind".into(),
+                    params: params.clone(),
+                    principal: None,
+                };
+                assert_eq!(
+                    code_of(answer(&request, &shared, &mut binding).outcome),
+                    ErrorCode::NotAuthorized
+                );
+                assert_eq!(binding, Binding::Anonymous);
+            }
+        }
+    }
+
+    #[test]
+    fn grants_mode_keeps_v1_hello_and_closes_the_tokenless_legacy_agent_path() {
+        let legacy = shared(Path::new("/unused"));
+        let request = Request::new::<MsgBind>(
+            1,
+            &MsgBindParams {
+                member: Some("ada".into()),
+                app_token: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            answer(&request, &legacy, &mut Binding::Anonymous).outcome,
+            org_proto::Outcome::Result(_)
+        ));
+        let grants = Shared::new(
+            &test_info(),
+            Path::new("/unused"),
+            ports(Box::new(|| Err(SnapshotFailure::Storage))),
+            LaunchAuth::Grants {
+                _key: org_proto::GrantKey::from_bytes([7; 32]),
+            },
+        );
+        assert_eq!(
+            code_of(answer(&request, &grants, &mut Binding::Anonymous).outcome),
+            ErrorCode::NotAuthorized
+        );
+        assert_eq!(
+            serde_json::to_value(&grants.hello).unwrap(),
+            serde_json::to_value(&legacy.hello).unwrap()
+        );
+    }
+
+    #[test]
+    fn grants_authority_refuses_every_bind_on_the_live_socket_and_keeps_api_one() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let shared = Arc::new(Shared::new(
+            &test_info(),
+            &path,
+            ports(Box::new(|| Err(SnapshotFailure::Storage))),
+            LaunchAuth::Grants {
+                _key: org_proto::GrantKey::from_bytes([7; 32]),
+            },
+        ));
+        let (stop, server) = start(&path, &shared);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut client = Client::connect(&path);
+            assert!(
+                matches!(client.call::<Hello>(&Default::default()), org_proto::Outcome::Result(value)
+                if value == serde_json::to_value(&shared.hello).unwrap() && value["api_version"] == 1)
+            );
+            for params in [
+                serde_json::json!({"app_token":"a7".repeat(32)}),
+                serde_json::json!({"app_token":"11".repeat(32)}),
+                serde_json::json!({}),
+                serde_json::json!({"app_token":"not hex"}),
+                serde_json::json!({"member":"ada"}),
+                serde_json::json!({"member":"pat","app_token":"a7".repeat(32)}),
+                serde_json::json!({"member":7}),
+                serde_json::json!({"member":"office"}),
+            ] {
+                assert_eq!(
+                    code_of(client.ask(|id| Request {
+                        id,
+                        method: "msg.bind".into(),
+                        params,
+                        principal: None,
+                    })),
+                    ErrorCode::NotAuthorized
+                );
+                assert_eq!(
+                    code_of(client.call::<MsgInbox>(&inbox_params())),
+                    ErrorCode::NotBound
+                );
+                assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+            }
+        }));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        result.unwrap();
+    }
 
     #[test]
     fn an_unbind_preserves_a_racing_watcher_revocation() {
