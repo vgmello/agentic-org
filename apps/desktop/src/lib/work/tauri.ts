@@ -8,6 +8,7 @@ let queue: Promise<unknown> = Promise.resolve();
 export const tauriWork: WorkApi = {
 	// The shell's mock office keeps tasks and bugs; requests arrive with the office's own work service.
 	requests: false,
+	similar: () => Promise.reject({ source: 'api', code: 'unavailable', message: 'Similar requests are not available in this build yet.' }),
 	list: () => Promise.reject({ source: 'api', code: 'unavailable', message: 'Listing is not available in this build yet.' }),
 	activity: () => Promise.reject({ source: 'api', code: 'unavailable', message: 'Activity is not available in this build yet.' }),
 	snapshot: (organizationId, projectId, closedSince) =>

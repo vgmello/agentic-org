@@ -210,7 +210,7 @@
 					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
 
-				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From {fromRequest.ref} · {fromRequest.title}</p>{/if}
+				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-white" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
 				{#if fixed.length > 0}<p class="text-sm/6 text-gray-300" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
 
 				<div class="grid gap-4 sm:grid-cols-2">

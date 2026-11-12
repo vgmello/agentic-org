@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import BugSheet from '$lib/components/BugSheet.svelte';
 	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
@@ -23,8 +25,8 @@
 	const snapshot = $derived(data.snapshot);
 	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
-	/** The open requests with a word that starts with `text`, from the office (the similar requests offered while typing). */
-	const find = (text: string) => workApi.list(organizationId, { kinds: ['request'], statuses: ['new', 'routed', 'scoping', 'scoped'], text, limit: 20 }).then((r) => r.items);
+	/** The open requests that read like these words, from the office (offered while typing). */
+	const find = (text: string) => workApi.similar(organizationId, { text, limit: 2 }).then((r) => r.items);
 	/** The words of a request sent as an ordinary message to a member instead: their direct message, then the message (RQS-4). */
 	async function message(memberId: string, text: string) {
 		const chat = chatSender(organizationId);
@@ -64,6 +66,19 @@
 		}
 	}
 	onMount(load);
+
+	// A link to a request ("From REQ-12" on a task) opens its page here, whether this page was just opened or already open.
+	const wanted = $derived(page.url.searchParams.get('request'));
+	$effect(() => {
+		if (!wanted || items === undefined) return;
+		if (workApi.requests && items.some((i) => i.id === wanted && i.kind === 'request')) {
+			tab = 'requests';
+			requestId = wanted;
+			requestStart = undefined;
+			requestOpen = true;
+		}
+		void goto(page.url.pathname, { replaceState: true, noScroll: true, keepFocus: true });
+	});
 
 	function pick(next: WorkTab) {
 		tab = next;
@@ -109,7 +124,7 @@
 	{:else if items === undefined}
 		<p class="text-sm/6 text-gray-400">Loading work…</p>
 	{:else if tab === 'requests'}
-		<RequestsPanel items={items} {snapshot} {now} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />
+		{#key organizationId}<RequestsPanel items={items} {snapshot} {now} {organizationId} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />{/key}
 	{:else if (snapshot.projects ?? []).length === 0}
 		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-projects">No projects yet. Work items live in projects.</p>
 	{:else}
@@ -157,7 +172,7 @@
 	{/if}
 </div>
 
-<NewRequestDialog bind:open={newRequestOpen} {snapshot} {find} {send} {message} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} onmessaged={(to) => toast.success(`Message sent to ${to}.`)} />
+<NewRequestDialog bind:open={newRequestOpen} {snapshot} {find} {send} {message} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} onmessaged={(to) => toast.success(`Message sent to ${to}`, { action: { label: 'Open in Chat', onClick: () => void goto('/chat') } })} />
 <RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
 <TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
 <BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />

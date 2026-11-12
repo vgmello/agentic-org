@@ -11,7 +11,7 @@
 	import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
 	import { nameOf } from '$lib/work/people';
-	import { atName, handleFor, KIND_WORD, requestRef, similarFrom, similarKeywords, suggestScopers, withHandle } from '$lib/work/requests-view';
+	import { atName, atSpan, handleFor, KIND_WORD, requestRef, suggestScopers, withHandle, withoutHandle } from '$lib/work/requests-view';
 	import type { Member } from '$lib/proto';
 
 	/**
@@ -32,7 +32,7 @@
 		open: boolean;
 		snapshot: OrgSnapshot;
 		defaultProjectId?: string;
-		/** Open requests whose title or words have a word starting with `text` (`work.list { text }`): the ones that read alike are offered while typing (RQS-13). Without it nothing is offered. */
+		/** The open requests that read like these words (`request.similar`): offered while typing (RQS-13). Without it nothing is offered. */
 		find?: (text: string) => Promise<WorkItemSummary[]>;
 		send: (draft: WorkDraft) => Promise<WorkAccepted>;
 		/** Send the words to a member as an ordinary message instead (RQS-4). Without it there is no such button. */
@@ -95,20 +95,27 @@
 	const choice = $derived((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none');
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
-	// After a pause in typing, each keyword is looked up in the office; the requests several of them found are offered.
+	// After a pause in typing the office is asked which open requests read like the words (one call); up to 2 are offered.
 	let similar = $state<WorkItemSummary[]>([]);
 	$effect(() => {
-		const words = open && find ? similarKeywords(text) : [];
-		const lookup = find;
-		if (!lookup || words.length < 2) {
+		const lookup = open ? find : undefined;
+		const needle = text.trim();
+		// What was found for the words before is not about these words: it goes at once.
+		similar = [];
+		if (!lookup || [...needle].length < 8) {
 			similar = [];
 			return;
 		}
 		let live = true;
 		const timer = setTimeout(() => {
-			Promise.all(words.map((w) => lookup(w).catch(() => [] as WorkItemSummary[]))).then((found) => {
-				if (live) similar = similarFrom(found);
-			});
+			lookup([...needle].slice(0, 200).join('')).then(
+				(found) => {
+					if (live) similar = found.slice(0, 2);
+				},
+				() => {
+					if (live) similar = [];
+				}
+			);
 		}, 350);
 		return () => {
 			live = false;
@@ -123,7 +130,13 @@
 		const m = snapshot.members.find((x) => x.id === scoperId);
 		return m?.kind === 'agent' && m.agent?.status === 'paused' ? `${m.name} is paused and won't pick this up. Choose someone else or Just save.` : undefined;
 	});
-	const textError = $derived(touched && text.trim() === '' ? 'Write what you need.' : undefined);
+	/** The words as they are saved: without the @handle when that is what routes it (decision 5). */
+	const words = $derived(atMember && scoperId === atMember.id ? withoutHandle(text) : text);
+	/** A handle at the start that no agent has: "No one called @x." Send is off until it is fixed or removed (RQS-4). */
+	const unknownHandle = $derived(at?.kind === 'unknown' ? at.token : undefined);
+	const textError = $derived(touched && words.trim() === '' ? (atMember && text.trim() !== '' ? `Write what you need after @${at?.kind === 'exact' ? at.token : ''}.` : 'Write what you need.') : undefined);
+	// Picking someone in the list instead settles it: the handle is then just words.
+	const cannotSend = $derived(unknownHandle !== undefined && picked === undefined);
 	const sendLabel = $derived(confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
 
 	/** Whether closing now should ask first: words typed, nothing in flight. */
@@ -140,6 +153,42 @@
 		else if (wantClose()) open = false;
 	}
 	const back = () => ((asking = false), queueMicrotask(() => field?.focus()));
+
+	// The agents a half-typed @handle could be: ↑↓ move, Enter or Tab pick, Esc closes the list (and not the panel).
+	let activeAt = $state(0);
+	let atClosed = $state(false);
+	// Where the caret is: the list belongs to the handle at the start and only shows while the caret is in or at the end of it.
+	let caret = $state(0);
+	const atToken = $derived(at?.kind === 'partial' ? at.token : undefined);
+	$effect(() => {
+		void atToken;
+		activeAt = 0;
+		atClosed = false;
+	});
+	const inHandle = $derived(caret <= (atSpan(text) ?? -1));
+	const completions = $derived(at?.kind === 'partial' && !atClosed && inHandle ? at.matches : []);
+	const trackCaret = (e: Event) => (caret = (e.currentTarget as HTMLTextAreaElement).selectionStart ?? 0);
+	function onKey(e: KeyboardEvent) {
+		// A key that is part of composing text (an input method) is not a command.
+		if (e.isComposing || e.keyCode === 229) return;
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			void submit(true);
+			return;
+		}
+		if (completions.length === 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			activeAt = (activeAt + (e.key === 'ArrowDown' ? 1 : completions.length - 1)) % completions.length;
+		} else if (e.key === 'Enter' || e.key === 'Tab') {
+			e.preventDefault();
+			complete(completions[Math.min(activeAt, completions.length - 1)]);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			atClosed = true;
+		}
+	}
 
 	function complete(m: Member) {
 		text = withHandle(text, m);
@@ -168,11 +217,11 @@
 	/** The words go to the member as an ordinary message, not as a request (RQS-4). */
 	async function sendAsMessage() {
 		touched = true;
-		if (busy || !message || !scoperId || text.trim() === '') return;
+		if (busy || !message || !scoperId || words.trim() === '' || cannotSend) return;
 		busy = true;
 		error = undefined;
 		try {
-			await message(scoperId, text);
+			await message(scoperId, words);
 			const to = nameOf(snapshot, scoperId);
 			text = '';
 			open = false;
@@ -186,7 +235,7 @@
 
 	async function submit(route: boolean) {
 		touched = true;
-		if (busy || text.trim() === '') return;
+		if (busy || words.trim() === '' || (route && cannotSend)) return;
 		if (route && warning && !confirmed) {
 			confirmed = true;
 			return;
@@ -199,7 +248,7 @@
 			const accepted = await send({
 				method: 'request.create',
 				item_id: newId(),
-				text,
+				text: route || !atMember ? words : text,
 				request_kind: kind,
 				project_id: projectId || undefined,
 				scoper_id: to,
@@ -236,16 +285,27 @@
 					maxlength={REQUEST_LIMITS.text * 2}
 					disabled={busy}
 					aria-invalid={textError ? true : undefined}
-					onkeydown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && (e.preventDefault(), void submit(true))}
+					onkeydown={onKey}
+					onkeyup={trackCaret}
+					onclick={trackCaret}
+					oninput={trackCaret}
+					onselect={trackCaret}
+					aria-autocomplete="list"
+					aria-controls={completions.length > 0 ? 'at-list' : undefined}
+					aria-activedescendant={completions.length > 0 ? `at-opt-${Math.min(activeAt, completions.length - 1)}` : undefined}
 					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				></textarea>
 				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
-				{#if at?.kind === 'partial'}
-					<ul class="flex flex-wrap gap-2" aria-label="Agents you could mean" data-testid="at-matches">
-						{#each at.matches as m (m.id)}
-							<li><button type="button" class="rounded-md bg-white/5 px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => complete(m)}>{m.name} <span class="text-gray-400">@{handleFor(m)}</span></button></li>
+				{#if cannotSend}<p class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">No one called @{unknownHandle}. Pick someone from the list or remove it.</p>{/if}
+				{#if completions.length > 0}
+					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
+						{#each completions as m, i (m.id)}
+							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)}>
+								<button type="button" tabindex="-1" class="rounded-md px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/10 {i === Math.min(activeAt, completions.length - 1) ? 'bg-white/15 outline-2 outline-indigo-400' : 'bg-white/5'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-gray-400">@{handleFor(m)}</span></button>
+							</li>
 						{/each}
 					</ul>
+					<p class="text-xs/5 text-gray-400">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
 				{/if}
 				{#if similar.length > 0}
 					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
@@ -297,6 +357,7 @@
 				</label>
 			</fieldset>
 
+			{#if message && !scoperId}<p id="message-hint" class="text-xs/5 text-gray-400" data-testid="message-hint">Choose who to message.</p>{/if}
 			{#if warning}<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
@@ -307,9 +368,9 @@
 					<Button type="button" disabled={busy} onclick={() => void submit(false)}>Keep</Button>
 				{:else}
 					<Button type="button" variant="outline" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
-					{#if message}<Button type="button" variant="outline" disabled={busy || !scoperId} title={scoperId ? undefined : 'Choose who to message first.'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
+					{#if message}<Button type="button" variant="outline" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
 					<Button type="button" variant="outline" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
-					<Button type="submit" disabled={busy}>{sendLabel}</Button>
+					<Button type="submit" disabled={busy || cannotSend}>{sendLabel}</Button>
 				{/if}
 			</DialogFooter>
 		</form>

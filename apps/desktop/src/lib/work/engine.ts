@@ -38,6 +38,7 @@ import type {
 	WorkEvent,
 	WorkItemSummary,
 	WorkListQuery,
+	RequestSimilarQuery,
 	WorkPosition
 } from '$lib/proto';
 import { WORK_LIMITS } from '$lib/proto';
@@ -746,6 +747,33 @@ export function listItems(s: WorkState, q: WorkListQuery): WorkItemSummary[] {
 		.map((i) => i.summary)
 		.sort((a, b) => (b.number ?? 0) - (a.number ?? 0))
 		.slice(0, q.limit ?? 100);
+}
+
+const SIMILAR_STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'let', 'want', 'need', 'make', 'when', 'what', 'from', 'into', 'have', 'would', 'should', 'could', 'about', 'there', 'their', 'them', 'than', 'then', 'also', 'just', 'like', 'some', 'more', 'every', 'each', 'only', 'your', 'our', 'can', 'are', 'was', 'were', 'but', 'not', 'all', 'any', 'its']);
+const SIMILAR_LIMIT = { default: 5, max: 10 } as const;
+
+/**
+ * `request.similar`: the open requests (New, Routed, being scoped) that read like `text`, ranked by how many of its
+ * meaningful words (at least 3 characters, the leading @handle removed) start a word of the title or of the request's own
+ * words; ties go to the newest. A request must share at least two of them (or the only one there is), so a stray word is
+ * not a match.
+ */
+export function similarRequests(s: WorkState, q: RequestSimilarQuery): WorkItemSummary[] {
+	if (typeof q.text !== 'string' || [...q.text].length > LIST_TEXT_MAX) fail('invalid_request', `text can be at most ${LIST_TEXT_MAX} characters.`);
+	if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > SIMILAR_LIMIT.max)) fail('invalid_request', `limit is 1 to ${SIMILAR_LIMIT.max}.`);
+	const mine = [...new Set(wordsIn(q.text.replace(/^\s*@(?!@)[\p{L}\p{N}_-]*/u, '')).filter((w) => w.length >= 3 && !SIMILAR_STOP.has(w)))];
+	if (mine.length === 0) return [];
+	const need = Math.min(2, mine.length);
+	return Object.values(s.items)
+		.filter((i) => !i.summary.deleted && i.summary.kind === 'request' && ['new', 'routed', 'scoping'].includes(i.summary.status) && (q.project_id === undefined || i.summary.project_id === q.project_id))
+		.map((i) => {
+			const have = wordsIn(`${i.summary.title} ${i.text ?? ''}`);
+			return { summary: i.summary, hits: mine.filter((w) => have.some((h) => h.startsWith(w))).length };
+		})
+		.filter((c) => c.hits >= need)
+		.sort((a, b) => b.hits - a.hits || (b.summary.number ?? 0) - (a.summary.number ?? 0))
+		.slice(0, q.limit ?? SIMILAR_LIMIT.default)
+		.map((c) => c.summary);
 }
 
 /** The events of one request, oldest first (`work.activity`). Other kinds keep none yet. */

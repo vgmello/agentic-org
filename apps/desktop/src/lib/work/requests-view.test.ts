@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, NO_FILTER, similarFrom, similarKeywords, withHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, atSpan, filterActive, filterRequests, handleFor, narrowed, NO_FILTER, withHandle, withoutHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -216,7 +216,7 @@ describe('RQS-4 @name routing', () => {
 	const at = (text: string) => atName(text, team);
 	const who = (text: string) => {
 		const a = at(text);
-		return a?.kind === 'exact' ? a.member.id : a ? a.matches.map((m) => m.id) : undefined;
+		return a?.kind === 'exact' ? a.member.id : a?.kind === 'partial' ? a.matches.map((m) => m.id) : a?.kind;
 	};
 
 	it('takes a messaging name, a display name as a slug, or a first name only one agent has', () => {
@@ -233,7 +233,7 @@ describe('RQS-4 @name routing', () => {
 	it('offers the agents a half-typed handle could become, and none for a stranger', () => {
 		expect(who('@ed')).toEqual(['eden']);
 		expect(who('@')).toEqual(['eden', 'ada', 'riley', 'quinn', 'ac-product-designer-juno']);
-		expect(who('@zzz')).toBeUndefined();
+		expect(who('@zzz')).toBe('unknown');
 	});
 
 	it('is only for the start of the words: an @ later, an email, or no @ is not a route', () => {
@@ -241,8 +241,8 @@ describe('RQS-4 @name routing', () => {
 	});
 
 	it('never offers a former agent, and never a person', () => {
-		expect(who('@old')).toBeUndefined();
-		expect(who('@sam')).toBeUndefined();
+		expect(who('@old')).toBe('unknown');
+		expect(who('@sam')).toBe('unknown');
 	});
 
 	it('takes the handle up to punctuation and accents, and refuses @@', () => {
@@ -262,52 +262,29 @@ describe('RQS-4 @name routing', () => {
 	});
 });
 
-describe('RQS-13 similar requests', () => {
-	it('looks up the longest few meaningful words, once each, without the @handle, stop words and short words', () => {
-		expect(similarKeywords('I would like a dark mode when reading the docs')).toEqual(['reading', 'dark', 'docs', 'mode']);
-		expect(similarKeywords('@ac-product-designer-eden Weekly digest by email, weekly')).toEqual(['digest', 'weekly', 'email']);
-		expect(similarKeywords('a b c')).toEqual([]);
-		expect(similarKeywords('one two three four five six seven eight', 2)).toEqual(['eight', 'seven']);
-	});
-
-	const found = (id: string, over: Partial<WorkItemSummary> = {}) => req('new', { id, number: Number(id.replace(/\D/g, '')) || 1, title: id, ...over });
-
-	it('keeps the open requests that at least two of the lookups found, most first, at most two', () => {
-		const a = found('a9');
-		const b = found('b10');
-		const c = found('c11');
-		expect(similarFrom([[a, b], [a, c], [a, b, c]]).map((i) => i.id)).toEqual(['a9', 'c11']);
-		expect(similarFrom([[a], [b]])).toEqual([]);
-		expect(similarFrom([[a, a], [a]]).map((i) => i.id)).toEqual(['a9']); // one lookup finding it twice counts once
-	});
-
-	it('never keeps one that ended, was deleted, or is a task', () => {
-		const ended = found('e1', { status: 'approved' });
-		const gone = found('g2', { deleted: true });
-		const task = { ...found('t3'), kind: 'task' } as WorkItemSummary;
-		expect(similarFrom([[ended, gone, task], [ended, gone, task]])).toEqual([]);
-	});
-});
-
 describe('RQS-7 the queue filters', () => {
 	const items = [
-		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1' }),
-		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden' }),
-		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1' }),
-		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada' })
+		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1', created_by: 'owner' }),
+		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden', created_by: 'ada' }),
+		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1', created_by: 'owner' }),
+		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada', created_by: 'eden' })
 	];
 	const ids = (f: Partial<typeof NO_FILTER>) => filterRequests(items, { ...NO_FILTER, ...f }).map((i) => i.id);
 
-	it('shows everything with no filter, and only what is still going when Open', () => {
-		expect(ids({})).toEqual(['a', 'b', 'c', 'd']);
-		expect(ids({ state: 'open' })).toEqual(['a', 'b', 'c']);
+	it('opens on what is still going, like a to-do list, and All shows what ended too', () => {
+		expect(NO_FILTER.state).toBe('open');
+		expect(ids({})).toEqual(['a', 'b', 'c']);
+		expect(ids({ state: 'all' })).toEqual(['a', 'b', 'c', 'd']);
 	});
 
-	it('filters by who scopes it (or nobody) and by project (or none)', () => {
-		expect(ids({ who: 'eden' })).toEqual(['b', 'c']);
-		expect(ids({ who: 'none' })).toEqual(['a']);
-		expect(ids({ project: 'p1' })).toEqual(['a', 'c']);
-		expect(ids({ project: 'none' })).toEqual(['b', 'd']);
+	it('filters by who scopes it, nobody, or who raised it, and by project (or none)', () => {
+		const all = { state: 'all' as const };
+		expect(ids({ ...all, who: 'scoped:eden' })).toEqual(['b', 'c']);
+		expect(ids({ ...all, who: 'none' })).toEqual(['a']);
+		expect(ids({ ...all, who: 'raised:owner' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, who: 'raised:eden' })).toEqual(['d']);
+		expect(ids({ ...all, project: 'p1' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, project: 'none' })).toEqual(['b', 'd']);
 	});
 
 	it('searches the title and the reference, every word must match, without case', () => {
@@ -315,10 +292,26 @@ describe('RQS-7 the queue filters', () => {
 		expect(ids({ query: 'req-2' })).toEqual(['b']);
 		expect(ids({ query: 'digest weekly' })).toEqual(['b']);
 		expect(ids({ query: 'digest costs' })).toEqual([]);
-		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c', 'd']);
+		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c']);
 	});
 
-	it('knows when a filter is on', () => {
-		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'open' }), filterActive({ ...NO_FILTER, who: 'x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
+	it('is narrowed by who, project or words, not by the state alone', () => {
+		expect([narrowed(NO_FILTER), narrowed({ ...NO_FILTER, state: 'all' }), narrowed({ ...NO_FILTER, who: 'none' }), narrowed({ ...NO_FILTER, project: 'p' }), narrowed({ ...NO_FILTER, query: 'x' })]).toEqual([false, false, true, true, true]);
+	});
+
+	it('knows when a filter is on: anything that differs from how the queue opens', () => {
+		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'all' }), filterActive({ ...NO_FILTER, who: 'scoped:x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
+	});
+});
+
+describe('RQS-4 the words without the handle that routed them', () => {
+	it('drops the @handle at the start and the punctuation after it, and nothing else', () => {
+		expect([withoutHandle('@sam! fix'), withoutHandle('@sam fix the build time'), withoutHandle('  @sam: fix it'), withoutHandle('@sam, fix it @ada'), withoutHandle('@Éden.  Costs'), withoutHandle('ask @sam later'), withoutHandle('@sam'), withoutHandle('@@sam x')]).toEqual(['fix', 'fix the build time', 'fix it', 'fix it @ada', 'Costs', 'ask @sam later', '', '@@sam x']);
+	});
+});
+
+describe('RQS-4 how far the handle reaches', () => {
+	it('is the leading @handle and its spaces before it, so the list can follow the caret', () => {
+		expect([atSpan('@sa fix'), atSpan('  @sam'), atSpan('@'), atSpan('fix @sam'), atSpan('@@sam')]).toEqual([3, 6, 1, undefined, undefined]);
 	});
 });
