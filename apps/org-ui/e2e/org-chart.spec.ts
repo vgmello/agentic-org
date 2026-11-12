@@ -29,7 +29,7 @@ test('OWNER-1: the owner is shown once, above the chart, and never on a team or 
 	await expect(page.getByText(/\b3\b.*people/)).toBeVisible();
 });
 
-test('TEAM-1: the Teams view draws the ownership tree with lead, agents, people and projects', async ({ page }) => {
+test('TEAM-1: the Teams view draws the ownership tree with lead, agents, people and projects', { tag: '@journey' }, async ({ page }) => {
 	await openChart(page);
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
 	await expect(card(page, 'eng')).toContainText('Lead: Sam Okafor');

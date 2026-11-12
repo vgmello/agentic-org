@@ -7,7 +7,7 @@ async function createOrg(page: Page, name: string) {
 	await page.getByRole('button', { name: /create organization|try again/i }).click();
 }
 
-test('first launch: welcome → create → shell, then straight into the shell', async ({ page }) => {
+test('first launch: welcome → create → shell, then straight into the shell', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/');
 	await expect(page).toHaveURL(/\/welcome$/);
 	await expect(page.getByRole('heading', { name: 'Welcome to Agentic Org' })).toBeVisible();
@@ -31,7 +31,7 @@ test('first launch: welcome → create → shell, then straight into the shell',
 	await expect(page).toHaveURL(/\/agents$/);
 });
 
-test('an empty or duplicate name stays on the form with a message', async ({ page }) => {
+test('an empty or duplicate name stays on the form with a message', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page.getByRole('alert')).toHaveText('Give the organization a name.');

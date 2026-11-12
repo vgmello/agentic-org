@@ -60,7 +60,7 @@ for (const width of [720, 1280]) {
 	});
 }
 
-test('BUG-74: desktop navigation and Back preserve the retained Chat thread draft', async ({ page }) => {
+test('BUG-74: desktop navigation and Back preserve the retained Chat thread draft', { tag: '@journey' }, async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openOffices(page);
 	await visit(page, '/chat?c=c-release-v1');
@@ -79,7 +79,7 @@ test('BUG-74: desktop navigation and Back preserve the retained Chat thread draf
 	await shot(page, 'bug74-desktop-chat-back-thread-draft');
 });
 
-test('BUG-74: Switch organization keeps its non-shell navigation', async ({ page }) => {
+test('BUG-74: Switch organization keeps its non-shell navigation', { tag: '@journey' }, async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openOffices(page);
 	await page.getByRole('link', { name: /^Switch organization/ }).click();

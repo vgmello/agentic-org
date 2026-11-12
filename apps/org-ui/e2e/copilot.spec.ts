@@ -26,7 +26,7 @@ async function openReportDialog(page: Page, scenario = '') {
 const smartButtons = (scope: ReturnType<Page['locator']>) => scope.getByRole('button', { name: /^Draft or improve/ });
 const bugRows = (page: Page) => page.getByTestId('bug-row');
 
-test('report dialog: a sentence drafts the fields of the real form, and nothing is reported until the person confirms', async ({ page }) => {
+test('report dialog: a sentence drafts the fields of the real form, and nothing is reported until the person confirms', { tag: '@journey' }, async ({ page }) => {
 	const dialog = await openReportDialog(page);
 	await dialog.getByLabel('What went wrong?').fill("The save button doesn't work after I rename a file. It just sits there.");
 	await dialog.getByRole('button', { name: 'Draft the report' }).click();

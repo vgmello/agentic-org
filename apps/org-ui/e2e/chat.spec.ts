@@ -20,7 +20,7 @@ const send = async (page: Page, text: string) => {
 	await composer(page).press('Control+Enter');
 };
 
-test('CHAT-1: Chat is in the nav, with Needs you, Mentions, Threads, channels and DMs, and a conversation with threads', async ({ page }) => {
+test('CHAT-1: Chat is in the nav, with Needs you, Mentions, Threads, channels and DMs, and a conversation with threads', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Chat' })).toHaveAttribute('aria-current', 'page');
 	await expect(side(page).getByTestId('needs-you-count')).toHaveText('2');
@@ -88,7 +88,7 @@ test('CHAT-3: DMs show each member\'s status, and a group of up to 8 can be star
 	await expect(page.getByTestId('member-row')).toHaveCount(8);
 });
 
-test('CHAT-5: an ask is a card with its options; answering it answers the ask and clears Needs you', async ({ page }) => {
+test('CHAT-5: an ask is a card with its options; answering it answers the ask and clears Needs you', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await expect(title(page)).toHaveText('Needs you');
 	const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
@@ -152,7 +152,7 @@ test('CHAT-6: an ask with a default shows its deadline', async ({ page }) => {
 	await expect(page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' }).getByTestId('deadline')).toContainText("the default applies: No, allow (default)");
 });
 
-test('CHAT-7: messaging an asleep agent says it will wake it, and a typing indicator shows while it works', async ({ page }) => {
+test('CHAT-7: messaging an asleep agent says it will wake it, and a typing indicator shows while it works', { tag: '@journey' }, async ({ page }) => {
 	await open(page);
 	await go(page, 'Inês Duarte');
 	await expect(page.getByTestId('composer-note')).toHaveText('Inês Duarte is asleep. Your message will wake it.');
@@ -345,7 +345,7 @@ test('CHAT-17: a bridged message shows its platform, and asks to the owner and a
 	await shot(page, 'chat-bridge-preview');
 });
 
-test('states: the office is not running, a message that fails shows Not delivered with Retry, and an empty organization has a welcome card', async ({ page }) => {
+test('states: the office is not running, a message that fails shows Not delivered with Retry, and an empty organization has a welcome card', { tag: '@journey' }, async ({ page }) => {
 	await open(page, '?chat=offline');
 	await go(page, 'general');
 	await expect(page.getByTestId('office-down')).toBeVisible();

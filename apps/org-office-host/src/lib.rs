@@ -8,9 +8,10 @@
 //! - serves registered-instance hello and count-only status over `org-host-control` on
 //!   `<home>/host.sock` (`service`). Retired session-less operations are refused.
 //!
-//! It holds no organization data: the catalog is the folders under `<home>/offices/` that hold
+//! Organization content stays in office databases: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
-//! `org-office-launch`, and never depends on `org-office` (no SQLCipher in the login service).
+//! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
+//! host's registry in SQLCipher; organization databases remain in office servers.
 //!
 //! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
@@ -46,6 +47,11 @@ mod error;
 mod home;
 mod host_log;
 mod host_secrets;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "2b.3 activates hostdb after accepted bootstrap")
+)]
+mod hostdb;
 mod ids;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
 #[cfg(any(target_os = "macos", target_os = "linux"))]

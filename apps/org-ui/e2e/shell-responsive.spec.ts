@@ -141,7 +141,7 @@ for (const dismissal of ['Escape', 'scrim', 'Close']) {
 	});
 }
 
-test('BUG-59: browser Back dismisses Menu before leaving the page', async ({ page }) => {
+test('BUG-59: browser Back dismisses Menu before leaving the page', { tag: '@journey' }, async ({ page }) => {
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
 	const menu = page.getByRole('button', { name: 'Menu', exact: true });

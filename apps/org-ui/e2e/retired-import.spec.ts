@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-test('IMP-retired: hiring remains while existing-team import and native window controls are absent', async ({ page }) => {
+test('IMP-retired: hiring remains while existing-team import and native window controls are absent', { tag: '@journey' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Fresh organization');
 	await page.getByRole('button', { name: 'Create organization' }).click();

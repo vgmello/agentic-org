@@ -529,6 +529,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "org-socket",
+ "rusqlite",
  "security-framework",
  "security-framework-sys",
  "serde",
