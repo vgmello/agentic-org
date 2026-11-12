@@ -6,6 +6,9 @@
 //! it covers `recvmsg` through every `FD_CLOEXEC` update. Linux sets CLOEXEC atomically
 //! with `MSG_CMSG_CLOEXEC` and does not acquire the fence.
 
+mod stream;
+pub use stream::connected_unix_stream;
+
 use std::fmt;
 use std::io;
 use std::mem;
@@ -153,6 +156,7 @@ impl DescriptorCount {
         }
     }
 
+    // Compare with the caller's bound, never ancillary-buffer padding capacity.
     fn accepts(self, actual: usize) -> bool {
         match self {
             Self::Exact(expected) => actual == expected,
