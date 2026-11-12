@@ -148,7 +148,7 @@
 							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
 							{#if onremoveproject}
 								<button type="button" aria-label="Remove {project.name} from {team.name}"
-									title="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
+									data-project={project.id} style="width: calc(1.5rem / var(--fit-scale)); height: calc(1.5rem / var(--fit-scale));" title="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
 							{/if}
 							{#if others.length > 0}
 								<button
@@ -193,7 +193,7 @@
 
 <div bind:clientWidth={available} class="w-full">
 	<div class="mx-auto" style="width: {natural.w * scale}px; height: {natural.h * scale}px;">
-		<div bind:this={chart} class="org-tree" data-testid="teams-chart" style="transform: scale({scale}); transform-origin: top left;">
+		<div bind:this={chart} class="org-tree" data-testid="teams-chart" style="--fit-scale: {scale}; transform: scale({scale}); transform-origin: top left;">
 			<ul class="t">
 				{#each tree as node (node.team.id)}<li class="t">{@render branch(node)}</li>{/each}
 			</ul>

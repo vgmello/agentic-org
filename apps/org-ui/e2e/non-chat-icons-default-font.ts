@@ -14,6 +14,7 @@ for (const width of [320, 640, 960, 1280]) for (const screen of ['projects', 'pr
 		if (screen === 'profile') await iconIs(page.getByRole('navigation', { name: 'Breadcrumb', exact: true }).locator('svg'), 'mini:chevron-right');
 		const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
 		if (screen === 'chart') {
+			await removeIs(remove, 'Remove Beacon from Web');
 			await focusTarget(page, remove);
 			await shot(page, `non-chat-chart-fit-default20-${width}`, { context: remove });
 			await viewAction(page, 'Actual size');
