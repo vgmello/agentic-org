@@ -379,7 +379,7 @@ fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() 
     // This distinguishes a rendezvous watcher from a pipe-EOF watcher without a sleep:
     // the undefined control byte must produce exit1; a pipe-authoritative worker exits0.
     session.stream.write_all(b"!").unwrap();
-    assert!(!session.run.wait().success());
+    assert_eq!(session.run.wait().code(), Some(1));
     session.no_stdout();
 }
 
