@@ -105,6 +105,27 @@ test('BUG-99 BUG-70: Attach and Remove have visible keyboard outlines', async ({
 	await shot(page, 'bug99-remove-focus', { context: page.getByRole('list', { name: 'Attached', exact: true }) });
 });
 
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+ test(`BUG-99 BUG-70: Attach and Remove icons inherit idle and hover colour at ${width}/${scale * 100}`, async ({ page }) => {
+  await openChat(page, width, scale, '/chat?c=c-general');
+  const attach = page.getByRole('button', { name: 'Attach', exact: true });
+  await page.mouse.move(0, 0);
+  await inheritsColour(attach.locator('svg'), attach);
+  await attach.hover();
+  await expect(attach).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await shot(page, `bug99-attach-hover-${width}-${scale}`, { context: attach });
+  await inheritsColour(attach.locator('svg'), attach);
+  await page.getByLabel('Attach files').setInputFiles({ name: 'colour.txt', mimeType: 'text/plain', buffer: Buffer.from('test') });
+  const remove = page.getByRole('button', { name: 'Remove colour.txt', exact: true });
+  await page.mouse.move(0, 0);
+  await inheritsColour(remove.locator('svg'), remove);
+  await remove.hover();
+  await expect(remove).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await shot(page, `bug99-remove-hover-${width}-${scale}`, { context: remove });
+  await inheritsColour(remove.locator('svg'), remove);
+ });
+}
+
 test('BUG-99 BUG-70: pointer removal follows first, last and sole attachment identities', async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const names = ['undefined', '__proto__', 'quote" bracket].txt'];

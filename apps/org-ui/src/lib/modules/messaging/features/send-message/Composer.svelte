@@ -267,7 +267,7 @@
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-gray-400">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
-				<button type="button" bind:this={attachButton} class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}" onclick={() => files?.click()}><HeroIcon variant="mini" name="paper-clip" /> Attach</button>
+				<button type="button" bind:this={attachButton} class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}" onclick={() => files?.click()}><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button>
 				<input bind:this={files} type="file" multiple class="hidden" aria-label="Attach files" onchange={(e) => { attachments = [...new Set([...attachments, ...[...(e.currentTarget.files ?? [])].map((f) => f.name)])].slice(0, 10); e.currentTarget.value = ''; }} />
 				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
 				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}
