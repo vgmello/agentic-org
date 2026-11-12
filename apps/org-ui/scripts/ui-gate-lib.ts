@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
 export type Journey = { name: string; why: string; tests: { spec: string; match: string; count: number; webkit?: boolean }[] };
@@ -71,8 +71,28 @@ export function plan(files: string[], m: Manifest): Plan {
 	return { all: full, categories, cspFull: full || has('cspFull'), gateway: full || has('gateway'), effects };
 }
 
+/** The spec files of the given categories, each once, even when two categories list the same file. */
 export function categorySpecs(m: Manifest, categories: string[], specs: string[]): string[] {
 	return specs.filter((spec) => categories.some((name) => m.categories[name].specs.some((glob) => matches(glob, spec))));
+}
+
+/** Reads the manifest; a missing or unparseable file is reported, not thrown, so the caller can fail closed. */
+export function loadManifest(file: string): { manifest: Manifest } | { error: string } {
+	try {
+		return { manifest: JSON.parse(readFileSync(file, 'utf8')) as Manifest };
+	} catch (error) {
+		return { error: `cannot read the gate manifest (${error instanceof Error ? error.message.split('\n')[0] : error})` };
+	}
+}
+
+/** Runs the steps in order and stops at the first one that is not a clean exit; returns the exit code (a step killed by a signal, status null, is 1). */
+export function runSteps(list: Step[], cwd: string, spawn: typeof spawnSync = spawnSync, log: (line: string) => void = console.log, describe: (step: Step) => string = (step) => step.cmd.join(' ')): number {
+	for (const step of list) {
+		log(`\n== ${step.name}\n${describe(step)}`);
+		const result = spawn(step.cmd[0], step.cmd.slice(1), { cwd, stdio: 'inherit', env: { ...process.env, ...step.env } });
+		if (result.status !== 0) return result.status ?? 1;
+	}
+	return 0;
 }
 
 /** The Playwright invocations for a plan, in run order. `specs` are the file names in e2e/. */
@@ -81,6 +101,8 @@ export function steps(p: Plan, m: Manifest, specs: string[], { webkit = true, ex
 	const pw = (...args: string[]) => ['bun', 'x', 'playwright', 'test', ...args, ...extra];
 	const csp = (...args: string[]) => pw('--config', 'playwright.csp.config.ts', ...args);
 	const anchored = (list: string[]) => list.map((spec) => `e2e/${spec.replace(/\./g, '\\.')}$`);
+	// A category that lists no spec file would silently run its journeys only.
+	for (const name of p.categories) if (!categorySpecs(m, [name], specs).length) throw new Error(`category ${name} lists no spec file in e2e/`);
 	const chosen = categorySpecs(m, p.categories, specs);
 	const files = anchored(chosen);
 	// csp-chromium-full ignores some specs; a step with nothing left would end in "No tests found".

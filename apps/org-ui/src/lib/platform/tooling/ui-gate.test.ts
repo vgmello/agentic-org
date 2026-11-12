@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { changedFiles, changedOrUnknown, classify, explicitFiles, matches, plan, steps, UNKNOWN_CHANGES, type Manifest } from '../../../../scripts/ui-gate-lib';
+import { categorySpecs, changedFiles, changedOrUnknown, classify, explicitFiles, loadManifest, matches, plan, runSteps, steps, UNKNOWN_CHANGES, type Manifest, type Step } from '../../../../scripts/ui-gate-lib';
 import { parseArgs } from '../../../../scripts/ui-gate';
 
 const app = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -26,6 +26,13 @@ describe('gate manifest guard', () => {
 	it('has no category glob that matches nothing', () => {
 		for (const [name, category] of Object.entries(manifest.categories)) {
 			for (const glob of category.specs) expect(specs.some((spec) => matches(glob, spec)), `${name}: ${glob}`).toBe(true);
+		}
+	});
+
+	it('gives every category at least one spec file, so it never runs its journeys only', () => {
+		for (const [name, category] of Object.entries(manifest.categories)) {
+			expect(category.specs.length, name).toBeGreaterThan(0);
+			expect(categorySpecs(manifest, [name], specs).length, `${name} lists no spec file in e2e/`).toBeGreaterThan(0);
 		}
 	});
 
@@ -149,6 +156,25 @@ describe('glob matching', () => {
 		expect(matches('src/routes/+*', 'src/routes/(shell)/+layout.svelte')).toBe(false);
 		expect(matches('src/lib/org/projects*', 'src/lib/org/projects.ts')).toBe(true);
 	});
+
+	it('matches the whole path only: the end is anchored, `*` stays inside a segment, a directory glob is not a prefix', () => {
+		expect(matches('src/lib/a/**', 'src/lib/ab/x')).toBe(false);
+		expect(matches('src/lib/a/**', 'src/lib/a')).toBe(false);
+		expect(matches('src/lib/a/**', 'src/lib/a/x/y')).toBe(true);
+		expect(matches('**/*.md', 'x.md.svelte')).toBe(false);
+		expect(matches('**/*.md', 'foo.mdx')).toBe(false);
+		expect(matches('src/*.ts', 'src/a/b.ts')).toBe(false);
+		expect(matches('src/*.ts', 'src/a.ts')).toBe(true);
+		expect(matches('src/lib/name.ts', 'src/lib/name.tsx')).toBe(false);
+		expect(matches('src/lib/name.ts', 'xsrc/lib/name.ts')).toBe(false);
+		expect(matches('scripts/ui-gate*.ts', 'scripts/ui-gate-x/evil.ts')).toBe(false);
+	});
+
+	it('does not let an ignore glob swallow a lookalike file: it is unknown, so the full suite', () => {
+		for (const file of ['src/lib/x.test.ts.svelte', 'src/lib/x.md.svelte', 'scripts/ui-gate-x/evil.ts']) {
+			expect(classify(ui(file), manifest), file).toEqual([expect.objectContaining({ kind: 'unknown' })]);
+		}
+	});
 });
 
 describe('selector', () => {
@@ -214,6 +240,26 @@ describe('selector', () => {
 	it('several areas run each category once', () => {
 		const chosen = plan([ui('src/lib/offices/model.ts'), ui('src/lib/modules/processes/rules.ts'), ui('src/lib/offices/probe.ts')], manifest);
 		expect(chosen.categories.sort()).toEqual(['offices', 'processes']);
+	});
+
+	it('runs the specs of every selected area, and a spec two areas list only once', () => {
+		const two = steps(plan([ui('src/lib/offices/model.ts'), ui('src/lib/modules/processes/rules.ts')], manifest), manifest, specs);
+		const ordinary = two.find((step) => step.name === 'ordinary: offices, processes')!;
+		expect(ordinary.cmd).toEqual(expect.arrayContaining(['e2e/offices\\.spec\\.ts$', 'e2e/processes\\.spec\\.ts$', 'e2e/processes-bugs\\.spec\\.ts$', 'e2e/office-status-refresh\\.spec\\.ts$']));
+		const cspStep = two.find((step) => step.name === 'csp: offices, processes')!;
+		expect(cspStep.cmd).toEqual(expect.arrayContaining(['e2e/offices\\.spec\\.ts$', 'e2e/processes\\.spec\\.ts$']));
+		const shared: Manifest = { ...manifest, categories: { one: { specs: ['a.spec.ts', 'both.spec.ts'], sources: [] }, two: { specs: ['both.spec.ts', 'b.spec.ts'], sources: [] } } };
+		const files = ['a.spec.ts', 'b.spec.ts', 'both.spec.ts', 'other.spec.ts'];
+		expect(categorySpecs(shared, ['one', 'two'], files)).toEqual(['a.spec.ts', 'b.spec.ts', 'both.spec.ts']);
+		expect(categorySpecs(shared, ['two'], files)).toEqual(['b.spec.ts', 'both.spec.ts']);
+		const built = steps({ all: false, categories: ['one', 'two'], cspFull: false, gateway: false, effects: [] }, shared, files).find((step) => step.name === 'ordinary: one, two')!;
+		expect(built.cmd.filter((word) => word === 'e2e/both\\.spec\\.ts$')).toHaveLength(1);
+		expect(built.cmd).toEqual(expect.arrayContaining(['e2e/a\\.spec\\.ts$', 'e2e/b\\.spec\\.ts$']));
+	});
+
+	it('refuses to build a step for a category that lists no spec file', () => {
+		const empty: Manifest = { ...manifest, categories: { ghost: { specs: ['nothing.spec.ts'], sources: [] } } };
+		expect(() => steps({ all: false, categories: ['ghost'], cspFull: false, gateway: false, effects: [] }, empty, specs)).toThrow('category ghost lists no spec file');
 	});
 
 	it.each([
@@ -337,6 +383,69 @@ describe('command line', () => {
 		expect(run('select', '--typo').status).toBe(2);
 		expect(run('select', '--file', 'apps/org-ui/package.json', '--no-webkit').stderr).toContain('not the full gate');
 		expect(run('select', '--file', real, '--no-webkit').stderr).toContain('WebKit journey subset');
+	});
+});
+
+describe('running the steps', () => {
+	const list: Step[] = [{ name: 'one', cmd: ['a', '1'] }, { name: 'two', env: { X: '1' }, cmd: ['b', '2'] }, { name: 'three', cmd: ['c'] }];
+	const fake = (...statuses: (number | null)[]) => {
+		const calls: string[] = [];
+		const spawn = ((cmd: string, args: string[], options: { env: Record<string, string> }) => { calls.push(`${cmd} ${args.join(' ')}${options.env.X ? ' X' : ''}`); return { status: statuses.length ? statuses.shift() : 0 }; }) as unknown as Parameters<typeof runSteps>[2];
+		return { calls, spawn };
+	};
+
+	it('exits 0 only when every step exits 0', () => {
+		const { calls, spawn } = fake(0, 0, 0);
+		expect(runSteps(list, '.', spawn, () => {})).toBe(0);
+		expect(calls).toEqual(['a 1', 'b 2 X', 'c ']);
+	});
+
+	it('stops at a failed step and returns its status, never 0', () => {
+		const failed = fake(0, 1, 0);
+		expect(runSteps(list, '.', failed.spawn, () => {})).toBe(1);
+		expect(failed.calls).toEqual(['a 1', 'b 2 X']);
+		const killed = fake(null);
+		expect(runSteps(list, '.', killed.spawn, () => {})).toBe(1);
+		expect(killed.calls).toHaveLength(1);
+		expect(runSteps(list, '.', fake(0, 0, 3).spawn, () => {})).toBe(3);
+	});
+});
+
+describe('a manifest that cannot be read', () => {
+	it('is reported by loadManifest, not thrown', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'ui-gate-manifest-'));
+		try {
+			writeFileSync(join(dir, 'broken.json'), '{ "journeys": [');
+			expect(loadManifest(join(dir, 'broken.json'))).toEqual({ error: expect.stringContaining('cannot read the gate manifest') });
+			expect(loadManifest(join(dir, 'missing.json'))).toEqual({ error: expect.stringContaining('cannot read the gate manifest') });
+			expect(loadManifest(join(app, 'e2e/gate-manifest.json'))).toHaveProperty('manifest');
+		} finally { rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it('makes the command line run the full suite (select/run) or exit 2 (areas/verify), never a quiet journeys-only run', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'ui-gate-broken-'));
+		const sh = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+		try {
+			mkdirSync(join(dir, 'scripts'));
+			mkdirSync(join(dir, 'e2e'));
+			for (const file of ['ui-gate.ts', 'ui-gate-lib.ts']) writeFileSync(join(dir, 'scripts', file), readFileSync(join(app, 'scripts', file)));
+			writeFileSync(join(dir, 'e2e/gate-manifest.json'), '{ not json');
+			writeFileSync(join(dir, 'README.md'), 'docs\n');
+			sh('init', '-q');
+			sh('add', '-A');
+			sh('commit', '-q', '-m', 'x');
+			const run = (...args: string[]) => spawnSync('bun', [join(dir, 'scripts/ui-gate.ts'), ...args], { cwd: dir, encoding: 'utf8' });
+			const selected = run('select', '--file', 'README.md');
+			expect(selected.status).toBe(0);
+			expect(selected.stdout).toContain('ordinary: full suite');
+			expect(selected.stdout).toContain('gateway CSP');
+			expect(selected.stderr).toContain('cannot read the gate manifest');
+			for (const command of ['areas', 'verify']) {
+				const result = run(command);
+				expect(result.status, command).toBe(2);
+				expect(result.stderr).toContain('cannot read the gate manifest');
+			}
+		} finally { rmSync(dir, { recursive: true, force: true }); }
 	});
 });
 

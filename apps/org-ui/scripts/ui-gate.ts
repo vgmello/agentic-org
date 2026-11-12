@@ -1,10 +1,12 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { categorySpecs, changedOrUnknown, explicitFiles, plan, steps, type Manifest, type Step } from './ui-gate-lib';
+import { categorySpecs, changedOrUnknown, explicitFiles, loadManifest, plan, runSteps, steps, UNKNOWN_CHANGES, type Manifest, type Step } from './ui-gate-lib';
 
 const app = fileURLToPath(new URL('../', import.meta.url));
-const manifest: Manifest = JSON.parse(readFileSync(`${app}e2e/gate-manifest.json`, 'utf8'));
+const loaded = loadManifest(`${app}e2e/gate-manifest.json`);
+// Without a readable manifest nothing can be selected: select/run fall back to the full suite, areas/verify have nothing to report.
+const manifest: Manifest = 'manifest' in loaded ? loaded.manifest : { budget: { maxJourneyTests: 0, maxChromiumSeconds: 0, measured: { tests: 0, chromiumSeconds: 0 } }, webkitSpecs: [], cspIgnoredSpecs: [], journeys: [], categories: {}, rules: { ignore: [], noImpact: [], shared: [], cspFull: [], gateway: [] } };
 const specs = readdirSync(`${app}e2e`).filter((name) => name.endsWith('.spec.ts')).sort();
 const quote = (word: string) => (/^[\w@./=:,-]+$/.test(word) ? word : `'${word}'`);
 const show = (step: Step) => `${Object.entries(step.env ?? {}).map(([k, v]) => `${k}=${v} `).join('')}${step.cmd.map(quote).join(' ')}`;
@@ -73,6 +75,10 @@ export function parseArgs(argv: string[]) {
 if (import.meta.main) {
 	try {
 		const args = parseArgs(process.argv.slice(2));
+		if ('error' in loaded) {
+			if (args.command === 'areas' || args.command === 'verify') throw new Error(loaded.error);
+			console.error(`ui-gate: ${loaded.error}; running the full suite`);
+		}
 		const value = (name: string) => args.values.get(name) ?? [];
 		const workers = value('--workers')[0] ?? '2';
 		if (!/^[1-9]\d*$/.test(workers)) throw new Error(`--workers must be a positive integer, got ${workers}`);
@@ -91,7 +97,7 @@ if (import.meta.main) {
 				if (changed.warning) console.error(`ui-gate: ${changed.warning}`);
 				files = changed.files;
 			}
-			const chosen = plan(files, manifest);
+			const chosen = plan('error' in loaded ? [UNKNOWN_CHANGES] : files, manifest);
 			const webkit = !args.flags.has('--no-webkit');
 			if (!webkit) console.error(`ui-gate: warning: --no-webkit skips WebKit${chosen.all ? ', so this is not the full gate' : ' (including the WebKit journey subset)'}`);
 			// Two workers by default: the shared Mac is overloaded. Choose more with --workers <n>.
@@ -104,11 +110,7 @@ if (import.meta.main) {
 			else {
 				// Ordinary runs include the production project, which serves the static build.
 				if (list.some((step) => !step.cmd.includes('--config') && step.cmd[1] === 'x')) execFileSync('bun', ['run', 'build'], { cwd: app, stdio: 'inherit' });
-				for (const step of list) {
-					console.log(`\n== ${step.name}\n${show(step)}`);
-					const result = spawnSync(step.cmd[0], step.cmd.slice(1), { cwd: app, stdio: 'inherit', env: { ...process.env, ...step.env } });
-					if (result.status !== 0) { process.exitCode = result.status ?? 1; break; }
-				}
+				process.exitCode = runSteps(list, app, undefined, undefined, show);
 			}
 		}
 	} catch (error) {
