@@ -179,7 +179,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
             } else if name == "clippy.toml" || name == ".clippy.toml" {
                 configs += 1;
                 let config = std::fs::read_to_string(entry.path()).unwrap();
-                opener_policy::clippy(&config);
+                check_clippy_config(&entry.path(), &config);
             }
         }
     }
@@ -445,20 +445,27 @@ fn rust_code(source: &str) -> String {
 }
 
 fn check_rust_file(root: &Path, path: &Path, source: &str) {
-    opener_policy::modules(root, path, source);
-    let compact = rust_code(source);
-    let relative = path.strip_prefix(root).unwrap().to_owned();
-    override_policy(&relative, source);
-    // No unsafe SQLite opener is needed by the current Rust fence. Check
-    // identifiers (including aliased imports), not only qualified calls.
-    for (stem, suffix) in [("sqlite3", "_open"), ("from", "_handle")] {
-        let opener = format!("{stem}{suffix}");
-        assert!(
-            !compact.contains(&opener),
-            "{} bypasses the SQLite init fence with {opener}",
-            path.display()
-        );
-    }
+    assert!(
+        std::panic::catch_unwind(|| {
+            opener_policy::modules(root, path, source);
+            let compact = rust_code(source);
+            let relative = path.strip_prefix(root).unwrap().to_owned();
+            override_policy(&relative, source);
+            // No unsafe SQLite opener is needed by the current Rust fence. Check
+            // identifiers (including aliased imports), not only qualified calls.
+            for (stem, suffix) in [("sqlite3", "_open"), ("from", "_handle")] {
+                let opener = format!("{stem}{suffix}");
+                assert!(
+                    !compact.contains(&opener),
+                    "{} bypasses the SQLite init fence with {opener}",
+                    path.display()
+                );
+            }
+        })
+        .is_ok(),
+        "{} has unsupported or weakening Rust source",
+        path.display()
+    );
 }
 
 fn skip_policy_directory(relative: &Path) -> bool {
@@ -483,10 +490,25 @@ fn opener_policy_config(path: &Path) -> bool {
                 .is_some_and(|name| name.starts_with("config")))
 }
 
+fn check_clippy_config(path: &Path, config: &str) {
+    assert!(
+        std::panic::catch_unwind(|| opener_policy::clippy(config)).is_ok(),
+        "{} has unsupported or weakening Clippy configuration",
+        path.display()
+    );
+}
+
 fn check_opener_config(path: &Path, config: &str) {
     assert!(
-        std::panic::catch_unwind(|| opener_policy::config(config)).is_ok(),
-        "{} weakens the SQLCipher opener policy",
+        std::panic::catch_unwind(|| {
+            if path.file_name().is_some_and(|name| name == "Cargo.toml") {
+                opener_policy::config(config);
+            } else {
+                opener_policy::cargo_config(config);
+            }
+        })
+        .is_ok(),
+        "{} has unsupported or weakening SQLCipher opener configuration",
         path.display()
     );
 }
@@ -517,7 +539,7 @@ fn sqlcipher_policy_scans_source_directories_and_cargo_configuration() {
     ] {
         let path = Path::new(path);
         assert!(opener_policy_config(path));
-        check_opener_config(path, "[lints.clippy]\ntoo_many_arguments = \"allow\"");
+        check_opener_config(path, "[build]\nrustflags = ['-Dclippy::all']");
         for lint in ["disallowed_method", "disallowed_methods"] {
             for config in [
                 format!("[lints.clippy]\n{lint} = \"allow\""),
@@ -1267,4 +1289,147 @@ fn host_override_inventory_accepts_only_three_exact_statements() {
             .is_err());
         }
     }
+}
+
+#[test]
+fn sqlcipher_cargo_configuration_refuses_unknown_keys_and_tables() {
+    let path = Path::new(".cargo/config.toml");
+    let mut accepted = Vec::new();
+    for source in [
+        "include = ['lints.toml']",
+        "[[include]]\npath = 'lints.toml'",
+        "[unknown_table]",
+        "[build]\nunknown_key = 'value'",
+        "[build]\nrustc-wrapper = 'redirect'",
+        "[build]\nrustc-workspace-wrapper = 'redirect'",
+        "[target.x86_64-unknown-linux-gnu]\nlinker = 'redirect'",
+        "[alias]\ncheck = 'clippy -- --cap-lints=allow'",
+        "[env.OTHER.unknown_table]",
+        "[env]\nOTHER.unknown_key = 'value'",
+    ] {
+        if std::panic::catch_unwind(|| check_opener_config(path, source)).is_ok() {
+            accepted.push(source);
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted unknown Cargo configuration: {accepted:?}"
+    );
+}
+
+#[test]
+fn sqlcipher_cargo_configuration_preserves_known_keys_and_manifest_metadata() {
+    for source in [
+        "[build]\nrustflags = ['-Dclippy::all']",
+        "target.'cfg(unix)'.rustflags = '-D clippy::all'",
+        "target.'cfg(target_os = \"linux\")'.rustflags = '-D clippy::all'",
+        "[target.x86_64-unknown-linux-gnu]\nrustflags = '-D clippy::all'",
+        "[env]",
+    ] {
+        check_opener_config(Path::new(".cargo/config.toml"), source);
+    }
+    check_opener_config(
+        Path::new("Cargo.toml"),
+        "[package.metadata]\nnote = 'application-specific manifest metadata'",
+    );
+    for name in [
+        "CLIPPY_ARGS",
+        "CLIPPY_CONF_DIR",
+        "CLIPPY_FUTURE",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "OTHER",
+    ] {
+        for source in [
+            format!("[env]\n{name} = 'redirect'"),
+            format!("[env.{name}]\nvalue = 'redirect'"),
+            format!("[env]\n{name} = {{ value = 'redirect', force = true }}"),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| check_opener_config(
+                    Path::new(".cargo/config.toml"),
+                    &source
+                ))
+                .is_err(),
+                "accepted {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_parent_adapters_pair_bare_and_prefixed_names_and_config_classes() {
+    let attr = "#[allow(clippy::disallowed_methods)]";
+    for name in [
+        "allowed",
+        "fn allowed(",
+        "pubfn allowed(",
+        "pub(super)fn allowed(",
+    ] {
+        require_exception_statement(
+            &format!("fn allowed(){{{attr}let x=op();}}"),
+            name,
+            attr,
+            "letx=op();",
+        );
+    }
+    check_opener_config(Path::new("Cargo.toml"), "[package.metadata]\nANY='data'");
+    check_opener_config(
+        Path::new(".cargo/config.toml"),
+        "[build]\nrustflags='-Dclippy::all'",
+    );
+    assert!(std::panic::catch_unwind(|| check_opener_config(
+        Path::new(".cargo/config.toml"),
+        "[package.metadata]\nANY='data'"
+    ))
+    .is_err());
+    assert!(std::panic::catch_unwind(|| check_opener_config(
+        Path::new("Cargo.toml"),
+        "[lints.clippy]\ndisallowed_methods='allow'"
+    ))
+    .is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("input.rs");
+    std::fs::write(&file, "").unwrap();
+    check_rust_file(dir.path(), &file, "fn allowed(){}");
+    for input in [
+        "include!(\"other.rs\");",
+        "#[allow(clippy::all)] fn allowed(){}",
+        "fn wrong(){Connection::from_handle();}",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| check_rust_file(dir.path(), &file, input)).is_err(),
+            "accepted {input}"
+        );
+    }
+}
+
+#[test]
+fn sqlcipher_policy_diagnostics_name_the_file_and_selected_function() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("context.rs");
+    std::fs::write(&file, "").unwrap();
+    let panic = std::panic::catch_unwind(|| {
+        check_rust_file(temp.path(), &file, "use std::fmt::Result as Alias;");
+    })
+    .unwrap_err();
+    assert!(panic
+        .downcast_ref::<String>()
+        .unwrap()
+        .contains(&file.display().to_string()));
+    let config = Path::new("fixtures/clippy.toml");
+    let repository_config = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../clippy.toml");
+    check_clippy_config(config, &std::fs::read_to_string(repository_config).unwrap());
+    let panic =
+        std::panic::catch_unwind(|| check_clippy_config(config, "unknown=true")).unwrap_err();
+    assert!(panic
+        .downcast_ref::<String>()
+        .unwrap()
+        .contains("fixtures/clippy.toml"));
+    let panic = std::panic::catch_unwind(|| opener_policy::function("fn other(){}", "missing"))
+        .err()
+        .unwrap();
+    assert!(panic.downcast_ref::<String>().unwrap().contains("missing"));
 }

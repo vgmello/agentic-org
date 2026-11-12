@@ -246,6 +246,43 @@ fn flags(value: &str) {
         }
     }
 }
+// Cargo manifests have extensible package/dependency metadata. Cargo configuration
+// is a separate input: only the tables and keys modeled by this fence are admitted.
+pub(super) fn cargo_config(source: &str) {
+    // No tracked Cargo configuration currently sets an environment variable:
+    // the reviewed environment-name allowlist is empty.
+    let mut section = Vec::new();
+    for line in statements(source) {
+        if line.starts_with('[') {
+            let header = line
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .expect("unsupported Cargo config table");
+            section = key(header);
+            let names = section.iter().map(String::as_str).collect::<Vec<_>>();
+            assert!(
+                matches!(
+                    names.as_slice(),
+                    ["build"] | ["target"] | ["target", _] | ["env"]
+                ),
+                "unknown Cargo config table"
+            );
+            continue;
+        }
+        let fields = split(&line, '=');
+        let [name, value] = fields.as_slice() else {
+            panic!("unsupported Cargo config key");
+        };
+        let mut path = section.clone();
+        path.extend(key(name));
+        let names = path.iter().map(String::as_str).collect::<Vec<_>>();
+        match names.as_slice() {
+            ["build", "rustflags"] | ["target", _, "rustflags"] => flags(value),
+            _ => panic!("unknown Cargo config key"),
+        }
+    }
+}
+
 pub(super) fn config(source: &str) {
     let mut section = Vec::new();
     for line in statements(source) {
@@ -423,63 +460,151 @@ fn extern_import(item: &syn::ItemExternCrate) {
     );
 }
 
-// These data-only attribute forwarders predate the policy. A fixture update is a
-// reviewed fence change; no definition exception is inherited by an invocation.
-const MACRO_PINS: &[(&str, &str, &str)] = &[
+// Every in-scope macro_rules definition is a reviewed source contract. Fixture
+// changes require fence review; invocations never inherit definition exceptions.
+const MACRO_PINS: &[(&str, &str, &str, &str)] = &[
     (
         "crates/org-host-control/src/secret.rs",
+        "",
         "secret_text",
         include_str!("opener_policy_macros/secret_text.tokens"),
     ),
     (
-        "crates/org-runtime/src/token.rs",
-        "validated_string",
-        include_str!("opener_policy_macros/validated_string.tokens"),
+        "crates/org-mailbox/src/testkit/conformance.rs",
+        "",
+        "__mailbox_conformance_cases",
+        include_str!("opener_policy_macros/__mailbox_conformance_cases.tokens"),
+    ),
+    (
+        "crates/org-mailbox/src/testkit/conformance.rs",
+        "",
+        "mailbox_conformance_tests",
+        include_str!("opener_policy_macros/mailbox_conformance_tests.tokens"),
+    ),
+    (
+        "crates/org-mailbox/src/testkit/triage_conformance.rs",
+        "",
+        "__triage_conformance_cases",
+        include_str!("opener_policy_macros/__triage_conformance_cases.tokens"),
+    ),
+    (
+        "crates/org-mailbox/src/testkit/triage_conformance.rs",
+        "",
+        "triage_conformance_tests",
+        include_str!("opener_policy_macros/triage_conformance_tests.tokens"),
+    ),
+    (
+        "crates/org-office/src/rules/command.rs",
+        "impl OrgCommand/fn parse/block",
+        "read",
+        include_str!("opener_policy_macros/read.tokens"),
+    ),
+    (
+        "crates/org-office/src/rules/command.rs",
+        "impl OrgCommand/fn method_and_params/block",
+        "of",
+        include_str!("opener_policy_macros/of.tokens"),
+    ),
+    (
+        "crates/org-office/src/store/work/tests/assembly.rs",
+        "",
+        "view_queries",
+        include_str!("opener_policy_macros/view_queries.tokens"),
+    ),
+    (
+        "crates/org-proto/src/gateway/org_mutations.rs",
+        "",
+        "mutations",
+        include_str!("opener_policy_macros/mutations.tokens"),
+    ),
+    (
+        "crates/org-proto/src/gateway/views.rs",
+        "",
+        "view_enum",
+        include_str!("opener_policy_macros/view_enum.tokens"),
     ),
     (
         "crates/org-proto/src/org.rs",
+        "",
         "command",
         include_str!("opener_policy_macros/command.tokens"),
     ),
     (
+        "crates/org-proto/src/token.rs",
+        "",
+        "hex_secret",
+        include_str!("opener_policy_macros/hex_secret.tokens"),
+    ),
+    (
         "crates/org-proto/src/work.rs",
+        "",
         "wire_enum",
         include_str!("opener_policy_macros/wire_enum.tokens"),
     ),
     (
         "crates/org-proto/src/work.rs",
+        "",
         "write_call",
         include_str!("opener_policy_macros/write_call.tokens"),
     ),
     (
-        "crates/org-proto/src/gateway/org_mutations.rs",
-        "mutations",
-        include_str!("opener_policy_macros/mutations.tokens"),
+        "crates/org-runtime/src/token.rs",
+        "",
+        "validated_string",
+        include_str!("opener_policy_macros/validated_string.tokens"),
+    ),
+    (
+        "crates/org-socket/src/rights.rs",
+        "",
+        "cloexec_result",
+        include_str!("opener_policy_macros/cloexec_result.tokens"),
+    ),
+    (
+        "crates/org-sync-proto/src/values.rs",
+        "",
+        "identity",
+        include_str!("opener_policy_macros/identity.tokens"),
+    ),
+    (
+        "crates/org-sync-proto/src/values.rs",
+        "",
+        "sequence",
+        include_str!("opener_policy_macros/sequence.tokens"),
+    ),
+    (
+        "crates/org-work/src/call.rs",
+        "",
+        "work_calls",
+        include_str!("opener_policy_macros/work_calls.tokens"),
     ),
 ];
 
-fn pinned_macro(root: &Path, file: &Path, item: &syn::ItemMacro) -> bool {
+fn pinned_macro(root: &Path, file: &Path, scope: &str, item: &syn::ItemMacro) -> bool {
     let Some(name) = &item.ident else {
-        return false;
-    };
-    let file = file.canonicalize().unwrap();
-    let relative = file.strip_prefix(root).unwrap();
-    let name = name.to_string();
-    let Some((_, _, expected)) = MACRO_PINS
-        .iter()
-        .find(|(path, ident, _)| relative == Path::new(path) && name == *ident)
-    else {
+        assert!(
+            !item.mac.path.is_ident("macro_rules"),
+            "unnamed macro definition"
+        );
         return false;
     };
     assert!(
         item.mac.path.is_ident("macro_rules"),
         "pinned macro kind changed"
     );
+    let file = file.canonicalize().unwrap();
+    let relative = file.strip_prefix(root).unwrap();
+    let name = name.to_string();
+    let (_, _, _, expected) = MACRO_PINS
+        .iter()
+        .find(|(path, owner, ident, _)| {
+            relative == Path::new(path) && scope == *owner && name == *ident
+        })
+        .expect("unpinned macro definition");
     let expected: proc_macro2::TokenStream = expected.parse().expect("invalid macro pin");
     assert_eq!(
         item.mac.tokens.to_string(),
         expected.to_string(),
-        "pinned macro body changed: {}::{name}",
+        "pinned macro body changed: {}::{scope}::{name}",
         relative.display()
     );
     true
@@ -489,6 +614,8 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
     struct Modules<'a> {
         root: &'a Path,
         file: &'a Path,
+        source: &'a str,
+        scope: Vec<String>,
         depth: usize,
         opaque_definition: bool,
         seen_pins: std::collections::BTreeSet<String>,
@@ -561,12 +688,12 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
 
         fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
             let previous = self.opaque_definition;
-            self.opaque_definition = pinned_macro(self.root, self.file, item);
+            let scope = self.scope.join("/");
+            self.opaque_definition = pinned_macro(self.root, self.file, &scope, item);
             if self.opaque_definition {
-                assert_eq!(self.depth, 0, "pinned macro moved into nested scope");
                 assert!(
                     self.seen_pins
-                        .insert(item.ident.as_ref().unwrap().to_string()),
+                        .insert(format!("{scope}/{}", item.ident.as_ref().unwrap())),
                     "duplicate pinned macro definition"
                 );
             }
@@ -575,7 +702,9 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
         }
         fn visit_block(&mut self, block: &'ast syn::Block) {
             self.depth += 1;
+            self.scope.push("block".into());
             syn::visit::visit_block(self, block);
+            self.scope.pop();
             self.depth -= 1;
         }
         fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
@@ -587,88 +716,136 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
             }
             if let Some((_, items)) = &module.content {
                 self.depth += 1;
+                self.scope.push(format!("mod {}", module.ident));
                 for item in items {
                     self.visit_item(item);
                 }
+                self.scope.pop();
                 self.depth -= 1;
             }
         }
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            let header = &self.source[item.impl_token.span.byte_range().start
+                ..item.brace_token.span.open().byte_range().start];
+            let header: proc_macro2::TokenStream = header.parse().expect("unsupported impl owner");
+            self.scope.push(header.to_string());
+            syn::visit::visit_item_impl(self, item);
+            self.scope.pop();
+        }
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            self.scope.push(format!("fn {}", item.sig.ident));
+            syn::visit::visit_item_fn(self, item);
+            self.scope.pop();
+        }
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            self.scope.push(format!("fn {}", item.sig.ident));
+            syn::visit::visit_impl_item_fn(self, item);
+            self.scope.pop();
+        }
         fn visit_macro(&mut self, node: &'ast syn::Macro) {
-            // Macro output is opaque: never allow it to add an unscanned source file.
-            fn attribute(stream: proc_macro2::TokenStream, opaque_definition: bool) {
-                let mut iter = stream.into_iter();
-                let Some(proc_macro2::TokenTree::Ident(name)) = iter.next() else {
-                    assert!(opaque_definition, "opaque macro attribute name");
-                    return;
+            check_macro(node, self.opaque_definition);
+        }
+    }
+    let root = root.canonicalize().unwrap();
+    let syntax = syn::parse_file(source).expect("unsupported Rust source");
+    let mut visitor = Modules {
+        root: &root,
+        file,
+        source,
+        scope: Vec::new(),
+        depth: 0,
+        opaque_definition: false,
+        seen_pins: std::collections::BTreeSet::new(),
+    };
+    visitor.visit_file(&syntax);
+    let file = file.canonicalize().unwrap();
+    let relative = file.strip_prefix(&root).unwrap();
+    let expected: std::collections::BTreeSet<_> = MACRO_PINS
+        .iter()
+        .filter(|(path, _, _, _)| relative == Path::new(path))
+        .map(|(_, scope, name, _)| format!("{scope}/{name}"))
+        .collect();
+    assert_eq!(
+        visitor.seen_pins, expected,
+        "missing pinned macro definition"
+    );
+}
+
+fn check_macro(node: &syn::Macro, opaque_definition: bool) {
+    // Macro output is opaque: never allow it to add an unscanned source file.
+    fn attribute(stream: proc_macro2::TokenStream, opaque_definition: bool) {
+        let mut iter = stream.into_iter();
+        let Some(proc_macro2::TokenTree::Ident(name)) = iter.next() else {
+            assert!(opaque_definition, "opaque macro attribute name");
+            return;
+        };
+        match name.to_string().trim_start_matches("r#") {
+            "path" => panic!("macro path attributes are outside the module inventory"),
+            "cfg_attr" => {
+                let Some(proc_macro2::TokenTree::Group(args)) = iter.next() else {
+                    panic!("unsupported macro cfg_attr");
                 };
-                match name.to_string().trim_start_matches("r#") {
-                    "path" => panic!("macro path attributes are outside the module inventory"),
-                    "cfg_attr" => {
-                        let Some(proc_macro2::TokenTree::Group(args)) = iter.next() else {
-                            panic!("unsupported macro cfg_attr");
-                        };
-                        assert!(
-                            args.delimiter() == proc_macro2::Delimiter::Parenthesis
-                                && iter.next().is_none(),
-                            "unsupported macro cfg_attr"
-                        );
-                        let mut args = args.stream().into_iter();
-                        // A predicate can contain metavariables; only output attributes matter.
-                        assert!(
-                            args.by_ref().any(|t| matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ',')),
-                            "missing macro cfg_attr output"
-                        );
-                        let mut child = proc_macro2::TokenStream::new();
-                        for token in args {
-                            if matches!(&token, proc_macro2::TokenTree::Punct(p) if p.as_char() == ',')
-                            {
-                                attribute(child, opaque_definition);
-                                child = proc_macro2::TokenStream::new();
-                            } else {
-                                child.extend([token]);
-                            }
-                        }
-                        if !child.is_empty() {
-                            attribute(child, opaque_definition);
-                        }
+                assert!(
+                    args.delimiter() == proc_macro2::Delimiter::Parenthesis
+                        && iter.next().is_none(),
+                    "unsupported macro cfg_attr"
+                );
+                let mut args = args.stream().into_iter();
+                // A predicate can contain metavariables; only output attributes matter.
+                assert!(
+                    args.by_ref().any(
+                        |t| matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ',')
+                    ),
+                    "missing macro cfg_attr output"
+                );
+                let mut child = proc_macro2::TokenStream::new();
+                for token in args {
+                    if matches!(&token, proc_macro2::TokenTree::Punct(p) if p.as_char() == ',') {
+                        attribute(child, opaque_definition);
+                        child = proc_macro2::TokenStream::new();
+                    } else {
+                        child.extend([token]);
                     }
-                    _ => {}
+                }
+                if !child.is_empty() {
+                    attribute(child, opaque_definition);
                 }
             }
-            fn tokens(stream: proc_macro2::TokenStream, opaque_definition: bool, definition: bool) {
-                let mut iter = stream.into_iter().peekable();
-                let mut pending_definition = false;
-                while let Some(token) = iter.next() {
-                    match token {
-                        proc_macro2::TokenTree::Ident(name)
-                            if name == "macro_rules"
-                                && matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!') =>
-                        {
-                            pending_definition = true;
-                        }
-                        proc_macro2::TokenTree::Ident(name) if name == "use" => {
-                            let tree: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
-                            let tree: syn::UseTree =
-                                syn::parse2(tree).expect("opaque macro use import");
-                            imports(&tree, false);
-                        }
-                        proc_macro2::TokenTree::Ident(name)
-                            if name == "extern"
-                                && matches!(iter.peek(), Some(proc_macro2::TokenTree::Ident(next)) if next == "crate") =>
-                        {
-                            iter.next();
-                            let body: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
-                            let item: syn::ItemExternCrate =
-                                syn::parse_str(&format!("extern crate {body};"))
-                                    .expect("opaque macro extern import");
-                            extern_import(&item);
-                        }
-                        proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '$' => {
-                            let mut look = iter.clone();
-                            let target = look.next();
-                            let literal_crate = matches!(&target, Some(proc_macro2::TokenTree::Ident(name)) if name == "crate");
-                            let mut literal_path = false;
-                            let mut call = match target {
+            _ => {}
+        }
+    }
+    fn tokens(stream: proc_macro2::TokenStream, opaque_definition: bool, definition: bool) {
+        let mut iter = stream.into_iter().peekable();
+        while let Some(token) = iter.next() {
+            match token {
+                proc_macro2::TokenTree::Ident(name)
+                    if name.to_string().trim_start_matches("r#") == "macro_rules"
+                        && matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!') =>
+                {
+                    panic!("nested macro definition");
+                }
+                proc_macro2::TokenTree::Ident(name) if name == "use" => {
+                    let tree: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
+                    let tree: syn::UseTree = syn::parse2(tree).expect("opaque macro use import");
+                    imports(&tree, false);
+                }
+                proc_macro2::TokenTree::Ident(name)
+                    if name == "extern"
+                        && matches!(iter.peek(), Some(proc_macro2::TokenTree::Ident(next)) if next == "crate") =>
+                {
+                    iter.next();
+                    let body: proc_macro2::TokenStream = iter.by_ref().take_while(|t| !matches!(t, proc_macro2::TokenTree::Punct(p) if p.as_char() == ';')).collect();
+                    let item: syn::ItemExternCrate =
+                        syn::parse_str(&format!("extern crate {body};"))
+                            .expect("opaque macro extern import");
+                    extern_import(&item);
+                }
+                proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '$' => {
+                    let mut look = iter.clone();
+                    let target = look.next();
+                    let literal_crate = matches!(&target, Some(proc_macro2::TokenTree::Ident(name)) if name == "crate");
+                    let mut literal_path = false;
+                    let mut call = match target {
                                 Some(proc_macro2::TokenTree::Ident(_)) => look.next(),
                                 Some(proc_macro2::TokenTree::Group(_)) => {
                                     look.find(|token| matches!(token, proc_macro2::TokenTree::Punct(p) if ['*','+','?'].contains(&p.as_char())))
@@ -676,92 +853,75 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                                 }
                                 _ => None,
                             };
-                            if definition {
-                                assert!(
-                                    !matches!(&call, Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Bracket),
-                                    "opaque macro attribute introducer"
-                                );
+                    if definition {
+                        assert!(
+                            !matches!(&call, Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Bracket),
+                            "opaque macro attribute introducer"
+                        );
+                    }
+                    while matches!(&call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ':')
+                    {
+                        match (look.next(), look.next()) {
+                            (
+                                Some(proc_macro2::TokenTree::Punct(separator)),
+                                Some(proc_macro2::TokenTree::Ident(_)),
+                            ) if separator.as_char() == ':' => {
+                                literal_path = true;
+                                call = look.next();
                             }
-                            while matches!(&call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ':')
-                            {
-                                match (look.next(), look.next()) {
-                                    (
-                                        Some(proc_macro2::TokenTree::Punct(separator)),
-                                        Some(proc_macro2::TokenTree::Ident(_)),
-                                    ) if separator.as_char() == ':' => {
-                                        literal_path = true;
-                                        call = look.next();
-                                    }
-                                    _ => break,
-                                }
-                            }
-                            if literal_crate && literal_path {
-                                call = None;
-                            }
-                            assert!(
-                                !matches!(call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!'),
-                                "opaque macro call name"
-                            );
+                            _ => break,
                         }
-                        proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
-                            if matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!')
-                            {
-                                iter.next();
-                            }
-                            match iter.peek() {
-                                Some(proc_macro2::TokenTree::Group(group))
-                                    if group.delimiter() == proc_macro2::Delimiter::Bracket =>
-                                {
-                                    attribute(group.stream(), opaque_definition);
-                                }
-                                _ => panic!("unstructured macro attribute introducer"),
-                            }
-                        }
-                        proc_macro2::TokenTree::Ident(name)
-                            if name.to_string().trim_start_matches("r#") == "include" =>
+                    }
+                    if literal_crate && literal_path {
+                        call = None;
+                    }
+                    assert!(
+                        !matches!(call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!'),
+                        "opaque macro call name"
+                    );
+                }
+                proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '#' => {
+                    if matches!(iter.peek(), Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '!')
+                    {
+                        iter.next();
+                    }
+                    match iter.peek() {
+                        Some(proc_macro2::TokenTree::Group(group))
+                            if group.delimiter() == proc_macro2::Delimiter::Bracket =>
                         {
-                            assert!(
-                                !matches!(iter.peek(),Some(proc_macro2::TokenTree::Punct(p)) if p.as_char()=='!'),
-                                "code include is outside the module inventory"
-                            )
+                            attribute(group.stream(), opaque_definition);
                         }
-                        proc_macro2::TokenTree::Group(group) => {
-                            tokens(
-                                group.stream(),
-                                opaque_definition,
-                                definition || pending_definition,
-                            );
-                            pending_definition = false;
-                        }
-                        _ => {}
+                        _ => panic!("unstructured macro attribute introducer"),
                     }
                 }
+                proc_macro2::TokenTree::Ident(name)
+                    if name.to_string().trim_start_matches("r#") == "include" =>
+                {
+                    assert!(
+                        !matches!(iter.peek(),Some(proc_macro2::TokenTree::Punct(p)) if p.as_char()=='!'),
+                        "code include is outside the module inventory"
+                    )
+                }
+                proc_macro2::TokenTree::Group(group) => {
+                    tokens(group.stream(), opaque_definition, definition);
+                }
+                _ => {}
             }
-            assert!(
-                !node.path.segments.last().is_some_and(|s| s
-                    .ident
-                    .to_string()
-                    .trim_start_matches("r#")
-                    == "include"),
-                "code include is outside the module inventory"
-            );
-            tokens(
-                node.tokens.clone(),
-                self.opaque_definition,
-                node.path.is_ident("macro_rules"),
-            );
         }
     }
-    let root = root.canonicalize().unwrap();
-    let syntax = syn::parse_file(source).expect("unsupported Rust source");
-    Modules {
-        root: &root,
-        file,
-        depth: 0,
-        opaque_definition: false,
-        seen_pins: std::collections::BTreeSet::new(),
-    }
-    .visit_file(&syntax);
+    assert!(
+        !node
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident.to_string().trim_start_matches("r#") == "include"),
+        "code include is outside the module inventory"
+    );
+    tokens(
+        node.tokens.clone(),
+        opaque_definition,
+        node.path.is_ident("macro_rules"),
+    );
 }
 
 pub(super) struct Function<'a> {
@@ -798,7 +958,7 @@ pub(super) fn function<'a>(source: &'a str, name: &str) -> Function<'a> {
     assert_eq!(
         functions.blocks.len(),
         1,
-        "exception must name exactly one function"
+        "exception must name exactly one function: {name}"
     );
     let block = functions.blocks[0];
     let open = block.brace_token.span.open().byte_range().end;
@@ -1106,7 +1266,11 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "macro_rules! ordinary { ($m:ident, $p:tt) => { literal!($m, $p); }; }",
         "macro_rules! ordinary { ($($m:tt)*) => { literal!($($m)*); }; }",
     ] {
-        super::check_rust_file(root, &file, source);
+        if source.starts_with("macro_rules!") {
+            let item: syn::ItemMacro = syn::parse_str(source).unwrap();
+            check_macro(&item.mac, false);
+            assert!(std::panic::catch_unwind(|| super::check_rust_file(root, &file, source)).is_err());
+        } else { super::check_rust_file(root, &file, source); }
     }
     for source in [
         "#[path=\"rogue.inc\"] mod child;",
@@ -1174,6 +1338,11 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "other! { #[cfg_attr(test)] mod child; }",
         "not valid Rust",
     ] {
+        if source.starts_with("macro_rules!") {
+            let syntax = syn::parse_file(source).unwrap();
+            let syn::Item::Macro(item) = &syntax.items[0] else { unreachable!() };
+            assert!(std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err(), "token policy accepted {source}");
+        }
         assert!(
             std::panic::catch_unwind(|| super::check_rust_file(root, &file, source)).is_err(),
             "accepted {source}"
@@ -1265,11 +1434,9 @@ fn sqlcipher_reserved_crate_macro_paths_remain_literal() {
     let root = temporary.path();
     let file = root.join("lib.rs");
     std::fs::write(&file, "").unwrap();
-    modules(
-        root,
-        &file,
-        "macro_rules! wrapper { () => { $crate::literal::call!(); }; }",
-    );
+    let literal: syn::ItemMacro =
+        syn::parse_str("macro_rules! wrapper { () => { $crate::literal::call!(); }; }").unwrap();
+    check_macro(&literal.mac, false);
     for source in [
         "macro_rules! wrapper { ($m:ident) => { $crate::$m!(); }; }",
         "macro_rules! wrapper { ($m:ident) => { $crate::literal::$m!(); }; }",
@@ -1285,62 +1452,147 @@ fn sqlcipher_reserved_crate_macro_paths_remain_literal() {
 
 #[test]
 fn sqlcipher_macro_definition_pins_match_exact_keys_and_token_bodies() {
+    use syn::spanned::Spanned;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let dir = tempfile::TempDir::new().unwrap();
     let root = dir.path().canonicalize().unwrap();
-    // Independent of MACRO_PINS: deleting an allowlist entry must lose its positive.
-    for (path, name) in [
-        ("crates/org-host-control/src/secret.rs", "secret_text"),
-        ("crates/org-runtime/src/token.rs", "validated_string"),
-        ("crates/org-proto/src/org.rs", "command"),
-        ("crates/org-proto/src/work.rs", "wire_enum"),
-        ("crates/org-proto/src/work.rs", "write_call"),
-        ("crates/org-proto/src/gateway/org_mutations.rs", "mutations"),
+    // Independent expected inventory: every record must retain its positive.
+    for (path, scope, name) in [
+        ("crates/org-host-control/src/secret.rs", "", "secret_text"),
+        (
+            "crates/org-mailbox/src/testkit/conformance.rs",
+            "",
+            "__mailbox_conformance_cases",
+        ),
+        (
+            "crates/org-mailbox/src/testkit/conformance.rs",
+            "",
+            "mailbox_conformance_tests",
+        ),
+        (
+            "crates/org-mailbox/src/testkit/triage_conformance.rs",
+            "",
+            "__triage_conformance_cases",
+        ),
+        (
+            "crates/org-mailbox/src/testkit/triage_conformance.rs",
+            "",
+            "triage_conformance_tests",
+        ),
+        (
+            "crates/org-office/src/rules/command.rs",
+            "impl OrgCommand/fn parse/block",
+            "read",
+        ),
+        (
+            "crates/org-office/src/rules/command.rs",
+            "impl OrgCommand/fn method_and_params/block",
+            "of",
+        ),
+        (
+            "crates/org-office/src/store/work/tests/assembly.rs",
+            "",
+            "view_queries",
+        ),
+        (
+            "crates/org-proto/src/gateway/org_mutations.rs",
+            "",
+            "mutations",
+        ),
+        ("crates/org-proto/src/gateway/views.rs", "", "view_enum"),
+        ("crates/org-proto/src/org.rs", "", "command"),
+        ("crates/org-proto/src/token.rs", "", "hex_secret"),
+        ("crates/org-proto/src/work.rs", "", "wire_enum"),
+        ("crates/org-proto/src/work.rs", "", "write_call"),
+        ("crates/org-runtime/src/token.rs", "", "validated_string"),
+        ("crates/org-socket/src/rights.rs", "", "cloexec_result"),
+        ("crates/org-sync-proto/src/values.rs", "", "identity"),
+        ("crates/org-sync-proto/src/values.rs", "", "sequence"),
+        ("crates/org-work/src/call.rs", "", "work_calls"),
     ] {
         let source = std::fs::read_to_string(repository.join(path)).unwrap();
         let file = root.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, &source).unwrap();
         modules(&root, &file, &source);
-        let syntax = syn::parse_file(&source).unwrap();
-        let mut item = syntax
-            .items
-            .into_iter()
-            .find_map(|item| match item {
-                syn::Item::Macro(item)
-                    if item.ident.as_ref().is_some_and(|ident| ident == name) =>
-                {
-                    Some(item)
+        struct Find<'ast, 'name> {
+            name: &'name str,
+            found: Vec<&'ast syn::ItemMacro>,
+        }
+        impl<'ast> Visit<'ast> for Find<'ast, '_> {
+            fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+                if item.ident.as_ref().is_some_and(|ident| ident == self.name) {
+                    self.found.push(item);
                 }
-                _ => None,
-            })
-            .unwrap();
-        assert!(pinned_macro(&root, &file, &item));
-        let definition = format!("macro_rules! {name} {{ {} }}", item.mac.tokens);
-        let leaked = format!("{definition}\nfn outer(){{ unknown!{{#[$meta] Value}}; }}");
+                syn::visit::visit_item_macro(self, item);
+            }
+        }
+        let syntax = syn::parse_file(&source).unwrap();
+        let mut find = Find {
+            name,
+            found: Vec::new(),
+        };
+        find.visit_file(&syntax);
+        assert_eq!(find.found.len(), 1);
+        let item = find.found[0];
+        assert!(pinned_macro(&root, &file, scope, item));
+        let leaked = format!("{source}\nfn unknown_scope(){{ unknown!{{#[$meta] Value}}; }}");
         assert!(std::panic::catch_unwind(|| modules(&root, &file, &leaked)).is_err());
-        let duplicate = format!("{source}\n{definition}");
-        assert!(std::panic::catch_unwind(|| modules(&root, &file, &duplicate)).is_err());
-        let nested = format!("mod nested {{ {definition} }}");
-        assert!(std::panic::catch_unwind(|| modules(&root, &file, &nested)).is_err());
-        let original = item.mac.tokens.clone();
-        item.mac
-            .tokens
-            .extend(";".parse::<proc_macro2::TokenStream>().unwrap());
-        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &file, &item)).is_err());
-        item.mac.tokens = original;
-        item.mac.path = syn::parse_str("other_rules").unwrap();
-        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &file, &item)).is_err());
-        let renamed = source.replacen(
-            &format!("macro_rules! {name}"),
-            &format!("macro_rules! other_{name}"),
-            1,
+        let range = item.span().byte_range();
+        let definition = &source[range.clone()];
+        for changed in [
+            source.replacen(definition, &format!("{definition} {definition}"), 1),
+            source.replacen(definition, &format!("mod moved {{ {definition} }}"), 1),
+            source.replacen(definition, "", 1),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| modules(&root, &file, &changed)).is_err(),
+                "accepted changed {path}::{name}"
+            );
+        }
+        let moved_scope = format!("mod moved/{scope}");
+        assert!(
+            std::panic::catch_unwind(|| pinned_macro(&root, &file, &moved_scope, item)).is_err()
         );
-        assert_ne!(source, renamed);
-        assert!(std::panic::catch_unwind(|| modules(&root, &file, &renamed)).is_err());
         let moved = root.join(format!("moved_{name}.rs"));
         std::fs::write(&moved, &source).unwrap();
-        assert!(std::panic::catch_unwind(|| modules(&root, &moved, &source)).is_err());
+        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &moved, scope, item)).is_err());
+        let mut changed: syn::ItemMacro =
+            syn::parse_str(&format!("macro_rules! {name} {{ {} ; }}", item.mac.tokens)).unwrap();
+        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &file, scope, &changed)).is_err());
+        changed.mac.tokens = item.mac.tokens.clone();
+        changed.ident = Some(syn::parse_str(&format!("other_{name}")).unwrap());
+        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &file, scope, &changed)).is_err());
+        changed.ident = Some(syn::parse_str(name).unwrap());
+        changed.mac.path = syn::parse_str("other_rules").unwrap();
+        assert!(std::panic::catch_unwind(|| pinned_macro(&root, &file, scope, &changed)).is_err());
+    }
+}
+
+#[test]
+fn sqlcipher_macro_allowlist_refuses_reassembly_and_generated_definitions() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let file = dir.path().join("lib.rs");
+    std::fs::write(&file, "").unwrap();
+    for source in [
+        r#"macro_rules! wrapper { ($m:ident,$bang:tt,$p:tt)=>{$m $bang ($p);}; } wrapper!(include,!,"rogue.inc");"#,
+        r#"macro_rules! wrapper { ($hash:tt $rest:tt;$attr:tt)=>{$hash $attr mod child;}; } wrapper!(#[doc="ok"];[path="rogue.inc"]);"#,
+        r#"macro_rules! wrapper { ($root:ident,$name:ident,$bang:tt,$p:tt)=>{$root::$name $bang ($p);}; } wrapper!(std,include,!,"rogue.inc");"#,
+        "other! { macro_rules! hidden { () => {} } }",
+        "other! { { other! { macro_rules! hidden { () => {} } } } }",
+        "other! { r#macro_rules! hidden { () => {} } }",
+        "macro_rules! ordinary { () => { struct Data; }; }",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| modules(dir.path(), &file, source)).is_err(),
+            "accepted {source}"
+        );
+    }
+    for source in [
+        "other! { struct Data; }",
+        "// macro_rules! hidden {}\nconst TEXT:&str=\"macro_rules! hidden {}\";",
+    ] {
+        modules(dir.path(), &file, source);
     }
 }
 
@@ -1376,5 +1628,244 @@ fn sqlcipher_macro_invocations_reject_path_attributes() {
                 "accepted {source}"
             );
         }
+    }
+}
+
+#[test]
+fn sqlcipher_policy_option_guards_pair_present_and_absent_inputs() {
+    assert_eq!(split("a,'b,c',d", ','), ["a", "'b,c'", "d"]);
+    assert_eq!(
+        statements("k='x#y' # comment\nk2='z'"),
+        ["k='x#y'", "k2='z'"]
+    );
+    assert_eq!(string("'ok'"), "ok");
+    for value in ["plain", "'open", "close'"] {
+        assert!(std::panic::catch_unwind(|| string(value)).is_err());
+    }
+    assert_eq!(table_field("{ level='deny' }", "level", &["level"]), "deny");
+    for value in ["level='deny'", "{ level }", "{}"] {
+        assert!(std::panic::catch_unwind(|| table_field(value, "level", &["level"])).is_err());
+    }
+    flags("'--cfg=feature'");
+    flags("['--cfg=feature']");
+    for value in ["['--cfg=feature'", "'-A'"] {
+        assert!(std::panic::catch_unwind(|| flags(value)).is_err());
+    }
+    config("name='ok'");
+    config("[package]\nname='ok'");
+    for value in ["[package", "no_assignment"] {
+        assert!(std::panic::catch_unwind(|| config(value)).is_err());
+    }
+    let paths = OPENERS
+        .iter()
+        .map(|name| format!("'rusqlite::Connection::{name}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    clippy(&format!("disallowed-methods=[{paths}]"));
+    for value in ["", "no_assignment", "disallowed-methods=true"] {
+        assert!(std::panic::catch_unwind(|| clippy(value)).is_err());
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("input.rs");
+    std::fs::write(&file, "").unwrap();
+    modules(temp.path(), &file, "mod external;");
+    modules(temp.path(), &file, "mod inline { fn allowed() {} }");
+    assert!(std::panic::catch_unwind(|| modules(
+        temp.path(),
+        &file,
+        "mod inline { include!(\"x\"); }"
+    ))
+    .is_err());
+    for source in [
+        "other! { #[doc=\"ok\"] struct Data; }",
+        "other! { #[cfg_attr(test,doc=\"ok\")] struct Data; }",
+    ] {
+        let tree = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &tree.items[0] else {
+            panic!("fixture must be a macro invocation")
+        };
+        check_macro(&item.mac, false);
+    }
+    for source in [
+        "other! { #[] struct Data; }",
+        "other! { #[cfg_attr] struct Data; }",
+    ] {
+        let tree = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &tree.items[0] else {
+            panic!("fixture must be a macro invocation")
+        };
+        assert!(std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err());
+    }
+}
+
+#[test]
+fn sqlcipher_policy_directions_preserve_grammar_and_opaque_data() {
+    assert_eq!(split(r#""a\",b",c"#, ','), [r#""a\",b""#, "c"]);
+    assert_eq!(split(r#"'a\',b"#, ','), [r#"'a\'"#, "b"]);
+    assert_eq!(
+        statements(r##"name="a\"#b" # comment"##),
+        [r##"name="a\"#b""##]
+    );
+    assert_eq!(statements(r#"name='a\' # comment"#), [r#"name='a\'"#]);
+    assert_eq!(table_field("{level='deny',}", "level", &["level"]), "deny");
+    assert!(
+        std::panic::catch_unwind(|| table_field("{level.extra='deny'}", "level", &["level"]))
+            .is_err()
+    );
+    flags("'--allow dead_code'");
+    config("[env]\nRUSTFLAGS.value='-Dclippy::all'");
+    for value in [
+        "[package..metadata]\nname='ok'",
+        "[package.bad key]\nname='ok'",
+        "[package.!]\nname='ok'",
+        "[build]\nrustflags=['a''b']",
+        "one=]\ntwo=[",
+        "name='unterminated",
+        "[profile.dev]\nrustflags=['--cfg=ok']",
+        "[env]\nRUSTFLAGS.other='-Dclippy::all'",
+        "[package}",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| config(value)).is_err(),
+            "accepted {value}"
+        );
+    }
+    for value in [
+        "name='unterminated",
+        "flags=[\n'-Aclippy::disallowed_methods'",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| statements(value)).is_err(),
+            "accepted incomplete statement {value}"
+        );
+    }
+    for value in [
+        "[['-Aclippy::disallowed_methods'],'--cfg=ok']",
+        "['--cfg=ok',['-Aclippy::disallowed_methods']]",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| flags(value)).is_err(),
+            "accepted nested flag array {value}"
+        );
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("input.rs");
+    std::fs::write(&file, "").unwrap();
+    modules(temp.path(), &file, "extern crate std as _;");
+    modules(temp.path(), &file, "extern crate std;");
+    modules(temp.path(), &file, "#[clippy::anything] mod inline {}");
+    std::fs::write(temp.path().join("no_extension"), "").unwrap();
+    assert!(std::panic::catch_unwind(|| modules(
+        temp.path(),
+        &file,
+        "#[path=\"no_extension\"] mod external;"
+    ))
+    .is_err());
+    for source in [
+        "stringify!(macro_rules, data);",
+        "stringify!(macro_rules data);",
+        "stringify!(pretend crate std as named;);",
+        "stringify!(extern value std as named;);",
+        "stringify!($root : ! tail ! ());",
+        "stringify!(include, data);",
+        "stringify!($);",
+        "stringify!($m);",
+        "stringify!($(x));",
+        "stringify!($($x)*);",
+        "stringify!($m:);",
+        "stringify!($m::);",
+        "stringify!($m::literal);",
+    ] {
+        let tree = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &tree.items[0] else {
+            panic!("fixture must be a macro invocation")
+        };
+        check_macro(&item.mac, false);
+    }
+    for source in [
+        "stringify!(extern crate local + data;);",
+        "stringify!($root ! : harmless);",
+        "stringify!($crate!());",
+        "stringify!(# , [doc=\"ok\"]);",
+        "stringify!(#);",
+        "stringify!($m!());",
+        "stringify!($($x)*!());",
+        "stringify!($m::literal!());",
+    ] {
+        let tree = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &tree.items[0] else {
+            panic!("fixture must be a macro invocation")
+        };
+        assert!(
+            std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err(),
+            "accepted {source}"
+        );
+    }
+}
+
+#[test]
+fn sqlcipher_macro_metadata_distinguishes_reviewed_and_opaque_inputs() {
+    let syntax = syn::parse_file("other! { #[$attribute] struct Data; }").unwrap();
+    let syn::Item::Macro(item) = &syntax.items[0] else {
+        panic!("macro fixture")
+    };
+    check_macro(&item.mac, true);
+    assert!(std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err());
+    for source in [
+        r#"other! { #[cfg_attr(target_os = "linux", doc = "ok")] struct Data; }"#,
+        "other! { #[cfg_attr(unix, doc = \"ok\")] struct Data; }",
+        "other! { #[cfg_attr(all(unix), derive(Debug), doc = \"ok\")] struct Data; }",
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &syntax.items[0] else {
+            panic!("macro fixture")
+        };
+        check_macro(&item.mac, false);
+    }
+}
+
+#[test]
+fn sqlcipher_reserved_definition_name_refuses_aliased_invocations() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("input.rs");
+    std::fs::write(&file, "").unwrap();
+    modules(
+        temp.path(),
+        &file,
+        "use crate::identity as ordinary; ordinary!{Boundary}",
+    );
+    assert!(std::panic::catch_unwind(|| modules(
+        temp.path(),
+        &file,
+        "use crate::identity as macro_rules; macro_rules!{Boundary}"
+    ))
+    .is_err());
+}
+
+#[test]
+fn sqlcipher_cargo_config_pairs_strict_grammar_and_flag_refusals() {
+    for input in [
+        "[build]",
+        "[target]",
+        "[env]",
+        "build.rustflags='-Dclippy::all'",
+        "target.'cfg(target_os = \"linux\")'.rustflags=['-Dclippy::all']",
+        "[target.'cfg(unix)']\nrustflags='-Dclippy::all'",
+    ] {
+        cargo_config(input);
+    }
+    for input in [
+        "[build] = 'extra'",
+        "build.rustflags",
+        "[unknown]",
+        "include=['outside.toml']",
+        "[env]\nANY='data'",
+        "[target.'cfg(unix)']\nrustflags='-Aclippy::disallowed_methods'",
+        "[target.x86_64-unknown-linux-gnu]\nrustflags='--cap-lints=allow'",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| cargo_config(input)).is_err(),
+            "accepted {input}"
+        );
     }
 }
