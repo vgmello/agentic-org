@@ -119,7 +119,7 @@ impl LaunchAuth {
 
 /// Who a connection is, as far as the socket knows.
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum Binding {
+pub(crate) enum Binding {
     /// Not bound, or the last bind failed.
     Anonymous,
     /// Bound app-wide with the office's `app_token`, as no member.
@@ -298,6 +298,7 @@ pub struct Shared {
     timing: Timing,
     /// The connections bound as a member, for the watcher.
     bound: Bound,
+    pub(crate) inbox: Option<crate::inbox::Hq>,
 }
 
 impl Shared {
@@ -321,6 +322,7 @@ impl Shared {
             auth: auth.into(),
             timing: Timing::default(),
             bound: Mutex::default(),
+            inbox: None,
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -344,6 +346,33 @@ impl Shared {
             ),
         }
     }
+
+    /// Only a known HQ composition registers real sources; other offices stay dark.
+    pub(crate) fn register_inbox(&mut self, inbox: crate::inbox::Hq) {
+        if self
+            .hello
+            .office
+            .as_ref()
+            .is_some_and(|office| office.office.role == OfficeRole::Hq)
+        {
+            self.inbox = Some(inbox);
+            self.hello.capabilities.push("inbox.list".into());
+        }
+    }
+}
+
+pub(crate) type LookupError = org_mailbox::StoreError;
+
+/// One live owner check for list authorization and a2's per-delivery hint filtering.
+pub(crate) fn live_owner(shared: &Shared, binding: &Binding) -> Result<bool, LookupError> {
+    let Binding::Member { id, .. } = binding else {
+        return Ok(false);
+    };
+    shared.ports.directory.resolve_member(id).map(|found| {
+        found.is_some_and(|(member, _)| {
+            member.id == *id && member.kind == MemberKind::Person && member.owner
+        })
+    })
 }
 
 /// Binds `path` (owner-only), replacing a stale socket file a crashed server left: the caller
@@ -867,6 +896,29 @@ fn hello_response(request: &Request, shared: &Shared) -> Response {
 }
 
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
+    if request.is::<org_proto::inbox::InboxList>() {
+        if let Some(inbox) = &shared.inbox {
+            if !matches!(live_owner(shared, binding), Ok(true)) {
+                return bind_error(
+                    request.id,
+                    ErrorCode::NotAuthorized,
+                    "inbox is for the live owner",
+                );
+            }
+            return match request.params::<org_proto::inbox::InboxList>() {
+                Ok(params) => match inbox.list(params) {
+                    Ok(result) => Response::ok::<org_proto::inbox::InboxList>(request.id, &result)
+                        .unwrap_or_else(|_| internal(request.id)),
+                    Err(error) => Response::error(request.id, error),
+                },
+                Err(_) => bind_error(
+                    request.id,
+                    ErrorCode::InvalidRequest,
+                    "invalid inbox list parameters",
+                ),
+            };
+        }
+    }
     if request.is::<org_proto::OperationGet>() {
         let params = match request.params::<org_proto::OperationGet>() {
             Ok(params) if org_proto::ulid_time_ms(&params.id).is_some() => params,
@@ -1256,6 +1308,7 @@ fn internal(id: u64) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod inbox;
     mod office_socket;
     mod work;
     use std::io::BufReader;
