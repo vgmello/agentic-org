@@ -321,6 +321,17 @@ describe('RQS-4 the words without the handle that routed them', () => {
 	});
 });
 
+describe('RQS-4 the rest of a name the handle began', () => {
+	const sam = member('sam', 'Sam Okafor', 'Developer');
+	const juno = member('juno', 'Juno van der Berg', 'Designer');
+	it('drops the rest of the display name that follows the handle, and only that', () => {
+		expect([withoutHandle('@sam Okafor rest', sam), withoutHandle('@Sam Okafor: rest', sam), withoutHandle('@sam okafor', sam), withoutHandle('@sam fix Okafor', sam), withoutHandle('@sam Okaforish rest', sam), withoutHandle('@sam Okafor', undefined)]).toEqual(['rest', 'rest', '', 'fix Okafor', 'Okaforish rest', 'Okafor']);
+		expect(withoutHandle('@juno van der Berg make it', juno)).toBe('make it');
+		// Only the whole rest of the name counts: part of it is just words.
+		expect(withoutHandle('@juno van make it', juno)).toBe('van make it');
+	});
+});
+
 describe('RQS-4 how far the handle reaches', () => {
 	it('is the leading @handle and its spaces before it, so the list can follow the caret', () => {
 		expect([atSpan('@sa fix'), atSpan('  @sam'), atSpan('@'), atSpan('fix @sam'), atSpan('@@sam')]).toEqual([3, 6, 1, undefined, undefined]);

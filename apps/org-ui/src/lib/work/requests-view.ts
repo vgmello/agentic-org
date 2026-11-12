@@ -281,7 +281,27 @@ export const atSpan = (text: string): number | undefined => AT.exec(text)?.[0].l
 export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugOf(m.name);
 
 /** The words without the `@handle` that routed them (and the colon or comma after it): "fix the build time", not "@sam: fix the build time". */
-export const withoutHandle = (text: string): string => text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[\s:,;.!?\-–—]*/u, '$1').trimStart();
+export function withoutHandle(text: string, member?: Member): string {
+	const found = AT.exec(text);
+	let rest = text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[\s:,;.!?\-–—]*/u, '$1').trimStart();
+	// "@sam Okafor fix it": the rest of the display name that the handle began is part of the handle too, but only all of it.
+	if (member && found) {
+		const parts = plain(member.name).trim().split(/\s+/);
+		const at = parts.indexOf(plain(found[2]));
+		let cut = rest;
+		let whole = at >= 0 && at < parts.length - 1;
+		for (const word of at >= 0 ? parts.slice(at + 1) : []) {
+			const next = /^(\S+)(\s+|$)/u.exec(cut);
+			if (!next || plain(next[1]).replace(/[:,;.!?]+$/u, '') !== word) {
+				whole = false;
+				break;
+			}
+			cut = cut.slice(next[0].length);
+		}
+		if (whole) rest = cut.replace(/^[\s:,;.!?\-–—]+/u, '');
+	}
+	return rest;
+}
 
 /** The words with their `@token` at the start replaced by `@handle`. */
 export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);

@@ -186,7 +186,7 @@
 	<SheetContent side="right" class="w-full max-w-xl overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle class="[overflow-wrap:anywhere]">{s ? `${requestRef(s)} · ${s.title}` : 'Request'}</SheetTitle>
-			<SheetDescription>{s ? `Raised ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
+			<SheetDescription>{s ? `Raised ${shortDate(s.created_at)} by ${s.created_by === me ? 'you' : nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
 		</SheetHeader>
 
 		{#if s && item}

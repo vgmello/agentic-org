@@ -879,3 +879,42 @@ test('RQS-4: taking an unresolved handle out of the words keeps the person the o
 	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
 	await expect(dialog.getByRole('radio', { name: /Pax Moreau/ })).toBeChecked();
 });
+
+for (const [width, height] of [[390, 844], [320, 640]] as const) {
+	test(`F1/F7: at ${width}px with 200% text the capture panel and the Work page do not overflow sideways`, async ({ page }) => {
+		await page.addInitScript(() => {
+			document.documentElement.style.fontSize = '200%';
+		});
+		await page.setViewportSize({ width, height });
+		await open(page);
+		await queue(page);
+		await capture(page, 'Something to keep around', { button: /^Just save$/ });
+		// The Work page: nothing makes the main area scroll sideways.
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+		await page.getByTestId('new-request').click();
+		const dialog = page.getByRole('dialog', { name: 'New request' });
+		await expect(dialog.getByLabel('What do you need?')).toBeVisible();
+		await dialog.getByLabel('What do you need?').fill('@sam Okafor fix the build time and then some more words to make it long enough to wrap around the panel');
+		const box = (await dialog.boundingBox())!;
+		expect(box.x).toBeGreaterThanOrEqual(0);
+		expect(box.x + box.width).toBeLessThanOrEqual(width);
+		// Nothing inside runs past the panel's width, and the heading clears the close button.
+		expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+		for (const name of [/^Send to /, /^Just save$/, /^Cancel$/]) {
+			const b = (await dialog.getByRole('button', { name }).boundingBox())!;
+			expect(b.x).toBeGreaterThanOrEqual(box.x);
+			expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+		}
+		await expect(dialog.getByRole('button', { name: /^Send to / })).toBeInViewport();
+	});
+}
+
+test('RQS-4: "@sam Okafor rest" saves just "rest"', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@sam Okafor: rest of the words');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(page.getByRole('button', { name: 'rest of the words', exact: true })).toBeVisible();
+});

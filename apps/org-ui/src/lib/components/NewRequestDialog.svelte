@@ -135,7 +135,7 @@
 		return m?.kind === 'agent' && m.agent?.status === 'paused' ? `${m.name} is paused and won't pick this up. Choose someone else or Just save.` : undefined;
 	});
 	/** The words as they are saved: without the @handle when that is what routes it (decision 5). */
-	const words = $derived(atMember && scoperId === atMember.id ? withoutHandle(text) : text);
+	const words = $derived(atMember && scoperId === atMember.id ? withoutHandle(text, atMember) : text);
 	/** A handle at the start that no agent has: "No one called @x." Send is off until it is fixed or removed (RQS-4). */
 	const unknownHandle = $derived(at?.kind === 'unknown' ? at.token : undefined);
 	/** A handle that fits several agents, or is still half typed (`@sa`, `@juno`): not a route until one is picked. */
@@ -215,7 +215,7 @@
 		busy = true;
 		error = undefined;
 		try {
-			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body: at?.kind === 'exact' ? withoutHandle(text) : text });
+			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body: at?.kind === 'exact' ? withoutHandle(text, at.member) : text });
 			text = '';
 			open = false;
 			onadded?.(requestRef(request));
@@ -281,8 +281,8 @@
 </script>
 
 <Dialog bind:open={() => open, setOpen}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl">
-		<DialogHeader>
+	<DialogContent class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl">
+		<DialogHeader class="pr-10">
 			<DialogTitle text={'New request'} />
 			<DialogDescription>A request isn't a task yet. Whoever scopes it turns it into a feature you can approve.</DialogDescription>
 		</DialogHeader>
@@ -314,7 +314,7 @@
 					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				></textarea>
 				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
-				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
+				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
 				{#if completions.length > 0}
 					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
 						{#each completions as m, i (m.id)}
@@ -331,7 +331,7 @@
 							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
 						{/each}
 					</ul>
-					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-amber-200" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
+					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-red-300" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
 				{/if}
 				</div>
 			</div>
@@ -356,20 +356,20 @@
 				<legend class="flex items-center gap-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
 				{#if atMember && !suggestions.some((x) => x.member.id === atMember.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
 						<span><span class="font-semibold text-white">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
 					</label>
 				{/if}
 				{#each suggestions as s (s.member.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
 						<span><span class="font-semibold text-white">{s.member.name}</span>, {s.why}</span>
 					</label>
 				{/each}
 				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
 					<span class="flex flex-wrap items-center gap-2">Someone else…
-						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="max-w-full min-w-0 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 							<option value="">Choose…</option>
 							{#each agents as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 						</select>
@@ -378,20 +378,20 @@
 			</fieldset>
 
 			{#if message && !scoperId}<p id="message-hint" class="text-xs/5 text-gray-400" data-testid="message-hint">Choose who to message.</p>{/if}
-			{#if warning}<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" role="alert" data-testid="route-warning">{warning}</p>{/if}
+			{#if warning}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
-			<DialogFooter class="shrink-0">
+			<DialogFooter class="min-w-0 shrink-0">
 				{#if asking}
 					<p class="mr-auto self-center text-sm/6 text-gray-200" role="alert" data-testid="keep-draft">Keep as a draft?</p>
 					<Button type="button" variant="outline" onclick={back}>Back</Button>
 					<Button type="button" variant="outline" onclick={() => ((asking = false), (text = ''), (open = false))}>Discard</Button>
 					<Button type="button" disabled={busy} onclick={() => void submit(false)}>Keep</Button>
 				{:else}
-					<Button type="button" variant="outline" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
-					{#if message}<Button type="button" variant="outline" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
-					<Button type="button" variant="outline" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
-					<Button type="submit" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
+					<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
+					{#if message}<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
+					<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
+					<Button type="submit" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
 				{/if}
 			</DialogFooter>
 		</form>
