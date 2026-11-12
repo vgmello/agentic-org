@@ -58,3 +58,4 @@ core-foundation.workspace = true
 # Turns on `test-support` for test builds only, so `CARGO_BIN_EXE_fake-office-server` exists.
 org-office-host = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }

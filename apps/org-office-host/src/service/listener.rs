@@ -22,7 +22,7 @@ use serde_json::Value;
 
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
-use crate::peer::{peer_uid, Accepted, Received};
+use crate::peer::{Accepted, Received};
 use crate::sync::lock;
 
 /// How long the accept thread waits for a connection before checking whether to stop.
@@ -82,12 +82,6 @@ pub(crate) fn bind(path: &Path) -> Result<UnixListener, BindError> {
     };
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(BindError::Io)?;
     Ok(listener)
-}
-
-/// Whether the peer runs as `expected_uid` (defence in depth: `host.sock` is already 0600 in
-/// an owner-only folder). A peer whose uid can't be read is refused.
-pub(crate) fn peer_allowed(stream: &UnixStream, expected_uid: u32) -> bool {
-    matches!(peer_uid(stream), Ok(uid) if uid == expected_uid)
 }
 
 /// A running listener.
@@ -202,7 +196,7 @@ fn accept_loop(
         if stream.set_nonblocking(false).is_err() {
             continue;
         }
-        if !peer_allowed(&stream, config.expected_uid) {
+        if !org_socket::peer_allowed(&stream, config.expected_uid) {
             host_log::log("refused a connection from another user");
             continue; // dropping `stream` closes it
         }
@@ -783,11 +777,86 @@ mod tests {
 
     #[test]
     fn a_peer_of_another_uid_is_refused() {
-        let (a, _b) = UnixStream::pair().unwrap();
+        use std::io::Read;
+
         let me = crate::home::euid();
-        assert_eq!(peer_uid(&a).unwrap(), me);
-        assert!(peer_allowed(&a, me));
-        assert!(!peer_allowed(&a, me.wrapping_add(1)));
+        for closed in [false, true] {
+            let (mut stream, peer) = UnixStream::pair().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let _peer = if closed {
+                drop(peer);
+                assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+                None
+            } else {
+                Some(peer)
+            };
+            assert!(org_socket::peer_allowed(&stream, me));
+            assert!(!org_socket::peer_allowed(&stream, me.wrapping_add(1)));
+            println!("pair peer_closed={closed} uid={me}: match=true mismatch=false");
+        }
+    }
+
+    #[test]
+    fn expected_uid_is_checked_before_host_dispatch() {
+        use std::io::Read;
+        use std::sync::atomic::AtomicUsize;
+
+        struct Counted(Arc<AtomicUsize>);
+        impl Handler for Counted {
+            fn handle(&self, request: Request, connection: &Arc<Connection>, _: Received) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                connection.send_response(Response {
+                    id: request.id,
+                    outcome: org_proto::Outcome::Result(Value::String(request.method)),
+                });
+            }
+        }
+
+        let uid = crate::home::euid();
+        for expected_uid in [uid, uid.wrapping_add(1)] {
+            let dir = short_tempdir();
+            let path = dir.path().join("uid.sock");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let mut listener = Listener::start(
+                bind(&path).unwrap(),
+                ListenerConfig {
+                    max_connections: 2,
+                    max_in_flight: 4,
+                    expected_uid,
+                },
+                Arc::new(Counted(Arc::clone(&calls))),
+            )
+            .unwrap();
+            let mut stream = connect(&path);
+            let _ = stream.write_all(b"{\"id\":1,\"method\":\"hello\"}\n");
+            if expected_uid == uid {
+                let response: Response =
+                    serde_json::from_str(&read_line(&stream).expect("matching peer served"))
+                        .unwrap();
+                assert_eq!(response.id, 1);
+                assert_eq!(
+                    response.outcome,
+                    org_proto::Outcome::Result(Value::String("hello".into()))
+                );
+                println!("accepted uid={uid} expected={expected_uid}: served");
+            } else {
+                let result = stream.read(&mut [0]);
+                assert!(
+                    matches!(result, Ok(0))
+                        || matches!(result, Err(ref error) if error.kind() == io::ErrorKind::ConnectionReset),
+                    "wrong UID reached dispatch or was not closed: {result:?}"
+                );
+                println!("accepted uid={uid} expected={expected_uid}: {result:?}");
+            }
+            listener.close();
+            listener.join();
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                usize::from(expected_uid == uid)
+            );
+        }
     }
 
     #[test]

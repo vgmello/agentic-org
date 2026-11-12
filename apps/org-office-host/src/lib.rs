@@ -436,7 +436,7 @@ impl Host {
             let config = ListenerConfig {
                 max_connections: config.max_connections,
                 max_in_flight: MAX_IN_FLIGHT_PER_CONNECTION,
-                expected_uid: home::euid(),
+                expected_uid: org_socket::effective_uid(),
             };
             let service = Arc::new(Service::new(
                 Arc::clone(&offices),
