@@ -1,7 +1,7 @@
 import type { OrgApi } from '$lib/org/api';
 import { isFormer } from '$lib/org/model';
-import type { RequestSimilarQuery, WorkAccepted, WorkEvent, WorkItem, WorkListQuery, WorkItemSummary, WorkPosition } from '$lib/proto';
-import { activityOf, applyWork, listItems, similarRequests, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
+import type { RequestSimilarQuery, WorkAccepted, WorkEvent, WorkItem, WorkItemSummary, WorkPosition } from '$lib/proto';
+import { activityOf, applyWork, similarRequests, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
 
 /**
  * What the work screens need from an office: `work.snapshot`, `work.get` and the item calls. The calls are
@@ -14,8 +14,6 @@ export interface WorkApi {
 	get(organizationId: string, itemId: string): Promise<WorkItem>;
 	/** Rejects with the error the office gave (an `AppError` with source `api`). */
 	command(organizationId: string, call: WorkCall): Promise<WorkAccepted>;
-	/** `work.list`: items by filter, newest first (design §4.3). */
-	list(organizationId: string, query: WorkListQuery): Promise<{ items: WorkItemSummary[] }>;
 	/** `request.similar`: open requests that read like some words (read-only). */
 	similar(organizationId: string, query: RequestSimilarQuery): Promise<{ items: WorkItemSummary[] }>;
 	/** `work.activity`: what happened to one item, oldest first. */
@@ -100,7 +98,6 @@ export function createMockWork(
 		},
 		activity: async (organizationId, itemId) => activityOf(load(organizationId), itemId),
 		similar: async (organizationId, query) => ({ items: structuredClone(similarRequests(load(organizationId), query)) }),
-		list: async (organizationId, query) => ({ items: structuredClone(listItems(load(organizationId), query)) }),
 		command: (organizationId, call) => apply(organizationId, call),
 		commandAs: (organizationId, actor, call) => apply(organizationId, call, actor)
 	};

@@ -37,7 +37,6 @@ import type {
 	WorkItem,
 	WorkEvent,
 	WorkItemSummary,
-	WorkListQuery,
 	RequestSimilarQuery,
 	WorkPosition
 } from '$lib/proto';
@@ -721,33 +720,8 @@ export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 	});
 }
 
-const ENDED: readonly string[] = ['done', 'closed', 'approved', 'declined', 'merged'];
 const LIST_TEXT_MAX = 200;
-const LIST_LIMIT_MAX = 500;
 const wordsIn = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-
-/**
- * `work.list`: the items that pass the filters, newest number first. `text` is case-insensitive and matches word
- * prefixes over the title and a request's own words: every word of it must start some word there.
- */
-export function listItems(s: WorkState, q: WorkListQuery): WorkItemSummary[] {
-	if (q.text !== undefined && (typeof q.text !== 'string' || [...q.text].length > LIST_TEXT_MAX)) fail('invalid_request', `text can be at most ${LIST_TEXT_MAX} characters.`);
-	if (q.limit !== undefined && (!Number.isInteger(q.limit) || q.limit < 1 || q.limit > LIST_LIMIT_MAX)) fail('invalid_request', `limit is 1 to ${LIST_LIMIT_MAX}.`);
-	const wanted = q.text === undefined ? [] : wordsIn(q.text);
-	return Object.values(s.items)
-		.filter((i) => !i.summary.deleted)
-		.filter((i) => q.project_id === undefined || i.summary.project_id === q.project_id)
-		.filter((i) => !q.kinds || (q.kinds as string[]).includes(i.summary.kind))
-		.filter((i) => (q.statuses ? (q.statuses as string[]).includes(i.summary.status) : q.include_closed || !ENDED.includes(i.summary.status)))
-		.filter((i) => {
-			if (wanted.length === 0) return true;
-			const have = wordsIn(`${i.summary.title} ${i.text ?? ''}`);
-			return wanted.every((w) => have.some((h) => h.startsWith(w)));
-		})
-		.map((i) => i.summary)
-		.sort((a, b) => (b.number ?? 0) - (a.number ?? 0))
-		.slice(0, q.limit ?? 100);
-}
 
 const SIMILAR_STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'let', 'want', 'need', 'make', 'when', 'what', 'from', 'into', 'have', 'would', 'should', 'could', 'about', 'there', 'their', 'them', 'than', 'then', 'also', 'just', 'like', 'some', 'more', 'every', 'each', 'only', 'your', 'our', 'can', 'are', 'was', 'were', 'but', 'not', 'all', 'any', 'its']);
 const SIMILAR_LIMIT = { default: 5, max: 10 } as const;

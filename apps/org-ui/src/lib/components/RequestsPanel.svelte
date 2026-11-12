@@ -4,7 +4,7 @@
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { Input } from '$lib/components/ui/input';
 	import { nameOf } from '$lib/work/people';
-	import { ageWord, filterActive, filterRequests, narrowed, groupRequests, NO_FILTER, nextAction, REQUEST_GROUPS, requestRef, stateWords, type RequestFilter } from '$lib/work/requests-view';
+	import { ageWord, filterActive, filterRequests, narrowed, groupRequests, NO_FILTER, nextAction, STATE_FILTERS, REQUEST_GROUPS, requestRef, stateWords, type RequestFilter } from '$lib/work/requests-view';
 
 	/** The Requests queue (feature-requests-ux §2): what needs you first, then what is with agents, then the rest. */
 	let {
@@ -30,7 +30,7 @@
 	function remembered(): RequestFilter {
 		try {
 			const saved = JSON.parse(localStorage.getItem(KEY(organizationId)) ?? 'null') as Partial<RequestFilter> | null;
-			if (saved && typeof saved === 'object') return { state: saved.state === 'all' ? 'all' : 'open', who: typeof saved.who === 'string' ? saved.who : '', project: typeof saved.project === 'string' ? saved.project : '', query: typeof saved.query === 'string' ? saved.query.slice(0, 200) : '' };
+			if (saved && typeof saved === 'object') return { state: STATE_FILTERS.some((s) => s.id === saved.state) ? (saved.state as RequestFilter['state']) : 'open', who: typeof saved.who === 'string' ? saved.who : '', project: typeof saved.project === 'string' ? saved.project : '', query: typeof saved.query === 'string' ? saved.query.slice(0, 200) : '' };
 		} catch {
 			// unreadable storage: open on the defaults
 		}
@@ -75,7 +75,7 @@
 
 	{#if total > 0}
 		<div class="flex flex-wrap items-center gap-2" role="search" aria-label="Filter requests" data-testid="request-filters">
-			<select aria-label="State" bind:value={filter.state} class={selectClass}><option value="open">Open</option><option value="all">All</option></select>
+			<select aria-label="State" bind:value={filter.state} class={selectClass}>{#each STATE_FILTERS as s (s.id)}<option value={s.id}>{s.label}</option>{/each}</select>
 			<select aria-label="People" bind:value={filter.who} class={selectClass}>
 				<option value="">Anyone</option><option value="none">Not routed</option>
 				{#if raisers.includes(me)}<option value="raised:{me}">Raised by me</option>{/if}

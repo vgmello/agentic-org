@@ -91,7 +91,9 @@
 	// Words that start with @handle send it to that agent without a suggestion (RQS-4), unless the owner then picks someone.
 	const at = $derived(atName(text, snapshot));
 	const atMember = $derived(at?.kind === 'exact' ? at.member : undefined);
-	const pickStands = $derived(pickedAt === atMember?.id && (picked === 'other' || (!!atMember && picked === atMember.id) || suggestions.some((s) => s.member.id === picked)));
+	/** What the words' @handle says right now: a pick only stands while it says the same as when the pick was made. */
+	const atKey = $derived(at ? (at.kind === 'exact' ? `exact:${at.member.id}` : `${at.kind}:${at.token}`) : '');
+	const pickStands = $derived((pickedAt ?? '') === atKey && (picked === 'other' || (!!atMember && picked === atMember.id) || suggestions.some((s) => s.member.id === picked)));
 	const choice = $derived((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none');
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
@@ -134,9 +136,11 @@
 	const words = $derived(atMember && scoperId === atMember.id ? withoutHandle(text) : text);
 	/** A handle at the start that no agent has: "No one called @x." Send is off until it is fixed or removed (RQS-4). */
 	const unknownHandle = $derived(at?.kind === 'unknown' ? at.token : undefined);
+	/** A handle that fits several agents, or is still half typed (`@sa`, `@juno`): not a route until one is picked. */
+	const ambiguous = $derived(at?.kind === 'partial' ? at : undefined);
 	const textError = $derived(touched && words.trim() === '' ? (atMember && text.trim() !== '' ? `Write what you need after @${at?.kind === 'exact' ? at.token : ''}.` : 'Write what you need.') : undefined);
 	// Picking someone in the list instead settles it: the handle is then just words.
-	const cannotSend = $derived(unknownHandle !== undefined && picked === undefined);
+	const cannotSend = $derived((unknownHandle !== undefined || ambiguous !== undefined) && !(picked !== undefined && pickStands));
 	const sendLabel = $derived(confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
 
 	/** Whether closing now should ask first: words typed, nothing in flight. */
@@ -290,13 +294,16 @@
 					onclick={trackCaret}
 					oninput={trackCaret}
 					onselect={trackCaret}
+					role="combobox"
 					aria-autocomplete="list"
+					aria-expanded={completions.length > 0}
+					aria-haspopup="listbox"
 					aria-controls={completions.length > 0 ? 'at-list' : undefined}
 					aria-activedescendant={completions.length > 0 ? `at-opt-${Math.min(activeAt, completions.length - 1)}` : undefined}
 					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				></textarea>
 				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
-				{#if cannotSend}<p class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">No one called @{unknownHandle}. Pick someone from the list or remove it.</p>{/if}
+				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
 				{#if completions.length > 0}
 					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
 						{#each completions as m, i (m.id)}
@@ -307,6 +314,7 @@
 					</ul>
 					<p class="text-xs/5 text-gray-400">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
 				{/if}
+				<div aria-live="polite">
 				{#if similar.length > 0}
 					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
 						{#each similar as r (r.id)}
@@ -314,6 +322,7 @@
 						{/each}
 					</ul>
 				{/if}
+				</div>
 			</div>
 
 			<div class="grid gap-4 sm:grid-cols-2">
@@ -336,20 +345,20 @@
 				<legend class="flex items-center gap-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
 				{#if atMember && !suggestions.some((x) => x.member.id === atMember.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onchange={() => ((picked = atMember.id), (pickedAt = atMember.id), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onchange={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 						<span><span class="font-semibold text-white">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
 					</label>
 				{/if}
 				{#each suggestions as s (s.member.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onchange={() => ((picked = s.member.id), (pickedAt = atMember?.id), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onchange={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 						<span><span class="font-semibold text-white">{s.member.name}</span>, {s.why}</span>
 					</label>
 				{/each}
 				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onchange={() => ((picked = 'other'), (pickedAt = atMember?.id), (confirmed = false))} class="mt-1.5" />
+					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 					<span class="flex flex-wrap items-center gap-2">Someone else…
-						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atMember?.id), (confirmed = false))} class="rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 							<option value="">Choose…</option>
 							{#each agents as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 						</select>
@@ -370,7 +379,7 @@
 					<Button type="button" variant="outline" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
 					{#if message}<Button type="button" variant="outline" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
 					<Button type="button" variant="outline" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
-					<Button type="submit" disabled={busy || cannotSend}>{sendLabel}</Button>
+					<Button type="submit" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
 				{/if}
 			</DialogFooter>
 		</form>

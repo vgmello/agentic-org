@@ -5,7 +5,7 @@ import type { WorkApi } from './api';
 import type { WorkCall } from './engine';
 
 export const workApi: WorkApi = Object.freeze({
-	snapshot: unavailableCall, get: unavailableCall, command: unavailableCall, activity: unavailableCall, list: unavailableCall, similar: unavailableCall,
+	snapshot: unavailableCall, get: unavailableCall, command: unavailableCall, activity: unavailableCall, similar: unavailableCall,
 	requests: false
 });
 

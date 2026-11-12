@@ -635,6 +635,38 @@ test('RQS-4: the handle list belongs to the handle: it is gone once the caret le
 	await expect(dialog.getByTestId('by-at')).toBeVisible();
 });
 
+test('RQS-4: a half-typed or shared handle with words after it is not a route: it says so and Send is off until one is picked', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sa fix the build');
+	await expect(dialog.getByTestId('no-such-handle')).toContainText('@sa could be Sam Okafor');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+	await expect(dialog.locator('button[type=submit]')).toHaveAttribute('aria-describedby', 'handle-problem');
+	// Fixing the handle (a full one) clears it; so does picking someone in the list.
+	await words.fill('@sam fix the build');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await words.fill('@sa fix the build');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-4: a pick made before an unknown handle is typed does not settle it', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('do the thing');
+	await dialog.getByRole('radio').nth(1).check();
+	await words.fill('@nobody-here do the thing');
+	await expect(dialog.getByTestId('no-such-handle')).toContainText('No one called @nobody-here');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+});
+
 test('RQS-4: choosing someone in the list settles a handle nobody has: the words stay as typed and Send works', async ({ page }) => {
 	await open(page);
 	await queue(page);
@@ -663,4 +695,22 @@ test('RQS-15: when nothing is open the queue says so and offers All, instead of 
 	await expect(page.getByTestId('nothing-open')).toContainText('Nothing is open.');
 	await page.getByRole('button', { name: 'Show all requests' }).click();
 	await expect(page.getByTestId('request-row')).toHaveCount(1);
+});
+
+test('RQS-15: the State filter can show one group, and REQ-1 does not find REQ-12', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await capture(page, 'Weekly digest by email');
+	await page.getByLabel('State').selectOption({ label: 'Not routed' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await page.getByLabel('State').selectOption({ label: 'With agents' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await expect(page.getByTestId('request-row')).toContainText('Weekly digest');
+	await page.getByLabel('State').selectOption({ label: 'Needs you' });
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+	await page.getByLabel('State').selectOption({ label: 'All' });
+	await page.getByLabel('Search requests').fill('req-1');
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await expect(page.getByTestId('request-row')).toContainText('REQ-1');
 });

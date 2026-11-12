@@ -288,9 +288,21 @@ export const withHandle = (text: string, m: Member): string => text.replace(AT, 
 
 // ---- the queue's filters and search (§2) -------------------------------------------------------------------------------
 
+/** What the State filter can say: Open is the default; the groups of the queue; All. */
+export type RequestStateFilter = 'open' | RequestGroupId | 'all';
+export const STATE_FILTERS: readonly { id: RequestStateFilter; label: string }[] = [
+	{ id: 'open', label: 'Open' },
+	{ id: 'needs_you', label: 'Needs you' },
+	{ id: 'with_agents', label: 'With agents' },
+	{ id: 'not_routed', label: 'Not routed' },
+	{ id: 'approved', label: 'Approved' },
+	{ id: 'closed', label: 'Declined and merged' },
+	{ id: 'all', label: 'All' }
+];
+
 export interface RequestFilter {
-	/** Open (the default, like a to-do list): what is still going, not approved, declined or merged. */
-	state: 'all' | 'open';
+	/** Open (the default, like a to-do list): New, Routed, being scoped or Scoped. */
+	state: RequestStateFilter;
 	/** Anyone (empty), `none` (not routed), `scoped:<member id>` or `raised:<member id>`. */
 	who: string;
 	/** A project id, `none` for no project, or any. */
@@ -307,14 +319,18 @@ export const narrowed = (f: RequestFilter): boolean => f.who !== '' || f.project
 /** Whether anything differs from how the queue opens. */
 export const filterActive = (f: RequestFilter): boolean => f.state !== NO_FILTER.state || f.who !== '' || f.project !== '' || f.query.trim() !== '';
 
-/** The requests that pass the filters: the words of the search must all be in the title or the reference. */
+/** The requests that pass the filters: the words of the search must all be in the title, and a REQ-n is the number itself. */
 export function filterRequests(items: WorkItemSummary[], f: RequestFilter): WorkItemSummary[] {
 	const terms = f.query.toLowerCase().split(/\s+/).filter(Boolean);
 	return items.filter((i) => {
-		if (f.state === 'open' && !OPEN_STATUSES.includes(i.status)) return false;
+		if (f.state === 'open' ? !OPEN_STATUSES.includes(i.status) : f.state !== 'all' && groupOf(i) !== f.state) return false;
 		if (f.who === 'none' ? !!i.assignee_id : f.who.startsWith('scoped:') ? i.assignee_id !== f.who.slice(7) : f.who.startsWith('raised:') ? i.created_by !== f.who.slice(7) : false) return false;
 		if (f.project === 'none' ? !!i.project_id : f.project !== '' && i.project_id !== f.project) return false;
-		const hay = `${requestRef(i)} ${i.title}`.toLowerCase();
-		return terms.every((t) => hay.includes(t));
+		const title = i.title.toLowerCase();
+		// A request number is matched on the number itself (REQ-1 is not REQ-12); other words are looked for in the title.
+		return terms.every((t) => {
+			const number = /^req-(\d+)$/.exec(t);
+			return number ? i.number === Number(number[1]) : title.includes(t);
+		});
 	});
 }

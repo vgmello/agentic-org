@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, atName, atSpan, filterActive, filterRequests, handleFor, narrowed, NO_FILTER, withHandle, withoutHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, atSpan, filterActive, filterRequests, STATE_FILTERS, handleFor, narrowed, NO_FILTER, withHandle, withoutHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -285,6 +285,17 @@ describe('RQS-7 the queue filters', () => {
 		expect(ids({ ...all, who: 'raised:eden' })).toEqual(['d']);
 		expect(ids({ ...all, project: 'p1' })).toEqual(['a', 'c']);
 		expect(ids({ ...all, project: 'none' })).toEqual(['b', 'd']);
+	});
+
+	it('can show one group of the queue: Needs you, With agents, Not routed, Approved, Declined and merged', () => {
+		expect(STATE_FILTERS.map((s) => s.id)).toEqual(['open', 'needs_you', 'with_agents', 'not_routed', 'approved', 'closed', 'all']);
+		expect([ids({ state: 'needs_you' }), ids({ state: 'with_agents' }), ids({ state: 'not_routed' }), ids({ state: 'approved' }), ids({ state: 'closed' })]).toEqual([['c'], ['b'], ['a'], ['d'], []]);
+	});
+
+	it('matches a REQ number on the number itself, not as part of a longer one', () => {
+		const many = [req('new', { id: 'x1', number: 1, title: 'One' }), req('new', { id: 'x12', number: 12, title: 'Twelve' }), req('new', { id: 'x13', number: 13, title: 'Thirteen' })];
+		const hit = (query: string) => filterRequests(many, { ...NO_FILTER, query }).map((i) => i.id);
+		expect([hit('REQ-1'), hit('req-12'), hit('req-2'), hit('req-1 one'), hit('req-1 twelve')]).toEqual([['x1'], ['x12'], [], ['x1'], []]);
 	});
 
 	it('searches the title and the reference, every word must match, without case', () => {
