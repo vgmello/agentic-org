@@ -2,6 +2,13 @@
 # OwnedChild's explicit finalization and emergency Drop reap only their own child,
 # after group/filesystem cleanup (Drop is best effort).
 disallowed-methods = [
+  # This crate-local configuration also retains the workspace SQLCipher fence.
+  { path = "rusqlite::Connection::open", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_with_flags", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory_with_flags", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_with_flags_and_vfs", reason = "use the store opener (BUG-100 init fence)" },
+  { path = "rusqlite::Connection::open_in_memory_with_flags_and_vfs", reason = "use the store opener (BUG-100 init fence)" },
   { path = "std::process::Child::wait", reason = "exit observation must use WNOWAIT" },
   { path = "std::process::Child::try_wait", reason = "exit observation must use WNOWAIT" },
   { path = "std::process::Child::wait_with_output", reason = "the pump owns output; observation must use WNOWAIT" },

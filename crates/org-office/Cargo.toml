@@ -23,3 +23,5 @@ org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
 org-sync = { path = "../org-sync", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true
+# Use the exact already-bundled source for the barrier-controlled upstream defect probe.
+sqlcipher-src = "=419.0.6"

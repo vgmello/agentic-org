@@ -68,7 +68,7 @@ test('OFC-13: every status shows its icon and its word (the word is never replac
 	await expect(badge.locator('svg')).toHaveCount(1); // the icon really renders
 });
 
-test('while the agents are being counted the row shows a skeleton, then the count', async ({ page }) => {
+test('OFC-13 BUG-70: while the agents are being counted the row shows a skeleton, then the count', async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -76,6 +76,7 @@ test('while the agents are being counted the row shows a skeleton, then the coun
 	await visit(page, '/offices?org=slow');
 	await expect(rows(page)).toHaveCount(1); // the list doesn't wait
 	await expect(page.getByTestId('count-skeleton')).toBeVisible();
+	await shot(page, 'of2-count-loading', { context: rows(page).first(), settle: false });
 	await expect(rows(page).first().getByRole('button')).toHaveAccessibleName(/^HQ, HQ, This Mac \(you're here\), [^,]+, opens details$/); // no count in it yet
 	await expect(page.getByTestId('count-skeleton')).toHaveCount(0, { timeout: 10_000 });
 	await expect(rows(page).first().getByTestId('agent-count')).toContainText('7 agents');
@@ -115,7 +116,7 @@ test('Unplaced agents are a group with a disabled Place… that says why', async
 	await expect(place).toHaveAccessibleDescription('Placing agents is available in a later release.');
 });
 
-test('a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', async ({ page }) => {
+test('OFC-13 BUG-70: a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -123,6 +124,7 @@ test('a failure to count agents keeps the list and shows an in-page error with R
 	await visit(page, '/offices?org=fails');
 	await expect(rows(page)).toHaveCount(1); // the list is there
 	await expect(page.getByTestId('count-error')).toContainText("Can't count agents right now: The office couldn't read its storage.");
+	await shot(page, 'of2-count-error', { context: rows(page).first() });
 	await expect(page.getByRole('link', { name: /Offices/ }).first()).toBeVisible(); // the window around it is intact
 	await expect(rows(page).first().getByTestId('agent-count')).not.toContainText('agents');
 	await expect(page.getByTestId('unplaced-note')).toHaveCount(0);
@@ -217,7 +219,7 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	// The row name contains its visible countdown; the separate live-status announcement stays stable.
 	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
 	expect(label).toContain("This Mac");
-	expect(label).toContain(await hq.locator('button[aria-haspopup] > span').nth(1).innerText());
+	expect(label).toContain(await hq.getByTestId('office-location').innerText());
 });
 
 test('OFC-11: Restart office brings a crashed office back, and the row reads Online', { tag: '@journey' }, async ({ page }) => {
@@ -464,13 +466,13 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 		return [...new Set(log.seconds)];
 	});
 	expect(written).toEqual([40]);
-	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByRole('button').locator(':scope > span').nth(1).innerText()));
+	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByTestId('office-location').innerText()));
 	await page.clock.setSystemTime(new Date(current + 2_000));
 	await pushOffice(page, pending); // The same deadline is reported again before a tick.
 	await expect(row).toContainText('Restarting in 40 s');
 	await page.clock.runFor(10_000);
 	await expect(row).toContainText('Restarting in 30 s');
-	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByRole('button').locator(':scope > span').nth(1).innerText()));
+	await expect(row.getByRole('button')).toHaveAccessibleName(literal(await row.getByTestId('office-location').innerText()));
 
 	const observed = await page.evaluate(() => Date.now());
 	const later = { ...pending, next_restart_at: new Date(observed + 60_000).toISOString() };
@@ -482,7 +484,7 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await page.clock.setSystemTime(new Date(observed + 2_000));
 	await pushOffice(page, later);
 	await expect(row).toContainText('Restarting in 50 s');
-	await expect(opener).toHaveAccessibleName(literal(await opener.locator(':scope > span').nth(1).innerText()));
+	await expect(opener).toHaveAccessibleName(literal(await opener.getByTestId('office-location').innerText()));
 });
 
 test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', async ({ page }) => {
@@ -812,7 +814,7 @@ test('OFC-13 BUG-70 BUG-81: the row accessible name contains its visible locatio
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
 	const opener = rows(page).first().locator('button[aria-haspopup]');
-	const visible = await opener.locator(':scope > span').nth(1).innerText();
+	const visible = await opener.getByTestId('office-location').innerText();
 	await shot(page, 'of1-visible-row-name', { context: rows(page).first() });
 	await expect(opener).toHaveAccessibleName(literal(visible));
 });
@@ -828,11 +830,11 @@ for (const seconds of [45, 60]) {
 		const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
 		await expect(row).toContainText(`Restarting in ${seconds === 45 ? 40 : 60} s`);
 		await shot(page, `of1-visible-countdown-${seconds}`, { settle: false, context: row });
-		const visible = await opener.locator(':scope > span').nth(1).innerText();
+		const visible = await opener.getByTestId('office-location').innerText();
 		await expect(opener).toHaveAccessibleName(literal(visible));
 		const announcement = await page.getByTestId('live-status').textContent();
 		await page.clock.runFor(10_000);
-		await expect(opener).toHaveAccessibleName(literal(await opener.locator(':scope > span').nth(1).innerText()));
+		await expect(opener).toHaveAccessibleName(literal(await opener.getByTestId('office-location').innerText()));
 		await expect(page.getByTestId('live-status')).toHaveText(announcement!);
 	});
 }
@@ -848,7 +850,7 @@ test('OFC-1 OFC-13 BUG-70 OF-2 OF-3 OF-4 OF-5: Offices and Unplaced use flat qui
 	await expect(rows(page).first()).toHaveCSS('padding-left', '32px');
 	const normalRow = rows(page).first();
 	expect(await normalRow.evaluate(element => {
-	 const pill = element.querySelector('[data-status-icon]')!.getBoundingClientRect(), chevron = element.querySelector('[data-status-icon]')!.parentElement!.querySelector(':scope > svg')!.getBoundingClientRect();
+	 const pill = element.querySelector('[data-status-icon]')!.getBoundingClientRect(), chevron = element.querySelector(':scope > svg')!.getBoundingClientRect();
 	 return Math.abs((pill.top + pill.bottom) / 2 - (chevron.top + chevron.bottom) / 2);
 	})).toBeLessThanOrEqual(1);
 	await expect(rows(page).first().locator(':scope > span[aria-hidden=true]').filter({ hasText: /^HQ$/ })).toHaveCount(0);
@@ -884,6 +886,7 @@ test('OFC-1 OFC-13 BUG-70 OF-2 OF-3: office title keeps HQ only for a named HQ a
 	const ring = opener.locator(':scope > .absolute');
 	await expect(ring).toHaveCSS('outline-style', 'solid');
 	await expect(ring).toHaveCSS('outline-width', '2px');
+	await expect(opener).toHaveCSS('outline-style', 'none');
 	await opener.press('Enter');
 	await expect(page.getByRole('dialog')).toBeVisible();
 	await page.keyboard.press('Escape');
@@ -931,8 +934,8 @@ async function expectReadableOfficeName(row: Locator) {
 
 async function expectFullStatusWord(row: Locator, chevronOnNextLine = false) {
  const geometry = await row.evaluate(element => {
-  const pill = element.querySelector('[data-status-icon]')!, label = pill.lastElementChild!, group = pill.parentElement!;
-  const css = getComputedStyle(element), chevron = group.querySelector(':scope > svg')!;
+  const pill = element.querySelector('[data-status-icon]')!, label = pill.lastElementChild!, group = element.querySelector('[data-testid=office-actions]')!;
+  const css = getComputedStyle(element), chevron = element.querySelector(':scope > svg')!;
   const box = element.getBoundingClientRect(), arrow = chevron.getBoundingClientRect();
   return { rootFont: getComputedStyle(document.documentElement).fontSize, rowWidth: box.width, paddingLeft: css.paddingLeft, paddingRight: css.paddingRight, labelWidth: label.clientWidth, labelScroll: label.scrollWidth, pillBottom: pill.getBoundingClientRect().bottom, chevronTop: arrow.top, chevronEndGap: box.right - parseFloat(css.paddingRight) - arrow.right, chevronWidth: arrow.width, chevronFits: arrow.left >= box.left && arrow.right <= box.right, rowFits: element.scrollWidth <= element.clientWidth };
  });
@@ -1063,7 +1066,7 @@ test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a n
  await expectReadableOfficeName(row);
  const opener = row.locator('button[aria-haspopup]');
  await expect(row.getByRole('button')).toHaveCount(1);
- const arrow = await row.locator('[data-status-icon]').locator('..').locator(':scope > svg').boundingBox();
+ const arrow = await row.locator(':scope > svg').boundingBox();
  expect(arrow).not.toBeNull();
  await page.mouse.click(arrow!.x + arrow!.width / 2, arrow!.y + arrow!.height / 2);
  await expect(page.getByRole('dialog')).toBeVisible();
@@ -1112,8 +1115,9 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 		expect((await row.boundingBox())!.width).toBeCloseTo(column, 0);
 		await expectReadableOfficeName(row);
 		await expectVisibleStatusText(row);
-		const group = row.locator('[data-status-icon]').locator('..');
-		await expect(group).toHaveCSS('flex-wrap', offset < 0 ? 'wrap' : 'nowrap');
+		const group = row.getByTestId('office-actions');
+		await expect(group).toHaveCSS('flex-wrap', 'wrap');
+		await expect(row).toHaveCSS('column-gap', `${offset < 0 ? rootFont / 2 : rootFont}px`);
 		const gutter = offset < 0 ? Math.min(rootFont, column * 0.05) : rootFont * (rootFont === 16 ? 1 : 2);
 		await expect(row).toHaveCSS('padding-left', `${gutter}px`);
 		await expect(page.getByTestId('unplaced-note').getByRole('listitem')).toHaveCSS('padding-left', `${gutter}px`);
@@ -1121,11 +1125,12 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 			await expectFullStatusWord(row);
 			const layout = await row.evaluate(element => {
 				const button = element.querySelector('button[aria-haspopup]')!.getBoundingClientRect();
-				const group = element.querySelector('[data-status-icon]')!.parentElement!.getBoundingClientRect();
+				const group = element.querySelector('[data-testid=office-actions]')!.getBoundingClientRect();
 				return { buttonBottom: button.bottom, groupTop: group.top, groupWidth: group.width, buttonWidth: button.width };
 			});
 			expect(layout.groupTop).toBeGreaterThanOrEqual(layout.buttonBottom);
-			expect(layout.groupWidth).toBeCloseTo(layout.buttonWidth, 0);
+			expect(layout.groupWidth).toBeGreaterThan(0);
+			expect(layout.groupWidth).toBeLessThanOrEqual(layout.buttonWidth);
 		}
 		expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 	});
@@ -1152,5 +1157,181 @@ for (const rootFont of [20, 40]) for (const width of [300, 304, 960]) {
 		await expectVisibleStatusText(row);
 		await expectFullStatusWord(row, width === 960 && rootFont === 40);
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+	});
+}
+
+
+async function expectTrailingOfficeChevron(row: Locator, retryExpected: boolean, mayWrap = false) {
+	expect(await row.locator('[data-status-icon]').evaluate(e => e.closest('[aria-hidden="true"]'))).not.toBeNull();
+	await expect(row.locator(':scope > svg')).toHaveAttribute('aria-hidden', 'true');
+	await expect(row.getByTestId('retry-office')).toHaveCount(retryExpected ? 1 : 0);
+	if (retryExpected) {
+		await expect(row.getByRole('button', { name: /Retry/ })).toHaveCount(1);
+		expect(await row.getByTestId('retry-office').evaluate(e => e.closest('[aria-hidden="true"]'))).toBeNull();
+	}
+	const layout = await row.evaluate(element => {
+		const pill = element.querySelector('[data-status-icon]')!, group = element.querySelector('[data-testid=office-actions]')!, arrow = element.querySelector(':scope > svg')!;
+		const retry = element.querySelector('[data-testid=retry-office]');
+		const box = element.getBoundingClientRect(), status = pill.getBoundingClientRect(), end = arrow.getBoundingClientRect(), pair = group.getBoundingClientRect();
+		const css = getComputedStyle(element);
+		return { rowStart: box.left + parseFloat(css.paddingLeft), rowEnd: box.right - parseFloat(css.paddingRight), rowBottom: box.bottom, gap: parseFloat(css.columnGap), pairStart: pair.left, pairEnd: pair.right, pairWidth: pair.width, pairBottom: pair.bottom, pillStart: status.left, pillEnd: status.right, pillBottom: status.bottom, pillMid: (status.top + status.bottom) / 2, arrowStart: end.left, arrowEnd: end.right, arrowTop: end.top, arrowBottom: end.bottom, arrowWidth: end.width, arrowMid: (end.top + end.bottom) / 2, last: element.lastElementChild === arrow, retry: retry ? { left: retry.getBoundingClientRect().left, right: retry.getBoundingClientRect().right, top: retry.getBoundingClientRect().top, mid: (retry.getBoundingClientRect().top + retry.getBoundingClientRect().bottom) / 2, width: retry.getBoundingClientRect().width, height: retry.getBoundingClientRect().height } : null };
+	});
+	expect(layout.last).toBe(true);
+	expect(layout.arrowEnd, JSON.stringify(layout)).toBeCloseTo(layout.rowEnd, 0);
+	expect(layout.arrowBottom).toBeLessThanOrEqual(layout.rowBottom);
+	const fits = layout.pairWidth + layout.gap + layout.arrowWidth <= layout.rowEnd - layout.rowStart + 0.5;
+	if (!mayWrap || fits) {
+		expect(Math.abs(layout.arrowMid - layout.pillMid), JSON.stringify(layout)).toBeLessThanOrEqual(1);
+		expect(layout.arrowStart).toBeGreaterThanOrEqual(layout.pillEnd);
+		expect(layout.arrowStart - layout.pairEnd).toBeCloseTo(layout.gap, 0);
+	} else expect(layout.arrowTop, JSON.stringify(layout)).toBeGreaterThanOrEqual(layout.pairBottom);
+	if (layout.retry) {
+		expect(layout.retry.width).toBeGreaterThanOrEqual(24);
+		expect(layout.retry.height).toBeGreaterThanOrEqual(24);
+		expect(layout.retry.left).toBeGreaterThanOrEqual(layout.rowStart);
+		expect(layout.retry.right).toBeLessThanOrEqual(layout.rowEnd);
+		if (layout.retry.top >= layout.pillBottom) expect(layout.retry.left).toBeCloseTo(layout.pairStart, 0);
+		else expect(layout.retry.left).toBeGreaterThanOrEqual(layout.pillEnd);
+	}
+	await expectReadableOfficeName(row);
+	await expectVisibleStatusText(row);
+}
+
+for (const width of [390, 1280]) {
+	test(`OFC-12 BUG-70 BUG-127 BUG-128: pill then Retry then chevron end-aligned at ${width}px`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 900 });
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await shot(page, `of2-online-order-${width}`, { context: row });
+		await expectTrailingOfficeChevron(row, false);
+		await visit(page, '/offices?mock=unreachable');
+		await expect(row).toContainText('Unreachable');
+		await shot(page, `of2-unreachable-order-${width}`, { context: row });
+		await expectTrailingOfficeChevron(row, true);
+		const retry = row.getByTestId('retry-office');
+		await retry.focus();
+		await retry.press('Enter');
+		await expect(retry).toHaveText('Retrying…');
+		await expect(retry).toBeFocused();
+		await expect(page.getByRole('dialog')).toHaveCount(0);
+		await shot(page, `of2-retrying-order-${width}`, { context: row });
+		await expectTrailingOfficeChevron(row, true);
+		await expect(retry).toHaveText('Retry');
+	});
+}
+
+for (const [width, rootFont] of [[1280, 16], [320, 32]] as const) {
+	test(`OFC-13 BUG-70 BUG-128: meta facts have no orphan separator at ${width}px root${rootFont}`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 1100 });
+		await openOffices(page);
+		const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
+		await expect(row).toContainText('Online');
+		await page.addStyleTag({ content: `html { font-size: ${rootFont}px !important; }` });
+		await pushOffice(page, { host: 'different-reported-machine.local', endpoint: '/tmp/test-owned-office.sock', status: 'unavailable', status_reason: 'unsupported_version' });
+		await expect(row).toContainText('The release components');
+		await shot(page, `of2-meta-${width}-${rootFont}`, { context: row });
+		const lines = await opener.evaluate(element => {
+			const title = element.firstElementChild!, walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+			const lines: { top: number; text: string }[] = [];
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+				if (title.contains(node)) continue;
+				for (let i = 0; i < (node.textContent?.length ?? 0); i++) {
+					const char = node.textContent![i]; if (!char.trim()) continue;
+					const range = document.createRange(); range.setStart(node, i); range.setEnd(node, i + 1);
+					const rect = range.getBoundingClientRect(); if (rect.width <= 0) continue;
+					const line = lines.find(line => Math.abs(line.top - rect.top) < 2);
+					if (line) line.text += char; else lines.push({ top: rect.top, text: char });
+				}
+			}
+			return lines.map(line => line.text);
+		});
+		expect(lines.length).toBeGreaterThan(0);
+		for (const line of lines) expect(line, JSON.stringify(lines)).not.toMatch(/^·|·$/);
+		const count = row.getByTestId('agent-count');
+		await expect(count).toHaveText('7 agents');
+		expect(await count.evaluate(element => {
+			const range = document.createRange(); range.selectNodeContents(element);
+			return new Set(Array.from(range.getClientRects(), r => Math.round(r.top))).size;
+		})).toBe(1);
+	});
+}
+
+for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
+	test(`OFC-13 BUG-70 BUG-128: header and row share gutter ${offset < 0 ? 'inside' : 'outside'} compact at root${rootFont}`, async ({ page }) => {
+		const column = 21 * rootFont + offset, sidebar = rootFont === 16 ? 0 : 18 * rootFont;
+		await page.setViewportSize({ width: column + sidebar, height: 1100 });
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await page.addStyleTag({ content: `html { font-size: ${rootFont}px !important; }` });
+		await shot(page, `of2-gutter-${rootFont}-${offset}`, { context: row });
+		const intro = page.getByText("Where Acme's agents run. HQ keeps the records and approves new offices; other offices keep a copy.", { exact: true });
+		const header = (await intro.boundingBox())!, button = (await row.locator('button[aria-haspopup]').boundingBox())!;
+		expect((await row.boundingBox())!.width).toBeCloseTo(column, 0);
+		expect((await row.boundingBox())!.x).toBeCloseTo(sidebar, 0);
+		expect(header.x).toBeCloseTo(button.x, 0);
+		const expected = offset < 0 ? Math.min(rootFont, column * 0.05) : rootFont * (rootFont === 16 ? 1 : 2);
+		const unplaced = page.getByTestId('unplaced-note').getByRole('listitem');
+		expect((await unplaced.boundingBox())!.width).toBeCloseTo(column, 0);
+		expect((await unplaced.boundingBox())!.x).toBeCloseTo(sidebar, 0);
+		expect(button.x - (await row.boundingBox())!.x).toBeCloseTo(expected, 1);
+		expect(header.x - (await row.boundingBox())!.x).toBeCloseTo(expected, 1);
+	});
+}
+
+
+for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
+	test(`OFC-13 BUG-70 BUG-127 BUG-128: compact ${status} preserves its full word before the decorative chevron fallback at 320px and 200%`, async ({ page }) => {
+		await page.setViewportSize({ width: 320, height: 1100 });
+		await openOffices(page);
+		await expect(rows(page).first()).toContainText('Online');
+		if (status === 'Unreachable') await visit(page, '/offices?mock=unreachable');
+		else if (status === 'Update needed') await pushOffice(page, { status: 'update_needed' });
+		else await page.evaluate(async () => {
+			const path = '/e2e/fakes/office-api.ts';
+			const { officeApi } = await import(path);
+			const connection = (await officeApi.connections()).at(-1)!;
+			(window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus({ kind: 'offices', offices: [connection.office, { ...connection.office, id: 'remote-status', name: 'Studio', host: 'studio.local', endpoint: undefined, role: 'satellite' }] });
+		});
+		const row = status === 'Status unknown' ? rows(page).filter({ hasText: 'Studio' }) : rows(page).first();
+		await expect(row.locator('[data-status-icon]')).toHaveText(status);
+		await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+		await shot(page, `of2-compact-${status.replaceAll(' ', '-')}`, { context: row });
+		expect((await row.boundingBox())!.width).toBeCloseTo(320, 0);
+		expect((await row.boundingBox())!.x).toBeCloseTo(0, 0);
+		await expectTrailingOfficeChevron(row, status === 'Unreachable', true);
+		await expectFullStatusWord(row);
+		await expect(row.locator('button[aria-haspopup]')).toHaveAccessibleName(literal(status));
+		expect(await row.evaluate(e => e.scrollWidth <= e.clientWidth)).toBe(true);
+	});
+}
+
+
+for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
+	test(`OFC-13 BUG-70 BUG-119: full ${status} at 960px and 40px root awaits the shell fix`, async ({ page }) => {
+		await page.setViewportSize({ width: 960, height: 1100 });
+		await openOffices(page);
+		await expect(rows(page).first()).toContainText('Online');
+		if (status === 'Unreachable') await visit(page, '/offices?mock=unreachable');
+		else if (status === 'Update needed') await pushOffice(page, { status: 'update_needed' });
+		else await page.evaluate(async () => {
+			const path = '/e2e/fakes/office-api.ts';
+			const { officeApi } = await import(path);
+			const connection = (await officeApi.connections()).at(-1)!;
+			(window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus({ kind: 'offices', offices: [connection.office, { ...connection.office, id: 'remote-status', name: 'Studio', host: 'studio.local', endpoint: undefined, role: 'satellite' }] });
+		});
+		const row = status === 'Status unknown' ? rows(page).filter({ hasText: 'Studio' }) : rows(page).first();
+		const badge = row.locator('[data-status-icon]'), label = badge.locator(':scope > span').last();
+		await expect(badge).toHaveText(status);
+		await page.addStyleTag({ content: 'html { font-size: 40px !important; }' });
+		await expect(row.locator('button[aria-haspopup]')).toHaveAccessibleName(literal(status));
+		await expect(label).toHaveAttribute('title', status);
+		await shot(page, `of2-bug119-${status.replaceAll(' ', '-')}`, { context: row });
+		const text = await label.evaluate(e => ({ width: e.clientWidth, natural: e.scrollWidth }));
+		expect(text.width).toBeGreaterThan(0);
+		// Ada01M77C980: preserve the deferred full-word requirement, not a silent pass.
+		test.fail(true, 'BUG-119: shell leaves too little content width at 960px/root40; remove once fixed.');
+		expect(text.width, JSON.stringify(text)).toBe(text.natural);
 	});
 }
