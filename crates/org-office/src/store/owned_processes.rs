@@ -198,9 +198,10 @@ pub(crate) fn checkpoint(
     if row.mark != mark {
         return Err(STALE);
     }
-    let has = |saved: &SavedTarget| inventory.iter().any(|t| t.identity == saved.identity);
-    if !row.inventory.iter().all(has) {
-        return Err(OfficeError::Invalid("the inventory omits a saved entry"));
+    if !row.inventory.iter().all(|saved| inventory.contains(saved)) {
+        return Err(OfficeError::Invalid(
+            "the inventory omits or changes a saved entry",
+        ));
     }
     missed(deadline)?;
     db.execute(

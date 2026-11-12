@@ -203,19 +203,15 @@ fn a_checkpoint_keeps_the_union_across_a_restart() {
     office
         .checkpoint_owned_inventory(key, "m1", &[target(2), target(3)], later())
         .unwrap();
-    // The same identities again, reordered and with new ancestry, are still the union.
-    let moved = SavedTarget {
-        ancestry: vec![],
-        ..target(2)
-    };
+    // The same entries again, reordered, are still the union.
     office
-        .checkpoint_owned_inventory(key, "m1", &[target(3), moved.clone()], later())
+        .checkpoint_owned_inventory(key, "m1", &[target(3), target(2)], later())
         .unwrap();
     drop(office);
     let office = reopen(&dir);
     let rows = office.pending_owned_processes().unwrap();
     assert_eq!((rows.len(), rows[0].key), (1, key));
-    assert_eq!(rows[0].inventory, [target(3), moved]);
+    assert_eq!(rows[0].inventory, [target(3), target(2)]);
 }
 
 #[test]
@@ -236,6 +232,20 @@ fn a_checkpoint_refuses_omissions_stale_keys_and_marks_and_a_passed_deadline() {
     let all = [target(2), target(3), target(4)];
     let refusals = [
         office.checkpoint_owned_inventory(key, "m1", &[target(3), target(4)], later()),
+        // A saved entry re-sent with other ancestry is a changed entry, not a union.
+        office.checkpoint_owned_inventory(
+            key,
+            "m1",
+            &[
+                target(2),
+                SavedTarget {
+                    ancestry: vec![],
+                    ..target(3)
+                },
+                target(4),
+            ],
+            later(),
+        ),
         office.checkpoint_owned_inventory(key, "m2", &all, later()),
         office.checkpoint_owned_inventory(stale, "m1", &all, later()),
         office.checkpoint_owned_inventory(missing, "m1", &all, later()),

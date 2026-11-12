@@ -101,10 +101,10 @@ impl Office {
     }
 
     /// Stores `inventory` for the row `key` with `mark`, durably (synchronous FULL) before
-    /// returning. It must hold every saved identity, so the row only grows by identity; a saved
-    /// identity's ancestry is replaced by the one given. The caller validated `inventory` with
-    /// `RecoveryRecord::with_inventory` (the 256 cap). Refused, nothing written: a stale key or
-    /// mark, a missing saved identity, or `deadline` passed when the write is about to be made
+    /// returning. It must hold every saved entry unchanged (identity and ancestry), so the row
+    /// only grows. The caller validated `inventory` with `RecoveryRecord::with_inventory` (the
+    /// 256 cap). Refused, nothing written: a stale key or mark, a saved entry missing or with
+    /// other ancestry, or `deadline` passed when the write is about to be made
     /// (`TimedOut`). A commit that finishes after `deadline` also answers `TimedOut`, but
     /// committed: ambiguous, like every error here.
     pub fn checkpoint_owned_inventory(
