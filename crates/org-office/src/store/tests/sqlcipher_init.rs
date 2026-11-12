@@ -1,3 +1,6 @@
+#[path = "opener_policy.rs"]
+mod opener_policy;
+
 use super::*;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -122,9 +125,9 @@ fn sqlcipher_key_errors_keep_only_the_extended_code_and_never_key_text() {
 
 #[test]
 fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
-    let source = rust_code(include_str!("../../store.rs"));
-    let initializer = &source[source.find("pubfn sqlcipher_ready()").unwrap()
-        ..source.find("fn initialize_sqlcipher(").unwrap()];
+    let raw = include_str!("../../store.rs");
+    let source = rust_code(raw);
+    let initializer = rust_code(opener_policy::function(raw, "sqlcipher_ready").body);
     assert!(source.contains("staticREADY:OnceLock<Result<(),String>>"));
     assert!(
         initializer.find("initialized(&READY").unwrap()
@@ -134,7 +137,12 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
         ("fn connect(", "Connection::open_with_flags"),
         ("fn connection_for_test(", "Connection::open("),
     ] {
-        let body = &source[source.find(function).unwrap()..];
+        let name = function
+            .strip_prefix("fn ")
+            .unwrap()
+            .strip_suffix('(')
+            .unwrap();
+        let body = rust_code(opener_policy::function(raw, name).body);
         assert!(body.find("sqlcipher_ready()?").unwrap() < body.find(open).unwrap());
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -162,19 +170,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
                 .is_some_and(|extension| extension == "rs")
             {
                 let source = std::fs::read_to_string(entry.path()).unwrap();
-                let compact = rust_code(&source);
-                let relative = entry.path().strip_prefix(root).unwrap().to_owned();
-                override_policy(&relative, &compact);
-                // No unsafe SQLite opener is needed by the current Rust fence. Check
-                // identifiers (including aliased imports), not only qualified calls.
-                for (stem, suffix) in [("sqlite3", "_open"), ("from", "_handle")] {
-                    let opener = format!("{stem}{suffix}");
-                    assert!(
-                        !compact.contains(&opener),
-                        "{} bypasses the SQLite init fence with {opener}",
-                        entry.path().display()
-                    );
-                }
+                check_rust_file(root, &entry.path(), &source);
             } else if opener_policy_config(&entry.path()) {
                 check_opener_config(
                     &entry.path(),
@@ -183,20 +179,7 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
             } else if name == "clippy.toml" || name == ".clippy.toml" {
                 configs += 1;
                 let config = std::fs::read_to_string(entry.path()).unwrap();
-                for method in [
-                    "open",
-                    "open_with_flags",
-                    "open_in_memory",
-                    "open_in_memory_with_flags",
-                    "open_with_flags_and_vfs",
-                    "open_in_memory_with_flags_and_vfs",
-                ] {
-                    assert!(
-                        config.contains(&format!("path = \"rusqlite::Connection::{method}\"")),
-                        "{} drops the init fence",
-                        entry.path().display()
-                    );
-                }
+                opener_policy::clippy(&config);
             }
         }
     }
@@ -461,6 +444,23 @@ fn rust_code(source: &str) -> String {
     code
 }
 
+fn check_rust_file(root: &Path, path: &Path, source: &str) {
+    opener_policy::modules(root, path, source);
+    let compact = rust_code(source);
+    let relative = path.strip_prefix(root).unwrap().to_owned();
+    override_policy(&relative, source);
+    // No unsafe SQLite opener is needed by the current Rust fence. Check
+    // identifiers (including aliased imports), not only qualified calls.
+    for (stem, suffix) in [("sqlite3", "_open"), ("from", "_handle")] {
+        let opener = format!("{stem}{suffix}");
+        assert!(
+            !compact.contains(&opener),
+            "{} bypasses the SQLite init fence with {opener}",
+            path.display()
+        );
+    }
+}
+
 fn skip_policy_directory(relative: &Path) -> bool {
     // Generated/dependency trees are irrelevant, but a source module may legally
     // be named build, dist or target. Never omit a directory beneath src.
@@ -485,8 +485,8 @@ fn opener_policy_config(path: &Path) -> bool {
 
 fn check_opener_config(path: &Path, config: &str) {
     assert!(
-        !config.contains("disallowed_method"),
-        "{} overrides the SQLCipher opener lint through Cargo configuration",
+        std::panic::catch_unwind(|| opener_policy::config(config)).is_ok(),
+        "{} weakens the SQLCipher opener policy",
         path.display()
     );
 }
@@ -565,7 +565,9 @@ fn sqlcipher_override_policy_rejects_renamed_lint_and_preserves_exact_exceptions
     }
 }
 
-fn override_policy(path: &Path, code: &str) {
+fn override_policy(path: &Path, source: &str) {
+    let compact = rust_code(source);
+    let code = compact.as_str();
     reject_lint_groups(path, code);
     let lint = "disallowed_method";
     if path == Path::new("crates/org-office/src/store.rs") {
@@ -581,7 +583,7 @@ fn override_policy(path: &Path, code: &str) {
         );
         let plain = format!("#[allow(clippy::{lint}s)]");
         for (function, statement) in office_opener_statements() {
-            require_exception_statement(code, function, &plain, statement);
+            require_exception_statement(source, function, &plain, statement);
         }
         assert!(code.contains("#[cfg(test)]fn connection_for_test("));
     } else if path == Path::new("crates/org-supervise/src/lib.rs") {
@@ -590,7 +592,7 @@ fn override_policy(path: &Path, code: &str) {
     } else if path == Path::new("crates/org-supervise/src/spawn.rs") {
         // Preserve the existing test-only Command::status exception, not a SQL opener.
         assert_eq!(code.matches(lint).count(), 1);
-        require_exception_statement(code,
+        require_exception_statement(source,
             "fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec(",
             &format!("#[expect(clippy::{lint}s,reason=)]"),
             "letstatus=std::process::Command::new().env_clear().args([,,,]).args(descriptors.map(|fd|fd.to_string())).status().unwrap();");
@@ -608,7 +610,7 @@ fn override_policy(path: &Path, code: &str) {
             "host override identifier count"
         );
         require_exception_statement(
-            code,
+            source,
             function,
             &format!("#[allow(clippy::{lint}s)]"),
             statement,
@@ -662,10 +664,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
     // The existing unrelated child-exec exception stays legal, and quoted/comment
     // lookalikes cannot satisfy a fence-order check or invent an override.
     let child = format!("#[test] fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec() {{ #[expect(clippy::{lint}, reason = \"test-only exec\")] let status = std::process::Command::new(\"/bin/sh\").env_clear().args([\"-c\",\"payload\",\"check\",]).args(descriptors.map(|fd|fd.to_string())).status().unwrap(); }}");
-    override_policy(
-        Path::new("crates/org-supervise/src/spawn.rs"),
-        &rust_code(&child),
-    );
+    override_policy(Path::new("crates/org-supervise/src/spawn.rs"), &child);
     override_policy(
         Path::new("crates/org-supervise/src/lib.rs"),
         &rust_code(&format!("#![deny(clippy::{lint})]")),
@@ -676,7 +675,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
             "crates/org-supervise/src/lib.rs",
             format!("#![deny(clippy::{lint})]"),
         ),
-        ("crates/org-supervise/src/spawn.rs", rust_code(&child)),
+        ("crates/org-supervise/src/spawn.rs", child.clone()),
     ] {
         let extra = format!("{approved}#[allow(clippy::disallowed_method)]fn extra(){{}}");
         assert!(std::panic::catch_unwind(|| override_policy(Path::new(path), &extra)).is_err());
@@ -706,10 +705,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
             format!("{child} fn bypass() {{ rusqlite::Connection::open(); }}"),
         ),
     ] {
-        assert!(
-            std::panic::catch_unwind(|| override_policy(Path::new(path), &rust_code(&source)))
-                .is_err()
-        );
+        assert!(std::panic::catch_unwind(|| override_policy(Path::new(path), &source)).is_err());
     }
     assert_eq!(
         rust_code(
@@ -991,58 +987,52 @@ fn sqlcipher_probe_compiler_honors_explicit_paths_without_shell_parsing() {
 fn office_opener_statements() -> [(&'static str, &'static str); 3] {
     [
         (
-            "pubfn sqlcipher_ready(",
+            "sqlcipher_ready",
             "letdb=Connection::open_in_memory().map_err(key_failure_reason)?;",
         ),
         (
-            "fn connect(",
+            "connect",
             "letdb=Connection::open_with_flags(db_path,flags).map_err(OfficeError::storage)?;",
         ),
         (
-            "fn connection_for_test(",
+            "connection_for_test",
             "letdb=Connection::open(path).map_err(OfficeError::storage)?;",
         ),
     ]
 }
-fn function_body<'a>(code: &'a str, function: &str) -> &'a str {
-    let start = code
-        .find(function)
-        .expect("exception's approved function is missing");
-    let open = start + code[start..].find('{').unwrap();
-    let mut depth = 0;
-    for (index, c) in code[open..].char_indices() {
-        if c == '{' {
-            depth += 1;
-        } else if c == '}' {
-            depth -= 1;
-            if depth == 0 {
-                return &code[open + 1..open + index];
-            }
-        }
-    }
-    panic!("unterminated function body")
-}
-fn require_exception_statement(code: &str, function: &str, attribute: &str, statement: &str) {
-    let body = function_body(code, function);
+fn require_exception_statement(source: &str, function: &str, attribute: &str, statement: &str) {
+    let name = function
+        .strip_prefix("pub(super)fn ")
+        .or_else(|| function.strip_prefix("pubfn "))
+        .or_else(|| function.strip_prefix("fn "))
+        .unwrap_or(function)
+        .trim_end_matches('(');
+    let function = opener_policy::function(source, name);
     assert_eq!(
-        body.matches(attribute).count(),
+        rust_code(function.body).matches(attribute).count(),
         1,
         "exception escaped its approved function"
     );
-    assert!(
-        body.contains(&format!("{attribute}{statement}")),
-        "exception escaped its approved statement in {function}"
+    assert_eq!(
+        function
+            .statements
+            .iter()
+            .filter(|candidate| rust_code(candidate) == format!("{attribute}{statement}"))
+            .count(),
+        1,
+        "exception escaped its approved statement in {name}"
     );
 }
+
 fn office_policy_fixture(attribute: &str) -> String {
     office_opener_statements()
         .map(|(function, statement)| {
-            let prefix = if function == "fn connection_for_test(" {
+            let prefix = if function == "connection_for_test" {
                 "#[cfg(test)]"
             } else {
                 ""
             };
-            format!("{prefix}{function}){{{attribute}{statement}}}")
+            format!("{prefix}fn {function}(){{{attribute}{statement}}}")
         })
         .join("")
 }
@@ -1059,24 +1049,8 @@ fn reject_lint_groups(path: &Path, code: &str) {
         for keyword in ["allow(", "expect(", "warn("] {
             for parameters in attribute.split(keyword).skip(1) {
                 for lint in parameters.split(')').next().unwrap().split(',') {
-                    let lint = lint.replace("r#", "");
                     assert!(
-                        ![
-                            "warnings",
-                            "renamed_and_removed_lints",
-                            "clippy",
-                            "clippy::all",
-                            "clippy::restriction",
-                            "clippy::pedantic",
-                            "clippy::nursery",
-                            "clippy::cargo",
-                            "clippy::style",
-                            "clippy::correctness",
-                            "clippy::suspicious",
-                            "clippy::complexity",
-                            "clippy::perf"
-                        ]
-                        .contains(&lint.as_str()),
+                        !opener_policy::lint_group(lint),
                         "{} has a broad lint override that can hide an opener",
                         path.display()
                     );
@@ -1113,9 +1087,7 @@ fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
             format!("#[expect(dead_code,{group},reason=\"test\")] mod store;"),
             format!("#[cfg_attr(test,allow(dead_code,{group}))] mod store;"),
         ] {
-            assert!(
-                std::panic::catch_unwind(|| override_policy(file, &rust_code(&source))).is_err()
-            );
+            assert!(std::panic::catch_unwind(|| override_policy(file, &source)).is_err());
         }
     }
     override_policy(
@@ -1133,7 +1105,11 @@ fn sqlcipher_policy_rejects_effective_lint_groups_and_widened_scopes() {
     for (function, statement) in office_opener_statements() {
         let moved = code
             .replacen(&format!("{plain}{statement}"), statement, 1)
-            .replacen(function, &format!("{plain}{function}"), 1);
+            .replacen(
+                &format!("fn {function}("),
+                &format!("{plain}fn {function}("),
+                1,
+            );
         assert!(std::panic::catch_unwind(|| override_policy(
             Path::new("crates/org-office/src/store.rs"),
             &moved
@@ -1164,6 +1140,7 @@ fn sqlcipher_exception_statement_requires_one_attribute_on_the_named_statement()
     for code in [
         format!("fn allowed(){{{attr}letx=op();{attr}lety=op();}}"),
         format!("fn allowed(){{{attr}letx={{extra();op()}};}}"),
+        format!("fn allowed(){{{attr}letx=other();}}"),
         format!("{attr}fn allowed(){{letx=op();}}"),
         format!("fn other(){{{attr}letx=op();}}"),
     ] {
@@ -1191,7 +1168,7 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
         let source = format!("fn {name}(){{{attr}let x=op();}}");
         assert!(
             std::panic::catch_unwind(|| require_exception_statement(
-                &rust_code(&source),
+                &source,
                 "fn connect(",
                 attr,
                 "letx=op();"
@@ -1200,22 +1177,16 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
             "accepted function {name}"
         );
         let source = format!("fn {name}(){{}} fn connect(){{{attr}let x=op();}}");
-        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+        require_exception_statement(&source, "fn connect(", attr, "letx=op();");
     }
     for prefix in ["wrongfn", "_fn", "r#fn", "éfn", "e\u{301}fn"] {
         let source = format!("{prefix} connect(){{{attr}let x=op();}}");
         assert!(
-            std::panic::catch_unwind(|| require_exception_statement(
-                &rust_code(&source),
-                "fn connect(",
-                attr,
-                "letx=op();"
-            ))
-            .is_err(),
+            !rust_code(&source).contains("fn connect("),
             "accepted non-keyword {prefix}"
         );
         let source = format!("{prefix} connect(){{}} fn connect(){{{attr}let x=op();}}");
-        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+        assert_eq!(rust_code(&source).matches("fn connect(").count(), 1);
     }
     for declaration in [
         "fn connect",
@@ -1224,7 +1195,7 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
         "pub/**/fn/**/connect",
     ] {
         let source = format!("{declaration}(){{{attr}let x=op();}}");
-        require_exception_statement(&rust_code(&source), "fn connect(", attr, "letx=op();");
+        require_exception_statement(&source, "fn connect(", attr, "letx=op();");
     }
 }
 // Each process-private host opener has one statement-scoped exception.

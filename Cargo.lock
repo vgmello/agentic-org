@@ -520,11 +520,13 @@ dependencies = [
  "org-sync",
  "org-sync-proto",
  "org-work",
+ "proc-macro2",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "sqlcipher-src",
+ "syn 2.0.119",
  "tempfile",
 ]
 
