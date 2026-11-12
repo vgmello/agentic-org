@@ -328,6 +328,7 @@ mod tests {
 
     #[test]
     fn the_first_presence_goes_at_once_a_sooner_one_waits_and_the_latest_wins() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let gap = Duration::from_secs(1);
         let mut gate = PresenceGate::new(gap);
         let t0 = Instant::now();
@@ -360,6 +361,7 @@ mod tests {
 
     #[test]
     fn members_are_gated_apart_and_one_after_the_gap_goes_at_once() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
         let gap = Duration::from_secs(1);
         let mut gate = PresenceGate::new(gap);
         let t0 = Instant::now();

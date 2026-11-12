@@ -88,6 +88,7 @@ fn pass_fds(stream: &UnixStream, byte: u8, fds: &[RawFd]) {
 
 #[test]
 fn v3_launch_receives_keys_and_acknowledges_handoff_before_ready() {
+    let _process = process_isolation();
     let world = World::new();
     let path = world.home.join("r.sock");
     let listener = UnixListener::bind(&path).unwrap();
@@ -297,6 +298,7 @@ fn assert_reopens(world: &World) {
 
 #[test]
 fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
+    let _process = process_isolation();
     let world = World::new();
     let session = ready_create(&world);
     // stdin is still open. Only rendezvous EOF asks the worker to close its office.
@@ -308,6 +310,7 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
 
 #[test]
 fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() {
+    let _process = process_isolation();
     use org_proto::org::{
         AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
     };
@@ -406,6 +409,7 @@ fn database_bytes(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
 }
 #[test]
 fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() {
+    let _process = process_isolation();
     let world = World::new();
     let mut legacy = create(&world);
     assert!(legacy.host_goes_away().success());
@@ -444,6 +448,7 @@ fn v3_start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes
 
 #[test]
 fn v3_discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
+    let _process = process_isolation();
     let world = World::new();
     for key in [None, Some(db_key())] {
         std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
@@ -467,6 +472,7 @@ fn v3_discard_uses_zero_fds_and_no_receipt_with_null_or_present_key() {
 
 #[test]
 fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
+    let _process = process_isolation();
     for op in [FirstLine::Start, FirstLine::Discard] {
         let world = World::new();
         let path = world.home.join("r.sock");
@@ -511,6 +517,7 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
 
 #[test]
 fn malformed_launch_json_never_echoes_input_bytes() {
+    let _process = process_isolation();
     let mut legacy = serde_json::to_value(create_message()).unwrap();
     legacy["v"] = json!(2);
     legacy["org_name"] = json!(314159265358979323u64);
@@ -555,6 +562,7 @@ fn malformed_launch_json_never_echoes_input_bytes() {
 
 #[test]
 fn undefined_lifetime_bytes_and_rights_exit_the_real_worker_and_close_reported_fd() {
+    let _process = process_isolation();
     for rights in [false, true] {
         let world = World::new();
         let mut session = ready_create(&world);
@@ -576,6 +584,7 @@ fn undefined_lifetime_bytes_and_rights_exit_the_real_worker_and_close_reported_f
 
 #[test]
 fn startup_rights_faults_exit_before_any_failure_or_office_event() {
+    let _process = process_isolation();
     for case in [
         "early_fd",
         "zero_fds",

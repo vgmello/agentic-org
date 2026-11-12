@@ -62,6 +62,7 @@ fn assert_error(response: Response, expected: ErrorCode, message: Option<&str>) 
 
 #[test]
 fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for binding in [
         Binding::Anonymous,
         Binding::App,
@@ -121,6 +122,7 @@ fn c1_work_guard_matrix_checks_binding_and_app_only_before_params() {
 
 #[test]
 fn c1_all_25_work_methods_check_binding_then_their_typed_params() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for method in [
         "task.create",
         "task.update",
@@ -171,6 +173,7 @@ fn c1_all_25_work_methods_check_binding_then_their_typed_params() {
 
 #[test]
 fn c1_work_port_maps_success_refusal_and_storage_without_leaking_details() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for reply in [
         Ok(Ok(accepted())),
         Ok(Err(ApiError::new(ErrorCode::Conflict, "native conflict"))),
@@ -197,6 +200,7 @@ fn c1_work_port_maps_success_refusal_and_storage_without_leaking_details() {
 
 #[test]
 fn c1_leaves_later_work_calls_unknown_and_org_dispatch_unchanged() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     let (shared, seen) = harness(Err("must not be called".into()));
     for method in [
         "work.set_current",
@@ -231,6 +235,7 @@ fn c1_leaves_later_work_calls_unknown_and_org_dispatch_unchanged() {
 
 #[test]
 fn c1_app_only_request_classifier_ignores_bad_params_and_shares_call_policy() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
     for (method, app_only) in [
         ("work.delete", true),
         ("task.create", false),
