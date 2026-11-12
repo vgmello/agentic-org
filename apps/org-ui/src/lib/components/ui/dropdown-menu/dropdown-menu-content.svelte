@@ -26,7 +26,7 @@
 	function interactOutside(event: PointerEvent) {
 		pointerClose = undefined;
 		onInteractOutside?.(event);
-		if (event.defaultPrevented || !ref) return;
+		if (event.defaultPrevented || !ref || dispatch.get(event)?.insideTree) return;
 		const content = ref;
 		const path = dispatch.get(event)?.path ?? event.composedPath();
 		const target = path.find((node): node is HTMLElement => node instanceof HTMLElement

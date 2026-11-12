@@ -338,3 +338,12 @@ test('BUG-158 BUG-70: an immediate caller reopen never lends focus back to the t
  await physicalClick(page,fixture.getByTestId('blank'));await shot(page,'bug158-immediate-reopen');
  await expect(page.getByRole('menu')).toBeVisible();await expect.poll(()=>page.getByRole('menu').evaluate(node=>node.contains(document.activeElement))).toBe(true);await expect(trigger).toHaveAttribute('data-focuses','0');
 });
+test('BUG-158 BUG-70: a retained submenu pointer action cannot replace later keyboard restoration', async ({ page }) => {
+ const fixture = await pointerFixture(page, 'submenu-keep'), trigger = fixture.getByRole('button', { name: 'Contract commands', exact: true });
+ await trigger.click(); const more = page.getByRole('menuitem', { name: 'More commands', exact: true }); await more.hover();
+ const nested = page.getByRole('menuitem', { name: 'Nested action', exact: true }); await expect(nested).toBeVisible(); await physicalClick(page, nested);
+ await expect(fixture.getByLabel('Pointer activations')).toHaveText('1'); await expect(page.getByRole('menu')).toHaveCount(2);
+ await nested.press('ArrowLeft'); await expect(page.getByRole('menu')).toHaveCount(1); await expect(more).toBeFocused();
+ await more.press('Escape'); await expect(page.getByRole('menu')).toHaveCount(0); await expect(trigger).toBeFocused();
+ await shot(page, 'bug158-submenu-pointer-then-keyboard');
+});

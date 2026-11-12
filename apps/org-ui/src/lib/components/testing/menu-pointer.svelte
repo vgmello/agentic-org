@@ -34,7 +34,7 @@
 				<Menu.Item closeOnSelect={false} onSelect={(event) => event.preventDefault()}>Keep open</Menu.Item>
 				<Menu.CheckboxItem bind:checked closeOnSelect={false}>Checked option</Menu.CheckboxItem>
 				<Menu.RadioGroup bind:value={choice}><Menu.RadioItem value="one">Choice one</Menu.RadioItem><Menu.RadioItem value="two">Choice two</Menu.RadioItem><Menu.RadioItem value="close" closeOnSelect>Closing choice</Menu.RadioItem></Menu.RadioGroup>
-				<Menu.Sub><Menu.SubTrigger>More commands</Menu.SubTrigger><Menu.SubContent><Menu.Item onSelect={() => count++}>Nested action</Menu.Item></Menu.SubContent></Menu.Sub>
+				<Menu.Sub><Menu.SubTrigger>More commands</Menu.SubTrigger><Menu.SubContent><Menu.Item closeOnSelect={mode !== 'submenu-keep'} onSelect={() => count++}>Nested action</Menu.Item></Menu.SubContent></Menu.Sub>
 			</Menu.Content>
 		</Menu.Root>
 	{/if}
