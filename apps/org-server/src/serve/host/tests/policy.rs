@@ -39,10 +39,13 @@ fn shared() -> Shared {
             _key: GrantKey::from_bytes([7; 32]),
         },
     );
-    shared.register_inbox(crate::inbox::Hq {
-        sources: vec![],
-        clock: crate::inbox::Clock::new("host-test".into()),
-    });
+    shared.register_inbox(
+        crate::inbox::Hq {
+            sources: vec![],
+            clock: crate::inbox::Clock::new("host-test".into()),
+        },
+        Ok(true),
+    );
     shared
 }
 fn signed(shared: &Shared, method: &str, params: Value) -> Request {
