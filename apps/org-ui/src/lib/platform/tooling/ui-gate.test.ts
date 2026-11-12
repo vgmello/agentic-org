@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { categorySpecs, changedFiles, changedOrUnknown, classify, explicitFiles, loadManifest, matches, plan, runSteps, specFiles, steps, UNKNOWN_CHANGES, type Manifest, type Step } from '../../../../scripts/ui-gate-lib';
@@ -11,9 +11,47 @@ const app = fileURLToPath(new URL('../../../../', import.meta.url));
 const read = (path: string) => readFileSync(join(app, path), 'utf8');
 const manifest: Manifest & { journeys: Manifest['journeys'] } = JSON.parse(read('e2e/gate-manifest.json'));
 const specs = specFiles(readdirSync(join(app, 'e2e')), manifest);
-const declarations = (spec: string) => read(`e2e/${spec}`).split('\n').filter((line) => /\btest\(/.test(line));
+const numberedDeclarations = (spec: string) => read(`e2e/${spec}`).split('\n').map((text, index) => ({ text, line: index + 1 })).filter(({ text }) => /\btest\(/.test(text));
+const declarations = (spec: string) => numberedDeclarations(spec).map(({ text }) => text);
 const ui = (path: string) => `apps/org-ui/${path}`;
 const names = (files: string[], options = {}) => steps(plan(files, manifest), manifest, specs, options).map((step) => step.name);
+
+// WebKit coverage of keyboard and focus. The universe is every file Playwright runs: e2e/*.spec.ts plus every
+// manifest.projectFiles key (the *-default-font.ts project files), paths relative to e2e/. A file exercises keyboard or
+// focus when its source, or that of a local e2e module it imports (relative imports, followed transitively), matches
+// KEYBOARD_OR_FOCUS. Each such file needs a @webkit-tagged test or a webkitExempt entry with a reason.
+const KEYBOARD_OR_FOCUS = /keyboard\.|\.press\(|toBeFocused|\.focus\(\)/;
+type WebkitCoverage = { files: string[]; sources: Record<string, string>; tagged: Set<string>; exempt: { spec: string; why: string }[] };
+const usesKeyboardOrFocus = (file: string, sources: Record<string, string>, seen = new Set<string>()): boolean => {
+	if (seen.has(file) || !(file in sources)) return false;
+	seen.add(file);
+	if (KEYBOARD_OR_FOCUS.test(sources[file])) return true;
+	return [...sources[file].matchAll(/\b(?:from|import)\s*['"](\.{1,2}\/[^'"]+)['"]/g)].some(([, spec]) => {
+		const base = posix.normalize(posix.join(posix.dirname(file), spec));
+		return [base, `${base}.ts`, `${base}/index.ts`].some((candidate) => usesKeyboardOrFocus(candidate, sources, seen));
+	});
+};
+/** Pure check: files that exercise keyboard or focus without a @webkit test or an exemption, and exemptions that are not real. */
+const webkitCoverage = ({ files, sources, tagged, exempt }: WebkitCoverage) => {
+	const focus = files.filter((file) => usesKeyboardOrFocus(file, sources));
+	const listed = new Set(exempt.map(({ spec }) => spec));
+	const missing = focus.filter((file) => !tagged.has(file) && !listed.has(file));
+	const stale: string[] = [];
+	exempt.forEach(({ spec, why }, index) => {
+		if (!files.includes(spec)) stale.push(`${spec}: not a file Playwright runs`);
+		else if (!focus.includes(spec)) stale.push(`${spec}: does not exercise keyboard or focus, so drop its exemption`);
+		if (tagged.has(spec)) stale.push(`${spec}: has a @webkit test, so it cannot also be exempt`);
+		if ((why ?? '').trim().length < 20) stale.push(`${spec}: give a reason of at least 20 characters`);
+		if (exempt.findIndex((other) => other.spec === spec) !== index) stale.push(`${spec}: listed twice`);
+	});
+	return { missing, stale };
+};
+const repoWebkitCoverage = (): WebkitCoverage => {
+	const e2e = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'e2e'], { cwd: app, encoding: 'utf8' }).split('\0').filter((file) => file.endsWith('.ts') && existsSync(join(app, file))).map((file) => file.slice('e2e/'.length));
+	const files = e2e.filter((file) => (!file.includes('/') && file.endsWith('.spec.ts')) || file in (manifest.projectFiles ?? {}));
+	const tagged = new Set(files.filter((file) => numberedDeclarations(file).some(({ text }) => text.includes("'@webkit'"))));
+	return { files, sources: Object.fromEntries(e2e.map((file) => [file, read(`e2e/${file}`)])), tagged, exempt: manifest.webkitExempt ?? [] };
+};
 
 describe('gate manifest guard', () => {
 	it('assigns every e2e spec file to exactly one category', () => {
@@ -62,15 +100,65 @@ describe('gate manifest guard', () => {
 		expect(budget.measured.chromiumSeconds).toBeLessThanOrEqual(budget.maxChromiumSeconds);
 	});
 
-	it('keeps the WebKit subset equal to playwright.config.ts and its journeys flagged', () => {
-		const config = read('playwright.config.ts');
-		const testMatch = [...config.match(/testMatch:\s*\[([^\]]*)\]/)![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-		const grep = new RegExp(config.match(/grep:\s*\/(.+)\/,/)![1]);
-		expect([...manifest.webkitSpecs].sort()).toEqual([...testMatch].sort());
+	it('makes the WebKit project list exactly the test declarations whose test( line carries @webkit', { timeout: 180_000 }, () => {
+		// Playwright's own selection, so a tag that does not reach the project (or a grep that reaches more) is caught.
+		const listed = execFileSync('bunx', ['playwright', 'test', '--list', '--project=webkit'], { cwd: app, encoding: 'utf8', env: { ...process.env, PW_WEBKIT: '1' }, timeout: 150_000 });
+		const selected = new Set([...listed.matchAll(/^\s*\[webkit\] › ([^:\s]+):(\d+):\d+ › /gm)].map((m) => `${m[1]}:${m[2]}`));
+		const tagged = new Set(readdirSync(join(app, 'e2e')).filter((file) => file.endsWith('.spec.ts')).flatMap((spec) => numberedDeclarations(spec).filter(({ text }) => text.includes("'@webkit'")).map(({ line }) => `${spec}:${line}`)));
+		expect([...selected].sort(), 'tag each WebKit case on its test( line with @webkit; nothing else may be selected').toEqual([...tagged].sort());
+		expect(tagged.size).toBeGreaterThan(0);
+	});
+
+	it('selects WebKit cases by the @webkit tag only, with no testMatch or BUG-id grep', () => {
+		const project = read('playwright.config.ts').match(/\.\.\.\(webkit \? \[\{[\s\S]*?\}\] : \[\]\)/)![0];
+		expect(project).toContain("name: 'webkit'");
+		expect(project).toContain('grep: /@webkit/,');
+		expect(project, 'production-unavailable runs only against the static release').toContain("testIgnore: 'production-unavailable.spec.ts',");
+		expect(project).not.toContain('testMatch');
+		expect(project).not.toMatch(/BUG-\d/);
+	});
+
+	it('flags exactly the journeys whose test( line carries @webkit', () => {
 		for (const { spec, match, webkit } of manifest.journeys.flatMap((journey) => journey.tests)) {
 			const line = declarations(spec).find((candidate) => candidate.includes(match))!;
-			expect(!!webkit, `${spec} "${match}": webkit flag must equal whether the WebKit project runs it`).toBe(testMatch.includes(spec) && grep.test(line));
+			expect(!!webkit, `${spec} "${match}": webkit flag must equal whether its test( line carries '@webkit'`).toBe(line.includes("'@webkit'"));
 		}
+	});
+
+	it('runs every keyboard or focus file on WebKit, or exempts it with a reason', () => {
+		const coverage = repoWebkitCoverage();
+		expect(coverage.files.length, 'git ls-files found no Playwright file under e2e/').toBeGreaterThan(0);
+		const { missing } = webkitCoverage(coverage);
+		expect(missing.map((file) => `${file}: exercises keyboard or focus; tag one of its tests '@webkit' or add it to webkitExempt in e2e/gate-manifest.json with a reason`)).toEqual([]);
+	});
+
+	it('keeps every webkitExempt entry real: a keyboard or focus file Playwright runs, not on WebKit, listed once, with a reason', () => {
+		expect(Array.isArray(manifest.webkitExempt), 'e2e/gate-manifest.json needs a webkitExempt list').toBe(true);
+		expect(webkitCoverage(repoWebkitCoverage()).stale).toEqual([]);
+	});
+
+	it('refuses an untagged, unexempted keyboard spec and follows local imports to a .focus() call', () => {
+		const why = 'not yet run on WebKit (BUG-169b)';
+		const sources = {
+			'new.spec.ts': "test('x', async ({ page }) => { await page.keyboard.press('Tab'); });",
+			'via-helper.spec.ts': "import { land } from './helpers/land';\ntest('y', async ({ page }) => land(page));",
+			'helpers/land.ts': "import { again } from '../via-helper.spec';\nexport const land = (page) => page.getByRole('button').focus();",
+			'plain.spec.ts': "import { proto } from '../src/lib/proto';\ntest('z', async ({ page }) => { await page.click('a'); });"
+		};
+		const files = ['new.spec.ts', 'via-helper.spec.ts', 'plain.spec.ts'];
+		expect(webkitCoverage({ files, sources, tagged: new Set(), exempt: [] })).toEqual({ missing: ['new.spec.ts', 'via-helper.spec.ts'], stale: [] });
+		expect(webkitCoverage({ files, sources, tagged: new Set(['new.spec.ts']), exempt: [{ spec: 'via-helper.spec.ts', why }] })).toEqual({ missing: [], stale: [] });
+		// A non-last file violates alone while the last one is fine; only a middle exemption is stale.
+		expect(webkitCoverage({ files, sources, tagged: new Set(['via-helper.spec.ts']), exempt: [] })).toEqual({ missing: ['new.spec.ts'], stale: [] });
+		expect(webkitCoverage({ files, sources, tagged: new Set(), exempt: [{ spec: 'new.spec.ts', why }, { spec: 'plain.spec.ts', why }, { spec: 'via-helper.spec.ts', why }] })).toEqual({ missing: [], stale: ['plain.spec.ts: does not exercise keyboard or focus, so drop its exemption'] });
+		const exempt = [{ spec: 'plain.spec.ts', why }, { spec: 'gone.spec.ts', why }, { spec: 'new.spec.ts', why }, { spec: 'via-helper.spec.ts', why: 'later' }, { spec: 'via-helper.spec.ts', why }];
+		expect(webkitCoverage({ files, sources, tagged: new Set(['new.spec.ts']), exempt }).stale).toEqual([
+			'plain.spec.ts: does not exercise keyboard or focus, so drop its exemption',
+			'gone.spec.ts: not a file Playwright runs',
+			'new.spec.ts: has a @webkit test, so it cannot also be exempt',
+			'via-helper.spec.ts: give a reason of at least 20 characters',
+			'via-helper.spec.ts: listed twice'
+		]);
 	});
 
 	it('keeps every alsoRuns entry real: a known category, a reason, and globs that match a current file', () => {

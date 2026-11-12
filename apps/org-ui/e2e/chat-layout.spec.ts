@@ -50,7 +50,7 @@ async function noSidewaysScroll(page: Page, checkNav = true) {
 }
 
 for (const [width, pixels, inline] of [[1440, 32, true], [1279, 32, false], [1024, 32, false], [1440, 20, true]] as const) {
-	test(`CHAT-29/30 BUG-67: names and title stay readable at ${pixels}px text and ${width}px viewport`, async ({ page }) => {
+	test(`CHAT-29/30 BUG-67: names and title stay readable at ${pixels}px text and ${width}px viewport`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page);
 		await page.setViewportSize({ width, height: 900 });
 		await fontSize(page, pixels);
@@ -110,7 +110,7 @@ for (const [width, pixels, inline] of [[1440, 32, true], [1279, 32, false], [102
 	});
 }
 
-test('CHAT-29 BUG-67: a long unbroken channel name wraps inside the fixed list', async ({ page }) => {
+test('CHAT-29 BUG-67: a long unbroken channel name wraps inside the fixed list', { tag: '@webkit' }, async ({ page }) => {
 	await create(page);
 	const longName = 'a'.repeat(64);
 	await page.evaluate(async (name) => {
@@ -137,7 +137,7 @@ test('CHAT-29 BUG-67: a long unbroken channel name wraps inside the fixed list',
 });
 
 for (const width of [320, 600, 639, 640, 1440]) {
-	test(`CHAT-13 BUG-68: Search uses its available width at ${width}px`, async ({ page }) => {
+	test(`CHAT-13 BUG-68: Search uses its available width at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page, '?c=c-release-v1');
 		await page.setViewportSize({ width, height: 900 });
 		if (width <= 640) await expect(toggle(page)).toBeVisible();
@@ -176,7 +176,7 @@ const previewNotice = 'Previewing how a bridge (Slack, Teams or Discord) shows t
 const offlineNotice = "Read-only from the last copy. The office isn't running.";
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`CHAT-1/29 BUG-70: quiet context notices preserve all flag combinations at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+	test(`CHAT-1/29 BUG-70: quiet context notices preserve all flag combinations at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page);
 		await page.setViewportSize({ width, height: 900 });
 		expect((await page.request.get('/e2e/fakes/org-api.ts')).status()).toBe(200);

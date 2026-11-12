@@ -19,7 +19,7 @@ async function switchLink(page: Page, width: number) {
 }
 
 for (const width of [320, 960]) {
-	test(`BUG-70 footer chrome: prototype icon/text rhythm at ${width}px`, async ({ page }) => {
+	test(`BUG-70 footer chrome: prototype icon/text rhythm at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffice(page);
 		const link = await switchLink(page, width);
@@ -29,7 +29,7 @@ for (const width of [320, 960]) {
 		expect(await link.evaluate((element) => getComputedStyle(element).columnGap)).toBe('16px');
 	});
 
-	test(`BUG-70 footer control: existing switch navigation works at ${width}px`, async ({ page }) => {
+	test(`BUG-70 footer control: existing switch navigation works at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffice(page);
 		await (await switchLink(page, width)).press('Enter');
@@ -39,7 +39,7 @@ for (const width of [320, 960]) {
 	});
 }
 
-test('BUG-70 footer control: rail keeps its existing logo switch and ten destinations', async ({ page }) => {
+test('BUG-70 footer control: rail keeps its existing logo switch and ten destinations', { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 640, height: 900 });
 	await openOffice(page);
 	const link = await switchLink(page, 640);
@@ -154,7 +154,7 @@ async function footerChecks(page: Page, width: number, scale: number, host = 'Th
 for (const width of [320, 640, 960, 1280]) {
 	for (const scale of [1, 2]) {
 		for (const long of [false, true]) {
-			test(`BUG-70 footer preflight: ${long ? 'long strings' : 'current data'} at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+			test(`BUG-70 footer preflight: ${long ? 'long strings' : 'current data'} at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 				await page.setViewportSize({ width, height: 900 });
 				await openOffice(page);
 				if (long) await longConnection(page);
@@ -174,7 +174,7 @@ for (const width of [320, 640, 960, 1280]) {
 }
 
 for (const width of [320, 1280]) {
-	test(`BUG-70 footer hit area: padding activates the existing whole link at ${width}px`, async ({ page }) => {
+	test(`BUG-70 footer hit area: padding activates the existing whole link at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffice(page);
 		const link = await switchLink(page, width);
@@ -187,7 +187,7 @@ for (const width of [320, 1280]) {
 for (const [path, label] of [
 	['/agents?org=empty', 'Agents'], ['/offices?org=fails', 'Offices'], ['/chat?chat=offline&c=c-general', 'Chat']
 ] as const) {
-	test(`BUG-70 footer fixture: ${path} preserves the current connection words`, async ({ page }) => {
+	test(`BUG-70 footer fixture: ${path} preserves the current connection words`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 900 });
 		await openOffice(page);
 		await visit(page, path);
@@ -200,7 +200,7 @@ for (const [path, label] of [
 	});
 }
 
-test('BUG-70 footer fixture: a stopped office keeps its truthful name and switch action', async ({ page }) => {
+test('BUG-70 footer fixture: a stopped office keeps its truthful name and switch action', { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openOffice(page, '/create?office=crashed');
 	await expect(page.getByTestId('office-row')).toContainText('It stopped unexpectedly');
@@ -209,7 +209,7 @@ test('BUG-70 footer fixture: a stopped office keeps its truthful name and switch
 });
 
 for (const width of [320, 1280]) {
-	test(`BUG-70 footer paths: all shell destinations retain the footer at ${width}px`, async ({ page }) => {
+	test(`BUG-70 footer paths: all shell destinations retain the footer at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		test.setTimeout(120_000);
 		await page.setViewportSize({ width, height: 900 });
 		await openOffice(page);

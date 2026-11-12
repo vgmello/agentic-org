@@ -123,7 +123,7 @@ test('BUG-52: the scrim dismisses Menu and widening the window releases the focu
 });
 
 for (const dismissal of ['Escape', 'scrim', 'Close']) {
-	test(`BUG-59: pointer-open Menu restores focus after ${dismissal}`, async ({ page }) => {
+	test(`BUG-59: pointer-open Menu restores focus after ${dismissal}`, { tag: '@webkit' }, async ({ page }) => {
 		await openOffices(page);
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
@@ -141,7 +141,7 @@ for (const dismissal of ['Escape', 'scrim', 'Close']) {
 	});
 }
 
-test('BUG-59: browser Back dismisses Menu before leaving the page', { tag: '@journey' }, async ({ page }) => {
+test('BUG-59: browser Back dismisses Menu before leaving the page', { tag: ['@journey', '@webkit'] }, async ({ page }) => {
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
 	const menu = page.getByRole('button', { name: 'Menu', exact: true });
@@ -159,7 +159,7 @@ test('BUG-59: browser Back dismisses Menu before leaving the page', { tag: '@jou
 	await expect(page.getByRole('group', { name: 'Show agents' })).toBeVisible();
 });
 
-test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ page }) => {
+test('BUG-59: opening and dismissing Menu preserves Forward history', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await page.goBack();
 	await expect(page).toHaveURL(/\/agents$/);
@@ -180,7 +180,7 @@ test('BUG-59: opening and dismissing Menu preserves Forward history', async ({ p
 // Older-browser fallback covers a native fragment observed growing history.
 // Histories with unindexed entries and existing Forward entries use the Navigation API.
 for (const legacy of [false, true]) {
-	test(`BUG-59: Back dismisses Menu before fragment history${legacy ? ' without the Navigation API' : ''}`, async ({ page }) => {
+	test(`BUG-59: Back dismisses Menu before fragment history${legacy ? ' without the Navigation API' : ''}`, { tag: '@webkit' }, async ({ page }) => {
 		if (legacy) await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
 		await openOffices(page);
 		await page.setViewportSize({ width: 600, height: 900 });
@@ -206,7 +206,7 @@ for (const legacy of [false, true]) {
 	});
 }
 
-test('BUG-59: Back keeps the fragment reached by Forward while Menu is open', async ({ page }) => {
+test('BUG-59: Back keeps the fragment reached by Forward while Menu is open', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
 	for (const fragment of ['one', 'two']) {
@@ -229,7 +229,7 @@ test('BUG-59: Back keeps the fragment reached by Forward while Menu is open', as
 	await shot(page, 'shell-menu-back-after-forward');
 });
 
-test('BUG-59: fragment Forward stays on the next entry without the Navigation API', async ({ page }) => {
+test('BUG-59: fragment Forward stays on the next entry without the Navigation API', { tag: '@webkit' }, async ({ page }) => {
 	await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
 	await openOffices(page);
 	await page.setViewportSize({ width: 600, height: 900 });
@@ -249,7 +249,7 @@ test('BUG-59: fragment Forward stays on the next entry without the Navigation AP
 	await expect(page).toHaveURL(/#two$/);
 });
 
-test('BUG-59: Back dismisses Menu before a native fragment entry on a previous route', async ({ page }) => {
+test('BUG-59: Back dismisses Menu before a native fragment entry on a previous route', { tag: '@webkit' }, async ({ page }) => {
 	await createOrganization(page);
 	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
 	await expect(page).toHaveURL(/\/agents#shell-page-title$/);
@@ -269,7 +269,7 @@ test('BUG-59: Back dismisses Menu before a native fragment entry on a previous r
 	await shot(page, 'shell-menu-back-to-previous-route-fragment');
 });
 
-test('BUG-59: Back across two entries preserves the drawer opener route', async ({ page }) => {
+test('BUG-59: Back across two entries preserves the drawer opener route', { tag: '@webkit' }, async ({ page }) => {
 	await createOrganization(page);
 	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
 	await expect(page).toHaveURL(/\/agents#shell-page-title$/);
@@ -289,7 +289,7 @@ test('BUG-59: Back across two entries preserves the drawer opener route', async 
 	await shot(page, 'shell-menu-back-across-two-entries');
 });
 
-test('BUG-59: Forward can reach an unfragmented entry without the Navigation API', async ({ page }) => {
+test('BUG-59: Forward can reach an unfragmented entry without the Navigation API', { tag: '@webkit' }, async ({ page }) => {
 	await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
 	await openOffices(page);
 	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
@@ -314,7 +314,7 @@ test('BUG-59: Forward can reach an unfragmented entry without the Navigation API
 	await expect(page).toHaveURL(/\/offices$/);
 });
 
-test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
+test('BUG-59: the focused rail tooltip survives keyboard scrolling', { tag: '@webkit' }, async ({ page, browserName }) => {
 	await page.setViewportSize({ width: 720, height: 450 });
 	await createOrganization(page);
 	await visit(page, '/offices');
@@ -341,7 +341,7 @@ test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ pa
 	await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toBeFocused();
 });
 
-test('BUG-59: a supplied navigation badge appears in the full sidebar and rail', async ({ page }) => {
+test('BUG-59: a supplied navigation badge appears in the full sidebar and rail', { tag: '@webkit' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.evaluate(async () => {
 		const path = '/src/lib/nav.ts';
@@ -365,7 +365,7 @@ test('BUG-59: a supplied navigation badge appears in the full sidebar and rail',
 	await shot(page, 'shell-badge-rail');
 });
 
-test('BUG-59: Back with Menu open preserves an unsent Chat draft', async ({ page }) => {
+test('BUG-59: Back with Menu open preserves an unsent Chat draft', { tag: '@webkit' }, async ({ page }) => {
 	await createOrganization(page);
 	await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Chat', exact: true }).click();
 	await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
@@ -393,7 +393,7 @@ test('BUG-59: Back with Menu open preserves an unsent Chat draft', async ({ page
 	await expect(composer).toHaveCount(0);
 });
 
-test('BUG-59: Back dismisses Menu during an unfinished Forward', async ({ page }) => {
+test('BUG-59: Back dismisses Menu during an unfinished Forward', { tag: '@webkit' }, async ({ page }) => {
 	await createOrganization(page);
 	const mainNav = page.getByRole('navigation', { name: 'Main', exact: true });
 	await mainNav.getByRole('link', { name: 'Projects', exact: true }).click();

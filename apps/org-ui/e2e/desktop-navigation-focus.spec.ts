@@ -19,7 +19,7 @@ async function sectionLink(page: Page, width: number, name: string) {
 
 for (const width of [320, 640, 720, 960, 1280]) {
 	for (const textScale of [1, 2]) {
-		test(`BUG-74: section selection lands on the destination heading at ${width}px and ${textScale * 100}% text`, async ({ page }) => {
+		test(`BUG-74: section selection lands on the destination heading at ${width}px and ${textScale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
 			await openOffices(page);
 			await page.evaluate((scale) => { document.documentElement.style.fontSize = `${scale * 100}%`; }, textScale);
@@ -34,7 +34,7 @@ for (const width of [320, 640, 720, 960, 1280]) {
 }
 
 for (const width of [320, 720, 1280]) {
-	test(`BUG-74: reselecting the current section focuses its heading without history at ${width}px`, async ({ page }) => {
+	test(`BUG-74: reselecting the current section focuses its heading without history at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffices(page);
 		const before = await page.evaluate(() => history.length);
@@ -50,7 +50,7 @@ for (const width of [320, 720, 1280]) {
 }
 
 for (const width of [720, 1280]) {
-	test(`BUG-74: a pointer selection focuses the new title at ${width}px`, async ({ page }) => {
+	test(`BUG-74: a pointer selection focuses the new title at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffices(page);
 		await (await sectionLink(page, width, 'Agents')).click();
@@ -60,7 +60,7 @@ for (const width of [720, 1280]) {
 	});
 }
 
-test('BUG-74: desktop navigation and Back preserve the retained Chat thread draft', { tag: '@journey' }, async ({ page }) => {
+test('BUG-74: desktop navigation and Back preserve the retained Chat thread draft', { tag: ['@journey', '@webkit'] }, async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openOffices(page);
 	await visit(page, '/chat?c=c-release-v1');
@@ -79,7 +79,7 @@ test('BUG-74: desktop navigation and Back preserve the retained Chat thread draf
 	await shot(page, 'bug74-desktop-chat-back-thread-draft');
 });
 
-test('BUG-74: Switch organization keeps its non-shell navigation', { tag: '@journey' }, async ({ page }) => {
+test('BUG-74: Switch organization keeps its non-shell navigation', { tag: ['@journey', '@webkit'] }, async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await openOffices(page);
 	await page.getByRole('link', { name: /^Switch organization/ }).click();
