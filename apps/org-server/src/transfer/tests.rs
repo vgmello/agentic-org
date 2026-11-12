@@ -58,7 +58,7 @@ fn service_drop_joins_the_receiver_and_closes_the_owned_transport() {
         receiver: org_socket::rights::DatagramReceiver::new(child),
         fence: Arc::default(),
     };
-    let service = Service::start(transport, Arc::clone(&state)).unwrap();
+    let service = Service::start(transport, Arc::clone(&state), |_| Err(invalid())).unwrap();
     let (done, joined) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         drop(service);
@@ -392,7 +392,11 @@ fn receipt_bounds_are_enforced_before_json_or_record_fd_count_can_mask_them() {
     }
 }
 
-fn send_rights(socket: &UnixDatagram, payload: &[u8], descriptors: &[std::os::fd::RawFd]) {
+pub(super) fn send_rights(
+    socket: &UnixDatagram,
+    payload: &[u8],
+    descriptors: &[std::os::fd::RawFd],
+) {
     // SAFETY: CMSG_SPACE computes storage for the bounded test-owned descriptor slice.
     let space = unsafe { libc::CMSG_SPACE(std::mem::size_of_val(descriptors) as u32) } as usize;
     let mut control = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
@@ -499,7 +503,7 @@ fn every_poll_result_retries_receipt_and_fatal_receipt_stops_before_later_record
 }
 
 #[test]
-fn staged_channel_refuses_before_any_later_revocation_can_be_applied() {
+fn channel_handler_refusal_stops_before_any_later_revocation_can_be_applied() {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     let (host, child) = UnixDatagram::pair().unwrap();
@@ -635,4 +639,14 @@ fn stream_handoff_with_concatenated_records_refuses_without_applying_a_prefix() 
         .unwrap()
         .apply_batch((0..4096).map(|n| format!("empty-probe-{n}")).collect())
         .expect("a concatenated stream applied a prefix");
+}
+
+// Receipt tests supply a refusing channel capability; registry/serving tests exercise
+// the production capability separately, without requiring Office ports here.
+fn run(
+    transport: startup::Transfer,
+    revocations: Arc<Mutex<Revocations>>,
+    stop: Arc<AtomicBool>,
+) -> io::Result<()> {
+    super::run(transport, revocations, stop, &mut |_| Err(invalid()))
 }

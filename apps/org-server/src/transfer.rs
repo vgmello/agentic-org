@@ -1,11 +1,13 @@
 //! FIFO transfer control service, independent of Office and work execution.
+mod channels;
 use crate::{revocations::Revocations, startup};
-use org_office_launch::v3::{self, TransferRecord};
+pub(super) use channels::Channels;
+use org_office_launch::v3::{self, ChannelKind, TransferRecord};
 #[cfg(not(test))]
 use org_socket::poll_readable;
 use org_socket::rights::ReceiveError;
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -13,6 +15,12 @@ use std::time::Duration;
 #[cfg(test)]
 use tests::poll_readable;
 
+pub(super) struct Channel {
+    kind: ChannelKind,
+    office_id: String,
+    channel_id: String,
+    fd: OwnedFd,
+}
 pub(super) struct Service {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -21,13 +29,14 @@ impl Service {
     pub fn start(
         transport: startup::Transfer,
         revocations: Arc<Mutex<Revocations>>,
+        mut channel: impl FnMut(Channel) -> io::Result<()> + Send + 'static,
     ) -> io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name("org-transfer".into())
             .spawn(move || {
-                if run(transport, revocations, stopping).is_err() {
+                if run(transport, revocations, stopping, &mut channel).is_err() {
                     fatal();
                 }
             })?;
@@ -86,9 +95,10 @@ fn run(
     mut transport: startup::Transfer,
     revocations: Arc<Mutex<Revocations>>,
     stop: Arc<AtomicBool>,
+    channel: &mut impl FnMut(Channel) -> io::Result<()>,
 ) -> io::Result<()> {
     while !stop.load(Ordering::SeqCst) {
-        let (payload, received) = match receive(&mut transport) {
+        let (payload, mut received) = match receive(&mut transport) {
             Ok(received) => received,
             Err(ReceiveError::WouldBlock) => {
                 let fd = transport.receiver.fd().ok_or_else(invalid)?.as_raw_fd();
@@ -107,8 +117,16 @@ fn run(
                     .map_err(|_| invalid())?
                     .apply_batch(session_ids)?;
             }
-            // Safe staging boundary: registry/serving is enabled deliberately in 2a.4b2.
-            TransferRecord::Channel { .. } => return Err(invalid()),
+            TransferRecord::Channel {
+                kind,
+                office_id,
+                channel_id,
+            } => channel(Channel {
+                kind,
+                office_id,
+                channel_id,
+                fd: received.descriptors.pop().ok_or_else(invalid)?,
+            })?,
         }
     }
     Ok(())

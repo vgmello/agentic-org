@@ -236,7 +236,9 @@ fn v3_owns_cloexec_transfer_before_receipt_and_routes_events_without_overreading
         // The header reader stops before the marker, and the marker reader stops after it.
         control
             .rendezvous
-            .as_mut()
+            .as_ref()
+            .unwrap()
+            .lock()
             .unwrap()
             .read_exact(&mut bytes[..1])
             .unwrap();
@@ -652,7 +654,7 @@ fn event_writer_errors_are_propagated_on_both_transports() {
     // by inherited copies and deterministically forces this writer's error path.
     stream.shutdown(std::net::Shutdown::Write).unwrap();
     drop(peer);
-    control.rendezvous = Some(stream);
+    control.rendezvous = Some(Arc::new(Mutex::new(stream)));
     assert!(matches!(
         control.emit(&ServerEvent::Discarded),
         Err(LaunchError::Frame(FrameError::Io(_)))
@@ -792,7 +794,7 @@ fn lifetime_probe_child() {
         },
         Arc::clone(&fence),
     );
-    control.rendezvous = Some(stream.try_clone().unwrap());
+    control.rendezvous = Some(Arc::new(Mutex::new(stream.try_clone().unwrap())));
     control.receiver = Some(StreamReceiver::new(stream.try_clone().unwrap()));
     let mut lifetime = control.lifetime().unwrap();
     if case == "empty" {
@@ -958,4 +960,84 @@ fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
             error.raw_os_error()
         );
     }
+}
+
+#[test]
+fn rendezvous_writer_poison_refuses_without_writing_an_event() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let writer = Arc::new(Mutex::new(socket));
+    let poisoned = Arc::clone(&writer);
+    assert!(std::thread::spawn(move || {
+        let _guard = poisoned.lock().unwrap();
+        panic!("synthetic poisoned event writer");
+    })
+    .join()
+    .is_err());
+    assert!(matches!(
+        write_event(
+            &writer,
+            &RendezvousEvent::FdsReceived { of: "owned".into() }
+        ),
+        Err(LaunchError::Invalid("rendezvous writer poisoned"))
+    ));
+    assert!(!org_socket::poll_readable(peer.as_raw_fd(), Duration::from_millis(10)).unwrap());
+}
+#[test]
+fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_frames() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    let (mut control, mut stdout) = control(b"");
+    control.rendezvous = Some(Arc::new(Mutex::new(socket)));
+    let writer = control.writer().unwrap();
+    assert!(Arc::ptr_eq(&writer, control.rendezvous.as_ref().unwrap()));
+    let reader = std::thread::spawn(move || {
+        let mut peer = BufReader::new(peer);
+        let mut values = Vec::new();
+        for _ in 0..33 {
+            let value: Value = frame::read_message(&mut peer).unwrap().unwrap();
+            assert_eq!(value["v"], 3);
+            values.push(value);
+        }
+        values
+    });
+    let mut writers = Vec::new();
+    let barrier = Arc::new(std::sync::Barrier::new(5));
+    for lane in 0..4 {
+        let writer = Arc::clone(&writer);
+        let barrier = Arc::clone(&barrier);
+        writers.push(std::thread::spawn(move || {
+            barrier.wait();
+            for n in 0..8 {
+                write_event(
+                    &writer,
+                    &RendezvousEvent::FdsReceived {
+                        of: format!("{lane}:{n}:{}", "x".repeat(64 * 1024)),
+                    },
+                )
+                .unwrap();
+            }
+        }));
+    }
+    barrier.wait();
+    control.emit(&ServerEvent::Discarded).unwrap();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let values = reader.join().unwrap();
+    assert_eq!(
+        values.iter().filter(|v| v["event"] == "discarded").count(),
+        1
+    );
+    let ids: std::collections::HashSet<_> = values
+        .iter()
+        .filter_map(|v| v["of"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(ids.len(), 32);
+    for lane in 0..4 {
+        for n in 0..8 {
+            assert!(ids.contains(&format!("{lane}:{n}:{}", "x".repeat(64 * 1024))));
+        }
+    }
+    stdout.rewind().unwrap();
+    assert_eq!(stdout.metadata().unwrap().len(), 0);
 }

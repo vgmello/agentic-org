@@ -200,7 +200,14 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
     );
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
-    serve_office(control, from_host, runtime, office, create.auth)
+    serve_office(
+        control,
+        from_host,
+        runtime,
+        office,
+        create.auth,
+        create.instance,
+    )
 }
 
 fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -> i32 {
@@ -237,7 +244,7 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    serve_office(control, from_host, runtime, office, auth)
+    serve_office(control, from_host, runtime, office, auth, instance)
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
@@ -283,6 +290,7 @@ fn serve_office(
     runtime: &Path,
     office: Office,
     auth: serve::LaunchAuth,
+    instance: Option<String>,
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
@@ -424,7 +432,17 @@ fn serve_office(
     let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
     let transfers = match control
         .transfer()
-        .map(|transport| transfer::Service::start(transport, revocations))
+        .map(|transport| {
+            let mut channels = transfer::Channels::new(
+                Arc::clone(&shared),
+                instance.expect("verified v3 instance"),
+                control.writer().expect("v3 rendezvous writer"),
+                Arc::clone(&revocations),
+            );
+            transfer::Service::start(transport, revocations, move |channel| {
+                channels.open(channel)
+            })
+        })
         .transpose()
     {
         Ok(service) => service,

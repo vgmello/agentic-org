@@ -196,35 +196,100 @@ fn unread_created_and_ready_host_close_has_normal_cleanup_including_linux_reset(
 }
 
 #[test]
-fn channel_records_are_explicitly_fatal_without_ack_until_the_registry_slice() {
+fn channels_are_owned_before_ack_then_require_api2_default_deny_and_release_live_ids() {
     let world = World::new();
     let mut session = ready_create(&world);
-    let (source, mut peer) = UnixStream::pair().unwrap();
-    let record = v3::encode_transfer_record(&TransferRecord::Channel {
-        kind: ChannelKind::Local,
-        office_id: OFFICE.into(),
-        channel_id: "not-active-yet".into(),
-    })
-    .unwrap();
-    session
-        .stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
+    let mut live_peer = None;
+    for phase in 0..2 {
+        let (source, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+            kind: ChannelKind::Local,
+            office_id: OFFICE.into(),
+            channel_id: "opaque/Exact:id".into(),
+        })
         .unwrap();
-    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    send_record(
-        session.transfer.as_ref().unwrap(),
-        &record,
-        &[source.as_raw_fd()],
-    );
+        send_record(
+            session.transfer.as_ref().unwrap(),
+            &record,
+            &[source.as_raw_fd()],
+        );
+        assert_eq!(
+            session.event(),
+            json!({"v":3,"event":"fds_received","of":"opaque/Exact:id"})
+        );
+        // The fake host retains its sender copy until this record's own ACK.
+        drop(source);
+        let mut peer = BufReader::with_capacity(1, peer);
+        if phase == 0 {
+            frame::write_message(
+                peer.get_mut(),
+                &json!({"id":41,"method":"org.snapshot","params":{}}),
+            )
+            .unwrap();
+            let answer: Value = frame::read_message(&mut peer).unwrap().unwrap();
+            assert_eq!(answer["id"], 41);
+            assert_eq!(answer["error"]["code"], "unsupported_version");
+            assert!(frame::read_line(&mut peer).unwrap().is_none());
+            // EOF means the old live ID is released before the next record uses it.
+        } else {
+            frame::write_message(peer.get_mut(), &json!({"id":42,"method":"hello","params":{"api":{"min":1,"max":3}},"principal":{"malformed":"ignored-on-hello"}})).unwrap();
+            let answer: Value = frame::read_message(&mut peer).unwrap().unwrap();
+            assert_eq!(answer["id"], 42);
+            assert_eq!(answer["result"]["api_version"], 2);
+            assert_eq!(answer["result"]["instance_id"], INSTANCE);
+            assert_eq!(answer["result"]["office"]["office"]["id"], OFFICE);
+            for (n, method) in [
+                "msg.bind",
+                "msg.wait",
+                "status.set",
+                "org.snapshot",
+                "who",
+                "team.create",
+                "work.list",
+                "task.create",
+                "project.list",
+                "area.list",
+                "msg.send",
+                "msg.inbox",
+                "msg.read",
+                "subscribe",
+                "session.open",
+                "channel.open",
+                "bridge.open",
+                "agent.add",
+                "run.start",
+                "approval.accept",
+                "unknown.method",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let id = 100 + n;
+                frame::write_message(
+                    peer.get_mut(),
+                    &json!({"id":id,"method":method,"params":{},"principal":null}),
+                )
+                .unwrap();
+                let answer: Value = frame::read_message(&mut peer).unwrap().unwrap();
+                assert_eq!(answer["id"], id);
+                let expected = if n < 3 {
+                    "invalid_request"
+                } else {
+                    "not_authorized"
+                };
+                assert_eq!(answer["error"]["code"], expected, "{method}");
+            }
+            live_peer = Some(peer);
+        }
+    }
     assert!(
-        frame::read_line(&mut session.reader).unwrap().is_none(),
-        "staged Channel received an ACK"
+        !org_socket::poll_readable(session.stream.as_raw_fd(), Duration::from_millis(10)).unwrap(),
+        "duplicate channel ACK"
     );
-    assert_transfer_fatal(&mut session.run, "channel");
-    drop(source);
-    use std::io::Read;
-    assert_eq!(peer.read(&mut [0]).unwrap(), 0);
-    session.no_stdout();
+    session.stop();
+    assert!(frame::read_line(&mut live_peer.unwrap()).unwrap().is_none());
+    assert_reopens(&world);
 }
 
 #[test]
@@ -512,4 +577,139 @@ fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db(
         status.code(),
         started.elapsed()
     );
+}
+
+fn open_live_channel(session: &mut Session, kind: ChannelKind, id: &str) -> BufReader<UnixStream> {
+    let (source, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let record = v3::encode_transfer_record(&TransferRecord::Channel {
+        kind,
+        office_id: OFFICE.into(),
+        channel_id: id.into(),
+    })
+    .unwrap();
+    send_record(
+        session.transfer.as_ref().unwrap(),
+        &record,
+        &[source.as_raw_fd()],
+    );
+    assert_eq!(
+        session.event(),
+        json!({"v":3,"event":"fds_received","of":id})
+    );
+    drop(source);
+    BufReader::with_capacity(1, peer)
+}
+#[test]
+fn real_channel_limits_accept_boundary_and_refuse_next_without_ack_then_reap_every_live_peer() {
+    for case in [
+        "eighth-gateway",
+        "ninth-local",
+        "ninth-gateway",
+        "ninth-all-local",
+        "duplicate-live",
+    ] {
+        let world = World::new();
+        let mut session = ready_create(&world);
+        let initial = if case == "duplicate-live" { 1 } else { 7 };
+        let mut peers = Vec::new();
+        for n in 0..initial {
+            peers.push(open_live_channel(
+                &mut session,
+                if case == "ninth-all-local" {
+                    ChannelKind::Local
+                } else {
+                    ChannelKind::Gateway
+                },
+                &format!("live-{n}"),
+            ));
+        }
+        if case.starts_with("ninth-") {
+            peers.push(open_live_channel(
+                &mut session,
+                ChannelKind::Local,
+                "eighth-local",
+            ));
+        }
+        let (source, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+            kind: if case.ends_with("gateway") {
+                ChannelKind::Gateway
+            } else {
+                ChannelKind::Local
+            },
+            office_id: OFFICE.into(),
+            channel_id: if case == "duplicate-live" {
+                "live-0"
+            } else {
+                "over-limit"
+            }
+            .into(),
+        })
+        .unwrap();
+        send_record(
+            session.transfer.as_ref().unwrap(),
+            &record,
+            &[source.as_raw_fd()],
+        );
+        assert_transfer_fatal(&mut session.run, case);
+        session.no_stdout();
+        assert!(
+            frame::read_line(&mut session.reader).unwrap().is_none(),
+            "{case}: unexpected ACK"
+        );
+        drop(source);
+        peers.push(BufReader::new(peer));
+        for peer in &mut peers {
+            assert!(
+                frame::read_line(peer).unwrap().is_none(),
+                "{case}: worker retained channel"
+            );
+        }
+        assert_reopens(&world);
+    }
+}
+#[test]
+fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_without_ack() {
+    for case in ["empty-id", "handoff-id", "wrong-office", "datagram", "file"] {
+        let world = World::new();
+        let mut session = ready_create(&world);
+        let record = v3::encode_transfer_record(&TransferRecord::Channel {
+            kind: ChannelKind::Local,
+            office_id: if case == "wrong-office" {
+                "other-office"
+            } else {
+                OFFICE
+            }
+            .into(),
+            channel_id: match case {
+                "empty-id" => "",
+                "handoff-id" => "handoff",
+                _ => "valid-id",
+            }
+            .into(),
+        })
+        .unwrap();
+        let (source, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (datagram, _datagram_peer) = UnixDatagram::pair().unwrap();
+        let file = tempfile::tempfile().unwrap();
+        let fd = match case {
+            "datagram" => datagram.as_raw_fd(),
+            "file" => file.as_raw_fd(),
+            _ => source.as_raw_fd(),
+        };
+        send_record(session.transfer.as_ref().unwrap(), &record, &[fd]);
+        assert_transfer_fatal(&mut session.run, case);
+        session.no_stdout();
+        assert!(
+            frame::read_line(&mut session.reader).unwrap().is_none(),
+            "{case}: unexpected ACK"
+        );
+        drop(source);
+        use std::io::Read;
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+        assert_reopens(&world);
+    }
 }

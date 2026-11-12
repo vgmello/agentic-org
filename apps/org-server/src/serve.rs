@@ -6,6 +6,13 @@
 //! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
 
+mod host;
+pub(super) use host::HostChannel;
+pub(super) enum Context {
+    OfficeSocket,
+    HostChannel(Box<HostChannel>),
+}
+
 use std::collections::HashMap;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -553,14 +560,27 @@ fn serve_connection(
     conn: u64,
     stopping: &std::sync::atomic::AtomicBool,
 ) {
-    serve_connection_with_poll(
-        stream,
-        shared,
-        conn,
-        stopping,
-        org_socket::READ_TICK,
-        org_socket::poll_readable,
-    );
+    serve_context(stream, shared, conn, stopping, Context::OfficeSocket);
+}
+
+pub(super) fn serve_context(
+    stream: UnixStream,
+    shared: &Shared,
+    conn: u64,
+    stopping: &std::sync::atomic::AtomicBool,
+    context: Context,
+) {
+    match context {
+        Context::OfficeSocket => serve_connection_with_poll(
+            stream,
+            shared,
+            conn,
+            stopping,
+            org_socket::READ_TICK,
+            org_socket::poll_readable,
+        ),
+        Context::HostChannel(context) => host::serve(stream, *context, stopping),
+    }
 }
 
 fn serve_connection_with_poll(
