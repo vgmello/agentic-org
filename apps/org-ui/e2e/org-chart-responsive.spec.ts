@@ -825,3 +825,51 @@ test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the ope
 	await expect(trigger).toBeFocused({ timeout: 5_000 });
 	await shot(page, 'bug129-second-escape-returns-view');
 });
+
+test('PEOPLE-1 BUG-70 BUG-129: live team removal remounts View closed with a fresh focus guard', async ({ page }) => {
+	await openChart(page, 1280);
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const trigger = page.getByRole('button', { name: 'View', exact: true });
+	await trigger.press('Enter');
+	await expect(page.getByRole('menuitem').first()).toBeFocused({ timeout: 5_000 });
+	const organizationId = await page.evaluate(async () => {
+		const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		const id = connections[connections.length - 1].organization.id;
+		const modulePath = '/e2e/fakes/org-api.ts';
+		const { orgApi } = await import(modulePath);
+		// Use the existing command feed and real versions; parents cannot be deleted before their children.
+		const { snapshot: initial } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+		for (let remaining = initial.teams.length; remaining > 0; remaining--) {
+			const { snapshot } = await orgApi.view(id) as { snapshot: OrgSnapshot };
+			const leaf = snapshot.teams.find((team) => !snapshot.teams.some((child) => child.owner_team_id === team.id))!;
+			await (window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.delete', params: { team_id: leaf.id, expected_version: leaf.version } });
+		}
+		return id;
+	});
+	await expect(trigger).toHaveCount(0);
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await shot(page, 'bug129-live-empty-no-view');
+	await page.evaluate(async (id) => {
+		await (window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'restored-team', name: 'Restored team' } });
+	}, organizationId);
+	await expect(trigger).toBeVisible();
+	await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await shot(page, 'bug129-live-remounted-closed');
+	await trigger.press('Enter');
+	const item = page.getByRole('menuitem').first();
+	await expect(item).toBeFocused({ timeout: 5_000 });
+	await expect(page.getByRole('menu')).not.toHaveAttribute('inert');
+	await item.evaluate((element) => {
+		const menu = element.closest<HTMLElement>('[role="menu"]')!;
+		const trigger = document.querySelector<HTMLButtonElement>('button[aria-controls="' + menu.id + '"]')!;
+		trigger.addEventListener('focus', () => queueMicrotask(() => Object.assign(window, {
+			bug129RemountClose: { connected: menu.isConnected, closed: menu.dataset.state === 'closed', inert: menu.inert }
+		})), { once: true });
+	});
+	await page.keyboard.press('Escape');
+	await expect.poll(() => page.evaluate(() => (window as unknown as { bug129RemountClose?: object }).bug129RemountClose), { timeout: 5_000 }).toEqual({ connected: true, closed: true, inert: true });
+	await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
+	await expect(trigger).toBeFocused({ timeout: 5_000 });
+	await shot(page, 'bug129-live-remounted-escape');
+});
