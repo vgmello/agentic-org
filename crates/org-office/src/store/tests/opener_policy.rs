@@ -226,6 +226,10 @@ fn flags(value: &str) {
         .collect::<Vec<_>>();
     for (i, arg) in args.iter().enumerate() {
         assert!(
+            !arg.starts_with('@'),
+            "rustc argument files are unsupported"
+        );
+        assert!(
             *arg != "--cap-lints" && !arg.starts_with("--cap-lints="),
             "Cargo caps the opener lint"
         );
@@ -677,6 +681,13 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
         }
     }
     impl<'ast> Visit<'ast> for Modules<'_> {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            assert!(
+                !matches!(item, syn::Item::Verbatim(_)),
+                "unsupported opaque Rust item"
+            );
+            syn::visit::visit_item(self, item);
+        }
         fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
             imports(&item.tree, false);
             syn::visit::visit_item_use(self, item);
@@ -1536,6 +1547,55 @@ fn sqlcipher_macro_definition_pins_match_exact_keys_and_token_bodies() {
         assert_eq!(find.found.len(), 1);
         let item = find.found[0];
         assert!(pinned_macro(&root, &file, scope, item));
+        let mut pending = vec![(item.mac.tokens.clone(), 0)];
+        let mut nested_identifier = None;
+        let mut nested_literal = None;
+        while let Some((tokens, depth)) = pending.pop() {
+            for token in tokens {
+                match token {
+                    proc_macro2::TokenTree::Group(group) => {
+                        pending.push((group.stream(), depth + 1));
+                    }
+                    proc_macro2::TokenTree::Ident(ident) if depth > 0 => {
+                        nested_identifier = Some(ident.span().byte_range());
+                    }
+                    proc_macro2::TokenTree::Literal(literal) if depth > 0 => {
+                        nested_literal = Some(literal.span().byte_range());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(nested_identifier.is_some());
+        assert_eq!(
+            nested_literal.is_none(),
+            [
+                "__mailbox_conformance_cases",
+                "mailbox_conformance_tests",
+                "__triage_conformance_cases",
+                "triage_conformance_tests",
+                "view_queries"
+            ]
+            .contains(&name)
+        );
+        for (token, replacement) in [
+            (nested_identifier, "changed_nested_identifier"),
+            (nested_literal, "\"changed nested literal\""),
+        ] {
+            if let Some(token) = token {
+                let definition = item.span().byte_range();
+                let mut changed = source[definition.clone()].to_owned();
+                changed.replace_range(
+                    token.start - definition.start..token.end - definition.start,
+                    replacement,
+                );
+                let changed = syn::parse_str(&changed).unwrap();
+                assert!(
+                    std::panic::catch_unwind(|| pinned_macro(&root, &file, scope, &changed))
+                        .is_err()
+                );
+            }
+        }
         let leaked = format!("{source}\nfn unknown_scope(){{ unknown!{{#[$meta] Value}}; }}");
         assert!(std::panic::catch_unwind(|| modules(&root, &file, &leaked)).is_err());
         let range = item.span().byte_range();
@@ -1868,4 +1928,29 @@ fn sqlcipher_cargo_config_pairs_strict_grammar_and_flag_refusals() {
             "accepted {input}"
         );
     }
+}
+
+#[test]
+fn sqlcipher_argument_files_and_opaque_items_fail_closed() {
+    for source in [
+        "[build]\nrustflags = '@absolute.args'",
+        "[target.'cfg(unix)']\nrustflags = ['@absolute.args']",
+        "build.rustflags = ['@absolute.args']",
+    ] {
+        assert!(std::panic::catch_unwind(|| cargo_config(source)).is_err());
+    }
+    for source in [
+        "[build]\nrustflags = '-Dclippy::all'",
+        "[target.'cfg(unix)']\nrustflags = ['-Dclippy::all']",
+        "build.rustflags = ['-Dclippy::all']",
+    ] {
+        cargo_config(source);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lib.rs");
+    std::fs::write(&file, "").unwrap();
+    for source in ["macro hidden() {}", "pub macro hidden($x:expr) {$x}"] {
+        assert!(std::panic::catch_unwind(|| modules(dir.path(), &file, source)).is_err());
+    }
+    modules(dir.path(), &file, "pub struct Supported;");
 }
