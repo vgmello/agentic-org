@@ -216,14 +216,16 @@ describe('selector', () => {
 		const pw = ['bun', 'x', 'playwright', 'test'];
 		const webkitProjects = ['--project=chromium', '--project=production', '--project=webkit'];
 		const chat = specs.filter((spec) => spec === 'chat.spec.ts' || spec.startsWith('chat-')).map((spec) => `e2e/${spec.replace(/\./g, '\\.')}$`);
-		expect(chat).toHaveLength(11);
+		expect(chat).toHaveLength(13);
+		const cspChat = chat.filter((file) => !file.includes('chat-followups-default-font'));
+		expect(cspChat).toHaveLength(12);
 		const csp = [...pw, '--config', 'playwright.csp.config.ts'];
 		expect(list).toEqual([
 			{ name: 'ordinary: journeys', env: { PW_WEBKIT: '1' }, cmd: [...pw, '--grep', '@journey', ...webkitProjects] },
-			{ name: 'ordinary: chat', env: { PW_WEBKIT: '1' }, cmd: [...pw, '--grep-invert', '@journey', ...webkitProjects, ...chat] },
+			{ name: 'ordinary: chat', env: { PW_WEBKIT: '1' }, cmd: [...pw, '--grep-invert', '@journey', ...webkitProjects, '--project=chromium-chat-default-font', ...chat] },
 			{ name: 'csp: CSP-specific specs', cmd: [...csp, '--project=csp-chromium', '--project=csp-webkit', '--project=csp-firefox'] },
 			{ name: 'csp: journeys', cmd: [...csp, '--project=csp-chromium-full', '--grep', '@journey'] },
-			{ name: 'csp: chat', cmd: [...csp, '--project=csp-chromium-full', '--grep-invert', '@journey', ...chat] }
+			{ name: 'csp: chat', cmd: [...csp, '--project=csp-chromium-full', '--grep-invert', '@journey', ...cspChat] }
 		]);
 	});
 

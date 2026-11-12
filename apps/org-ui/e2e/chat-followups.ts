@@ -1,6 +1,21 @@
 import { expect, type Locator, type Page } from '@playwright/test';
-import { create } from './non-chat-icons';
 import { visit } from './ready';
+
+async function create(page: Page, width: number, scale = 1) {
+	await page.setViewportSize({ width, height: 900 });
+	await page.addInitScript((scale) => {
+		const apply = () => document.documentElement.style.setProperty('font-size', `${scale * 100}%`, 'important');
+		addEventListener('DOMContentLoaded', apply, { once: true });
+		if (document.documentElement) apply();
+	}, scale);
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization', exact: true }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	// URL changes before the destination is ready; avoid interrupting the create handoff (BUG-93).
+	await expect(page.getByRole('main', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
+}
 
 export async function openChat(page: Page, width = 1280, scale = 1, url = '/chat') {
 	await create(page, width, scale);
@@ -36,6 +51,8 @@ export async function focusOutline(control: Locator) {
 	})).toBe(true);
 }
 export async function sidebarGeometry(nav: Locator) {
+ const navPadding=await nav.evaluate(e=>({actual:parseFloat(getComputedStyle(e).paddingLeft),expected:Math.min(parseFloat(getComputedStyle(document.documentElement).fontSize)*.75,12)}));
+ expect(navPadding.actual).toBeCloseTo(navPadding.expected,1);
 	const rows = nav.locator('[data-testid="needs-you-link"], [data-testid="mentions-link"], [data-testid="threads-link"], [data-testid="conversation-link"]');
 	expect(await rows.count()).toBeGreaterThan(5);
 	for (const row of await rows.all()) {
@@ -50,14 +67,19 @@ export async function sidebarGeometry(nav: Locator) {
 				return { word: word[0], fragments: [...wordRange.getClientRects()].filter((r) => r.width > 0).length };
 			});
 			const root = parseFloat(getComputedStyle(document.documentElement).fontSize);
-			return { name: e.textContent, words, fixed: e.getAttribute('data-testid') !== 'conversation-link', lines: lines.length,
+   const fixed = e.getAttribute('data-testid') !== 'conversation-link';
+   const probe=document.createElement('span');Object.assign(probe.style,{position:'absolute',display:'inline-block',width:'6ch'});label.append(probe);
+   const minimum=probe.getBoundingClientRect().width;probe.remove();
+   const labelStyle=getComputedStyle(label);
+   const readable=label.getBoundingClientRect().width>0 && (!fixed || label.getBoundingClientRect().width>=minimum-.5);
+			return { name: e.textContent, words, fixed, readable, fixedWordStyle: !fixed || (labelStyle.wordBreak==='normal' && labelStyle.overflowWrap==='normal'), lines: lines.length,
 				iconBefore: !!first && icon.right <= first.left + 1, sharesLine: !!first && icon.top < first.bottom && icon.bottom > first.top,
 				fits: [...lines, ...counts].every((r) => r.left >= icon.right - 1 && r.right <= box.right + 1),
 				noOverlap: counts.every((c) => lines.every((r) => c.right <= r.left + .5 || c.left >= r.right - .5 || c.bottom <= r.top + .5 || c.top >= r.bottom - .5)),
 				iconSize: visual.tagName.toLowerCase() === 'svg' ? { width: icon.width, height: icon.height, expected: Math.min(root * 1.5, 32) } : undefined };
 		});
 		expect(measured.lines).toBeGreaterThan(0);
-		expect(measured, measured.name ?? '').toMatchObject({ iconBefore: true, sharesLine: true, fits: true, noOverlap: true });
+		expect(measured, measured.name ?? '').toMatchObject({ iconBefore: true, sharesLine: true, fits: true, noOverlap: true, readable: true, fixedWordStyle: true });
 		if (measured.iconSize) {
 			expect(measured.iconSize.width).toBeCloseTo(measured.iconSize.expected, 1);
 			expect(measured.iconSize.height).toBeCloseTo(measured.iconSize.expected, 1);

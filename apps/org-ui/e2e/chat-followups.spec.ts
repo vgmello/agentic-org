@@ -169,6 +169,30 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
    await badges.first().scrollIntoViewIfNeeded();
    await shot(page, `bug95-path-${state}-${width}-${scale}`, { context: badges.first().locator('..') });
   }
+  for (const mode of ['muted','digest']) {
+   await visit(page,'/chat?c=c-general');
+   await page.getByRole('button',{name:'Members',exact:true}).click();
+   const members=page.getByTestId('members-panel');
+   await members.getByTestId('member-row').filter({hasText:'Sam Okafor'}).getByTestId('mute-select').selectOption(mode);
+   await members.getByRole('button',{name:'Close members',exact:true}).click();
+   const folded=page.getByTestId(mode==='muted'?'muted-row':'digest-row');
+   await expect(folded).toBeVisible();await folded.getByRole('button').first().click();
+   const badge=folded.getByTitle('Announcement',{exact:true});await expect(badge).toBeVisible();await kindGeometry(badge);
+   await expect(folded.getByRole('toolbar',{name:'Message actions'})).toHaveCount(0);
+   await shot(page,`bug95-path-${mode}-${width}-${scale}`,{context:badge.locator('..')});
+  }
+  for (const place of ['conversation','thread']) {
+   await visit(page,`/chat?c=c-general&chat=fail${place==='thread'?'&thread=m-2':''}`);
+   const area=place==='thread'?page.getByTestId('thread-panel'):page.getByRole('region',{name:'Conversation',exact:true});
+   const name='pending-attachment-with-a-long-wrapping-file-name-for-layout.txt';
+   await area.getByLabel('Attach files').setInputFiles({name,mimeType:'text/plain',buffer:Buffer.from('test')});
+   await area.getByTestId('composer').fill('Pending attachment layout proof');await area.getByTestId('composer').press('Control+Enter');
+   const failed=area.getByTestId('message').filter({hasText:'Pending attachment layout proof'});
+   await expect(failed.getByTestId('not-delivered')).toBeVisible();
+   await attachmentGeometry(failed.getByRole('list',{name:'Attachments',exact:true}).getByRole('listitem'),width===320);
+   await expect(failed.getByRole('toolbar',{name:'Message actions'})).toHaveCount(0);
+   await failed.scrollIntoViewIfNeeded();await shot(page,`bug96-path-pending-${place}-${width}-${scale}`,{context:failed});
+  }
  });
 }
 
@@ -240,4 +264,18 @@ for (const width of [320,640,960,1280]) test(`BUG-98/99 BUG-70: outlines remain 
  const remove=page.getByRole('button',{name:'Remove visible-focus.txt',exact:true});
  await keyboardFocus(page,remove);await focusOutline(remove);
  await shot(page,`bug99-focus-200-${width}`,{context:page.getByRole('list',{name:'Attached',exact:true})});
+});
+
+
+test('BUG-94 BUG-70: geometry oracle rejects an overlapping count inside row bounds', async ({ page }) => {
+ await openChat(page,1280,2);
+ const nav=await navigation(page);
+ await sidebarGeometry(nav);
+ await nav.getByTestId('needs-you-link').evaluate(row=>{
+  const label=row.lastElementChild!.firstElementChild!.getBoundingClientRect(), box=row.getBoundingClientRect();
+  (row as HTMLElement).style.position='relative';
+  const count=row.querySelector<HTMLElement>('[data-testid="needs-you-count"]')!;
+  Object.assign(count.style,{position:'absolute',left:`${label.left-box.left}px`,top:`${label.top-box.top}px`});
+ });
+ await expect(sidebarGeometry(nav)).rejects.toThrow(/noOverlap/);
 });
