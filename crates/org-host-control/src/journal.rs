@@ -16,8 +16,8 @@
 //! [`Journaled::fingerprint_fields`] fails: the PEM reader refuses the pair) is answered at the
 //! lookup with `tls_invalid`, unstored, whether or not its `operation_id` is known.
 //!
-//! This crate defines the bytes the host hashes ([`fingerprint_input`]); the host computes the
-//! SHA-256. `tls.set`'s fields are themselves hashes, which this crate computes
+//! This crate defines and hashes the bytes ([`fingerprint_input`], [`fingerprint`]).
+//! `tls.set`'s fields are themselves hashes, which this crate computes
 //! ([`crate::ops::TlsPairFingerprint`]).
 //!
 //! **A secret is never part of a fingerprint.** The journal keeps fingerprints for 30 days, and
@@ -83,6 +83,12 @@ pub fn fingerprint_input<J: Journaled>(params: &J) -> Result<Vec<u8>, serde_json
     out.push(0);
     out.extend_from_slice(fields.as_bytes());
     Ok(out)
+}
+
+/// SHA-256 of the canonical journal input; login normalization remains the host's job.
+pub fn fingerprint<J: Journaled>(params: &J) -> Result<[u8; 32], serde_json::Error> {
+    use sha2::{Digest, Sha256};
+    Ok(Sha256::digest(fingerprint_input(params)?).into())
 }
 
 impl Journaled for OrganizationCreateParams {

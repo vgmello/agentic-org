@@ -1,6 +1,7 @@
 //! Private registry persistence. Callers must hold host.lock and serialize bootstrap.
 //! No production caller creates a registry until 2b.3 accepts bootstrap.
 
+pub(crate) mod journal;
 mod schema;
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,11 @@ const TMP: &str = "host-registry.db.tmp";
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Error {
+    InvalidId,
+    Expired,
+    ClockSkew,
+    OperationReused,
+    Conflict,
     Unsafe,
     Exists,
     Empty,

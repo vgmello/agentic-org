@@ -37,6 +37,8 @@ compile_error!(
      development app, the trust-changing arguments). Build it without debug assertions."
 );
 
+#[cfg_attr(not(test), expect(dead_code, reason = "2b.3 account activation"))]
+mod accounts;
 mod app_auth;
 mod broadcast;
 mod catalog;

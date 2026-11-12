@@ -270,6 +270,44 @@ fn journaled<P: serde::de::DeserializeOwned + Journaled>(
     )
 }
 
+#[test]
+fn fingerprint_hashes_match_independently_pinned_vectors() {
+    fn check<P: serde::de::DeserializeOwned + Journaled>(case: &Value) {
+        let op: P = serde_json::from_value(case["stored"]["params"].clone()).unwrap();
+        let hash = crate::journal::fingerprint(&op).unwrap();
+        let hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(hex, case["fingerprint_sha256"].as_str().unwrap());
+    }
+    let vectors: Value =
+        serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    for case in vectors["cases"].as_array().unwrap() {
+        match case["method"].as_str().unwrap() {
+            "organization.create" => check::<OrganizationCreateParams>(case),
+            "office.restart" => check::<OfficeRestartParams>(case),
+            "account.create" => check::<AccountCreateParams>(case),
+            _ => panic!("unhandled vector method"),
+        }
+    }
+}
+
+#[test]
+fn an_abandoned_create_keeps_the_pinned_cancelled_refusal() {
+    let vectors: Value =
+        serde_json::from_str(include_str!("../test-vectors/journal.json")).unwrap();
+    let wire = vectors["abandoned"]["result"].clone();
+    let stored: HostOpResult<Value> = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(
+        stored,
+        HostOpResult::Rejected {
+            refusal: org_proto::ApiError::new(
+                org_proto::ErrorCode::Cancelled,
+                "the organization create was cancelled"
+            ),
+        }
+    );
+    assert_eq!(serde_json::to_value(stored).unwrap(), wire);
+}
+
 /// X-02 §6.3: the same op after a new sign-in by the same account replays; another account or
 /// other params is `operation_reused`, and so is an `account.create` whose password doesn't match
 /// the row's create-time verifier (a copy of the create's Argon2id hash, which the host checks;
@@ -522,6 +560,7 @@ fn tls_set_vectors_fingerprint_the_der_hashes_only() {
         let params: TlsSetParams = serde_json::from_value(case["params"].clone()).unwrap();
         let error = params.fingerprint_fields().unwrap_err().to_string();
         assert!(fingerprint_input(&params).is_err(), "{name}");
+        assert!(crate::journal::fingerprint(&params).is_err(), "{name}");
         // The error never quotes the pair.
         assert!(
             !error.contains("MII") && !error.contains("-----"),

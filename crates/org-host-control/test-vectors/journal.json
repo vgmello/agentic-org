@@ -22,7 +22,8 @@
         }
       },
       "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
-      "expect": "replay"
+      "expect": "replay",
+      "fingerprint_sha256": "12976af925762f49d91ac6834c267ed7b6ee4328138d9a29e9b372939adc99e2"
     },
     {
       "name": "the same op id from another account is reused",
@@ -44,7 +45,8 @@
         }
       },
       "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
-      "expect": "operation_reused"
+      "expect": "operation_reused",
+      "fingerprint_sha256": "12976af925762f49d91ac6834c267ed7b6ee4328138d9a29e9b372939adc99e2"
     },
     {
       "name": "the same op id with other params is reused",
@@ -66,7 +68,8 @@
         }
       },
       "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
-      "expect": "operation_reused"
+      "expect": "operation_reused",
+      "fingerprint_sha256": "12976af925762f49d91ac6834c267ed7b6ee4328138d9a29e9b372939adc99e2"
     },
     {
       "name": "an office restart after a new sign-in replays",
@@ -88,7 +91,8 @@
         }
       },
       "fingerprint_input": "office.restart\u0000{\"office_id\":\"01M72N8MG00000000000000F01\"}",
-      "expect": "replay"
+      "expect": "replay",
+      "fingerprint_sha256": "8a302bc6957c0428d510b2cbed85bf7a0e0bf2752fdaa2374801dc61e909ad55"
     },
     {
       "name": "an account create retried after a new sign-in with the same password matches the verifier: replay",
@@ -117,7 +121,8 @@
       },
       "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
       "password_verifier": "match",
-      "expect": "replay"
+      "expect": "replay",
+      "fingerprint_sha256": "7af155296dc72e427ac36cdae84b2e7ceaf5536d00ff4ce99309c0aa8883b02a"
     },
     {
       "name": "an account create retried with another password has the same fingerprint (the password isn't fingerprinted) but fails the create-time verifier: reused",
@@ -146,7 +151,8 @@
       },
       "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
       "password_verifier": "mismatch",
-      "expect": "operation_reused"
+      "expect": "operation_reused",
+      "fingerprint_sha256": "7af155296dc72e427ac36cdae84b2e7ceaf5536d00ff4ce99309c0aa8883b02a"
     },
     {
       "name": "an account create for another organization is reused",
@@ -175,7 +181,8 @@
       },
       "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
       "password_verifier": "match",
-      "expect": "operation_reused"
+      "expect": "operation_reused",
+      "fingerprint_sha256": "7af155296dc72e427ac36cdae84b2e7ceaf5536d00ff4ce99309c0aa8883b02a"
     }
   ],
   "bootstrap": {
@@ -338,7 +345,8 @@
         "same_fingerprint": false,
         "expect": "not_authorized"
       }
-    ]
+    ],
+    "fingerprint_sha256": "f04d05c9e93f36d3fea21e9cfda2371c183e5db3a51fe45d3f19156dd1298b58"
   },
   "tls_set": {
     "comment": "X-02 §6.2, §6.3: tls.set's fingerprint fields are exactly {\"cert_chain_sha256\", \"key_der_sha256\"}, the SHA-256 as lowercase hex of cert's chain (every CERTIFICATE block's DER with a u32 big-endian length prefix, in order) and in key's first PRIVATE KEY, RSA PRIVATE KEY or EC PRIVATE KEY block, never the pair itself; session and operation_id are excluded as for every op. The certificate and keys are synthetic, made with openssl for these vectors (P-256 and a 512-bit RSA key, CN=mac.local and CN=ca.local); the expected hashes were computed with openssl (chain: each block's DER from openssl x509 -outform DER, length-prefixed, then sha256; key: pkey, ec and rsa -outform DER | sha256sum), not by this crate. A body is strict standard base64 (spaces, tabs, CR and LF aside); a pair with no such block, or a body that doesn't decode, has no fingerprint: fingerprint_fields() fails on it, and the host refuses it as tls_invalid, unstored, wherever it needs the fingerprint. Lines end with LF, CRLF or a lone CR (RFC 7468 §3's eol), in any mix: 'line_ends' is the same pair with each, and every one fingerprints the same. 'invalid' rows are pairs the PEM reader refuses: their fingerprint is an error ('fingerprint': 'error'), and the host answers them with tls_invalid, unstored, on every path, the journal lookup included. 'lookup' is the journal lookup, which needs the fingerprint: a known operation_id with a pair that has none is tls_invalid, unstored, never a replay or operation_reused; otherwise the same fingerprint replays and another is operation_reused.",
@@ -759,6 +767,67 @@
           "expect": "tls_invalid"
         }
       ]
+    }
+  },
+  "login_normalization": [
+    {
+      "input": "Ａdmin",
+      "normalized": "ａdmin"
+    },
+    {
+      "input": "x²",
+      "normalized": "x²"
+    },
+    {
+      "input": "Straße",
+      "normalized": "strasse"
+    },
+    {
+      "input": "ΟΣς",
+      "normalized": "οσσ"
+    },
+    {
+      "input": "K",
+      "normalized": "k"
+    },
+    {
+      "input": "É",
+      "normalized": "é"
+    },
+    {
+      "input": "İ",
+      "normalized": "i̇"
+    },
+    {
+      "input": "admin",
+      "normalized": "admin"
+    },
+    {
+      "input": "ᾈ",
+      "normalized": "ἀι"
+    },
+    {
+      "input": "ﬃ",
+      "normalized": "ffi"
+    },
+    {
+      "input": "ᾲ",
+      "normalized": "ὰι"
+    },
+    {
+      "input": "ΐ",
+      "normalized": "ΐ"
+    }
+  ],
+  "abandoned": {
+    "state": "abandoned",
+    "kind": "organization.create",
+    "result": {
+      "status": "rejected",
+      "refusal": {
+        "code": "cancelled",
+        "message": "the organization create was cancelled"
+      }
     }
   }
 }
