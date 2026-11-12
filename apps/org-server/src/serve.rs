@@ -607,6 +607,11 @@ fn serve_connection_with_poll(
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
+            // A dead binding cannot be kept alive by principal-bearing frames.
+            if control.revoked.load(Ordering::SeqCst) {
+                refuse_revoked(&out, request.id, &control, shared.timing);
+                break;
+            }
             // This is the office-socket loop; host channels authenticate principals separately.
             // Presence includes null and malformed values. Refuse before any binding effects.
             if request.principal.is_some() {
@@ -1404,6 +1409,14 @@ mod tests {
                 ),
                 (
                     serde_json::json!({"member":"pat","app_token":"07".repeat(32)}),
+                    ErrorCode::NotAuthorized,
+                ),
+                (
+                    serde_json::json!({"member":"pat"}),
+                    ErrorCode::NotAuthorized,
+                ),
+                (
+                    serde_json::json!({"member":"owner"}),
                     ErrorCode::NotAuthorized,
                 ),
                 (serde_json::json!({"member":7}), ErrorCode::InvalidRequest),

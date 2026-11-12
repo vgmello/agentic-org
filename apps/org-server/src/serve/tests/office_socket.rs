@@ -300,46 +300,56 @@ fn principal_refusal_precedes_even_the_live_member_lookup() {
             self.inner.resolve_member(handle)
         }
     }
-    let (_, directory) = messaging();
-    let forbidden = Arc::new(AtomicBool::new(false));
-    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-    ports.directory = Arc::new(Directory {
-        inner: directory,
-        forbidden: Arc::clone(&forbidden),
-    });
-    let shared = Arc::new(Shared::new(
-        &test_info(),
-        Path::new("/unused"),
-        ports,
-        token(),
-    ));
-    let (stream, peer) = UnixStream::pair().unwrap();
-    peer.set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let stop = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&stop);
-    // Exercise the real loop without a watcher that independently queries this directory.
-    let server = std::thread::spawn(move || serve_connection(stream, &shared, 1, &flag));
-    let _server = Running {
-        stop,
-        server: Some(server),
-    };
-    let mut client = Client {
-        reader: BufReader::new(peer.try_clone().unwrap()),
-        stream: peer,
-        next: 0,
-    };
-    assert!(matches!(
-        client.bind(Some("pat"), Some(token())),
-        org_proto::Outcome::Result(_)
-    ));
-    forbidden.store(true, Ordering::SeqCst);
-    for principal in principal_values() {
-        for method in ["hello", "msg.bind", "msg.wait", "subscribe", "team.create"] {
-            assert_eq!(
-                code_of(client.ask(|id| with_principal(id, method, json!({}), principal.clone()))),
-                ErrorCode::NotAuthorized
-            );
+    for grants in [false, true] {
+        let (_, directory) = messaging();
+        let forbidden = Arc::new(AtomicBool::new(false));
+        let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+        ports.directory = Arc::new(Directory {
+            inner: directory,
+            forbidden: Arc::clone(&forbidden),
+        });
+        let shared = Arc::new(Shared::new(
+            &test_info(),
+            Path::new("/unused"),
+            ports,
+            auth(grants),
+        ));
+        let (stream, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        // Exercise the real loop without a watcher that independently queries this directory.
+        let server = std::thread::spawn(move || serve_connection(stream, &shared, 1, &flag));
+        let _server = Running {
+            stop,
+            server: Some(server),
+        };
+        let mut client = Client {
+            reader: BufReader::new(peer.try_clone().unwrap()),
+            stream: peer,
+            next: 0,
+        };
+        assert!(matches!(
+            client.bind(
+                Some(if grants { "ada" } else { "pat" }),
+                if grants { None } else { Some(token()) },
+            ),
+            org_proto::Outcome::Result(_)
+        ));
+        forbidden.store(true, Ordering::SeqCst);
+        for principal in principal_values() {
+            for method in ["hello", "msg.bind", "msg.wait", "subscribe", "team.create"] {
+                assert_eq!(
+                    code_of(client.ask(|id| with_principal(
+                        id,
+                        method,
+                        json!({}),
+                        principal.clone()
+                    ))),
+                    ErrorCode::NotAuthorized
+                );
+            }
         }
     }
 }
@@ -378,5 +388,81 @@ fn failed_principal_refusal_write_ends_before_polling_another_request() {
             },
         );
         assert_eq!(polls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn revocation_precedes_principal_refusal_and_closes_the_office_socket() {
+    for grants in [false, true] {
+        for principal in std::iter::once(None).chain(principal_values().into_iter().map(Some)) {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            let shared = Shared::new(
+                &test_info(),
+                Path::new("/unused-test-socket"),
+                ports(Box::new(|| Err(SnapshotFailure::Storage))),
+                auth(grants),
+            );
+            frame::write_message(
+                &mut peer,
+                &Request::new::<MsgBind>(
+                    1,
+                    &MsgBindParams {
+                        member: Some("ada".into()),
+                        app_token: None,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let mut polls = 0;
+            serve_connection_with_poll(
+                stream,
+                &shared,
+                1,
+                &AtomicBool::new(false),
+                org_socket::READ_TICK,
+                |fd, _| {
+                    polls += 1;
+                    assert!(polls <= 3, "revoked connection did not stop");
+                    if polls == 3 {
+                        // Let an incorrectly continued loop finish, so the response assertion
+                        // below identifies the wrong refusal rather than timing out.
+                        return Ok(false);
+                    }
+                    if polls == 2 {
+                        let control = Arc::clone(&shared.bound.lock().unwrap().get(&1).unwrap().1);
+                        control.revoked.store(true, Ordering::SeqCst);
+                        let mut call = Request::new::<MsgInbox>(2, &inbox_params()).unwrap();
+                        if let Some(value) = principal.clone() {
+                            let method = call.method.clone();
+                            call = with_principal(2, &method, call.params, value);
+                        }
+                        frame::write_message(&mut peer, &call).unwrap();
+                    }
+                    org_socket::poll_readable(fd, Duration::from_millis(1))
+                },
+            );
+            let mut responses = BufReader::new(peer);
+            let bound = frame::read_message::<Response>(&mut responses)
+                .unwrap()
+                .unwrap();
+            assert_eq!(bound.id, 1);
+            assert!(matches!(bound.outcome, org_proto::Outcome::Result(_)));
+            let refused = frame::read_message::<Response>(&mut responses)
+                .unwrap()
+                .unwrap();
+            assert_eq!(refused.id, 2);
+            assert_eq!(
+                code_of(refused.outcome),
+                ErrorCode::NotBound,
+                "established revocation must win over a principal (grants={grants})"
+            );
+            assert!(frame::read_message::<Response>(&mut responses)
+                .unwrap()
+                .is_none());
+            assert_eq!(polls, 2, "refusal must close without polling another frame");
+            assert!(shared.bound.lock().unwrap().is_empty());
+        }
     }
 }

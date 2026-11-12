@@ -692,15 +692,18 @@ mod tests {
     #[test]
     fn repeated_authority_boundary_not_detected_after_advance() {
         let (hq, sat, peer, signed) = same_base_authority();
-        for payload in [b"first".as_slice(), b"second".as_slice()] {
+        for (index, payload) in [b"first".as_slice(), b"second".as_slice()]
+            .into_iter()
+            .enumerate()
+        {
             apply(&sat, &peer, hq.publish(payload).unwrap()).unwrap();
+            assert_eq!(sat.checkpoint().position.seq, index as u64 + 1);
+            assert_repeat_unchanged(&sat, signed.clone());
+            let mut conflict = signed.clone();
+            conflict.restored_digest = Digest::from_bytes([9; 32]);
+            assert_ne!(conflict.restored_digest, sat.checkpoint().digest);
+            assert_repeat_unchanged(&sat, conflict);
         }
-        assert_eq!(sat.checkpoint().position.seq, 2);
-        assert_repeat_unchanged(&sat, signed.clone());
-        let mut conflict = signed;
-        conflict.restored_digest = Digest::from_bytes([9; 32]);
-        assert_ne!(conflict.restored_digest, sat.checkpoint().digest);
-        assert_repeat_unchanged(&sat, conflict);
         apply(&sat, &peer, hq.publish(b"third").unwrap()).unwrap();
         assert_eq!(sat.checkpoint().position.seq, 3);
         assert_eq!(sat.applied(), hq.applied());
