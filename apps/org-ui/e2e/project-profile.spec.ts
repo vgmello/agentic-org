@@ -155,3 +155,45 @@ test('PROJ-2/3 BUG-70: Project membership refresh and keyboard tabs keep actions
 	await expect(page.getByText(overview, { exact: true })).toBeVisible();
 	await shot(page, 'project-profile-actions');
 });
+
+const BUG158_PROJECT = '/projects/atlas';
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test(`BUG-158 BUG-70: TasksBoard outside card acts once and owns the layer at ${width}/${scale * 100}`, async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 1100 }); await create(page); await open(page, BUG158_PROJECT);
+		await page.getByRole('tab', { name: 'Tasks', exact: true }).click();
+		await page.getByRole('button', { name: 'New task', exact: true }).click();
+		const dialog = page.getByRole('dialog', { name: 'New task', exact: true });
+		await dialog.getByLabel('Title', { exact: true }).fill('Pointer menu proof');
+		await dialog.getByRole('button', { name: 'Create task', exact: true }).click(); await expect(dialog).toHaveCount(0);
+		await page.setViewportSize({ width, height: 1100 });
+		await page.locator('html').evaluate((html, scale) => html.style.fontSize = `${scale * 100}%`, scale);
+		const card = page.getByTestId('task-card').filter({ hasText: 'Pointer menu proof' });
+		const trigger = card.getByRole('button', { name: /^Actions for/ });
+		await page.evaluate(()=>document.fonts.ready); await shot(page, `bug158-task-before-open-${width}-${scale}`);
+		await trigger.click(); await expect(page.getByRole('menu')).toBeVisible();
+		const target = card.getByRole('button').filter({ hasText: 'Pointer menu proof' });
+		await target.scrollIntoViewIfNeeded();
+		await target.evaluate((node) => { node.dataset.clicks = '0'; node.addEventListener('click', () => node.dataset.clicks = String(Number(node.dataset.clicks) + 1)); });
+		await shot(page, `bug158-task-before-outside-${width}-${scale}`); await clickExposedMenuDestination(page, target);
+		await expect(target).toHaveAttribute('data-clicks', '1'); await expect(page.getByRole('menu')).toHaveCount(0);
+		const destination = page.getByRole('dialog'); await expect(destination).toContainText('Pointer menu proof');
+		await expect.poll(() => destination.evaluate((node) => node.contains(document.activeElement))).toBe(true);
+		await shot(page, `bug158-task-card-destination-${width}-${scale}`);
+	});
+}
+
+// A native click must land on an exposed part of the actual control, not on its portal.
+async function clickExposedMenuDestination(page: import('@playwright/test').Page, target: import('@playwright/test').Locator) {
+ await target.evaluate(node=>node.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ const point = await target.evaluate(node => {
+  const r = node.getBoundingClientRect();
+  for (const fy of [.5, .1, .9]) for (const fx of [.5, .1, .9]) {
+   const x = r.left + r.width * fx, y = r.top + r.height * fy;
+   if (x > 0 && x < innerWidth && y > 0 && y < innerHeight && node.contains(document.elementFromPoint(x, y))) return { x, y };
+  }
+  return null;
+ });
+ expect(point, 'the outside destination has a real exposed hit point').not.toBeNull();
+ await page.mouse.click(point!.x, point!.y);
+}

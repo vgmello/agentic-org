@@ -1137,3 +1137,44 @@ test('TEAM-8 BUG-70 BUG-115: chart confirmation retains its own focus plan acros
 	await shot(page, 'bug115-chart-confirmation-plan-race', { context: later });
 	await expect(later).toBeFocused();
 });
+
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+	test(`BUG-158 BUG-70: TeamMenu and ChartView outside controls act once at ${width}/${scale * 100}`, async ({ page }) => {
+		await openChart(page, width, scale); await page.setViewportSize({ width, height: 1800 });
+		const team = page.getByTestId('team-menu').first(), view = page.getByRole('button', { name: 'View', exact: true });
+		await team.click(); await expect(page.getByRole('menuitem', { name: 'Rename…', exact: true })).toBeVisible();
+		await shot(page, `bug158-team-before-outside-${width}-${scale}`);
+		await view.scrollIntoViewIfNeeded();
+		await view.evaluate((node) => { node.dataset.clicks = '0'; node.addEventListener('click', () => node.dataset.clicks = String(Number(node.dataset.clicks) + 1)); });
+		await clickExposedMenuDestination(page, view);
+		await expect(view).toHaveAttribute('data-clicks', '1'); await expect(view).toHaveAttribute('aria-expanded', 'true');
+		await expect(team).toHaveAttribute('aria-expanded', 'false'); await expect(page.getByRole('menu')).toHaveCount(1);
+		await expect.poll(() => page.getByRole('menu').evaluate((node) => node.contains(document.activeElement))).toBe(true);
+		await shot(page, `bug158-team-to-view-${width}-${scale}`);
+		await page.keyboard.press('Escape'); await view.click();
+		const people = page.getByRole('tab', { name: 'People', exact: true });
+		await people.scrollIntoViewIfNeeded();
+		await people.evaluate((node) => { node.dataset.clicks = '0'; node.addEventListener('click', () => node.dataset.clicks = String(Number(node.dataset.clicks) + 1)); });
+		await shot(page, `bug158-view-before-outside-${width}-${scale}`); await clickExposedMenuDestination(page, people);
+		await expect(people).toHaveAttribute('data-clicks', '1'); await expect(people).toHaveAttribute('aria-selected', 'true');
+		await expect(page.getByRole('menu')).toHaveCount(0); await expect(people).toBeFocused();
+		await expect.poll(() => people.evaluate((node) => node.matches(':focus-visible'))).toBe(false);
+		await shot(page, `bug158-view-to-people-${width}-${scale}`);
+	});
+}
+
+// A native click must land on an exposed part of the actual control, not on its portal.
+async function clickExposedMenuDestination(page: import('@playwright/test').Page, target: import('@playwright/test').Locator) {
+ await target.evaluate(node=>node.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ const point = await target.evaluate(node => {
+  const r = node.getBoundingClientRect();
+  for (const fy of [.5, .1, .9]) for (const fx of [.5, .1, .9]) {
+   const x = r.left + r.width * fx, y = r.top + r.height * fy;
+   if (x > 0 && x < innerWidth && y > 0 && y < innerHeight && node.contains(document.elementFromPoint(x, y))) return { x, y };
+  }
+  return null;
+ });
+ expect(point, 'the outside destination has a real exposed hit point').not.toBeNull();
+ await page.mouse.click(point!.x, point!.y);
+}

@@ -421,3 +421,57 @@ test('BUG-134 BUG-70: long conversation titles wrap at 320/root40 while fixed la
   await headerGeometry(page); await shot(page, `bug134-fixed-${label.replaceAll(' ', '-')}-320-root40`);
  }
 });
+
+const BUG158_CHAT = '/chat?c=c-general';
+for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
+ test(`BUG-158 BUG-70: MessageRow outside Members acts once and preserves the native reflow at ${width}/${scale * 100}${width === 1280 && scale === 2 ? "; BUG-170 native anchoring at 1800px" : ""}`, async ({ page, browserName }, info) => {
+  await openChat(page, width, scale, BUG158_CHAT); await page.setViewportSize({ width, height: 1800 });
+  const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+  const list = page.getByTestId('message-list'), target = page.getByRole('button', { name: 'Members', exact: true });
+  const metrics = () => list.evaluate(node => ({scroll:node.scrollTop,height:node.scrollHeight,width:node.clientWidth}));
+  await row.hover(); await target.scrollIntoViewIfNeeded(); const controlBefore = await metrics();
+  await clickExposedMenuDestination(page,target); await expect(page.getByTestId('members-panel')).toBeVisible();
+  await shot(page, `bug158-members-closed-menu-control-${width}-${scale}`); const controlAfter = await metrics();
+  await page.getByRole('button',{name:'Close members',exact:true}).click(); await expect(page.getByTestId('members-panel')).toHaveCount(0);
+  await expect.poll(async()=> (await metrics()).width).toBe(controlBefore.width);
+  await row.hover(); await row.getByTestId('message-menu').click(); await expect(page.getByRole('menu')).toBeVisible();
+  await list.evaluate((node, scroll)=>node.scrollTop=scroll, controlBefore.scroll);
+  await shot(page, `bug158-message-before-outside-${width}-${scale}`); const before = await metrics();
+  expect(before).toEqual(controlBefore);
+  await target.evaluate(node => {node.dataset.clicks='0';node.addEventListener('click',()=>node.dataset.clicks=String(Number(node.dataset.clicks)+1));});
+  await clickExposedMenuDestination(page,target);
+  await expect(target).toHaveAttribute('data-clicks','1'); await expect(page.getByRole('menu')).toHaveCount(0);
+  const panel = page.getByTestId('members-panel'); await expect(panel).toBeVisible();
+  if(width<1280) await expect(panel.getByRole('button',{name:'Close members',exact:true})).toBeFocused();
+  else { await expect(target).toBeFocused(); await expect.poll(()=>target.evaluate(node=>node.matches(':focus-visible'))).toBe(false); }
+  await shot(page, `bug158-message-members-${width}-${scale}`); const after = await metrics();
+  expect(after.width).toBe(controlAfter.width); expect(after.height).toBe(controlAfter.height);
+  const delta=after.scroll-before.scroll, nativeDelta=controlAfter.scroll-controlBefore.scroll;
+  const evidence = JSON.stringify({delta,nativeDelta,controlBefore,controlAfter,before,after});
+  await info.attach('native-panel-reflow-control',{body:evidence,contentType:'application/json'});
+  if(before.width===after.width) expect(Math.abs(delta), evidence).toBeLessThanOrEqual(1);
+  if(browserName === 'chromium' && width === 1280 && scale === 2) {
+   // Ada01M78F0Z: the candidate must first match unchanged-base delta0.
+   expect(Math.abs(delta), evidence).toBeLessThanOrEqual(1);
+   // Set this only after all BUG-158 assertions: a new regression remains unexpected.
+   test.fail(true, 'BUG-170: Chromium1800px native anchoring gap also exists on the unchanged base');
+  }
+  expect(Math.abs(delta-nativeDelta), evidence).toBeLessThanOrEqual(2);
+ });
+}
+
+// A native click must land on an exposed part of the actual control, not on its portal.
+async function clickExposedMenuDestination(page: import('@playwright/test').Page, target: import('@playwright/test').Locator) {
+ await target.evaluate(node=>node.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ const point = await target.evaluate(node => {
+  const r = node.getBoundingClientRect();
+  for (const fy of [.5, .1, .9]) for (const fx of [.5, .1, .9]) {
+   const x = r.left + r.width * fx, y = r.top + r.height * fy;
+   if (x > 0 && x < innerWidth && y > 0 && y < innerHeight && node.contains(document.elementFromPoint(x, y))) return { x, y };
+  }
+  return null;
+ });
+ expect(point, 'the outside destination has a real exposed hit point').not.toBeNull();
+ await page.mouse.click(point!.x, point!.y);
+}

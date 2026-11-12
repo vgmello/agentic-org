@@ -131,6 +131,8 @@ export async function menu(page: Page, width: number, scale: number, root = 16) 
 	await shot(page, `focus-menu-pointer-${width}-${root * scale}`, { context: page.getByRole('menu') });
 	await normal.click(); await expect(fixture.getByLabel('Selection')).toHaveText('Renamed'); await expect(page.getByRole('menu')).toHaveCount(0);
 	await trigger.click(); await page.mouse.click(0, 0); await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(trigger).toBeFocused(); await expect.poll(()=>trigger.evaluate(node=>node.matches(':focus-visible'))).toBe(false);
+	await shot(page, `bug158-blank-restored-${width}-${root * scale}`);
 	await keyboardFocus(page, trigger); await trigger.press('ArrowDown'); await normal.press('End'); await destructive.press('Enter');
 	await expect(fixture.getByLabel('Selection')).toHaveText('Deleted'); await expect(page.getByRole('menu')).toHaveCount(0); await expect(trigger).toBeFocused();
 }
