@@ -562,3 +562,168 @@ for (const text of [1, 2]) {
 		}
 	});
 }
+
+// Hold only the People chart observer's first measurement, not a wall-clock delay.
+// This deterministically puts menu focus before the blocked-Fit notification.
+async function holdPeopleMeasurement(page: Page) {
+	await page.evaluate(() => {
+		const pending: (() => void)[] = [];
+		const NativeObserver = window.ResizeObserver;
+		let held = true;
+		window.ResizeObserver = class extends NativeObserver {
+			constructor(callback: ResizeObserverCallback) {
+				super((entries, observer) => {
+					if (held && entries.some(({ target }) => target.matches('[data-testid="people-chart"]') || target.querySelector('[data-testid="people-chart"]'))) {
+						pending.push(() => callback(entries, observer));
+					} else callback(entries, observer);
+				});
+			}
+		};
+		Object.assign(window, { peopleMeasurementCount: () => pending.length, releasePeopleMeasurement() {
+			held = false;
+			const count = pending.length;
+			pending.splice(0).forEach((release) => release());
+			return count;
+		} });
+	});
+}
+
+for (const focused of ['Fit', 'Expand all'] as const) {
+	test(`PEOPLE-1 BUG-70 BUG-90 BUG-123: late Fit refusal while ${focused} has keyboard focus`, async ({ page }) => {
+		await openChart(page, 320);
+		await holdPeopleMeasurement(page);
+		await page.getByRole('tab', { name: 'People', exact: true }).click();
+		await expect.poll(() => page.evaluate(() => (window as unknown as { peopleMeasurementCount(): number }).peopleMeasurementCount())).toBeGreaterThan(0);
+		const trigger = page.getByRole('button', { name: 'View', exact: true });
+		await trigger.press('Enter');
+		const item = page.getByRole('menuitem').first();
+		await expect(item).toBeFocused();
+		await expect(item).not.toHaveAttribute('aria-disabled', 'true');
+		const id = await item.getAttribute('id');
+		if (focused === 'Expand all') await item.press('ArrowDown');
+		const focus = focused === 'Fit' ? item : page.getByRole('menuitem', { name: 'Expand all', exact: true });
+		await expect(focus).toBeFocused();
+		const released = await page.evaluate(() => (window as unknown as { releasePeopleMeasurement(): number }).releasePeopleMeasurement());
+		expect(released, 'the real People observer notification was held').toBeGreaterThan(0);
+		const fit = page.getByRole('menuitem', { name: 'Fit to width', exact: true });
+		await expect(fit).toHaveAttribute('aria-disabled', 'true');
+		await expect(fit).toHaveAttribute('id', id!);
+		await expect(focus).toBeFocused();
+		await shot(page, `bug123-late-refusal-${focused.replaceAll(' ', '-')}`);
+		if (focused === 'Expand all') {
+			await expect(page.getByRole('tooltip')).toHaveCount(0);
+			await focus.press('ArrowUp');
+		}
+		await expect(fit).toBeFocused();
+		await expect(page.getByRole('tooltip')).toHaveText('The chart is already at its smallest readable size. Scroll to see the rest.');
+		await expect(fit).toHaveAccessibleDescription('The chart is already at its smallest readable size. Scroll to see the rest.');
+		await fit.press('ArrowDown');
+		await expect(page.getByRole('menuitem', { name: 'Expand all', exact: true })).toBeFocused();
+		await page.keyboard.press('ArrowUp');
+		await expect(fit).toBeFocused();
+		await expect(page.getByRole('tooltip')).toBeVisible();
+		await shot(page, `bug123-focused-refusal-${focused.replaceAll(' ', '-')}`);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('tooltip')).toHaveCount(0);
+		await expect(fit).toBeFocused();
+		await expect(page.getByRole('menu')).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(trigger).toBeFocused();
+	});
+}
+
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: removing a focused Fit refusal dismisses its explanation and preserves selection', async ({ page }) => {
+	await openChart(page, 320);
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const trigger = page.getByRole('button', { name: 'View', exact: true });
+	await trigger.press('Enter');
+	const fit = page.getByRole('menuitem').first();
+	await expect(fit).toHaveAttribute('aria-disabled', 'true');
+	await expect(fit).toBeFocused();
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	const id = await fit.getAttribute('id');
+	await page.setViewportSize({ width: 2560, height: 640 });
+	await expect(fit).toHaveText('Actual size');
+	await expect(fit).toHaveAttribute('aria-disabled', 'false');
+	await expect(fit).toHaveAttribute('id', id!);
+	await expect(fit).toBeFocused();
+	await expect(page.getByRole('tooltip')).toHaveCount(0);
+	await shot(page, 'bug123-refusal-cleared-while-focused');
+	await fit.press('Enter');
+	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(trigger).toBeFocused();
+	await trigger.press('Enter');
+	await expect(fit).toHaveText('Fit to width');
+	await expect(fit).toHaveAttribute('aria-disabled', 'false');
+	await expect(page.getByRole('tooltip')).toHaveCount(0);
+	await fit.press('Enter');
+	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(trigger).toBeFocused();
+});
+
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: pointer Fit refusal explains without activating and dismisses outside', async ({ page }) => {
+	await openChart(page, 320);
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const heading = await page.getByRole('heading', { name: 'Org chart', exact: true }).boundingBox();
+	expect(heading).not.toBeNull();
+	await page.getByRole('button', { name: 'View', exact: true }).click();
+	const fit = page.getByRole('menuitem', { name: 'Fit to width', exact: true });
+	await expect(fit).toHaveAttribute('aria-disabled', 'true');
+	await page.getByRole('menuitem', { name: 'Expand all', exact: true }).hover();
+	await fit.hover();
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	await shot(page, 'bug123-pointer-refusal');
+	const box = await fit.boundingBox();
+	expect(box).not.toBeNull();
+	// aria-disabled intentionally blocks locator.click; send a real pointer at its hit target.
+	await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+	await expect(page.getByRole('menu')).toBeVisible();
+	await expect(fit).toHaveAttribute('aria-disabled', 'true');
+	await expect(page.getByTestId('people-chart')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+	await page.getByRole('menuitem', { name: 'Expand all', exact: true }).hover();
+	await fit.hover();
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	await page.mouse.click(heading!.x + heading!.width / 2, heading!.y + heading!.height / 2);
+	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(page.getByRole('tooltip')).toHaveCount(0);
+	await shot(page, 'bug123-pointer-dismissed');
+});
+
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explanation before the parent', async ({ page }) => {
+	// Start in the default mobile List; opening Teams View first primes a different layer lifetime.
+	await page.setViewportSize({ width: 320, height: 640 });
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/org-chart');
+	await page.addStyleTag({ content: 'html { font-size: 100% !important; }' });
+	await page.evaluate(() => document.fonts.ready.then(() => undefined));
+	await page.getByRole('tab', { name: 'People', exact: true }).click();
+	const trigger = page.getByRole('button', { name: 'View', exact: true });
+	for (const opening of ['first', 'reopened']) {
+		if (opening === 'reopened') {
+			// The enabled wide-menu mount followed by a blocked narrow mount exercises
+			// the parent/tooltip registration order seen in the original :298 failure.
+			await page.setViewportSize({ width: 2560, height: 640 });
+			await trigger.click();
+			await page.getByRole('menuitem', { name: 'Actual size', exact: true }).click();
+			await page.setViewportSize({ width: 320, height: 640 });
+		}
+		await trigger.press('Enter');
+		const fit = page.getByRole('menuitem', { name: 'Fit to width', exact: true });
+		await expect(fit).toHaveAttribute('aria-disabled', 'true');
+		await expect(fit).toBeFocused();
+		await expect(page.getByRole('tooltip')).toBeVisible();
+		await shot(page, `bug123-${opening}-before-escape`);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('tooltip')).toHaveCount(0);
+		await expect(fit).toBeFocused();
+		await expect(page.getByRole('menu')).toBeVisible();
+		await shot(page, `bug123-${opening}-after-first-escape`);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menu')).toHaveCount(0);
+		await expect(trigger).toBeFocused();
+	}
+});

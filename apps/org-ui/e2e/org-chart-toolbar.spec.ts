@@ -312,11 +312,7 @@ test('PEOPLE-1 BUG-70 BUG-90: Fit availability tracks viewport and text while pr
 	const blocked = page.getByRole('menuitem', { name: 'Fit to width', exact: true });
 	await expect(blocked).toHaveAttribute('aria-disabled', 'true');
 	await expect(blocked).toBeFocused();
-	// The observer can enable the tooltip after the item received focus. Re-enter it now blocked.
-	await blocked.press('ArrowDown');
-	await expect(page.getByRole('menuitem', { name: 'Expand all', exact: true })).toBeFocused();
-	await page.keyboard.press('ArrowUp');
-	await expect(blocked).toBeFocused();
+	// Late observer updates must explain the refusal without requiring focus to re-enter.
 	await closeBlockedMenu(page);
 	await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
 	await trigger.press('Enter');
