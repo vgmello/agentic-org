@@ -164,6 +164,23 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
                 ) {
                     directories.push(entry.path());
                 }
+            } else if entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+            {
+                let source = std::fs::read_to_string(entry.path()).unwrap();
+                let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+                // No unsafe SQLite opener is needed by the current Rust fence. Check
+                // identifiers (including aliased imports), not only qualified calls.
+                for (stem, suffix) in [("sqlite3", "_open"), ("from", "_handle")] {
+                    let opener = format!("{stem}{suffix}");
+                    assert!(
+                        !compact.contains(&opener),
+                        "{} bypasses the SQLite init fence with {opener}",
+                        entry.path().display()
+                    );
+                }
             } else if name == "clippy.toml" || name == ".clippy.toml" {
                 configs += 1;
                 let config = std::fs::read_to_string(entry.path()).unwrap();
