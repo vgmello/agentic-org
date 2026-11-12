@@ -12,7 +12,7 @@ fn work_v5_schema_has_the_three_storage_tables_and_expiry_index() {
     store.read(|db| {
         let tables: Vec<String> = db.prepare("SELECT name FROM sqlite_schema WHERE name IN ('work_change_results','work_number_counters','work_clock') ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         assert_eq!(tables, ["work_change_results", "work_clock", "work_number_counters"]);
-        assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),5);
+        assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),6);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_schema WHERE name='idx_work_change_results_expiry'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
         assert_eq!(db.query_row("SELECT name FROM pragma_index_info('idx_work_change_results_expiry')",[],|r|r.get::<_,String>(0)).unwrap(),"expires_at_ms");
         let flags:Vec<(String,i64,i64)>=db.prepare("SELECT name,wr,strict FROM pragma_table_list WHERE schema='main' AND name IN ('work_change_results','work_number_counters','work_clock') ORDER BY name").unwrap().query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
@@ -554,6 +554,12 @@ fn work_v5_sql_guards_cover_insert_update_replace_delete_and_reopen() {
     assert_eq!(saved_meta(&store), before);
 }
 
+const V5: Schema = Schema {
+    version: 5,
+    create: |tx| tx.execute_batch(include_str!("fixtures/office-v5.sql")),
+    upgrade: |_, _| unreachable!(),
+};
+
 const V1: Schema = Schema {
     version: 1,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v1.sql")),
@@ -660,10 +666,10 @@ fn open_old(root: &tempfile::TempDir, schema: &Schema) -> Store {
 }
 
 #[test]
-fn work_v5_all_released_versions_upgrade_preserve_every_row_and_match_fresh_schema() {
+fn work_v6_all_released_versions_upgrade_preserve_every_row_and_match_fresh_schema() {
     let (_fresh_root, fresh) = fixture();
     let expected = fresh.read(|db| Ok(schema_rows(db))).unwrap();
-    for schema in [&V1, &V2, &LEGACY_V3, &V4] {
+    for schema in [&V1, &V2, &LEGACY_V3, &V4, &V5] {
         let (root, old) = fixture_for_schema(schema);
         seed_legacy(&old, schema.version);
         let before = old.read(|db| Ok(old_rows(db))).unwrap();
@@ -684,7 +690,7 @@ fn work_v5_all_released_versions_upgrade_preserve_every_row_and_match_fresh_sche
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    5
+                    6
                 );
                 Ok(())
             })
@@ -698,10 +704,10 @@ fn work_v5_all_released_versions_upgrade_preserve_every_row_and_match_fresh_sche
             &root.path().join("office.db"),
             &Key::from_bytes([42; 32]),
             Opening::Existing,
-            &V4,
+            &V5,
         )
         .err()
-        .expect("max-v4 binary refuses v5");
+        .expect("max-v5 binary refuses v6");
         let OfficeError::Storage(cause) = error else {
             panic!("expected older-binary refusal")
         };

@@ -240,7 +240,7 @@ impl Call for StatusSet {
     type Result = StatusSetResult;
 }
 
-/// `member.presence_changed`: a member's presence or status line changed. Debounced to at
+/// `member.presence_changed`: a member's presence, status line or current task changed. Debounced to at
 /// most one per member per second. Sent to bound connections only (member-bound or app-wide),
 /// never to unbound ones.
 pub struct MemberPresenceChanged;

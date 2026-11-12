@@ -158,7 +158,7 @@ test('PROC-9 / BUG-18: the process side panel is 440px at the minimum window', a
 	expect((await sheet.boundingBox())!.width).toBe(440);
 });
 
-test('PROC-18 / BUG-18: keyboard Close has the token focus ring and restores focus', async ({ page }) => {
+test('PROC-18 / BUG-18: keyboard Close has the indigo focus outline and restores focus', async ({ page }) => {
 	await open(page);
 	const trigger = row(page, 'branch-and-merge').getByRole('button');
 	await trigger.focus();
@@ -170,7 +170,7 @@ test('PROC-18 / BUG-18: keyboard Close has the token focus ring and restores foc
 	const ring = await close.evaluate((element) => {
 		const style = getComputedStyle(element);
 		const token = document.createElement('span');
-		token.style.color = 'var(--ring)';
+		token.style.color = 'var(--color-indigo-400)';
 		document.body.append(token);
 		const color = getComputedStyle(token).color;
 		token.remove();

@@ -71,3 +71,5 @@ The test that compares `projectFiles` with `playwright.config.ts` reads one patt
 ## Known limit of `verify`
 
 `verify` proves the ordinary-Playwright partition (journeys + category selections = the whole `e2e/` suite, including the WebKit duplicates). It does not list the interactive CSP or gateway runs; those steps are covered by the exact-argv unit tests and by the CSP config guard.
+
+The focus-primitives flow also opens Agents, Org chart, Projects, Work/Requests, Chat, Offices, Processes and the copilot dialog through `consumerFocus`'s route helper. Those visits are beyond the literal spec route scanner. The dedicated ProcessSheet regression is declared in `allowedCoupling`; all shared primitive/config/manifest changes still select FULL. Page-only changes keep their category and journey coverage. Its dedicated `chromium-focus-default-font` project proves actual 20px defaults; the ordinary Chromium/WebKit matrix additionally uses 40px roots without claiming a native WebKit default-font preference.

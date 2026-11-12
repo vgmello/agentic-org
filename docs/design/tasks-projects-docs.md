@@ -667,7 +667,7 @@ Rust details (derives, `#[serde(default)]` and `skip_serializing_if` on every op
 | `task.set_status` | `item_id`, `expected_version`, `status`, `blocked_reason?` (exactly when `blocked`), `resolution?` (only with `done`), `anyway_reason?` (only with `done`), `shortcut?: Shortcut` (only with `done`; P4) | `not_found`, `invalid_request` (wrong state; a reason missing or misplaced), `conflict`, `checklist_incomplete` (required steps left and no `anyway_reason`; the message names the steps) | P1 |
 | `work.set_current` | `item?` (absent: clear) | `not_found`, `invalid_request` (not a task; the caller isn't an agent; the caller isn't the task's assignee) | P1 |
 
-`NewStep { step_id, text, required }`. `work.set_current` sets the bound agent's current task (C14) in `member_status`; it isn't an item change and takes no `change_id`; its result is `Empty`.
+`NewStep { step_id, text, required }`. `work.set_current` sets the bound agent's current task (C14) in `member_status`; it isn't an item change and takes no `change_id`; its result is `Empty`. A Done task (any resolution) can stay current until replaced or cleared. Reassignment, deletion and offboarding do not publish presence in C2a: `who` checks validity; C2b will refresh live views.
 
 ### 4.5 Bugs (P2)
 | Call | Params (after `change_id`) | Errors |

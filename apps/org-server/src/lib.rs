@@ -365,10 +365,14 @@ fn serve_office(
                     let answer = office
                         .set_status(member, params)
                         .map_err(|e| logged("status", &e))?;
-                    if let Ok(set) = &answer {
-                        live.publish_presence(org_office::presence_after_status(member, set));
+                    if let Ok((set, current)) = &answer {
+                        live.publish_presence(org_office::presence_after_status(
+                            member,
+                            set,
+                            current.clone(),
+                        ));
                     }
-                    Ok(answer)
+                    Ok(answer.map(|(set, _)| set))
                 })
             },
             live: Arc::clone(&live),

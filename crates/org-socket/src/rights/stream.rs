@@ -1,4 +1,6 @@
 //! Validate a received capability before it becomes a serving stream.
+#[cfg(target_os = "macos")]
+mod macos;
 use super::invalid;
 #[cfg(not(test))]
 use libc::{fcntl, getsockname, getsockopt};
@@ -34,6 +36,10 @@ pub fn connected_unix_stream(descriptor: OwnedFd) -> io::Result<UnixStream> {
         )
     })?;
     require_unix(libc::c_int::from(address.ss_family))?;
+    #[cfg(target_os = "macos")]
+    if macos::listening(fd)? {
+        return Err(invalid("channel descriptor is a listener"));
+    }
     #[cfg(target_os = "linux")]
     if socket_option(fd, libc::SO_ACCEPTCONN)? != 0 {
         return Err(invalid("channel descriptor is a listener"));
@@ -71,9 +77,9 @@ fn socket_option(fd: RawFd, option: libc::c_int) -> io::Result<libc::c_int> {
 fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {
     stream.peer_addr()
 }
-// Measured macOS peer query: peer-gone EINVAL; never-connected and listeners
-// (empty or queued) ENOTCONN. SO_ACCEPTCONN is unsupported there (ENOPROTOOPT).
-// Linux explicitly rejects listeners above and never accepts peer-query errors.
+// Both platforms reject listeners above, including macOS sockets that were
+// connected before listening. Only then may macOS peer-gone EINVAL be adopted.
+// Linux never accepts peer-query errors.
 fn peer_closed(error: &io::Error, macos: bool) -> bool {
     macos && error.raw_os_error() == Some(libc::EINVAL)
 }

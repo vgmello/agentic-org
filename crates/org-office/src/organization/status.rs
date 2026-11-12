@@ -78,14 +78,18 @@ fn is_invisible_or_break(c: char) -> bool {
 /// (`set` is what `status.set` answered). Presence itself is not reported yet, so the member
 /// reads as offline beside its line. `last_seen_at` is now: the member just called the office, so
 /// it was alive a moment ago (`who` has no last-seen time to compare with yet).
-pub fn presence_after_status(member_id: &str, set: &StatusSetResult) -> MemberPresenceChangedData {
+pub fn presence_after_status(
+    member_id: &str,
+    set: &StatusSetResult,
+    current_task_id: Option<String>,
+) -> MemberPresenceChangedData {
     MemberPresenceChangedData {
         member_id: member_id.to_owned(),
         presence: MemberPresence::Offline,
         last_seen_at: time::now_rfc3339(),
         status: set.status.clone(),
         status_expires_at: set.expires_at.clone(),
-        current_task_id: None,
+        current_task_id,
     }
 }
 

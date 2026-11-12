@@ -3,6 +3,7 @@
 
 pub(crate) mod journal;
 mod schema;
+mod sqlcipher;
 #[cfg(test)]
 mod tests;
 
@@ -265,6 +266,8 @@ fn connect(path: &Path, key: &Value) -> Result<Connection, Error> {
     if key.expose().len() != 32 {
         return Err(Error::KeyLength);
     }
+    sqlcipher::ready()?;
+    #[allow(clippy::disallowed_methods)] // The sole durable opener crosses the fence.
     let db = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,

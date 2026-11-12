@@ -54,6 +54,10 @@ fn wrong_descriptor_classes_are_refused_and_owned_fds_close() {
         "seqpacket",
         "listener",
         "listener-queued",
+        #[cfg(target_os = "macos")]
+        "listener-crafted",
+        #[cfg(target_os = "macos")]
+        "listener-crafted-queued",
         "inet",
         "never-connected",
         "no-cloexec",
@@ -62,6 +66,14 @@ fn wrong_descriptor_classes_are_refused_and_owned_fds_close() {
         "fault-peer-einval",
         #[cfg(target_os = "linux")]
         "fault-listener",
+        #[cfg(target_os = "macos")]
+        "fault-proc-error",
+        #[cfg(target_os = "macos")]
+        "fault-proc-negative",
+        #[cfg(target_os = "macos")]
+        "fault-proc-short",
+        #[cfg(target_os = "macos")]
+        "fault-proc-long",
         "fault-family",
         "fault-flags",
     ] {
@@ -77,6 +89,10 @@ fn native_platform_state_table_checks_real_peer_errno_and_adoption_outcome() {
         "never-connected",
         "listener",
         "listener-queued",
+        #[cfg(target_os = "macos")]
+        "listener-crafted",
+        #[cfg(target_os = "macos")]
+        "listener-crafted-queued",
         "datagram",
         "pipe",
         #[cfg(target_os = "linux")]
@@ -170,6 +186,45 @@ fn adoption_child() {
             unix_peer = Some(UnixStream::from(unsafe { OwnedFd::from_raw_fd(fds[1]) }));
             socket
         }
+        #[cfg(target_os = "macos")]
+        "listener-crafted" | "listener-crafted-queued" => {
+            use std::os::unix::ffi::OsStrExt;
+            let (stream, peer) = UnixStream::pair().unwrap();
+            let path = dir.join("crafted");
+            let bytes = path.as_os_str().as_bytes();
+            // SAFETY: zero initializes a valid sockaddr_un, including its path terminator.
+            let mut address: libc::sockaddr_un = unsafe { mem::zeroed() };
+            assert!(bytes.len() < address.sun_path.len());
+            address.sun_len = mem::size_of_val(&address).try_into().unwrap();
+            address.sun_family = libc::AF_UNIX as _;
+            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
+                *slot = *byte as _;
+            }
+            // SAFETY: the test owns fd and the initialized UNIX address is fully covered.
+            assert_eq!(
+                unsafe {
+                    libc::bind(
+                        stream.as_raw_fd(),
+                        (&address as *const libc::sockaddr_un).cast(),
+                        mem::size_of_val(&address) as _,
+                    )
+                },
+                0
+            );
+            drop(peer);
+            // SAFETY: this test-owned bound socket has no connected peer; macOS permits listen.
+            assert_eq!(unsafe { libc::listen(stream.as_raw_fd(), 1) }, 0);
+            let listener = UnixListener::from(OwnedFd::from(stream));
+            let connected = UnixStream::connect(path).unwrap();
+            if case == "listener-crafted-queued" {
+                unix_peer = Some(connected);
+            } else {
+                let (accepted, _) = listener.accept().unwrap();
+                drop(accepted);
+                drop(connected);
+            }
+            listener.into()
+        }
         "listener" | "listener-queued" => {
             let path = dir.join("listener");
             let listener = UnixListener::bind(&path).unwrap();
@@ -208,7 +263,15 @@ fn adoption_child() {
             unix_peer = Some(peer);
             stream.into()
         }
-        "fault-peer" | "fault-peer-einval" | "fault-listener" | "fault-family" | "fault-flags" => {
+        "fault-peer"
+        | "fault-peer-einval"
+        | "fault-listener"
+        | "fault-family"
+        | "fault-flags"
+        | "fault-proc-error"
+        | "fault-proc-negative"
+        | "fault-proc-short"
+        | "fault-proc-long" => {
             let (stream, peer) = UnixStream::pair().unwrap();
             unix_peer = Some(peer);
             FAULT.with(|fault| {
@@ -217,6 +280,14 @@ fn adoption_child() {
                     "fault-peer-einval" => Fault::PeerEinval,
                     #[cfg(target_os = "linux")]
                     "fault-listener" => Fault::Listener,
+                    #[cfg(target_os = "macos")]
+                    "fault-proc-error" => Fault::ProcError,
+                    #[cfg(target_os = "macos")]
+                    "fault-proc-negative" => Fault::ProcNegative,
+                    #[cfg(target_os = "macos")]
+                    "fault-proc-short" => Fault::ProcShort,
+                    #[cfg(target_os = "macos")]
+                    "fault-proc-long" => Fault::ProcLong,
                     "fault-family" => Fault::Family,
                     _ => Fault::Flags,
                 }))
@@ -228,7 +299,13 @@ fn adoption_child() {
     let raw = descriptor.as_raw_fd();
     if matches!(
         case.as_str(),
-        "connected" | "peer-closed" | "never-connected" | "listener" | "listener-queued"
+        "connected"
+            | "peer-closed"
+            | "never-connected"
+            | "listener"
+            | "listener-queued"
+            | "listener-crafted"
+            | "listener-crafted-queued"
     ) {
         // SAFETY: zero initializes every byte of the kernel output storage.
         let mut address: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
@@ -244,7 +321,11 @@ fn adoption_child() {
         let errno = (status < 0).then(|| io::Error::last_os_error().raw_os_error().unwrap());
         let expected = match case.as_str() {
             "connected" => None,
-            "peer-closed" if cfg!(target_os = "macos") => Some(libc::EINVAL),
+            "peer-closed" | "listener-crafted" | "listener-crafted-queued"
+                if cfg!(target_os = "macos") =>
+            {
+                Some(libc::EINVAL)
+            }
             "peer-closed" => None,
             _ => Some(libc::ENOTCONN),
         };
@@ -272,18 +353,18 @@ fn adoption_child() {
     assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
     if case == "fault-peer-einval" {
         assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+    } else if case.starts_with("fault-proc-") {
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     } else if case.starts_with("fault-") {
         assert_eq!(error.raw_os_error(), Some(libc::EBADF));
     } else if matches!(case.as_str(), "pipe" | "file") {
         assert_eq!(error.raw_os_error(), Some(libc::ENOTSOCK));
-    } else if case == "never-connected"
-        || (cfg!(target_os = "macos") && case.starts_with("listener"))
-    {
+    } else if case == "never-connected" {
         assert_eq!(error.raw_os_error(), Some(libc::ENOTCONN));
     } else {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
-    if let Some(mut peer) = unix_peer.filter(|_| case != "listener-queued") {
+    if let Some(mut peer) = unix_peer.filter(|_| !case.starts_with("listener")) {
         assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
         assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
@@ -372,6 +453,14 @@ fn received_descriptor_passes_validation_without_a_second_flags_update() {
 // call site's error propagation and descriptor drop can be observed separately.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
+    #[cfg(target_os = "macos")]
+    ProcError,
+    #[cfg(target_os = "macos")]
+    ProcNegative,
+    #[cfg(target_os = "macos")]
+    ProcShort,
+    #[cfg(target_os = "macos")]
+    ProcLong,
     Peer,
     PeerEinval,
     #[cfg(target_os = "linux")]
@@ -489,4 +578,26 @@ pub(super) fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {
         return Err(error);
     }
     stream.peer_addr()
+}
+
+#[cfg(target_os = "macos")]
+pub(super) unsafe fn proc_pidfdinfo(
+    pid: libc::c_int,
+    fd: libc::c_int,
+    flavor: libc::c_int,
+    buffer: *mut libc::c_void,
+    size: libc::c_int,
+) -> libc::c_int {
+    for (fault, result) in [
+        (Fault::ProcError, 0),
+        (Fault::ProcNegative, -1),
+        (Fault::ProcShort, size - 1),
+        (Fault::ProcLong, size + 1),
+    ] {
+        if injected(fault) {
+            return result;
+        }
+    }
+    // SAFETY: the helper supplies an owned fd and its exact SDK-aligned writable buffer.
+    unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) }
 }

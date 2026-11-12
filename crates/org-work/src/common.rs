@@ -18,15 +18,18 @@ pub(crate) fn load(ctx: &mut Ctx, id: &str) -> Result<StoredItem, Fail> {
 }
 
 /// Refuses a call made on an item of another kind (§2.1).
-pub(crate) fn expect_kind(item: &StoredItem, kind: ItemKind) -> Result<(), Fail> {
+pub(crate) fn expect_kind(item: &StoredItem, kind: ItemKind) -> Result<(), org_proto::ApiError> {
     if item.kind == kind {
         Ok(())
     } else {
-        Err(invalid(format!(
-            "this call is for a {}, and the item is a {}",
-            kind_word(kind),
-            kind_word(item.kind)
-        )))
+        Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "this call is for a {}, and the item is a {}",
+                kind_word(kind),
+                kind_word(item.kind)
+            ),
+        ))
     }
 }
 

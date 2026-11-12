@@ -41,7 +41,7 @@ use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use rusqlite::config::DbConfig;
@@ -639,6 +639,108 @@ fn wipe(text: &mut String) {
     std::hint::black_box(&*text);
 }
 
+fn initialized(
+    state: &OnceLock<Result<(), String>>,
+    init: impl FnOnce() -> Result<(), String>,
+) -> Result<(), OfficeError> {
+    state
+        .get_or_init(init)
+        .as_ref()
+        .copied()
+        .map_err(|message| failure(message.clone()))
+}
+
+static READY: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Completes process-wide SQLCipher initialization before any keyed connection opens (BUG-100).
+///
+/// SQLite publishes its initialized flag before SQLCipher's EXTRA_INIT hook completes.
+/// All office openers must pass this fence.
+/// Initialization failure is cached for the process lifetime; restart after fixing its cause.
+/// Host-only twin: apps/org-office-host/src/hostdb/sqlcipher.rs. If both stores
+/// ever share a process, merge into one fence before linking them together.
+pub fn sqlcipher_ready() -> Result<(), OfficeError> {
+    initialized(&READY, || {
+        initialize_sqlcipher(
+            || {
+                // SAFETY: all process openers must cross this fence before their first
+                // SQLite use. Our first initializer waits for SQLCipher's EXTRA_INIT
+                // callback before admitting other openers; a late fence cannot repair
+                // initialization that an unfenced caller has already started.
+                unsafe { rusqlite::ffi::sqlite3_initialize() }
+            },
+            || {
+                #[allow(clippy::disallowed_methods)] // Only the keyed init probe.
+                let db = Connection::open_in_memory().map_err(key_failure_reason)?;
+                keyed_cipher_version(&db)
+            },
+        )
+    })
+}
+
+fn keyed_cipher_version(db: &Connection) -> Result<String, String> {
+    // This fixed public probe key protects no data; actual keys keep their path.
+    let key = Key::from_db_key(org_proto::DbKey::from_bytes([0; 32]));
+    let pragma = KeyPragma::new(&key);
+    let applied = db.execute_batch(pragma.as_str());
+    drop(pragma);
+    applied.map_err(key_failure_reason)?;
+    db.query_row("PRAGMA cipher_version", (), |row| row.get(0))
+        .map_err(cipher_failure_reason)
+}
+
+fn cipher_failure_reason(error: rusqlite::Error) -> String {
+    match error {
+        rusqlite::Error::QueryReturnedNoRows => {
+            "this SQLite build has no encryption (SQLCipher)".to_owned()
+        }
+        other => key_failure_reason(other),
+    }
+}
+
+// Keep the initialization ordering and its required postcondition independent of the FFI.
+fn initialize_sqlcipher(
+    initialize: impl FnOnce() -> i32,
+    keyed_probe: impl FnOnce() -> Result<String, String>,
+) -> Result<(), String> {
+    let code = initialize();
+    if code != rusqlite::ffi::SQLITE_OK {
+        return Err(format!(
+            "could not initialize SQLCipher (SQLite code {code})"
+        ));
+    }
+    if keyed_probe()?.is_empty() {
+        return Err("this SQLite build has no encryption (SQLCipher)".to_owned());
+    }
+    Ok(())
+}
+
+fn key_failure(error: rusqlite::Error) -> OfficeError {
+    failure(key_failure_reason(error))
+}
+
+fn key_failure_reason(error: rusqlite::Error) -> String {
+    // Both variants can carry the raw-key SQL. Keep only their integer code, never text.
+    let code = match error {
+        rusqlite::Error::SqliteFailure(error, _) | rusqlite::Error::SqlInputError { error, .. } => {
+            Some(error.extended_code)
+        }
+        _ => None,
+    };
+    match code {
+        Some(code) => format!("could not apply the database key (SQLite code {code})"),
+        None => "could not apply the database key".to_owned(),
+    }
+}
+
+#[cfg(test)]
+fn connection_for_test(path: impl AsRef<Path>) -> Result<Connection, OfficeError> {
+    sqlcipher_ready()?;
+    #[allow(clippy::disallowed_methods)] // Raw fixtures still cross the fence.
+    let db = Connection::open(path).map_err(OfficeError::storage)?;
+    Ok(db)
+}
+
 fn check_existing_file(db_path: &Path) -> Result<(), OfficeError> {
     // SQLite deletes a WAL beside an empty main file on the first read, which would
     // destroy whatever that log still holds: neither open nor inspection may look.
@@ -659,11 +761,13 @@ fn connect(
     create: bool,
     checkpoint_on_close: bool,
 ) -> Result<Connection, OfficeError> {
+    sqlcipher_ready()?;
     let mut flags = OpenFlags::default();
     if !create {
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
     }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
+    #[allow(clippy::disallowed_methods)] // The one durable opener; fenced above.
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
         .map_err(OfficeError::storage)?;
@@ -672,7 +776,7 @@ fn connect(
     let pragma = KeyPragma::new(key);
     let applied = db.execute_batch(pragma.as_str());
     drop(pragma);
-    applied.map_err(|_| failure("could not apply the database key"))?;
+    applied.map_err(key_failure)?;
     // Before the first read, so a busy database makes it wait instead of failing.
     db.pragma_update(None, "busy_timeout", 5_000)
         .map_err(OfficeError::storage)?;
@@ -776,6 +880,10 @@ fn bind_instance(db: &Connection, instance: &str, adopt: bool) -> Result<(), Off
         _ => Ok(()),
     }
 }
+
+#[cfg(test)]
+#[path = "store/tests/sqlcipher_init.rs"]
+mod sqlcipher_init_tests;
 
 #[cfg(test)]
 mod tests {
@@ -963,7 +1071,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("office.db");
         drop(open_in(&dir));
-        let raw = Connection::open(&path).unwrap();
+        let raw = connection_for_test(&path).unwrap();
         raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
         raw.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
@@ -1006,7 +1114,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("office.db");
         {
-            let raw = Connection::open(&path).unwrap();
+            let raw = connection_for_test(&path).unwrap();
             raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
             let _: String = raw
                 .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
@@ -1177,7 +1285,7 @@ mod tests {
         // A plain (unencrypted) SQLite file is not ours either: SQLCipher cannot read it with
         // any key.
         let plain = dir.path().join("plain.db");
-        Connection::open(&plain)
+        connection_for_test(&plain)
             .unwrap()
             .execute_batch("CREATE TABLE t (x)")
             .unwrap();
@@ -1395,8 +1503,8 @@ mod tests {
     fn a_busy_transaction_reports_the_sqlite_code_to_every_request() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("busy.db");
-        let mut other_writer = Connection::open(&path).unwrap();
-        let mut writer = Connection::open(&path).unwrap();
+        let mut other_writer = connection_for_test(&path).unwrap();
+        let mut writer = connection_for_test(&path).unwrap();
         writer.busy_timeout(std::time::Duration::ZERO).unwrap();
         let lock = other_writer
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1595,7 +1703,7 @@ mod tests {
     fn a_batch_fatal_request_rolls_back_and_replays_its_neighbors() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let mut writer = Connection::open_in_memory().unwrap();
+        let mut writer = connection_for_test(":memory:").unwrap();
         writer
             .execute_batch("CREATE TABLE writes (id INTEGER PRIMARY KEY)")
             .unwrap();
