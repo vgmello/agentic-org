@@ -774,8 +774,54 @@ test('RQS-13: what was found stays while the words change', async ({ page }) => 
 	const words = dialog.getByLabel('What do you need?');
 	await words.fill('I would like a dark mode when reading the docs');
 	await expect(dialog.getByTestId('similar')).toBeVisible();
-	await words.pressSequentially(' please');
-	await expect(dialog.getByTestId('similar')).toBeVisible(); // no flicker while the next answer is awaited
+	// From here the list must never be gone, not even for a moment while the next answer is awaited.
+	await page.evaluate(() => {
+		const w = window as unknown as { __similarGone: number };
+		w.__similarGone = 0;
+		new MutationObserver(() => {
+			if (!document.querySelector('[data-testid=similar]')) w.__similarGone++;
+		}).observe(document.body, { childList: true, subtree: true });
+	});
+	await words.pressSequentially(' please do it');
+	await page.waitForTimeout(800);
+	await expect(dialog.getByTestId('similar')).toBeVisible();
+	expect(await page.evaluate(() => (window as unknown as { __similarGone: number }).__similarGone)).toBe(0);
+});
+
+test('RQS-4: while a handle is unresolved no one is drawn as chosen, so the first suggestion can be picked from the keyboard', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@nobody-here do the thing');
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+	await dialog.getByRole('radio').first().focus();
+	await page.keyboard.press('Space');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-15: picking a project that has no requests keeps the choice and says nothing matches', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Not in any project', { button: /^Just save$/ });
+	await page.getByTestId('request-filters').getByLabel('Project').selectOption({ label: 'Atlas' });
+	await expect(page.getByTestId('request-filters').getByLabel('Project')).toHaveValue(/.+/);
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+});
+
+test('RQS-16: /work?request=<id> opens that request when the page is loaded fresh', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Opened by its link', { button: /^Just save$/ });
+	const id = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		const state = JSON.parse(localStorage.getItem(`agentic-org.mock.work.${saved[saved.length - 1].organization.id}`) ?? '{}') as { items: Record<string, { summary: { id: string; title: string } }> };
+		return Object.values(state.items).find((i) => i.summary.title === 'Opened by its link')!.summary.id;
+	});
+	await visit(page, `/work?request=${id}`);
+	await expect(page.getByRole('dialog').getByTestId('request-words')).toHaveText('Opened by its link');
+	await expect(page).toHaveURL(/\/work$/);
 });
 
 test('F1: the capture panel fits a small window: it scrolls inside and Send stays in view', async ({ page }) => {

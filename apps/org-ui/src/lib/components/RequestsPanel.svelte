@@ -38,11 +38,14 @@
 	}
 	let filter = $state<RequestFilter>(remembered());
 	// A remembered person or project that no request has any more is not a filter worth keeping: it would hide everything with nothing to show for it.
+	let pruned = false;
 	$effect(() => {
-		if (requests.length === 0) return;
-		const people = new Set(['', 'none', ...requests.flatMap((r) => [`raised:${r.created_by}`, ...(r.assignee_id ? [`scoped:${r.assignee_id}`] : [])])]);
+		// Once, when the queue first has requests: what was remembered is checked against them, not what the owner picks after.
+		if (pruned || requests.length === 0) return;
+		pruned = true;
+		const people = new Set(['', ...requests.flatMap((r) => [`raised:${r.created_by}`, ...(r.assignee_id ? [`scoped:${r.assignee_id}`] : [])])]);
 		if (!people.has(filter.who)) filter.who = '';
-		const projectsHere = new Set(['', 'none', ...requests.flatMap((r) => (r.project_id ? [r.project_id] : []))]);
+		const projectsHere = new Set(['', 'none', ...allProjects.map((p) => p.id)]);
 		if (!projectsHere.has(filter.project)) filter.project = '';
 	});
 	$effect(() => {

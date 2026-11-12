@@ -94,7 +94,9 @@
 	/** What the words' @handle says right now: a pick only stands while it says the same as when the pick was made. */
 	const atKey = $derived(at ? (at.kind === 'exact' ? `exact:${at.member.id}` : `${at.kind}:${at.token}`) : '');
 	const pickStands = $derived((pickedAt ?? '') === atKey && (picked === 'other' || (!!atMember && picked === atMember.id) || suggestions.some((s) => s.member.id === picked)));
-	const choice = $derived((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none');
+	// While a handle is unresolved no one is chosen (nothing is drawn as checked that Send would not use), until a pick settles it.
+	const unresolved = $derived(at?.kind === 'unknown' || at?.kind === 'partial');
+	const choice = $derived(unresolved && !(picked !== undefined && pickStands) ? 'none' : ((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none'));
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
 	// After a pause in typing the office is asked which open requests read like the words (one call); up to 2 are offered.
@@ -140,7 +142,7 @@
 	const textError = $derived(touched && words.trim() === '' ? (atMember && text.trim() !== '' ? `Write what you need after @${at?.kind === 'exact' ? at.token : ''}.` : 'Write what you need.') : undefined);
 	// Picking someone in the list instead settles it: the handle is then just words.
 	const cannotSend = $derived((unknownHandle !== undefined || ambiguous !== undefined) && !(picked !== undefined && pickStands && scoperId !== undefined));
-	const sendLabel = $derived(confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
+	const sendLabel = $derived(cannotSend ? 'Send' : confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
 
 	/** Whether closing now should ask first: words typed, nothing in flight. */
 	function wantClose(): boolean {
@@ -212,7 +214,7 @@
 		busy = true;
 		error = undefined;
 		try {
-			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body: text });
+			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body: at?.kind === 'exact' ? withoutHandle(text) : text });
 			text = '';
 			open = false;
 			onadded?.(requestRef(request));
