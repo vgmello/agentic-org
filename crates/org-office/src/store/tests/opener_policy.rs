@@ -390,6 +390,11 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
         }
     }
     impl<'ast> Visit<'ast> for Modules<'_> {
+        fn visit_block(&mut self, block: &'ast syn::Block) {
+            self.depth += 1;
+            syn::visit::visit_block(self, block);
+            self.depth -= 1;
+        }
         fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
             self.meta(&attr.meta, false);
         }
@@ -709,6 +714,9 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "mod inline { #[path=\"ok.rs\"] mod child; }",
         "#[path=\"ok.rs\"] mod inline {}",
         "#[path=\"ok.rs\"] fn not_a_module(){}",
+        "fn outer(){ #[path=\"ok.rs\"] mod child; }",
+        "impl Host { fn method(){ #[path=\"ok.rs\"] mod child; } }",
+        "const VALUE:() = { #[path=\"ok.rs\"] mod child; };",
         "#[path] mod child;",
         "include!(\"rogue.inc\");",
         "std::include!(\"rogue.inc\");",

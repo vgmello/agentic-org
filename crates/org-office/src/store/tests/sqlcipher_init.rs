@@ -623,7 +623,7 @@ fn override_policy(path: &Path, source: &str) {
             "host override identifier count"
         );
         require_exception_statement(
-            code,
+            source,
             function,
             &format!("#[allow(clippy::{lint}s)]"),
             statement,
@@ -1015,7 +1015,8 @@ fn office_opener_statements() -> [(&'static str, &'static str); 3] {
 }
 fn require_exception_statement(source: &str, function: &str, attribute: &str, statement: &str) {
     let name = function
-        .strip_prefix("pubfn ")
+        .strip_prefix("pub(super)fn ")
+        .or_else(|| function.strip_prefix("pubfn "))
         .or_else(|| function.strip_prefix("fn "))
         .unwrap_or(function)
         .trim_end_matches('(');
