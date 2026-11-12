@@ -139,7 +139,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="channels">
 			{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} flex-wrap items-center! gap-x-2! {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
+		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span class="min-w-0 flex-1 whitespace-normal">Add channel</span></button>
 	</div>
 
 	<div>
@@ -147,7 +147,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="dms">
 			{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} flex-wrap items-center! gap-x-2! {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
+		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span class="min-w-0 flex-1 whitespace-normal">New message</span></button>
 	</div>
 
 	{#if bar.asOwner.length}

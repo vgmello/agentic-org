@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
+import { shot } from './shot';
 
 async function create(page: Page, width: number, scale = 1) {
 	await page.setViewportSize({ width, height: 900 });
@@ -22,6 +23,7 @@ export async function openChat(page: Page, width = 1280, scale = 1, url = '/chat
 	await visit(page, url);
 	await expect(page.getByTestId('conversation-title')).toBeAttached();
 	await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toBeVisible();
+	await page.evaluate(() => document.fonts.ready);
 }
 export async function navigation(page: Page) {
 	const nav = page.getByRole('navigation', { name: 'Chat', exact: true });
@@ -111,4 +113,98 @@ export async function attachmentGeometry(chip: Locator, wraps = false) {
 	expect(geometry.lines).toBeGreaterThan(wraps ? 1 : 0);
 	expect(geometry.firstLineOffset).toBeLessThanOrEqual(4 * geometry.scale);
 	expect(geometry.lineBoxOffset).toBeLessThanOrEqual(.5);
+}
+
+/** Read actual glyph rectangles, including bare text before a content-column fix. */
+export async function labelGeometry(control: Locator, boundary: Locator = control) {
+ const bounds = await boundary.boundingBox(); expect(bounds).not.toBeNull();
+ const measured = await control.evaluate((e, box) => {
+  const rect=e.getBoundingClientRect(), style=getComputedStyle(e), walker=document.createTreeWalker(e,NodeFilter.SHOW_TEXT);
+  const lines: DOMRect[]=[], words: {text:string; fragments:number}[]=[];
+  for(let n=walker.nextNode();n;n=walker.nextNode()) {
+   if(!n.textContent?.trim()) continue;
+   const range=document.createRange();range.selectNodeContents(n);lines.push(...[...range.getClientRects()].filter(r=>r.width>0));
+   for(const word of n.textContent.matchAll(/\S+/g)) {
+    const r=document.createRange();r.setStart(n,word.index!);r.setEnd(n,word.index!+word[0].length);
+    words.push({text:word[0],fragments:[...r.getClientRects()].filter(b=>b.width>0).length});
+   }
+  }
+  const probe=document.createElement('span');Object.assign(probe.style,{position:'absolute',width:'6ch'});e.append(probe);const sixCh=probe.getBoundingClientRect().width;Object.assign(probe.style,{width:'max-content',whiteSpace:'nowrap',font:style.font});probe.textContent=e.textContent?.trim()??'';const natural=probe.getBoundingClientRect().width;probe.remove();
+  return {width:rect.width,minimum:Math.min(sixCh,natural),lines:lines.length,words,
+   fits:lines.every(r=>r.left>=Math.max(rect.left,box.x)-.5 && r.right<=Math.min(rect.right,box.x+box.width,innerWidth)+.5 && r.top>=rect.top-.5 && r.bottom<=rect.bottom+.5),
+   target: rect.height>=parseFloat(getComputedStyle(document.documentElement).fontSize)*2-.5,
+   whiteSpace:style.whiteSpace};
+ }, bounds!);
+ expect(measured.width).toBeGreaterThan(0);expect(measured.width).toBeGreaterThanOrEqual(measured.minimum-.5);
+ expect(measured.lines).toBeGreaterThan(0);expect(measured,JSON.stringify(measured)).toMatchObject({fits:true});
+ for(const word of measured.words) expect(word.fragments,`whole fixed word ${word.text}`).toBe(1);
+ return measured;
+}
+export async function headerGeometry(page: Page) {
+ const region=page.getByRole('region',{name:'Conversation',exact:true}), header=region.locator(':scope > div').first();
+ const measured=await header.evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));
+ expect(measured.width).toBeGreaterThan(0);expect(measured.scroll).toBeLessThanOrEqual(measured.width+1);
+ await labelGeometry(page.getByTestId('conversation-title'),header);
+ const toggle=header.getByRole('button',{name:/^Conversations(?:,|$)/});
+ if(await toggle.count()) await labelGeometry(toggle,header);
+ const search=page.getByRole('searchbox',{name:'Search chat',exact:true});
+ const searchGeometry=await search.evaluate(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),p=document.createElement('span');Object.assign(p.style,{position:'absolute',font:s.font,width:'6ch'});document.body.append(p);const min=p.getBoundingClientRect().width;p.remove();return {width:r.width-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight),min,right:r.right,left:r.left};});
+ expect(searchGeometry.width).toBeGreaterThanOrEqual(searchGeometry.min-.5);expect(searchGeometry.left).toBeGreaterThanOrEqual(0);expect(searchGeometry.right).toBeLessThanOrEqual(await page.evaluate(()=>innerWidth));
+}
+export async function creationGeometry(nav: Locator) {
+ for(const name of ['New message','Add channel']) {
+  const button=nav.getByRole('button',{name,exact:true});await labelGeometry(button,nav);
+  await labelGeometry(button.locator(':scope > span'),button);
+  const geometry=await button.evaluate(e=>{
+   const icon=e.querySelector('svg')!.getBoundingClientRect(),walker=document.createTreeWalker(e,NodeFilter.SHOW_TEXT);let first:DOMRect|undefined;
+   for(let n=walker.nextNode();n;n=walker.nextNode()) if(n.textContent?.trim()){const r=document.createRange(),start=n.textContent.search(/\S/),end=n.textContent.slice(start).search(/\s/);r.setStart(n,start);r.setEnd(n,end<0?n.textContent.length:start+end);first=r.getBoundingClientRect();break;}
+   return {beside:!!first&&icon.right<=first.left+.5&&icon.top<first.bottom&&icon.bottom>first.top,size:icon.width,expected:Math.min(parseFloat(getComputedStyle(document.documentElement).fontSize)*1.5,32)};
+  });
+  expect(geometry).toMatchObject({beside:true});expect(geometry.size).toBeCloseTo(geometry.expected,1);
+ }
+}
+export async function announcementGeometry(page: Page, area: Locator = page.getByTestId('message-list')) {
+ const row=area.getByTestId('message').filter({hasText:'Ready for review: create-org'}),body=row.getByTestId('message-body'),link=body.getByRole('link',{name:'the branch',exact:true});
+ await expect(link).toHaveAttribute('href','https://example.com/branch/create-org');
+ const measured=await link.evaluate(e=>{
+  const body=e.closest('[data-testid="message-body"]')!,b=body.getBoundingClientRect(),r=document.createRange();r.selectNodeContents(e);
+  return {width:b.width,fragments:[...r.getClientRects()].filter(r=>r.width>0).map(r=>({left:r.left,right:r.right})),left:b.left,right:Math.min(b.right,innerWidth)};
+ });
+ expect(measured.width).toBeGreaterThan(0);expect(measured.fragments.length).toBeGreaterThan(0);
+ for(const r of measured.fragments){expect(r.left).toBeGreaterThanOrEqual(measured.left-.5);expect(r.right).toBeLessThanOrEqual(measured.right+.5);}
+}
+
+export async function optionGeometry(card: Locator) {
+ const approval=(await card.textContent())?.includes('Publish the 0.2');
+ const labels=approval?['Approve','Reject…']:['Yes, block','No, allow (default)'];
+ for(const name of labels) {
+  const button=card.getByRole('button',{name,exact:true});const geometry=await labelGeometry(button,card);
+  expect(geometry.target).toBe(true);await expect(button).toHaveCSS('white-space','normal');
+  const size=await button.boundingBox();expect(size!.height).toBeGreaterThanOrEqual((await button.page().viewportSize())!.width<640?44:24);
+ }
+}
+/** Same native flow is reused by the actual Chromium20px default-font project. */
+export async function largeTextFlow(page: Page, width: number, scale: number) {
+ await openChat(page,width,scale,'/chat?c=c-general');
+ await headerGeometry(page);await announcementGeometry(page);await shot(page,`bug134-header-${width}-${scale}`);
+ const nav=await navigation(page);await creationGeometry(nav);
+ for(const name of ['Add channel','New message']) {
+  const button=nav.getByRole('button',{name,exact:true});await button.scrollIntoViewIfNeeded();
+  await shot(page,`bug136-${name.replaceAll(' ','-')}-${width}-${scale}`,{context:button});
+ }
+ if(await page.getByRole('dialog',{name:'Conversations',exact:true}).isVisible()) await page.keyboard.press('Escape');
+ for(const [state,url] of [['search','/chat?q=kind:announcement'],['empty-search','/chat?q=no-such-message-134'],['mentions','/chat?v=mentions'],['threads','/chat?v=threads']]) {
+  await visit(page,url);await headerGeometry(page);await shot(page,`bug134-${state}-${width}-${scale}`);
+  if(state==='search') await announcementGeometry(page);
+  if(state==='empty-search') await expect(page.getByTestId('no-results')).toHaveText('Nothing matches.');
+ }
+ for(const [state,url] of [['needs','/chat'],['conversation','/chat?c=c-project-atlas'],['search','/chat?q=has:ask']]) {
+  await visit(page,url);await headerGeometry(page);
+  for(const phrase of ['Block bug reports','Publish the 0.2']) {
+   const card=page.getByTestId('ask-card').filter({hasText:phrase});await optionGeometry(card);
+   const button=card.getByRole('button',{name:phrase==='Block bug reports'?'No, allow (default)':'Reject…',exact:true});
+   await keyboardFocus(page,button);await focusOutline(button);
+   await shot(page,`bug135-${state}-${phrase.startsWith('Block')?'ask':'approval'}-${width}-${scale}`,{context:button});
+  }
+ }
 }
