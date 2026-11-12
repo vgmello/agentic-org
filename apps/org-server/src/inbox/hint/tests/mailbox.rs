@@ -110,6 +110,12 @@ impl Fixture {
             send(msg_id(1), if person { "owner" } else { ADA_HANDLE }, None),
         )
         .unwrap();
+        // An answered request still expires, but produces no secondary notice. This
+        // isolates the expiry StateChanged trigger from a Received wakeup.
+        if expires && !person {
+            seed.send(ADA_ID, send(msg_id(3), "owner", Some(msg_id(1))))
+                .unwrap();
+        }
         let mut row = template.get_message(&msg_id(1)).unwrap().unwrap();
         if expires {
             row.message.header.kind = KIND_REQUEST.into();
@@ -128,6 +134,20 @@ impl Fixture {
                 initial_state: State::Unread,
             })
             .unwrap();
+        if expires && !person {
+            let answer = template.get_message(&msg_id(3)).unwrap().unwrap();
+            store
+                .commit_message(NewStoredMessage {
+                    message: answer.message,
+                    origin_office_id: answer.origin_office_id,
+                    origin_incarnation: answer.origin_incarnation,
+                    origin_seq: Some(answer.origin_seq),
+                    org_position: answer.org_position,
+                    content_hash: answer.content_hash,
+                    initial_state: State::Unread,
+                })
+                .unwrap();
+        }
         let live = Arc::new(LiveEvents::new(Box::new(|| {})));
         let mailbox = Mailbox::with_triage(
             store.clone(),
@@ -311,6 +331,14 @@ fn actual_expiry_hint_reads_the_expired_state_after_commit() {
     f.before();
     f.clock.set(NOW_MS + 2000);
     f.mailbox.expire_due(f.member, None, 10).unwrap();
+    assert!(
+        !f.live
+            .since(0, f.live.head().messages)
+            .events
+            .iter()
+            .any(|event| matches!(event, Live::Received(_))),
+        "expiry must be observed without a secondary Received trigger"
+    );
     f.changed();
     f.duplicates(f.header(), || {
         f.mailbox.expire_due(f.member, None, 10).unwrap();
