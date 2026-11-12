@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { categorySpecs, changedFiles, changedOrUnknown, classify, explicitFiles, loadManifest, matches, plan, runSteps, steps, UNKNOWN_CHANGES, type Manifest, type Step } from '../../../../scripts/ui-gate-lib';
+import { categorySpecs, changedFiles, changedOrUnknown, classify, explicitFiles, loadManifest, matches, plan, runSteps, specFiles, steps, UNKNOWN_CHANGES, type Manifest, type Step } from '../../../../scripts/ui-gate-lib';
 import { parseArgs } from '../../../../scripts/ui-gate';
 
 const app = fileURLToPath(new URL('../../../../', import.meta.url));
 const read = (path: string) => readFileSync(join(app, path), 'utf8');
 const manifest: Manifest & { journeys: Manifest['journeys'] } = JSON.parse(read('e2e/gate-manifest.json'));
-const specs = readdirSync(join(app, 'e2e')).filter((name) => name.endsWith('.spec.ts')).sort();
+const specs = specFiles(readdirSync(join(app, 'e2e')), manifest);
 const declarations = (spec: string) => read(`e2e/${spec}`).split('\n').filter((line) => /\btest\(/.test(line));
 const ui = (path: string) => `apps/org-ui/${path}`;
 const names = (files: string[], options = {}) => steps(plan(files, manifest), manifest, specs, options).map((step) => step.name);
@@ -71,6 +71,12 @@ describe('gate manifest guard', () => {
 			const line = declarations(spec).find((candidate) => candidate.includes(match))!;
 			expect(!!webkit, `${spec} "${match}": webkit flag must equal whether the WebKit project runs it`).toBe(testMatch.includes(spec) && grep.test(line));
 		}
+	});
+
+	it('lists every test file that only a dedicated Playwright project runs', () => {
+		const config = read('playwright.config.ts');
+		const dedicated = Object.fromEntries([...config.matchAll(/name: '([^']+)', testMatch: '([^']+)'/g)].filter((m) => !m[2].endsWith('.spec.ts')).map((m) => [m[2], m[1]]));
+		expect(manifest.projectFiles ?? {}).toEqual(dedicated);
 	});
 
 	it('keeps cspIgnoredSpecs equal to the csp-chromium-full testIgnore', () => {
@@ -319,7 +325,30 @@ describe('selector', () => {
 	it('selects whole category spec files, anchored so bugs.spec.ts does not pull chat-bugs.spec.ts', () => {
 		const step = steps(plan([ui('src/lib/org/projects.ts')], manifest), manifest, specs).find((s) => s.name.startsWith('ordinary: projects-work'))!;
 		expect(step.cmd).toContain('e2e/bugs\\.spec\\.ts$');
-		expect(step.cmd.filter((word) => word.startsWith('e2e/'))).toHaveLength(5);
+		expect(step.cmd.filter((word) => word.startsWith('e2e/'))).toHaveLength(7);
+	});
+
+	it('runs the dedicated-project test file with its own project, in the ordinary step only', () => {
+		const list = steps(plan([ui('e2e/non-chat-icons.ts')], manifest), manifest, specs);
+		const ordinary = list.find((step) => step.name === 'ordinary: projects-work')!;
+		expect(ordinary.cmd).toContain('--project=chromium-default-font');
+		expect(ordinary.cmd).toContain('e2e/non-chat-icons-default-font\\.ts$');
+		expect(ordinary.cmd).toContain('e2e/non-chat-icons\\.spec\\.ts$');
+		expect(list.find((step) => step.name === 'ordinary: journeys')!.cmd).not.toContain('--project=chromium-default-font');
+		const csp = list.find((step) => step.name === 'csp: projects-work')!;
+		expect(csp.cmd).toContain('e2e/non-chat-icons\\.spec\\.ts$');
+		expect(csp.cmd).not.toContain('e2e/non-chat-icons-default-font\\.ts$');
+		expect(names([ui('e2e/org-chart.spec.ts')])).not.toContain('csp: projects-work');
+		expect(steps(plan([ui('e2e/org-chart.spec.ts')], manifest), manifest, specs).find((step) => step.name === 'ordinary: org-chart')!.cmd).not.toContain('--project=chromium-default-font');
+	});
+
+	it('maps the non-Chat icon spec, its helpers and fixture to projects-work, and re-runs it when TeamsChart or its helper changes', () => {
+		for (const file of ['e2e/non-chat-icons.spec.ts', 'e2e/non-chat-icons-default-font.ts', 'e2e/non-chat-icons.ts', 'e2e/fixtures/non-chat-icons-v2.2.0.json']) {
+			expect(classify(ui(file), manifest), file).toEqual([expect.objectContaining({ kind: 'category', category: 'projects-work' })]);
+		}
+		expect(plan([ui('src/lib/components/TeamsChart.svelte')], manifest).categories.sort()).toEqual(['org-chart', 'projects-work']);
+		expect(plan([ui('src/lib/components/ProjectTeams.svelte')], manifest).categories).toEqual(['projects-work']);
+		expect(classify(ui('e2e/non-chat-icons-new-helper.ts'), manifest)).toEqual([expect.objectContaining({ kind: 'unknown' })]);
 	});
 
 	it('skips a CSP category step whose specs csp-chromium-full ignores, but still runs them in the ordinary projects', () => {

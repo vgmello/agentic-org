@@ -53,7 +53,7 @@ Tags were added to the `test(` lines only; no assertion, fixture or test body ch
 
 ## Add a spec
 
-Create `e2e/<name>.spec.ts` and add it to one category's `specs` globs (it must match exactly one). If it covers a new area, add a category with its `sources` globs. If it needs WebKit, add it to the `webkit` project in `playwright.config.ts` and to `webkitSpecs` (the guard compares them).
+Create `e2e/<name>.spec.ts` and add it to one category's `specs` globs (it must match exactly one). If it covers a new area, add a category with its `sources` globs. If it needs WebKit, add it to the `webkit` project in `playwright.config.ts` and to `webkitSpecs` (the guard compares them). A test file that is not `*.spec.ts` and runs only in its own Playwright project (today `non-chat-icons-default-font.ts` in `chromium-default-font`) is listed in `projectFiles` (file to project, compared with `playwright.config.ts` by the guard); it goes in a category's `specs` like any spec, and the selector then adds that project to the ordinary category step and leaves the file out of the CSP step.
 
 ## Add a journey
 

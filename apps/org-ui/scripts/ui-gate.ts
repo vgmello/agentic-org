@@ -1,13 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { categorySpecs, changedOrUnknown, explicitFiles, loadManifest, plan, runSteps, steps, UNKNOWN_CHANGES, type Manifest, type Step } from './ui-gate-lib';
+import { categorySpecs, changedOrUnknown, explicitFiles, loadManifest, plan, runSteps, specFiles, steps, UNKNOWN_CHANGES, type Manifest, type Step } from './ui-gate-lib';
 
 const app = fileURLToPath(new URL('../', import.meta.url));
 const loaded = loadManifest(`${app}e2e/gate-manifest.json`);
 // Without a readable manifest nothing can be selected: select/run fall back to the full suite, areas/verify have nothing to report.
 const manifest: Manifest = 'manifest' in loaded ? loaded.manifest : { budget: { maxJourneyTests: 0, maxChromiumSeconds: 0, measured: { tests: 0, chromiumSeconds: 0 } }, webkitSpecs: [], cspIgnoredSpecs: [], journeys: [], categories: {}, rules: { ignore: [], noImpact: [], shared: [], cspFull: [], gateway: [] } };
-const specs = readdirSync(`${app}e2e`).filter((name) => name.endsWith('.spec.ts')).sort();
+const specs = specFiles(readdirSync(`${app}e2e`), manifest);
 const quote = (word: string) => (/^[\w@./=:,-]+$/.test(word) ? word : `'${word}'`);
 const show = (step: Step) => `${Object.entries(step.env ?? {}).map(([k, v]) => `${k}=${v} `).join('')}${step.cmd.map(quote).join(' ')}`;
 function listAreas() {

@@ -7,7 +7,7 @@ export type Rules = { ignore: string[]; noImpact: string[]; shared: string[]; cs
 export type Category = { specs: string[]; sources: string[] };
 export type Manifest = {
 	budget: { maxJourneyTests: number; maxChromiumSeconds: number; measured: { tests: number; chromiumSeconds: number } };
-	allowedCoupling?: { from: string; to: string; why: string }[]; webkitSpecs: string[]; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
+	allowedCoupling?: { from: string; to: string; why: string }[]; webkitSpecs: string[]; projectFiles?: Record<string, string>; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
 };
 export type Effect = { kind: 'ignore' | 'outside' | 'all' | 'category' | 'cspFull' | 'gateway' | 'unknown'; rule: string; category?: string };
 export type Plan = { all: boolean; categories: string[]; cspFull: boolean; gateway: boolean; effects: [string, Effect[]][] };
@@ -71,6 +71,11 @@ export function plan(files: string[], m: Manifest): Plan {
 	return { all: full, categories, cspFull: full || has('cspFull'), gateway: full || has('gateway'), effects };
 }
 
+/** The test files in e2e/: every `*.spec.ts`, plus the files only a dedicated Playwright project runs (`projectFiles`). */
+export function specFiles(names: string[], m: Manifest): string[] {
+	return names.filter((name) => name.endsWith('.spec.ts') || name in (m.projectFiles ?? {})).sort();
+}
+
 /** The spec files of the given categories, each once, even when two categories list the same file. */
 export function categorySpecs(m: Manifest, categories: string[], specs: string[]): string[] {
 	return specs.filter((spec) => categories.some((name) => m.categories[name].specs.some((glob) => matches(glob, spec))));
@@ -106,13 +111,15 @@ export function steps(p: Plan, m: Manifest, specs: string[], { webkit = true, ex
 	const chosen = categorySpecs(m, p.categories, specs);
 	const files = anchored(chosen);
 	// csp-chromium-full ignores some specs; a step with nothing left would end in "No tests found".
-	const cspFiles = anchored(chosen.filter((spec) => !m.cspIgnoredSpecs.includes(spec)));
+	const cspFiles = anchored(chosen.filter((spec) => !m.cspIgnoredSpecs.includes(spec) && !(spec in (m.projectFiles ?? {}))));
+	// Files only a dedicated project runs need that project beside the ordinary ones.
+	const fileProjects = [...new Set(chosen.flatMap((spec) => (m.projectFiles?.[spec] ? [`--project=${m.projectFiles[spec]}`] : [])))];
 	const projects = ['--project=chromium', '--project=production', ...(webkit ? ['--project=webkit'] : [])];
 	const out: Step[] = [];
 	if (p.all) out.push({ name: 'ordinary: full suite', env, cmd: pw() });
 	else {
 		out.push({ name: 'ordinary: journeys', env, cmd: pw('--grep', '@journey', ...projects) });
-		if (files.length) out.push({ name: `ordinary: ${p.categories.join(', ')}`, env, cmd: pw('--grep-invert', '@journey', ...projects, ...files) });
+		if (files.length) out.push({ name: `ordinary: ${p.categories.join(', ')}`, env, cmd: pw('--grep-invert', '@journey', ...projects, ...fileProjects, ...files) });
 	}
 	if (p.cspFull) out.push({ name: 'csp: full interactive', cmd: csp() });
 	else if (p.categories.length) {

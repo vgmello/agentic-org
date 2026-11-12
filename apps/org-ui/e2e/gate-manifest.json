@@ -11,8 +11,9 @@
 		"maxChromiumSeconds": 300,
 		"measured": { "tests": 55, "chromiumSeconds": 190, "workers": 2, "date": "2026-11-11" }
 	},
+	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"webkitSpecs": ["non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
@@ -101,10 +102,11 @@
 			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*"]
 		},
 		"projects-work": {
-			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts"],
+			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
 			"sources": [
 				"src/routes/(shell)/projects/**", "src/routes/(shell)/work/**", "src/lib/org/projects*", "src/lib/org/team-edit*", "src/lib/modules/copilot/**",
-				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte"
+				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
+				"src/lib/components/{TeamsChart,MemberTile}.svelte", "src/lib/components/org-tree.css", "e2e/org-chart-menu.ts", "e2e/non-chat-icons.ts", "e2e/fixtures/non-chat-icons-*.json"
 			]
 		},
 		"processes": {
