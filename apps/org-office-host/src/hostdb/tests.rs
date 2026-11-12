@@ -733,34 +733,32 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
     );
 }
 
+fn database_fds(path: &Path) -> Vec<i32> {
+    let inode = fs::metadata(path).unwrap();
+    (3..4096)
+        .filter(|&fd| {
+            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: successful fstat initializes the output; failed descriptors are skipped.
+            if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+                return false;
+            }
+            // SAFETY: fstat succeeded.
+            let stat = unsafe { stat.assume_init() };
+            stat.st_ino as u128 == u128::from(inode.ino())
+                && stat.st_dev as u128 == u128::from(inode.dev())
+        })
+        .collect()
+}
 #[test]
 fn sqlite_file_descriptors_are_close_on_exec() {
-    use std::os::fd::AsRawFd;
     let (home, _, db) = fixture();
-    let held = File::open(home.path().join(DB)).unwrap();
-    let inode = held.metadata().unwrap();
-    let mut found = 0;
-    for fd in 3..4096 {
-        if fd == held.as_raw_fd() {
-            continue;
-        }
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: the output is initialized by a successful fstat; failed descriptors are skipped.
-        if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
-            continue;
-        }
-        // SAFETY: fstat succeeded.
-        let stat = unsafe { stat.assume_init() };
-        if stat.st_ino as u128 == u128::from(inode.ino())
-            && stat.st_dev as u128 == u128::from(inode.dev())
-        {
-            // SAFETY: F_GETFD has no variadic argument and examines a live fd.
-            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-            assert_ne!(flags & libc::FD_CLOEXEC, 0);
-            found += 1;
-        }
+    let fds = database_fds(&home.path().join(DB));
+    assert!(!fds.is_empty(), "SQLite owns a main-file fd");
+    for fd in fds {
+        // SAFETY: F_GETFD examines a descriptor retained by this SQLite connection.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
     }
-    assert!(found >= 1, "the SQLite connection owns a main-file fd");
     drop(db);
 }
 
@@ -1317,4 +1315,210 @@ fn wal_capability_refusal_covers_non_wal_vfs_results() {
     for mode in ["", "delete", "memory", "wal "] {
         assert_eq!(require_wal(mode), Err(Error::Unsafe));
     }
+}
+
+#[test]
+fn create_retains_sqlites_shared_file_lock() {
+    let (home, _secrets, db) = fixture();
+    db.connection
+        .lock()
+        .unwrap()
+        .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
+        .unwrap();
+    // Probe SQLite's existing descriptor; opening a second descriptor would itself
+    // risk cancelling this process's POSIX record locks when it closed.
+    let fd = *database_fds(&home.path().join(DB)).first().unwrap();
+    // SAFETY: the child only uses async-signal-safe fcntl and _exit; no SQLite or allocator.
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        let mut lock = libc::flock {
+            l_type: libc::F_WRLCK as _,
+            l_whence: libc::SEEK_SET as _,
+            l_start: 0x4000_0002,
+            l_len: 510,
+            l_pid: 0,
+        };
+        // SAFETY: live inherited fd and initialized lock request for SQLite's SHARED range.
+        unsafe {
+            let result = libc::fcntl(fd, libc::F_GETLK, &mut lock);
+            libc::_exit(if result < 0 {
+                42
+            } else if lock.l_type == libc::F_UNLCK as libc::c_short {
+                41
+            } else {
+                0
+            });
+        }
+    }
+    assert!(pid > 0, "fork failed");
+    let mut status = 0;
+    // SAFETY: reap exactly this child before assertions or closing the probe descriptor.
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(db);
+    assert_eq!(waited, pid);
+    assert_eq!(
+        status, 0,
+        "child found no SQLite shared lock (exit41) or failed fcntl (exit42)"
+    );
+}
+
+struct OrphanCheckedSecrets {
+    inner: Secrets,
+    sidecar: PathBuf,
+}
+impl HostSecrets for OrphanCheckedSecrets {
+    fn put(&self, name: &Name, value: &Value) -> Result<(), crate::host_secrets::Error> {
+        self.inner.put(name, value)
+    }
+    fn load(&self, name: &Name) -> Result<Option<Value>, crate::host_secrets::Error> {
+        self.inner.load(name)
+    }
+    fn delete(&self, name: &Name) -> Result<(), crate::host_secrets::Error> {
+        self.inner.delete(name)
+    }
+    fn list(&self) -> Result<Vec<Name>, crate::host_secrets::Error> {
+        // Observe the actual ordering: orphan cleanup must precede any secret reset.
+        if fs::symlink_metadata(&self.sidecar).is_ok() {
+            return Err(crate::host_secrets::Error::Unsafe);
+        }
+        self.inner.list()
+    }
+}
+fn owned_orphan_is_cleaned(suffix: &str) {
+    for bytes in [b"".as_slice(), b"orphan sidecar bytes".as_slice()] {
+        let home = home();
+        let path = home.path().join(format!("{DB}{suffix}"));
+        fs::write(&path, bytes).unwrap();
+        let secrets = OrphanCheckedSecrets {
+            inner: Secrets::default(),
+            sidecar: path,
+        };
+        let db = HostDb::create(home.path(), &secrets, &init(false)).unwrap();
+        assert_eq!(
+            db.connection
+                .lock()
+                .unwrap()
+                .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        drop(db);
+        let db = HostDb::open(home.path(), &secrets).unwrap();
+        assert_eq!(
+            db.connection
+                .lock()
+                .unwrap()
+                .query_row("SELECT count(*) FROM meta", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+    }
+}
+#[test]
+fn orphan_final_rollback_journal_is_cleaned_before_secrets() {
+    owned_orphan_is_cleaned("-journal");
+}
+#[test]
+fn orphan_final_wal_is_cleaned_before_secrets() {
+    owned_orphan_is_cleaned("-wal");
+}
+#[test]
+fn orphan_final_shm_is_cleaned_before_secrets() {
+    owned_orphan_is_cleaned("-shm");
+}
+#[test]
+fn unsafe_orphan_sidecars_refuse_create_before_secrets_and_stay_untouched() {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        for kind in ["directory", "symlink", "dangling"] {
+            let home = home();
+            let secrets = Secrets::default();
+            secrets
+                .put(
+                    &Name::parse("registry").unwrap(),
+                    &Value::new(vec![0x31; 32]).unwrap(),
+                )
+                .unwrap();
+            let before = secrets.0.lock().unwrap().clone();
+            let path = home.path().join(format!("{DB}{suffix}"));
+            let target = home.path().join("precious");
+            fs::write(&target, b"untouched").unwrap();
+            match kind {
+                "directory" => fs::create_dir(&path).unwrap(),
+                "symlink" => symlink(&target, &path).unwrap(),
+                _ => symlink(home.path().join("absent"), &path).unwrap(),
+            }
+            let inode = fs::symlink_metadata(&path).unwrap().ino();
+            assert!(
+                matches!(
+                    HostDb::create(home.path(), &secrets, &init(false)),
+                    Err(Error::Unsafe)
+                ),
+                "{suffix} {kind}"
+            );
+            assert!(
+                *secrets.0.lock().unwrap() == before,
+                "no secret changed: {suffix} {kind}"
+            );
+            assert!(!home.path().join(DB).exists());
+            assert!(!home.path().join(TMP).exists());
+            assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), inode);
+            assert_eq!(fs::read(&target).unwrap(), b"untouched");
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn foreign_owned_orphans_refuse_create_before_secrets_when_root() {
+    if crate::home::euid() != 0 {
+        return;
+    }
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let home = home();
+        let secrets = Secrets::default();
+        let path = home.path().join(format!("{DB}{suffix}"));
+        fs::write(&path, b"foreign orphan").unwrap();
+        std::os::unix::fs::chown(&path, Some(1), None).unwrap();
+        let inode = fs::symlink_metadata(&path).unwrap().ino();
+        assert!(matches!(
+            HostDb::create(home.path(), &secrets, &init(false)),
+            Err(Error::Unsafe)
+        ));
+        assert_eq!(fs::symlink_metadata(&path).unwrap().uid(), 1);
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), inode);
+        assert_eq!(fs::read(&path).unwrap(), b"foreign orphan");
+        assert!(secrets.0.lock().unwrap().is_empty());
+        assert!(!home.path().join(DB).exists());
+    }
+}
+#[test]
+fn orphan_cleanup_logs_only_the_fixed_sidecar_names() {
+    const CHILD: &str = "SAGE_HOSTDB_ORPHAN_LOG";
+    if std::env::var_os(CHILD).is_some() {
+        let home = home();
+        for suffix in ["-wal", "-shm", "-journal"] {
+            fs::write(
+                home.path().join(format!("{DB}{suffix}")),
+                b"private-test-sidecar-content",
+            )
+            .unwrap();
+        }
+        let _db = HostDb::create(home.path(), &Secrets::default(), &init(false)).unwrap();
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostdb::tests::orphan_cleanup_logs_only_the_fixed_sidecar_names",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stderr).unwrap();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        assert!(text.contains(&format!("removed orphan host registry sidecar {suffix}")));
+    }
+    assert!(!text.contains("private-test-sidecar-content"));
+    assert!(!text.contains("/"));
 }

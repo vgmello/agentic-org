@@ -82,6 +82,19 @@ impl HostDb {
     ) -> Result<Self, Error> {
         let home = checked_home(home)?;
         absent(&home.join(DB), Error::Exists)?;
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let path = home.join(format!("{DB}{suffix}"));
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if !metadata.is_file() || metadata.uid() != crate::home::euid() {
+                return Err(Error::Unsafe);
+            }
+            fs::remove_file(path)?;
+            crate::host_log::log(&format!("removed orphan host registry sidecar {suffix}"));
+        }
         // Interrupted creates leave only temps; no installed registry needs rollback recovery.
         for name in [
             TMP,
@@ -121,6 +134,7 @@ impl HostDb {
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&path)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        drop(file); // A later close on this inode would cancel SQLite's POSIX locks.
         let mut db = connect(&path, &key)?;
         db.pragma_update(None, "journal_mode", "DELETE")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -152,7 +166,9 @@ impl HostDb {
         for name in ["host-registry.db.tmp-wal", "host-registry.db.tmp-shm"] {
             absent(&home.join(name), Error::Unsafe)?;
         }
-        file.sync_all()?;
+        checked_file(&path, false)?
+            .ok_or(Error::Empty)?
+            .sync_all()?;
         install(&path, &home.join(DB))?;
         File::open(&home)?.sync_all()?;
         checkpoint(5)?;
