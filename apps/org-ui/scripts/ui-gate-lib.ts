@@ -7,9 +7,9 @@ export type Rules = { ignore: string[]; noImpact: string[]; shared: string[]; cs
 export type Category = { specs: string[]; sources: string[] };
 export type Manifest = {
 	budget: { maxJourneyTests: number; maxChromiumSeconds: number; measured: { tests: number; chromiumSeconds: number } };
-	allowedCoupling?: { from: string; to: string; why: string }[]; webkitSpecs: string[]; projectFiles?: Record<string, string>; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
+	allowedCoupling?: { from: string; to: string; why: string }[]; webkitSpecs: string[]; projectFiles?: Record<string, string>; alsoRuns?: { category: string; files: string[]; why: string }[]; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
 };
-export type Effect = { kind: 'ignore' | 'outside' | 'all' | 'category' | 'cspFull' | 'gateway' | 'unknown'; rule: string; category?: string };
+export type Effect = { kind: 'ignore' | 'outside' | 'all' | 'category' | 'cspFull' | 'gateway' | 'unknown'; rule: string; category?: string; also?: boolean };
 export type Plan = { all: boolean; categories: string[]; cspFull: boolean; gateway: boolean; effects: [string, Effect[]][] };
 export type Step = { name: string; env?: Record<string, string>; cmd: string[] };
 
@@ -52,6 +52,11 @@ export function classify(file: string, m: Manifest): Effect[] {
 	for (const [name, category] of Object.entries(m.categories)) {
 		const hit = category.sources.find((glob) => matches(glob, path)) ?? category.specs.map((glob) => `e2e/${glob}`).find((glob) => matches(glob, path));
 		if (hit) out.push({ kind: 'category', category: name, rule: `category ${name} (${hit})` });
+	}
+	// Files that another area's tests exercise without owning them: the category runs in addition.
+	for (const extra of m.alsoRuns ?? []) {
+		const glob = extra.files.find((candidate) => matches(candidate, path));
+		if (glob) out.push({ kind: 'category', category: extra.category, also: true, rule: `category ${extra.category} also runs (${glob}): ${extra.why}` });
 	}
 	const csp = first(m.rules.cspFull);
 	if (csp) out.push({ kind: 'cspFull', rule: `CSP/build ${csp}: full interactive CSP` });

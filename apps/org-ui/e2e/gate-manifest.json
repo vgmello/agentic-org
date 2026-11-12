@@ -126,6 +126,9 @@
 			"sources": []
 		}
 	},
+	"alsoRuns": [
+		{ "category": "projects-work", "files": ["src/routes/(shell)/org-chart/+page.{svelte,ts}", "src/lib/components/ChartFitMenuItem.svelte"], "why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports." }
+	],
 	"allowedCoupling": [
 		{ "from": "src/routes/(shell)/+layout.svelte", "to": "src/lib/modules/messaging/index.ts", "why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys." },
 		{ "from": "e2e/*.spec.ts", "to": "src/routes/(onboarding)/*/+page.svelte", "why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages." },

@@ -73,6 +73,15 @@ describe('gate manifest guard', () => {
 		}
 	});
 
+	it('keeps every alsoRuns entry real: a known category, a reason, and globs that match a current file', () => {
+		const files = execFileSync('git', ['ls-files', '-z', '--', '.'], { cwd: app, encoding: 'utf8' }).split('\0').filter(Boolean);
+		for (const extra of manifest.alsoRuns ?? []) {
+			expect(Object.keys(manifest.categories), extra.category).toContain(extra.category);
+			expect(extra.why.length).toBeGreaterThan(20);
+			for (const glob of extra.files) expect(files.some((file) => matches(glob, file)), `alsoRuns glob matches nothing: ${glob}`).toBe(true);
+		}
+	});
+
 	it('lists every test file that only a dedicated Playwright project runs', () => {
 		const config = read('playwright.config.ts');
 		const dedicated = Object.fromEntries([...config.matchAll(/name: '([^']+)', testMatch: '([^']+)'/g)].filter((m) => !m[2].endsWith('.spec.ts')).map((m) => [m[2], m[1]]));
@@ -111,7 +120,8 @@ describe('gate manifest guard', () => {
 			const effects = classify(ui(file), manifest);
 			if (effects.some((effect) => effect.kind === 'ignore')) return 'ignore';
 			if (effects.some((effect) => effect.kind === 'all')) return 'shared';
-			const categories = effects.flatMap((effect) => (effect.category ? [effect.category] : []));
+			// alsoRuns selects a category to run; it does not make that category own (or import) the file.
+			const categories = effects.flatMap((effect) => (effect.category && !effect.also ? [effect.category] : []));
 			return categories.length ? new Set(categories) : 'unknown';
 		};
 		const allowed = manifest.allowedCoupling ?? [];
@@ -239,8 +249,13 @@ describe('selector', () => {
 		expect(plan([ui('e2e/gate-manifest.json')], manifest).all).toBe(true);
 	});
 
-	it('org-chart page change maps to the org-chart category only', () => {
-		expect(plan([ui('src/routes/(shell)/org-chart/+page.svelte')], manifest).categories).toEqual(['org-chart']);
+	it('org-chart page, its load function and the chart fit menu item run org-chart and also the non-Chat icon spec (projects-work)', () => {
+		for (const file of ['src/routes/(shell)/org-chart/+page.svelte', 'src/routes/(shell)/org-chart/+page.ts', 'src/lib/components/ChartFitMenuItem.svelte']) {
+			const chosen = plan([ui(file)], manifest);
+			expect(chosen.all, file).toBe(false);
+			expect(chosen.categories.sort(), file).toEqual(['org-chart', 'projects-work']);
+		}
+		expect(plan([ui('src/lib/components/PeopleChart.svelte')], manifest).categories).toEqual(['org-chart']);
 	});
 
 	it('several areas run each category once', () => {
