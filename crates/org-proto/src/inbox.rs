@@ -97,17 +97,27 @@ pub struct InboxItem {
     pub reference: String,
     pub source: String,
     pub kind: InboxKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommendation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<u64>,
     pub state: InboxState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handled_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<String>,
     pub clears: InboxClears,
     pub dismissable: bool,
@@ -165,17 +175,23 @@ pub struct InboxPosition {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxListParams {
     pub state: InboxState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<InboxKind>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<String>,
     /// Opaque: echo it unchanged. Sources receive the decoded keyset before their cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxListResult {
     pub items: Vec<InboxItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     pub counts: InboxCounts,
     pub as_of: InboxPosition,

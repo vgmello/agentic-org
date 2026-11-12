@@ -198,3 +198,101 @@ fn a_maximal_page_of_escaped_control_characters_fits_the_frame_with_its_envelope
     let frame = crate::Response::ok::<InboxList>(9_007_199_254_740_991, &page).unwrap();
     assert!(serde_json::to_vec(&frame).unwrap().len() < crate::MAX_FRAME_BYTES);
 }
+
+/// The sibling wire convention: `field?: T` means absent for None, never an emitted null.
+/// Explicit null on input is equivalent to absence, as in msg.rs's optional cursors.
+fn optional_fields<T: serde::Serialize + serde::de::DeserializeOwned>(
+    base: Value,
+    fields: &[(&str, Value)],
+) {
+    let absent = serde_json::to_value(serde_json::from_value::<T>(base.clone()).unwrap()).unwrap();
+    for (field, present) in fields {
+        assert!(
+            absent.get(field).is_none(),
+            "{field}: absent input must omit the wire key"
+        );
+        let mut value = base.clone();
+        value[field] = present.clone();
+        let value = serde_json::to_value(serde_json::from_value::<T>(value).unwrap()).unwrap();
+        assert_eq!(
+            value.get(field),
+            Some(present),
+            "{field}: retain the present value"
+        );
+        let mut value = base.clone();
+        value[field] = Value::Null;
+        let value = serde_json::to_value(serde_json::from_value::<T>(value).unwrap()).unwrap();
+        assert_eq!(value, absent, "{field}: null input equals absence");
+    }
+    assert_eq!(absent, base, "only the declared required keys are emitted");
+}
+
+#[test]
+fn every_optional_wire_field_omits_none_preserves_some_and_normalizes_null() {
+    let mut row = item();
+    row.as_object_mut().unwrap().remove("member");
+    optional_fields::<InboxItem>(
+        row,
+        &[
+            ("member", json!("member")),
+            ("project", json!("project")),
+            ("team", json!("team")),
+            ("context", json!("why")),
+            ("recommendation", json!("recommendation")),
+            ("options", json!(["one", "two"])),
+            ("created_at_ms", json!(1)),
+            ("expires_at_ms", json!(2)),
+            ("handled_at_ms", json!(3)),
+            ("outcome", json!("placed")),
+        ],
+    );
+    optional_fields::<InboxListParams>(
+        json!({"state":"open"}),
+        &[
+            ("kinds", json!(["problem"])),
+            ("project", json!("project")),
+            ("team", json!("team")),
+            ("cursor", json!("opaque")),
+            ("limit", json!(50)),
+        ],
+    );
+    optional_fields::<InboxListResult>(
+        json!({"items":[],
+        "counts":{"approvals":0,"questions":0,"decisions":0,"problems":0,"total":0},
+        "as_of":{"epoch":"instance","seq":0},"degraded":[]}),
+        &[("next_cursor", json!("opaque"))],
+    );
+    optional_fields::<Action>(
+        json!({"type":"call","label":"Reply","op":"msg.reply","params":{},"fresh":["id"]}),
+        &[(
+            "input",
+            json!({"field":"body","required":true,"max_chars":10000}),
+        )],
+    );
+}
+
+#[test]
+fn last_page_wire_has_no_cursor_key_for_optional_string_clients() {
+    let page = InboxListResult {
+        items: vec![],
+        next_cursor: None,
+        counts: InboxCounts::default(),
+        as_of: InboxPosition {
+            epoch: "instance".into(),
+            seq: 0,
+        },
+        degraded: vec![],
+    };
+    let last = serde_json::to_value(&page).unwrap();
+    assert!(!last.as_object().unwrap().contains_key("next_cursor"));
+    let next = serde_json::to_value(InboxListResult {
+        next_cursor: Some("opaque".into()),
+        ..page
+    })
+    .unwrap();
+    assert_eq!(
+        next.get("next_cursor").and_then(Value::as_str),
+        Some("opaque")
+    );
+    println!("INBOX_CURSOR_SHAPE={}", json!({"last":last,"next":next}));
+}
