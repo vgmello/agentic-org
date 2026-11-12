@@ -6,7 +6,8 @@
 	import { toast } from 'svelte-sonner';
 	import pkg from '../../../package.json';
 	import { officeApi, toAppError } from '$lib/office/api';
-	import { agentsIn, copyDetails, repairLocation, restartAction, restartOutcome, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
+	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
+	import { agentsIn, copyDetails, repairReasonCopy, restartAction, restartOutcome, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -176,19 +177,18 @@
 				{#if why}
 					<dt class="text-gray-400">Why</dt>
 					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
-						<p data-testid="office-why">{why}</p>
+						<p data-testid="office-why">{#if office.status_reason === 'unsupported_version'}{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}{:else}{why}{/if}</p>
 						{#if office.status_reason === 'unsupported_version'}
-							{@const location = repairLocation(office.host)}
 							<Button variant="outline" class="mt-2 h-auto min-h-9 whitespace-normal py-2 text-left"
 								aria-expanded={repairOpen} aria-controls={repairId} onclick={toggleRepair}>
 								{repairOpen ? 'Hide repair instructions' : 'Show local CLI repair instructions'}
 							</Button>
 							<div id={repairId} hidden={!repairOpen} class="mt-3 space-y-2 text-gray-300">
-								<p>On {location}, run:</p>
+								<p>On <OfficeRepairLocation {office} />, run:</p>
 								<pre class="overflow-x-auto rounded-md bg-black/20 px-3 py-2 text-xs text-white"><code>{repairCommand}</code></pre>
 								<Button variant="outline" size="sm" onclick={copyRepairCommand}>{commandCopied ? 'Copied' : 'Copy command'}</Button>
 								<p>It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back.</p>
-								<p>If {location} runs more than one instance, add <code>--name &lt;instance&gt;</code>.</p>
+								<p>If <OfficeRepairLocation {office} /> runs more than one instance, add <code>--name &lt;instance&gt;</code>.</p>
 							</div>
 						{/if}
 					</dd>

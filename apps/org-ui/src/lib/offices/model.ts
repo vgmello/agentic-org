@@ -7,7 +7,7 @@ const THIS_MAC = 'This Mac';
 
 export const isHq = (o: OfficeInfo) => o.role === 'hq';
 // On this Mac: it has a local endpoint (the host label is the fallback).
-export const isHere = (o: OfficeInfo) => !!o.endpoint || o.host === THIS_MAC;
+export const isHere = (o: Pick<OfficeInfo, 'host' | 'endpoint'>) => !!o.endpoint || o.host === THIS_MAC;
 
 /** The owner-facing word for an office's role: an unrecognised role is never described as HQ or as an office that keeps a copy. */
 export function roleInfo(o: OfficeInfo): { label: string; description: string } {
@@ -147,12 +147,12 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, _here: boolean, status: DisplayStatus | undefined, why?: string): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined, why?: string): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
 	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
-	parts.push(status === 'unreachable' ? "Can't reach this office" : repairLocation(o.host));
+	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
 	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
@@ -174,12 +174,19 @@ const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, st
 	unknown: "It stopped for a reason this version doesn't know"
 };
 
-type OfficeStop = Pick<OfficeInfo, 'host' | 'status' | 'status_reason' | 'next_restart_at'>;
+type OfficeStop = Pick<OfficeInfo, 'host' | 'endpoint' | 'status' | 'status_reason' | 'next_restart_at'>;
 export type RestartDeadlineSample = { deadline: string; observedAt: number };
 
-/** The legacy host label refers to the office machine, not the device running the browser. */
-export function repairLocation(host: string): string {
-	return host === 'This Mac' ? "the office's machine" : host;
+/** Shared reason copy: the rendered host may be styled, while the accessible name stays plain text. */
+export const repairReasonCopy = {
+	before: 'The release components on ',
+	after: " don't match. Run diagnostics and repair the selected instance there."
+} as const;
+
+/** Repair prose shares the local machine label while retaining a differing reported host for diagnosis. */
+export function repairLocation(host: string, endpoint?: string): string {
+	if (!isHere({ host, endpoint })) return host;
+	return host === THIS_MAC ? THIS_MAC : `${THIS_MAC} (reported as ${host})`;
 }
 
 /** A new pending deadline is sampled once; another office or a repeated report cannot move that sample. */
@@ -197,7 +204,7 @@ export function sampleRestartDeadlines(
 	return next;
 }
 
-/** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
+/** The live-status announcement: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
 export function whyForLabel(o: OfficeStop, now: Date): string | undefined {
 	const text = whyStopped({ ...o, next_restart_at: undefined }, now);
 	if (text === undefined) return undefined;
@@ -227,7 +234,7 @@ export function secondsUntil(nextRestartAt: string | undefined, now: Date): numb
 export function whyStopped(o: OfficeStop, now: Date): string | undefined {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
 	if (o.status_reason === 'unsupported_version')
-		return `The release components on ${repairLocation(o.host)} don't match. Run diagnostics and repair the selected instance there.`;
+		return `${repairReasonCopy.before}${repairLocation(o.host, o.endpoint)}${repairReasonCopy.after}`;
 	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
 	if (n === undefined) return base;
