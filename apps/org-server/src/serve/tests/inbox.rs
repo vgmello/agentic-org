@@ -162,10 +162,17 @@ fn inbox_live_owner_is_one_canonical_person_check_and_fails_closed_without_sourc
             with_app_token: false,
         },
     ] {
-        assert_eq!(
-            code_of(answer(&req, &shared, &mut denied).outcome),
-            ErrorCode::NotAuthorized
-        );
+        for params in [
+            json!({"state":"open"}),
+            json!({"state":"bogus"}),
+            json!({"state":"open","cursor":"x"}),
+        ] {
+            assert_eq!(
+                code_of(answer(&request(params), &shared, &mut denied).outcome),
+                ErrorCode::NotAuthorized,
+                "authorization must precede parameter and cursor validation"
+            );
+        }
     }
     assert_eq!(source.reads.load(Ordering::SeqCst), 0);
     assert_eq!(
@@ -228,6 +235,8 @@ fn inbox_limits_unknown_filters_and_bad_cursors_are_refused_before_reading_sourc
     for params in [
         json!({}),
         json!({"state":"future"}),
+        json!({"state":"open","kinds":[]}),
+        json!({"state":"handled","kinds":[]}),
         json!({"state":"open","kinds":["future"]}),
         json!({"state":"open","kinds":["problem","future"]}),
         json!({"state":"open","limit":0}),
@@ -282,12 +291,12 @@ fn inbox_limits_unknown_filters_and_bad_cursors_are_refused_before_reading_sourc
         assert_eq!(result.as_of.epoch, "test-instance");
     }
     let handled = answer(
-        &request(json!({"state":"handled","project":"valid","team":"valid","kinds":[]})),
+        &request(json!({"state":"handled","project":"valid","team":"valid","kinds":["problem"]})),
         &shared,
         &mut owner(),
     )
     .into_result::<InboxList>()
-    .unwrap();
+    .expect("a known nonempty kinds filter remains valid");
     assert!(handled.items.is_empty() && handled.next_cursor.is_none());
     assert_eq!(handled.counts.total, 110);
 }

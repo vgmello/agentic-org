@@ -13,9 +13,19 @@ fn snapshot() -> OrgSnapshot {
 }
 
 fn member(id: &str, kind: &str, office: Option<&str>) -> org_proto::Member {
-    serde_json::from_value(json!({"id":id,"kind":kind,"name":id,"office_id":office,
-        "created_at":"2026-01-01T00:00:00.000Z","version":1}))
-    .unwrap()
+    let mut member: org_proto::Member = serde_json::from_value(json!({
+        "id":id,"kind":kind,"name":id,"office_id":office,
+        "created_at":"2026-01-01T00:00:00.000Z","version":1
+    }))
+    .unwrap();
+    // Keep a known Active profile even for malformed non-agent records so the kind
+    // condition is independently exercised.
+    member.agent = org_mailbox::testkit::fixture::members()
+        .into_iter()
+        .find(|member| member.id == org_mailbox::testkit::fixture::ADA_ID)
+        .unwrap()
+        .agent;
+    member
 }
 
 fn query() -> Query<'static> {
@@ -233,4 +243,114 @@ fn snapshot_is_read_once_and_failures_are_atomic() {
     assert_eq!(result.items.len(), 1);
     assert_eq!(result.counts.total, 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn offboarding_an_unplaced_agent_clears_items_and_open_totals_without_deleting_history() {
+    for status in [
+        org_proto::AgentStatus::Active,
+        org_proto::AgentStatus::Paused,
+    ] {
+        let mut view = snapshot();
+        let mut agent = org_mailbox::testkit::fixture::members()
+            .into_iter()
+            .find(|member| member.id == org_mailbox::testkit::fixture::ADA_ID)
+            .unwrap();
+        agent.office_id = None;
+        agent.agent.as_mut().unwrap().status = status;
+        view.members.push(agent);
+        let before = source(view.clone()).read(&query()).unwrap();
+        assert_eq!(before.items.len(), 1);
+        assert_eq!(before.counts.problems, 1);
+        assert_eq!(before.counts.total, 1);
+        // member.offboard changes the profile and retains the record/office assignment.
+        let agent = &mut view.members[0];
+        agent.agent.as_mut().unwrap().status = org_proto::AgentStatus::Offboarded;
+        agent.agent.as_mut().unwrap().offboarded_at = Some("2026-11-12T20:00:00.000Z".into());
+        assert_eq!(agent.kind, MemberKind::Agent);
+        assert!(agent.office_id.is_none());
+        let source = source(view);
+        let after = source.read(&query()).unwrap();
+        assert!(
+            after.items.is_empty(),
+            "offboarded records are never unplaced Problems"
+        );
+        assert_eq!(after.counts, InboxCounts::default());
+        let handled = source
+            .read(&Query {
+                state: InboxState::Handled,
+                ..query()
+            })
+            .unwrap();
+        assert!(handled.items.is_empty());
+        assert_eq!(handled.counts, InboxCounts::default());
+    }
+}
+
+#[test]
+fn offboarded_unknown_or_absent_profiles_never_create_unplaced_problems() {
+    for status in [
+        Some(AgentStatus::Offboarded),
+        Some(AgentStatus::Unknown),
+        None,
+    ] {
+        let mut agent = member("a", "agent", None);
+        match status {
+            Some(status) => agent.agent.as_mut().unwrap().status = status,
+            None => agent.agent = None,
+        }
+        let mut view = snapshot();
+        view.members.push(agent);
+        let source = source(view);
+        for state in [InboxState::Open, InboxState::Handled] {
+            let result = source.read(&Query { state, ..query() }).unwrap();
+            assert!(
+                result.items.is_empty(),
+                "uncertain or offboarded profile must not nag: {status:?}"
+            );
+            assert_eq!(
+                result.counts,
+                InboxCounts::default(),
+                "excluded profile must not contribute to open totals: {status:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn late_matching_team_and_project_members_remain_reachable_before_the_page_cap() {
+    let mut view = snapshot();
+    view.members = (0..102)
+        .map(|n| member(&format!("m{n:03}"), "agent", None))
+        .collect();
+    view.memberships = serde_json::from_value(json!([
+        {"id":"late","team_id":"T","member_id":"m101","version":1}
+    ]))
+    .unwrap();
+    view.project_teams = serde_json::from_value(json!([
+        {"id":"project","project_id":"P","team_id":"T","version":1}
+    ]))
+    .unwrap();
+    let source = source(view);
+    for (team, project) in [(Some("T"), None), (None, Some("P"))] {
+        let result = source
+            .read(&Query {
+                team,
+                project,
+                limit: 3,
+                ..query()
+            })
+            .unwrap();
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|item| item.member.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["m101"],
+            "matching rows must be filtered before cap: {team:?}/{project:?}"
+        );
+        assert_eq!(result.counts.problems, 102);
+        assert_eq!(result.counts.total, 102);
+    }
 }

@@ -11,10 +11,9 @@ impl Hq {
         let limit = params.limit.unwrap_or(50);
         if !(1..=100).contains(&limit)
             || !matches!(params.state, InboxState::Open | InboxState::Handled)
-            || params
-                .kinds
-                .as_ref()
-                .is_some_and(|kinds| kinds.iter().any(|kind| matches!(kind, InboxKind::Unknown)))
+            || params.kinds.as_ref().is_some_and(|kinds| {
+                kinds.is_empty() || kinds.iter().any(|kind| matches!(kind, InboxKind::Unknown))
+            })
             || params
                 .project
                 .as_deref()

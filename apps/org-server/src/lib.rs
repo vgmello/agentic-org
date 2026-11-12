@@ -315,7 +315,9 @@ fn serve_office(
     };
     let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
         Ok(inbox) => inbox,
-        Err(_) => {
+        Err(error) => {
+            eprintln!("org-server: inbox clock initialization failed: {error}");
+            log_causes(&error);
             let _ = std::fs::remove_file(&socket);
             return fail(
                 &mut control,

@@ -19,7 +19,12 @@ impl Hq {
         std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
         let office_id = office.info().office_id.clone();
         let source = org_source::OrgSource::new(
-            Box::new(move || office.org_snapshot().map_err(|_| SourceFailure)),
+            Box::new(move || {
+                office.org_snapshot().map_err(|error| {
+                    crate::logged("inbox.org", &error);
+                    SourceFailure
+                })
+            }),
             office_id,
         );
         Ok(Self {

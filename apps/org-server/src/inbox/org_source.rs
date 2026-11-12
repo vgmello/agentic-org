@@ -3,7 +3,7 @@ use super::{Keyset, Query, Source, SourceFailure, SourceRead};
 use org_proto::inbox::{
     Action, InboxClears, InboxCounts, InboxItem, InboxKind, InboxState, Open, OpenTarget,
 };
-use org_proto::MemberKind;
+use org_proto::{AgentStatus, MemberKind};
 
 type SnapshotFn = Box<dyn Fn() -> Result<org_proto::OrgSnapshot, SourceFailure> + Send + Sync>;
 
@@ -28,13 +28,20 @@ impl Source for OrgSource {
 
     fn read(&self, query: &Query<'_>) -> Result<SourceRead, SourceFailure> {
         let snapshot = (self.snapshot)().map_err(|_| SourceFailure)?;
+        // Only known current agents create Problems; uncertain profiles never nag.
         // No office assignment is authoritative org data. A foreign office may be a live
         // satellite. OFC-10 must record removal at HQ (or reclaim to None) before we add
         // that predicate; never infer removal from process status or reachability.
         let members: Vec<_> = snapshot
             .members
             .iter()
-            .filter(|member| member.kind == MemberKind::Agent && member.office_id.is_none())
+            .filter(|member| {
+                member.kind == MemberKind::Agent
+                    && member.agent.as_ref().is_some_and(|profile| {
+                        matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
+                    })
+                    && member.office_id.is_none()
+            })
             .collect();
         let count = members.len() as u64;
         let counts = InboxCounts {
