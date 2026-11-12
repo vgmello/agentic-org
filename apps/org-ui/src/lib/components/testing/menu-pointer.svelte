@@ -1,16 +1,21 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { flushSync, tick } from 'svelte';
 	import * as Menu from '$lib/components/ui/dropdown-menu';
 	import * as Dialog from '$lib/components/ui/dialog';
 	let { mode = 'normal' }: { mode?: string } = $props();
 	let open = $state(false), shown = $state(true), disabled = $state(false), dialog = $state(false);
 	let count = $state(0), checked = $state(false), choice = $state('one');
-	let trigger = $state<HTMLElement | null>(null), caller = $state<HTMLButtonElement>();
+	let trigger = $state<HTMLElement | null>(null), caller = $state<HTMLButtonElement>(), content = $state<HTMLElement | null>(null);
 	async function close(event: Event) {
 		if (mode === 'prevent-close' || mode === 'prevent-close-only') { event.preventDefault(); if (mode === 'prevent-close') caller?.focus(); }
 		if (mode === 'remove-trigger') shown = false;
 		if (mode === 'disable-trigger') disabled = true;
 		if (mode === 'caller-focus') { await tick(); caller?.focus(); }
+		if (mode === 'reopen') { open = true; await tick(); content?.focus({ preventScroll: true }); }
+	}
+	function outside(event: PointerEvent) {
+		if (mode === 'prevent-outside') event.preventDefault();
+		if (mode === 'remove-content') flushSync(() => shown = false);
 	}
 </script>
 <section aria-label="Pointer menu contracts" class="fixed inset-2 z-40 overflow-auto bg-gray-900 p-4">
@@ -23,7 +28,7 @@
 	{#if shown}
 		<Menu.Root bind:open>
 			<Menu.Trigger bind:ref={trigger} {disabled}>Contract commands</Menu.Trigger>
-			<Menu.Content isValidEvent={mode === 'caller-valid' ? () => true : undefined} preventScroll={mode === 'scroll-lock' ? true : undefined} onCloseAutoFocus={close} onInteractOutside={(event) => { if (mode === 'prevent-outside') event.preventDefault(); }}>
+			<Menu.Content bind:ref={content} isValidEvent={mode === 'caller-valid' ? () => true : undefined} preventScroll={mode === 'scroll-lock' ? true : undefined} onCloseAutoFocus={close} onInteractOutside={outside}>
 				<Menu.Item onSelect={() => count++}>Act in place</Menu.Item>
 				<Menu.Item onSelect={(event) => { event.preventDefault(); dialog = true; open = false; }}>Open dialog</Menu.Item>
 				<Menu.Item closeOnSelect={false} onSelect={(event) => event.preventDefault()}>Keep open</Menu.Item>

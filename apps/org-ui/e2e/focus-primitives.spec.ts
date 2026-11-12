@@ -326,3 +326,15 @@ test('BUG-158 BUG-70: a pointer close plan is consumed before a later keyboard c
  await expect(page.getByRole('menu')).toHaveCount(0);await expect(fixture.getByRole('button',{name:'Outside action',exact:true})).toBeFocused();
  await keyboardFocus(page,trigger);await trigger.press('ArrowDown');const action=page.getByRole('menuitem',{name:'Act in place',exact:true});await expect(action).toBeFocused();await action.press('Enter');await expect(page.getByRole('menu')).toHaveCount(0);await expect(trigger).toBeFocused();await shot(page,'bug158-consumed-plan');
 });
+test('BUG-158 BUG-70: caller removal during outside interaction safely relinquishes content ownership',async({page})=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));const fixture=await pointerFixture(page,'remove-content');
+ await fixture.getByRole('button',{name:'Contract commands',exact:true}).click();await page.getByRole('menuitem',{name:'Act in place',exact:true}).hover();await physicalClick(page,fixture.getByTestId('blank'));
+ await expect(page.getByRole('menu')).toHaveCount(0);await expect(fixture.getByRole('button',{name:'Contract commands',exact:true})).toHaveCount(0);await shot(page,'bug158-caller-removed-content');expect(errors).toEqual([]);
+});
+test('BUG-158 BUG-70: an immediate caller reopen never lends focus back to the trigger',async({page})=>{
+ const fixture=await pointerFixture(page,'reopen'),trigger=fixture.getByRole('button',{name:'Contract commands',exact:true});
+ await trigger.click();await page.getByRole('menuitem',{name:'Act in place',exact:true}).hover();
+ await trigger.evaluate(node=>{node.dataset.focuses='0';node.addEventListener('focus',()=>node.dataset.focuses=String(Number(node.dataset.focuses)+1));});
+ await physicalClick(page,fixture.getByTestId('blank'));await shot(page,'bug158-immediate-reopen');
+ await expect(page.getByRole('menu')).toBeVisible();await expect.poll(()=>page.getByRole('menu').evaluate(node=>node.contains(document.activeElement))).toBe(true);await expect(trigger).toHaveAttribute('data-focuses','0');
+});

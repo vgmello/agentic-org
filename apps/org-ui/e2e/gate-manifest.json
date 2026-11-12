@@ -99,7 +99,7 @@
 		},
 		"shell-look": {
 			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "focus-primitives-default-font.ts", "shot.spec.ts"],
-			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "e2e/focus-primitives.ts"]
+			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "src/lib/components/testing/menu-pointer.svelte", "e2e/focus-primitives.ts"]
 		},
 		"projects-work": {
 			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
