@@ -298,9 +298,40 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
 }
 
 #[test]
-fn stdin_is_unparsed_and_non_authoritative_while_v3_binds_fail_closed() {
+fn stdin_is_unparsed_while_v3_allows_agent_binds_and_refuses_app_person_binds() {
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    };
     let world = World::new();
-    let mut session = ready_create(&world);
+    // Seed through the supported Legacy owner path, then adopt/start the same office under v3.
+    let mut legacy = create(&world);
+    let seed = Client::connect(socket(&world)).unwrap();
+    bind(&seed, token()).unwrap();
+    let member_id = "AGENT00000000000000000000A";
+    seed.call::<MemberAddAgent>(&MemberAddAgentParams {
+        command_id: command_id(6),
+        member_id: member_id.into(),
+        name: "Ada".into(),
+        office_id: OFFICE.into(),
+        profile: AgentProfile {
+            role: "engineer".into(),
+            title: "Engineer".into(),
+            focus: None,
+            runtime: AgentRuntime::ClaudeCode,
+            model: None,
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: "ada".into(),
+            status: AgentStatus::Active,
+            offboarded_at: None,
+        },
+    })
+    .unwrap();
+    drop(seed);
+    assert!(legacy.host_goes_away().success());
+    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    assert_eq!(session.event()["event"], "ready");
     let mut stdin = session.run.stdin.take().unwrap();
     let (sent, complete) = std::sync::mpsc::channel();
     let writer = std::thread::spawn(move || {
@@ -316,22 +347,39 @@ fn stdin_is_unparsed_and_non_authoritative_while_v3_binds_fail_closed() {
     writer.join().unwrap();
     let client = Client::connect(socket(&world)).unwrap();
     assert_eq!(client.hello().unwrap().api_version, 1);
-    for (member, app_token) in [
-        (None, None),
-        (None, Some(token())),
-        (None, Some(AppToken::from_bytes([0; 32]))),
-        (Some("owner".into()), Some(token())),
-        (Some("ada".into()), None),
+    for (member, app_token, expected) in [
+        (None, None, ErrorCode::InvalidRequest),
+        (None, Some(token()), ErrorCode::NotAuthorized),
+        (
+            None,
+            Some(AppToken::from_bytes([7; 32])),
+            ErrorCode::NotAuthorized,
+        ),
+        (
+            Some("owner".into()),
+            Some(token()),
+            ErrorCode::NotAuthorized,
+        ),
     ] {
         assert!(
-            matches!(client.call::<MsgBind>(&MsgBindParams{member,app_token}),Err(org_client::ClientError::Api(error)) if error.code==ErrorCode::NotAuthorized)
+            matches!(client.call::<MsgBind>(&MsgBindParams{member,app_token}),Err(org_client::ClientError::Api(error)) if error.code==expected)
         );
     }
+    let bound = client
+        .call::<MsgBind>(&MsgBindParams {
+            member: Some("ada".into()),
+            app_token: None,
+        })
+        .unwrap();
+    assert_eq!(bound.member_id.as_deref(), Some(member_id));
+    client
+        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+        .unwrap();
     assert_eq!(client.hello().unwrap().api_version, 1);
     // This distinguishes a rendezvous watcher from a pipe-EOF watcher without a sleep:
     // the undefined control byte must produce exit1; a pipe-authoritative worker exits0.
     session.stream.write_all(b"!").unwrap();
-    assert!(!session.run.wait().success());
+    assert_eq!(session.run.wait().code(), Some(1));
     session.no_stdout();
 }
 
