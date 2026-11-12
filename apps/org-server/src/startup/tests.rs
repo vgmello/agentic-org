@@ -1153,6 +1153,58 @@ fn rendezvous_event_write_has_one_five_second_whole_frame_deadline() {
 }
 
 #[test]
+fn a_partly_written_event_ends_the_rendezvous_so_nothing_follows_the_truncated_frame() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    let small: libc::c_int = 4096;
+    // SAFETY: owned live socket, correctly sized int.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of_val(&small) as _,
+            )
+        },
+        0
+    );
+    let writer = Arc::new(Mutex::new(socket));
+    // The host reads nothing, so the frame only partly fits before its deadline.
+    let error = write_event(
+        &writer,
+        &RendezvousEvent::FdsReceived {
+            of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
+        },
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, LaunchError::Frame(FrameError::Io(_))),
+        "unexpected bounded write outcome: {error}"
+    );
+    // Now the host drains everything until EOF, so a later write would have room.
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut received = Vec::new();
+        (&peer).read_to_end(&mut received).unwrap();
+        received
+    });
+    let late = write_event(&writer, &RendezvousEvent::FdsReceived { of: "late".into() });
+    drop(writer);
+    let received = reader.join().unwrap();
+    assert!(
+        late.is_err(),
+        "a later ACK was written after a truncated frame"
+    );
+    assert!(!received.is_empty(), "no partial frame reached the host");
+    assert!(
+        !received.contains(&b'\n'),
+        "a complete frame followed the truncated one"
+    );
+}
+
+#[test]
 fn writer_is_available_only_for_the_authenticated_rendezvous_transport() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (mut control, _) = control(b"");

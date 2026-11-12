@@ -303,5 +303,12 @@ pub(super) fn write_event(
         .lock()
         .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
     let mut output = crate::bounded::writer(&stream, std::time::Duration::from_secs(5));
-    v3::write_rendezvous_event(&mut output, event)
+    let result = v3::write_rendezvous_event(&mut output, event);
+    if let Err(LaunchError::Frame(FrameError::Io(_))) = &result {
+        // Part of the frame may already be on the wire: end the rendezvous while still holding
+        // the lock, so no later ACK or event can follow a truncated frame. Encoding errors fail
+        // before any byte is written and keep the rendezvous open.
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    }
+    result
 }
