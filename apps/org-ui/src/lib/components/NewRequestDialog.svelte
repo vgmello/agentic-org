@@ -93,7 +93,8 @@
 	const atMember = $derived(at?.kind === 'exact' ? at.member : undefined);
 	/** What the words' @handle says right now: a pick only stands while it says the same as when the pick was made. */
 	const atKey = $derived(at ? (at.kind === 'exact' ? `exact:${at.member.id}` : `${at.kind}:${at.token}`) : '');
-	const pickStands = $derived((pickedAt ?? '') === atKey && (picked === 'other' || (!!atMember && picked === atMember.id) || suggestions.some((s) => s.member.id === picked)));
+	// Taking the handle out of the words is not typing another one: a pick made while it was there stands.
+	const pickStands = $derived((atKey === '' || (pickedAt ?? '') === atKey) && (picked === 'other' || (!!atMember && picked === atMember.id) || suggestions.some((s) => s.member.id === picked)));
 	// While a handle is unresolved no one is chosen (nothing is drawn as checked that Send would not use), until a pick settles it.
 	const unresolved = $derived(at?.kind === 'unknown' || at?.kind === 'partial');
 	const choice = $derived(unresolved && !(picked !== undefined && pickStands) ? 'none' : ((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none'));
@@ -327,9 +328,10 @@
 				{#if similar.length > 0}
 					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
 						{#each similar as r (r.id)}
-							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong} aria-label="Add to {requestRef(r)}" title={tooLong ? `A note can be ${WORK_LIMITS.text.toLocaleString('en-US')} characters at most.` : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
+							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
 						{/each}
 					</ul>
+					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-amber-200" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
 				{/if}
 				</div>
 			</div>

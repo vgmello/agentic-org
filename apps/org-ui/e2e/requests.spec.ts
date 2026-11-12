@@ -475,7 +475,7 @@ test('RQS-13: words too long to be a note can not be added to a request, and say
 	await dialog.getByLabel('What do you need?').fill(`I want a dark mode for the docs. ${'More detail. '.repeat(800)}`);
 	const add = dialog.getByRole('button', { name: 'Add to REQ-1' });
 	await expect(add).toBeDisabled();
-	await expect(add).toHaveAttribute('title', /at most/);
+	await expect(dialog.getByTestId('too-long-note')).toContainText('at most');
 });
 
 test('RQS-7: a search whose only match has ended opens the group it is in', async ({ page }) => {
@@ -849,4 +849,33 @@ test('F12: Work reopens on the tab it was left on', async ({ page }) => {
 	await page.reload();
 	await page.locator('html[data-hydrated="true"]').waitFor();
 	await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('RQS-13: Add to REQ-n puts the words there without the routing @handle', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@sam: a dark mode when reading the docs');
+	await dialog.getByRole('button', { name: 'Add to REQ-1' }).click();
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Dark mode for the docs reader' }).click();
+	const history = page.getByRole('dialog').getByTestId('request-history');
+	await expect(history).toContainText('a dark mode when reading the docs');
+	await expect(history).not.toContainText('@sam');
+});
+
+test('RQS-4: taking an unresolved handle out of the words keeps the person the owner picked', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sa fix the build');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await words.fill('fix the build');
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await expect(dialog.getByRole('radio', { name: /Pax Moreau/ })).toBeChecked();
 });
