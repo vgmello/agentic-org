@@ -36,7 +36,7 @@
 	<DialogContent class="sm:max-w-lg max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto">
 		{#if form}
 			<DialogHeader>
-				<DialogTitle>{form.title}</DialogTitle>
+				<DialogTitle text={form.title} />
 				<DialogDescription>{form.description} <Badge variant="secondary">Sample data</Badge></DialogDescription>
 			</DialogHeader>
 			<form class="space-y-4" onsubmit={submit} novalidate>

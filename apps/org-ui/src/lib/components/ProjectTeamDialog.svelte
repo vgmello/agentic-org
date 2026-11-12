@@ -74,10 +74,10 @@
 	<DialogContent>
 		<DialogHeader>
 			{#if shownTeam}
-				<DialogTitle class="[overflow-wrap:anywhere]">Add a project to {shownTeam.name}</DialogTitle>
+				<DialogTitle text={`Add a project to ${shownTeam.name ?? ''}`} />
 				<DialogDescription>A project can have several teams: it shows on each of their cards as Shared.</DialogDescription>
 			{:else}
-				<DialogTitle class="[overflow-wrap:anywhere]">Assign a team to {shownProject?.name}</DialogTitle>
+				<DialogTitle text={`Assign a team to ${shownProject?.name ?? ''}`} />
 				<DialogDescription>The team's lead also leads the project.</DialogDescription>
 			{/if}
 		</DialogHeader>

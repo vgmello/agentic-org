@@ -81,7 +81,7 @@
 	<DialogContent>
 		<form class="grid gap-6" onsubmit={submit} novalidate>
 			<DialogHeader>
-				<DialogTitle class="[overflow-wrap:anywhere]">Edit {shown?.name}</DialogTitle>
+				<DialogTitle text={`Edit ${shown?.name ?? ''}`} />
 				<DialogDescription>Agents address a person by their name.</DialogDescription>
 			</DialogHeader>
 			<div class="space-y-2">

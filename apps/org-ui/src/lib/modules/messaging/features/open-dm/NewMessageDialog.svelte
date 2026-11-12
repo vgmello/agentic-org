@@ -47,7 +47,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="sm:max-w-md max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto" onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }}>
 		<DialogHeader>
-			<DialogTitle>New message</DialogTitle>
+			<DialogTitle text={'New message'} />
 			<DialogDescription>Pick who to talk to. Up to {max} others makes a group.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-4" onsubmit={submit}>

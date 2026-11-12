@@ -32,6 +32,8 @@
 	let openId = $state<string | undefined>();
 	let sheetOpen = $state(false);
 	let blocking = $state<WorkItemSummary | undefined>();
+	// Keep the reference while the Block dialog finishes closing.
+	let blockTitle = $state('');
 	let blockReason = $state('');
 	let blockError = $state<string | undefined>();
 	let announcement = $state('');
@@ -76,6 +78,7 @@
 	async function move(task: WorkItemSummary, to: TaskStatus) {
 		if (to === 'blocked') {
 			blocking = task;
+			blockTitle = taskRef(task);
 			blockReason = '';
 			blockError = undefined;
 			return;
@@ -215,7 +218,7 @@
 <Dialog open={!!blocking} onOpenChange={(next) => !next && (blocking = undefined)}>
 	<DialogContent class="sm:max-w-md">
 		<DialogHeader>
-			<DialogTitle>Block {blocking ? taskRef(blocking) : ''}</DialogTitle>
+			<DialogTitle text={`Block ${blockTitle}`} />
 			<DialogDescription>Say in one line what it is blocked on. The card shows it.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-3" onsubmit={confirmBlock} novalidate>

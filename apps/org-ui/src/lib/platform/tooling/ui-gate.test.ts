@@ -353,7 +353,11 @@ describe('selector', () => {
 	it('selects whole category spec files, anchored so bugs.spec.ts does not pull chat-bugs.spec.ts', () => {
 		const step = steps(plan([ui('src/lib/org/projects.ts')], manifest), manifest, specs).find((s) => s.name.startsWith('ordinary: projects-work'))!;
 		expect(step.cmd).toContain('e2e/bugs\\.spec\\.ts$');
-		expect(step.cmd.filter((word) => word.startsWith('e2e/'))).toHaveLength(7);
+		expect(step.cmd.filter((word) => word.startsWith('e2e/')).sort()).toEqual([
+			'e2e/projects\\.spec\\.ts$', 'e2e/project-profile\\.spec\\.ts$', 'e2e/work\\.spec\\.ts$',
+			'e2e/tasks\\.spec\\.ts$', 'e2e/dialog-block-title\\.spec\\.ts$', 'e2e/bugs\\.spec\\.ts$',
+			'e2e/non-chat-icons\\.spec\\.ts$', 'e2e/non-chat-icons-default-font\\.ts$'
+		].sort());
 	});
 
 	it('runs the dedicated-project test file with its own project, in the ordinary step only', () => {

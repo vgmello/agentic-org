@@ -111,7 +111,7 @@
 	<DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-lg">
 		<form class="grid gap-4" onsubmit={submit} novalidate>
 			<DialogHeader>
-				<DialogTitle class="[overflow-wrap:anywhere]">Edit {shown?.name}</DialogTitle>
+				<DialogTitle text={`Edit ${shown?.name ?? ''}`} />
 				<DialogDescription>Changes take effect at the agent's next session.</DialogDescription>
 			</DialogHeader>
 			<div class="space-y-2">

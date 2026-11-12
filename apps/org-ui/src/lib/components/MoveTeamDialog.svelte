@@ -67,7 +67,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Move {shown?.name} to…</DialogTitle>
+			<DialogTitle text={`Move ${shown?.name ?? ''} to…`} />
 			<DialogDescription>Pick the team it should be part of. Its members, projects and the teams under it stay with it.</DialogDescription>
 		</DialogHeader>
 

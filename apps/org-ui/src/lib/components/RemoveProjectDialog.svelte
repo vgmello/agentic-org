@@ -52,7 +52,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Remove {shown?.projectName} from {shown?.teamName}?</DialogTitle>
+			<DialogTitle text={`Remove ${shown?.projectName ?? ''} from ${shown?.teamName ?? ''}?`} />
 			<DialogDescription class="[overflow-wrap:anywhere]">It will have no team and show under Unassigned projects.</DialogDescription>
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 		</DialogHeader>

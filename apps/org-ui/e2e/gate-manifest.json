@@ -11,9 +11,9 @@
 		"maxChromiumSeconds": 300,
 		"measured": { "tests": 55, "chromiumSeconds": 190, "workers": 2, "date": "2026-11-11" }
 	},
-	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font", "focus-primitives-default-font.ts": "chromium-focus-default-font" },
+	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font", "focus-primitives-default-font.ts": "chromium-focus-default-font", "dialog-title-words-default-font.ts": "chromium-title-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts", "dialog-title-words.spec.ts", "dialog-block-title.spec.ts"],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
@@ -80,6 +80,10 @@
 			{ "spec": "production-unavailable.spec.ts", "match": "SRV-18: browser query parameters", "count": 1 } ] }
 	],
 	"categories": {
+		"dialog-title-words": {
+			"specs": ["dialog-title-words.spec.ts", "dialog-title-words-default-font.ts"],
+			"sources": ["e2e/dialog-title-open.ts", "e2e/org-chart-menu.ts"]
+		},
 		"chat": {
 			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
 			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json", "e2e/chat-followups.ts"]
@@ -102,7 +106,7 @@
 			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "e2e/focus-primitives.ts"]
 		},
 		"projects-work": {
-			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
+			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "dialog-block-title.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
 			"sources": [
 				"src/routes/(shell)/projects/**", "src/routes/(shell)/work/**", "src/lib/org/projects*", "src/lib/org/team-edit*", "src/lib/modules/copilot/**",
 				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
@@ -127,7 +131,31 @@
 		}
 	},
 	"alsoRuns": [
-		{ "category": "projects-work", "files": ["src/routes/(shell)/org-chart/+page.{svelte,ts}", "src/lib/components/ChartFitMenuItem.svelte"], "why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports." }
+		{ "category": "projects-work", "files": ["src/routes/(shell)/org-chart/+page.{svelte,ts}", "src/lib/components/ChartFitMenuItem.svelte"], "why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports." },
+		{ "category": "dialog-title-words", "files": [
+			"src/lib/components/ChangeManagerDialog.svelte",
+			"src/lib/components/DeleteTeamDialog.svelte",
+			"src/lib/components/EditMemberTeamsDialog.svelte",
+			"src/lib/components/EditMembersDialog.svelte",
+			"src/lib/components/EditPersonDialog.svelte",
+			"src/lib/components/MoveMemberDialog.svelte",
+			"src/lib/components/MoveTeamDialog.svelte",
+			"src/lib/components/NewRequestDialog.svelte",
+			"src/lib/components/NewTaskDialog.svelte",
+			"src/lib/components/ProjectTeamDialog.svelte",
+			"src/lib/components/RemovePersonDialog.svelte",
+			"src/lib/components/RemoveProjectDialog.svelte",
+			"src/lib/components/RenameTeamDialog.svelte",
+			"src/lib/components/ReportBugDialog.svelte",
+			"src/lib/components/TasksBoard.svelte",
+			"src/lib/modules/employees/features/configure-run/HowItRunsDialog.svelte",
+			"src/lib/modules/employees/features/edit-profile/EditAgentDialog.svelte",
+			"src/lib/modules/employees/features/offboard-employee/OffboardAgentDialog.svelte",
+			"src/lib/modules/employees/features/pause-employee/PauseAgentDialog.svelte",
+			"src/lib/modules/messaging/features/manage-channel/ChannelDialog.svelte",
+			"src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte",
+			"src/lib/modules/messaging/features/run-command/CommandDialog.svelte"
+		], "why": "Every migrated DialogTitle consumer also runs exact heading/accessible name/selection, closing text and word geometry regressions in the title category. Existing owning categories, shared FULL and unknown fail-closed mappings remain in effect. Route visits live in the helper; the literal route scanner cannot inventory them." }
 	],
 	"allowedCoupling": [
 		{ "from": "e2e/focus-primitives.spec.ts", "to": "src/routes/(shell)/processes/+page.svelte", "why": "Dedicated ProcessSheet caller-override regression for the shared Button outline. The helper also samples nine consumer families (documented route-scanner limit); shared primitive changes select FULL, page-only changes retain their category and journey coverage." },

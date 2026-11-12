@@ -95,7 +95,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="sm:max-w-lg">
 		<DialogHeader>
-			<DialogTitle>New task</DialogTitle>
+			<DialogTitle text={'New task'} />
 			<DialogDescription>In {projectName}. It starts in To do.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-4" onsubmit={submit} novalidate>

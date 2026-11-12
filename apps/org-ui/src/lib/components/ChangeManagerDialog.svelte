@@ -68,7 +68,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<DialogTitle class="[overflow-wrap:anywhere]">Change manager of {shown?.name}</DialogTitle>
+			<DialogTitle text={`Change manager of ${shown?.name ?? ''}`} />
 			<DialogDescription>Reporting lines are separate from teams. {shown?.name} reports to {current ? label(current) : 'you'} now.</DialogDescription>
 		</DialogHeader>
 

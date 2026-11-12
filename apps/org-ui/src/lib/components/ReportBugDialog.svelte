@@ -199,7 +199,7 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
 		<DialogHeader>
-			<DialogTitle>Report a bug</DialogTitle>
+			<DialogTitle text={'Report a bug'} />
 			<DialogDescription>In {projectName}. It starts in New, and a triager looks at it.</DialogDescription>
 		</DialogHeader>
 		<form class="space-y-4" onsubmit={submit} novalidate>
