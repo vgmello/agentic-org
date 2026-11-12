@@ -78,6 +78,7 @@ pub(crate) struct Signing {
 }
 
 /// The entitlement that lists the Keychain access groups a signed program may use.
+#[cfg(target_os = "macos")]
 pub(crate) const KEYCHAIN_ACCESS_GROUPS: &str = "keychain-access-groups";
 
 /// Whether signed code may get a secret (an app token, a database key): it runs with the hardened runtime and has none of

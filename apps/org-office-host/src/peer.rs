@@ -3,14 +3,14 @@
 //! accepted the connection, and where each request was in the stream. `app_auth` decides what
 //! these allow; the listener records them.
 
-#[cfg(debug_assertions)]
+#[cfg(all(target_os = "macos", debug_assertions))]
 use std::ffi::OsStr;
 use std::io;
-#[cfg(debug_assertions)]
+#[cfg(all(target_os = "macos", debug_assertions))]
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
-#[cfg(debug_assertions)]
+#[cfg(all(target_os = "macos", debug_assertions))]
 use std::path::PathBuf;
 
 /// An `audit_token_t`: eight 32-bit words.
@@ -37,6 +37,7 @@ pub(crate) struct Received {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.3 CLI"))]
 pub(crate) struct Accepted {
+    #[cfg(target_os = "macos")]
     pub(crate) token: Option<AuditToken>,
     pub(crate) buffered: u64,
 }
@@ -45,11 +46,13 @@ impl Accepted {
     pub(crate) fn sample(stream: &UnixStream) -> Self {
         #[cfg(target_os = "macos")]
         let token = audit_token(stream).ok();
-        #[cfg(not(target_os = "macos"))]
-        let token = None;
         // After the token: anything sent before it was taken is counted as buffered.
         let buffered = bytes_waiting(stream).unwrap_or(u64::MAX);
-        Self { token, buffered }
+        Self {
+            #[cfg(target_os = "macos")]
+            token,
+            buffered,
+        }
     }
 }
 

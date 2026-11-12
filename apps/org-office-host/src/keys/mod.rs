@@ -73,6 +73,7 @@ pub(crate) enum KeyStoreError {
     /// The office id isn't a plain id.
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
+    #[cfg(any(target_os = "macos", test))]
     Os(i32),
     /// The development store's file I/O failed.
     Io(io::Error),
@@ -84,6 +85,7 @@ impl fmt::Display for KeyStoreError {
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
             KeyStoreError::Corrupt => f.write_str("the stored item isn't a database key"),
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
+            #[cfg(any(target_os = "macos", test))]
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
         }

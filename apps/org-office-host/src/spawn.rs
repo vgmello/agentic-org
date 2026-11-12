@@ -30,11 +30,14 @@
 //! given, and `/` as its working directory. [`Process`] is the child's handle: it reaps it, and
 //! kills it if dropped first.
 
-use std::ffi::{CString, OsStr, OsString};
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
 use crate::peer::AuditToken;
 
 /// A child started by [`spawn_suspended`], with the host's ends of its stdin, stdout and stderr.

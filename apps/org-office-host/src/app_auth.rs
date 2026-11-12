@@ -52,7 +52,9 @@ pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
-use crate::code_signing::{self, developer_id_requirement};
+#[cfg(target_os = "macos")]
+use crate::code_signing;
+use crate::code_signing::developer_id_requirement;
 
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
