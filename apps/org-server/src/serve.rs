@@ -608,7 +608,7 @@ pub(super) fn serve_context(
             org_socket::READ_TICK,
             org_socket::poll_readable,
         ),
-        Context::HostChannel(context) => host::serve(stream, *context, stopping),
+        Context::HostChannel(context) => host::serve(stream, shared, *context, stopping),
     }
 }
 
@@ -2028,7 +2028,7 @@ mod tests {
         assert_eq!(mailbox.held_waits(), 0);
     }
 
-    fn shared(path: &Path) -> Arc<Shared> {
+    pub(super) fn shared(path: &Path) -> Arc<Shared> {
         Arc::new(Shared::new(
             &test_info(),
             path,
@@ -2124,7 +2124,7 @@ mod tests {
         AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
     }
 
-    fn test_info() -> org_office::OfficeInfo {
+    pub(super) fn test_info() -> org_office::OfficeInfo {
         org_office::OfficeInfo {
             office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
             office_name: "HQ".into(),
@@ -2135,7 +2135,7 @@ mod tests {
         }
     }
 
-    fn ports(snapshot: SnapshotFn) -> OfficePorts {
+    pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         let (mailbox, directory) = messaging();
         OfficePorts {
             work: Box::new(|_, _| Err("none".into())),

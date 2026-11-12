@@ -1,0 +1,436 @@
+[
+  {
+    "group": "org",
+    "method": "team.create",
+    "params": {
+      "team_id": "fixture",
+      "name": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.rename",
+    "params": {
+      "team_id": "fixture",
+      "expected_version": 1,
+      "name": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.move",
+    "params": {
+      "team_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.set_lead",
+    "params": {
+      "team_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.delete",
+    "params": {
+      "team_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.add_member",
+    "params": {
+      "membership_id": "fixture",
+      "team_id": "fixture",
+      "member_id": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.remove_member",
+    "params": {
+      "membership_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "team.set_title",
+    "params": {
+      "membership_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.add_person",
+    "params": {
+      "member_id": "fixture",
+      "name": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.add_agent",
+    "params": {
+      "member_id": "fixture",
+      "name": "fixture",
+      "office_id": "fixture",
+      "profile": {
+        "role": "engineer",
+        "title": "Engineer",
+        "runtime": "codex",
+        "messaging_name": "agent",
+        "status": "active"
+      },
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.update_agent",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.set_agent_status",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "status": "active",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.offboard",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.set_run_mode",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.update_person",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.move",
+    "params": {
+      "membership_id": "fixture",
+      "expected_version": 1,
+      "new_membership_id": "fixture",
+      "to_team_id": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.remove",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "member.set_reports_to",
+    "params": {
+      "member_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "project.add_team",
+    "params": {
+      "project_team_id": "fixture",
+      "project_id": "fixture",
+      "team_id": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
+    "method": "project.remove_team",
+    "params": {
+      "project_team_id": "fixture",
+      "expected_version": 1,
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "task.create",
+    "params": {
+      "item_id": "fixture",
+      "project_id": "fixture",
+      "title": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "task.update",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "task.assign",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "task.set_status",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "status": "todo",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.comment",
+    "params": {
+      "item_id": "fixture",
+      "comment_id": "fixture",
+      "body": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.watch",
+    "params": {
+      "item_id": "fixture",
+      "watching": true,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.link",
+    "params": {
+      "link_id": "fixture",
+      "from_item_id": "fixture",
+      "kind": "relates_to",
+      "to": {
+        "type": "item",
+        "item_id": "item"
+      },
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.unlink",
+    "params": {
+      "link_id": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.undo",
+    "params": {
+      "target_id": "fixture",
+      "event_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "work.delete",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.add",
+    "params": {
+      "item_id": "fixture",
+      "steps": [],
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.edit",
+    "params": {
+      "step_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.check",
+    "params": {
+      "step_id": "fixture",
+      "done": true,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.move",
+    "params": {
+      "step_id": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.remove",
+    "params": {
+      "step_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.make_task",
+    "params": {
+      "step_id": "fixture",
+      "task_id": "fixture",
+      "link_id": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "checklist.unlink_task",
+    "params": {
+      "step_id": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.report",
+    "params": {
+      "item_id": "fixture",
+      "project_id": "fixture",
+      "title": "fixture",
+      "what_happened": "fixture",
+      "severity": "minor",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.update",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.triage",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "area_id": "fixture",
+      "severity": "minor",
+      "priority": "normal",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.assign",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.mark_fixed",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "note": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.verify",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "outcome": "fixed",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.close",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "work",
+    "method": "bug.reopen",
+    "params": {
+      "item_id": "fixture",
+      "expected_version": 1,
+      "note": "fixture",
+      "change_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  }
+]

@@ -723,3 +723,129 @@ fn real_channel_admission_rejects_each_reserved_identity_and_wrong_descriptor_wi
         assert_reopens(&world);
     }
 }
+
+#[test]
+fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation() {
+    let _process = process_isolation();
+    let world = World::new();
+    ready_create(&world).stop();
+    let office = org_office::Office::open_for_instance(
+        world.folder(OFFICE),
+        org_office::Key::from_db_key(db_key()),
+        INSTANCE,
+    )
+    .unwrap();
+    let owner = office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.owner)
+        .unwrap()
+        .id;
+    drop(office);
+    let mut session = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    assert_eq!(session.event()["event"], "ready");
+    let (source, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(WAIT)).unwrap();
+    let body = v3::encode_transfer_record(&TransferRecord::Channel {
+        kind: ChannelKind::Local,
+        office_id: OFFICE.into(),
+        channel_id: "grant-proof".into(),
+    })
+    .unwrap();
+    send_record(
+        session.transfer.as_ref().unwrap(),
+        &body,
+        &[source.as_raw_fd()],
+    );
+    assert_eq!(
+        session.event(),
+        json!({"v":3,"event":"fds_received","of":"grant-proof"})
+    );
+    drop(source);
+    let mut peer = BufReader::with_capacity(1, peer);
+    let mut call = |value: Value| {
+        frame::write_message(peer.get_mut(), &value).unwrap();
+        frame::read_message::<Value>(&mut peer).unwrap().unwrap()
+    };
+    assert_eq!(
+        call(
+            json!({"id":1,"method":"hello","params":{"api":{"min":2,"max":2}},"principal":{"ignored":true}})
+        )["result"]["api_version"],
+        2
+    );
+    // Sign for the actual stored owner; v3 owner_member_id activation is a later slice.
+    let mut grant = json!({"account":"test-account","member":owner,"org_id":ORG,"office_id":OFFICE,
+        "channel_id":"grant-proof","session_id":"grant-session","exp":u64::MAX,"mac":"fa1316830c08b2d2648ec24d6d852e06524879c028e5f90cdfe691482adae01d"});
+    sign_test_grant(&mut grant);
+    let allowed =
+        call(json!({"id":2,"method":"org.snapshot","params":{},"principal":{"grant":grant}}));
+    if allowed.get("result").is_none() {
+        session.stream.shutdown(std::net::Shutdown::Both).unwrap();
+        session.run.wait();
+        let log = session.run.stderr();
+        panic!(
+            "valid host owner grant must reach the real snapshot port: {allowed}; stderr: {log}"
+        );
+    }
+    assert_eq!(
+        call(json!({"id":3,"method":"org.snapshot","params":{}}))["error"]["code"],
+        "not_authorized"
+    );
+    let refused =
+        call(json!({"id":4,"method":"session.open","params":{},"principal":{"grant":grant}}));
+    assert_eq!(refused["error"]["code"], "not_authorized");
+    let revoke = v3::encode_transfer_record(&TransferRecord::Revoked {
+        session_ids: vec!["grant-session".into()],
+    })
+    .unwrap();
+    send_record(session.transfer.as_ref().unwrap(), &revoke, &[]);
+    // Same FIFO's next channel ACK is a barrier after apply_batch returns; no sleeps.
+    let (barrier_source, barrier_peer) = UnixStream::pair().unwrap();
+    let barrier = v3::encode_transfer_record(&TransferRecord::Channel {
+        kind: ChannelKind::Local,
+        office_id: OFFICE.into(),
+        channel_id: "revocation-barrier".into(),
+    })
+    .unwrap();
+    send_record(
+        session.transfer.as_ref().unwrap(),
+        &barrier,
+        &[barrier_source.as_raw_fd()],
+    );
+    assert_eq!(
+        session.event(),
+        json!({"v":3,"event":"fds_received","of":"revocation-barrier"})
+    );
+    drop(barrier_source);
+    let revoked =
+        call(json!({"id":5,"method":"org.snapshot","params":{},"principal":{"grant":grant}}));
+    assert_eq!(revoked["error"]["code"], "not_authorized");
+    grant["session_id"] = json!("other-session");
+    sign_test_grant(&mut grant);
+    let other =
+        call(json!({"id":6,"method":"org.snapshot","params":{},"principal":{"grant":grant}}));
+    assert!(
+        other.get("result").is_some(),
+        "revocation must leave other sessions valid: {other}"
+    );
+    session.stop();
+    drop(barrier_peer);
+    drop(peer);
+    assert_reopens(&world);
+}
+
+fn sign_test_grant(value: &mut Value) {
+    use hmac::Mac;
+    let grant: org_proto::Grant = serde_json::from_value(value.clone()).unwrap();
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&[7; 32]).unwrap();
+    mac.update(&org_proto::grant_mac_input(&grant.claims).unwrap());
+    let mut tag = mac.finalize().into_bytes();
+    value["mac"] = tag
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+        .into();
+    tag.fill(0);
+}

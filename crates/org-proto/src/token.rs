@@ -263,8 +263,9 @@ pub const GRANT_KEY_BYTES: usize = SECRET_BYTES;
 ///
 /// On the wire it is exactly 64 lowercase hex digits; anything else is refused, and decode
 /// errors never echo the input. It has the guards of [`DbKey`]: `Debug` prints
-/// `GrantMac(<redacted>)`, there is no `Display`, equality is constant-time (compare a computed
-/// tag with `==`), the bytes are zeroed on drop, and it isn't `Clone`:
+/// `GrantMac(<redacted>)`, there is no `Display`, and equality is constant-time. Worker verification
+/// uses the HMAC implementation's constant-time tag verifier. The bytes are zeroed on drop,
+/// and it isn't `Clone`:
 ///
 /// ```compile_fail,E0599
 /// let mac = org_proto::GrantMac::from_bytes([0; org_proto::GRANT_MAC_BYTES]);
@@ -276,6 +277,11 @@ impl GrantMac {
     /// Wrap a computed tag. The caller zeroes its own array afterwards.
     pub fn from_bytes(bytes: [u8; GRANT_MAC_BYTES]) -> Self {
         GrantMac(Box::new(bytes))
+    }
+
+    /// Borrow the tag for verification only. Never log it; zero any copy you make.
+    pub fn expose_bytes(&self) -> &[u8; GRANT_MAC_BYTES] {
+        &self.0
     }
 }
 
