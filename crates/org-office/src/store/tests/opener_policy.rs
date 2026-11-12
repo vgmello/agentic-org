@@ -666,12 +666,6 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                         proc_macro2::TokenTree::Punct(mark) if mark.as_char() == '$' => {
                             let mut look = iter.clone();
                             let target = look.next();
-                            if definition {
-                                assert!(
-                                    !matches!((&target, look.peek()), (Some(proc_macro2::TokenTree::Ident(_)), Some(proc_macro2::TokenTree::Group(group))) if group.delimiter() == proc_macro2::Delimiter::Bracket),
-                                    "opaque macro attribute introducer"
-                                );
-                            }
                             let literal_crate = matches!(&target, Some(proc_macro2::TokenTree::Ident(name)) if name == "crate");
                             let mut literal_path = false;
                             let mut call = match target {
@@ -682,6 +676,12 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                                 }
                                 _ => None,
                             };
+                            if definition {
+                                assert!(
+                                    !matches!(&call, Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Bracket),
+                                    "opaque macro attribute introducer"
+                                );
+                            }
                             while matches!(&call, Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == ':')
                             {
                                 match (look.next(), look.next()) {
@@ -1099,6 +1099,7 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "use std::{fs, io::Write as _}; use super::*; use local::prelude::*; extern crate std;",
         "use local::prelude::v1; use local::Thing as Alias; extern crate local as alias;",
         "other! { $x[0]; }",
+        "macro_rules! ordinary { ($($x:tt)*) => { $($x)*(0); }; }",
         "macro_rules! ordinary { ($x:expr) => { $x(0); }; }",
         "macro_rules! ordinary { ($m:ident) => { let _: $m::Type; }; }",
         "macro_rules! ordinary { () => { use std::fmt::Write as _; use super::*; extern crate core; }; }",
@@ -1140,6 +1141,9 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "macro_rules! wrapper { ($x:tt) => { $x[path = \"rogue.inc\"] mod child; }; }",
         "other! { macro_rules! wrapper { ($x:tt) => { $x[path = \"rogue.inc\"] mod child; }; } }",
         "macro_rules! wrapper { ($hash:tt,$attr:ident,$p:tt) => { $hash[$attr=$p] mod child; }; } wrapper!(#,path,\"rogue.inc\");",
+        "macro_rules! wrapper { ($( $hash:tt $rest:tt )*) => { $($hash)*[path=\"rogue.inc\"] mod child; }; } wrapper!(#[doc=\"ok\"]);",
+        "macro_rules! wrapper { ($( $hash:tt $rest:tt )+) => { $($hash)+[path=\"rogue.inc\"] mod child; }; } wrapper!(#[doc=\"ok\"]);",
+        "macro_rules! wrapper { ($( $hash:tt $rest:tt )?) => { $($hash)?[path=\"rogue.inc\"] mod child; }; } wrapper!(#[doc=\"ok\"]);",
         "use exported::include;", "use exported::include as x;",
         "use std::fs as files;", "use core as c;", "use std::prelude::v1;",
         "use std::{self, {r#include as include_source}};",
