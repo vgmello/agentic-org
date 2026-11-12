@@ -214,13 +214,14 @@ test('BUG-99 BUG-70: thread attachment focus stays in its own composer', async (
 
 
 test('BUG-95 BUG-70: metadata threshold has two sides at 16, 32 and 40px roots', async ({ page }) => {
+ const metadataThresholdRem = 10.765625; // Independent boundary golden; derivation guarded in message-layout.test.ts.
  await openChat(page, 1280, 1, '/chat?c=c-general');
  const badge = page.getByTestId('message').filter({ hasText:'Ready for review: create-org' }).getByTitle('Announcement',{exact:true});
  for (const root of [16,32,40]) for (const delta of [-1,1]) {
   await page.evaluate(({root,width})=>{
    document.documentElement.style.setProperty('font-size',`${root}px`,'important');
    document.querySelector('[data-id="m-2"]')!.parentElement!.style.width=`${width}px`;
-  },{root,width:root*10.765625+delta});
+  },{root,width:root*metadataThresholdRem+delta});
   const layout = await badge.evaluate(e=>{
    const article=e.closest('article')!, avatar=article.firstElementChild!.firstElementChild!.getBoundingClientRect();
    const header=e.parentElement!.getBoundingClientRect(), body=article.children[2].getBoundingClientRect();
