@@ -2003,12 +2003,21 @@ pub(super) fn manifest_paths(
                 }
             } else if names == ["package", "workspace"] {
                 scope.require(&base.join(string(value)).join("Cargo.toml"));
-            } else if names.iter().any(|name| {
-                matches!(
-                    *name,
-                    "dependencies" | "dev-dependencies" | "build-dependencies"
-                )
-            }) {
+            } else if matches!(
+                names.as_slice(),
+                [
+                    "dependencies" | "dev-dependencies" | "build-dependencies",
+                    _,
+                    _
+                ] | ["workspace", "dependencies", _, _]
+                    | [
+                        "target",
+                        _,
+                        "dependencies" | "dev-dependencies" | "build-dependencies",
+                        _,
+                        _
+                    ]
+            ) {
                 match names.last().copied() {
                     Some("path") => {
                         scope.require(&base.join(string(value)).join("Cargo.toml"));

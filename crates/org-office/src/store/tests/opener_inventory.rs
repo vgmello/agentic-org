@@ -419,6 +419,12 @@ fn sqlcipher_cargo_metadata_rejects_invalid_shape_members_and_source_kinds() {
         ("src/source.RS", "pub struct Unsupported;"),
         (".cargo/config", ""),
     ]);
+    std::fs::create_dir(dir.path().join("untracked")).unwrap();
+    std::fs::write(
+        dir.path().join("untracked/Cargo.toml"),
+        "[package]\nname='untracked'\nversion='0.1.0'",
+    )
+    .unwrap();
     let scope = tracked(dir.path());
     let root = &scope.root;
     let value = serde_json::json!({
@@ -443,6 +449,14 @@ fn sqlcipher_cargo_metadata_rejects_invalid_shape_members_and_source_kinds() {
             serde_json::json!(root.join("clippy.toml")),
         ),
         ("/packages/0/manifest_path", serde_json::Value::Null),
+        (
+            "/packages/0/manifest_path",
+            serde_json::json!(root.join("untracked/Cargo.toml")),
+        ),
+        (
+            "/packages/0/manifest_path",
+            serde_json::json!(root.parent().unwrap().join("Cargo.toml")),
+        ),
         ("/packages/0/dependencies", serde_json::Value::Null),
         (
             "/packages/0/dependencies",
@@ -517,6 +531,8 @@ fn sqlcipher_manifest_source_declarations_validate_every_local_spelling() {
         "[target.'cfg(unix)'.dependencies]\nhelper={path='member'}",
         "[package]\nworkspace='.'",
         "[dependencies]\nremote={git='https://example.test/remote'}",
+        "[package.metadata.dependencies.example]\npath='untracked'\ngit='file:///documentation'",
+        "[package.metadata]\ndependencies={example={path='untracked'}}",
     ] {
         super::opener_policy::manifest_paths(&scope, &manifest, source);
         // Every local source declaration must catch the corresponding untracked manifest too.
@@ -705,6 +721,11 @@ fn sqlcipher_cargo_cut_preserves_baseline_module_admission() {
 }
 
 #[cfg(unix)]
+fn shell_path(path: &Path) -> String {
+    format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
+}
+
+#[cfg(unix)]
 #[test]
 fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() {
     use std::os::unix::fs::PermissionsExt;
@@ -714,52 +735,213 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
         );
         return;
     }
-    for (config, script, invoked) in [
-        ("[build]\nrustflags='-Aclippy::all'", "exit 31", false),
-        ("", "exit 31", true),
-        ("", "printf invalid-json", true),
-        ("", "printf '{} invalid-json'", true),
+    for (config, script, invoked, changed_lock) in [
+        (
+            "[build]\nrustflags='-Aclippy::all'",
+            "exit 31",
+            false,
+            false,
+        ),
+        ("", "exit 31", true, false),
+        ("", "printf invalid-json", true, false),
+        ("", "printf '{} invalid-json'", true, false),
+        ("", "change-lock", true, true),
     ] {
-        let dir = fixture(&[
-            (
-                "Cargo.toml",
-                "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'",
-            ),
-            (
-                "Cargo.lock",
-                "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
-            ),
-            ("src/lib.rs", "pub struct Allowed;"),
-            (".cargo/config", config),
-        ]);
-        let fake = tempfile::tempdir().unwrap();
-        let marker = fake.path().join("invoked");
-        let cargo = fake.path().join("cargo");
-        std::fs::write(
-            &cargo,
-            format!("#!/bin/sh\n: > '{}'\n{script}\n", marker.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let before = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
-        let output = bounded_output(
-            Command::new(std::env::current_exe().unwrap())
+        for toolchain in [false, true] {
+            let dir = fixture(&[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'",
+                ),
+                (
+                    "Cargo.lock",
+                    "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
+                ),
+                ("src/lib.rs", "pub struct Allowed;"),
+                (".cargo/config", config),
+            ]);
+            let root = dir.path().canonicalize().unwrap();
+            let fake = tempfile::tempdir().unwrap();
+            let marker = fake.path().join("invoked");
+            let args = fake.path().join("args");
+            let environment = fake.path().join("environment");
+            let payload = fake.path().join("metadata.json");
+            std::fs::write(
+                &payload,
+                serde_json::to_vec(&serde_json::json!({
+                    "version": 1, "workspace_root": root, "workspace_members": ["fixture"],
+                    "packages": [{"id": "fixture", "manifest_path": root.join("Cargo.toml"),
+                        "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")}]}]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let action = if changed_lock {
+                format!(
+                    "/bin/cat {}\nprintf corrupt > {}",
+                    shell_path(&payload),
+                    shell_path(&root.join("Cargo.lock"))
+                )
+            } else {
+                script.to_owned()
+            };
+            let cargo = fake.path().join("cargo");
+            std::fs::write(&cargo, format!(
+                "#!/bin/sh\n: > {}\nprintf '%s\\n' \"$@\" > {}\nprintf '%s\\n' \"${{HOME-unset}}\" \"${{RUSTUP_HOME-unset}}\" \"${{RUSTUP_TOOLCHAIN-unset}}\" \"${{RUSTFLAGS-unset}}\" \"${{RUSTC-unset}}\" \"${{CARGO_HOME-unset}}\" \"${{QUINN_UNLISTED-unset}}\" > {}\n{action}\n",
+                shell_path(&marker), shell_path(&args), shell_path(&environment),
+            )).unwrap();
+            std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let before = std::fs::read(root.join("Cargo.lock")).unwrap();
+            let search = std::env::join_paths(
+                std::iter::once(fake.path().to_owned())
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
                 .args([
                     "sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata",
                     "--nocapture",
                 ])
-                .env("PATH", fake.path())
-                .env("QUINN_CARGO_FIXTURE_CHILD", dir.path()),
-            "isolated Cargo refusal fixture",
+                .env("PATH", &search)
+                .env("HOME", fake.path())
+                .env("RUSTFLAGS", "fixture-flags")
+                .env("RUSTC", "fixture-compiler")
+                .env("CARGO_HOME", "fixture-cargo")
+                .env("QUINN_UNLISTED", "fixture-unlisted")
+                .env("QUINN_CARGO_FIXTURE_CHILD", &root);
+            if toolchain {
+                child
+                    .env("RUSTUP_HOME", "fixture-rustup")
+                    .env("RUSTUP_TOOLCHAIN", "fixture-toolchain");
+            } else {
+                child
+                    .env_remove("RUSTUP_HOME")
+                    .env_remove("RUSTUP_TOOLCHAIN");
+            }
+            let output = bounded_output(&mut child, "isolated Cargo refusal fixture");
+            assert!(
+                output.contains("1 passed; 0 failed"),
+                "child did not run: {output}"
+            );
+            assert_eq!(marker.exists(), invoked, "Cargo invocation order changed");
+            if invoked {
+                let values = std::fs::read_to_string(environment).unwrap();
+                assert_eq!(
+                    values.lines().collect::<Vec<_>>(),
+                    [
+                        fake.path().to_str().unwrap(),
+                        if toolchain { "fixture-rustup" } else { "unset" },
+                        if toolchain {
+                            "fixture-toolchain"
+                        } else {
+                            "unset"
+                        },
+                        "unset",
+                        "unset",
+                        "unset",
+                        "unset"
+                    ]
+                );
+                assert_eq!(std::fs::read_to_string(args).unwrap(), format!("metadata\n--locked\n--offline\n--no-deps\n--format-version\n1\n--manifest-path\n{}\n", root.join("Cargo.toml").display()));
+            }
+            assert_eq!(
+                std::fs::read(root.join("Cargo.lock")).unwrap() != before,
+                changed_lock
+            );
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_cargo_source_closure_requires_a_manifest_and_existing_lock() {
+    for missing in ["Cargo.toml", "Cargo.lock"] {
+        let mut files = vec![("src/lib.rs", "pub struct Allowed;")];
+        for (name, body) in [
+            ("Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'"),
+            (
+                "Cargo.lock",
+                "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
+            ),
+        ] {
+            if name != missing {
+                files.push((name, body));
+            }
+        }
+        let dir = fixture(&files);
+        assert!(
+            std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err(),
+            "accepted missing {missing}"
         );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlcipher_cargo_metadata_queries_each_workspace_once_and_refuses_omitted_manifests() {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(root) = std::env::var_os("QUINN_CARGO_COUNTER_CHILD") {
+        let result = std::panic::catch_unwind(|| super::check_source_inventory(Path::new(&root)));
+        assert_eq!(
+            result.is_ok(),
+            std::env::var_os("QUINN_CARGO_COMPLETE").is_some()
+        );
+        return;
+    }
+    for complete in [false, true] {
+        let dir = fixture(&[
+            ("Cargo.toml", "[workspace]\nmembers=['helper']\n[package]\nname='fixture'\nversion='0.1.0'"),
+            ("Cargo.lock", "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'\n[[package]]\nname='helper'\nversion='0.1.0'"),
+            ("src/lib.rs", "pub struct Allowed;"),
+            ("helper/Cargo.toml", "[package]\nname='helper'\nversion='0.1.0'"), ("helper/src/lib.rs", "pub struct Helper;"),
+        ]);
+        let root = dir.path().canonicalize().unwrap();
+        let mut packages = vec![
+            serde_json::json!({"id": "fixture", "manifest_path": root.join("Cargo.toml"), "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")} ]}),
+        ];
+        let mut members = vec!["fixture"];
+        if complete {
+            packages.push(serde_json::json!({"id": "helper", "manifest_path": root.join("helper/Cargo.toml"), "dependencies": [], "targets": [{"src_path": root.join("helper/src/lib.rs")} ]}));
+            members.push("helper");
+        }
+        let fake = tempfile::tempdir().unwrap();
+        let marker = fake.path().join("invocations");
+        let payload = fake.path().join("metadata.json");
+        std::fs::write(&payload, serde_json::to_vec(&serde_json::json!({"version":1,"workspace_root":root,"workspace_members":members,"packages":packages})).unwrap()).unwrap();
+        let cargo = fake.path().join("cargo");
+        std::fs::write(
+            &cargo,
+            format!(
+                "#!/bin/sh\nprintf 'called\\n' >> {}\n/bin/cat {}\n",
+                shell_path(&marker),
+                shell_path(&payload)
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let search = std::env::join_paths(
+            std::iter::once(fake.path().to_owned())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child.args(["sqlcipher_cargo_metadata_queries_each_workspace_once_and_refuses_omitted_manifests", "--nocapture"]).env("PATH", search).env("QUINN_CARGO_COUNTER_CHILD", &root);
+        if complete {
+            child.env("QUINN_CARGO_COMPLETE", "1");
+        } else {
+            child.env_remove("QUINN_CARGO_COMPLETE");
+        }
+        let output = bounded_output(&mut child, "isolated Cargo workspace fixture");
         assert!(
             output.contains("1 passed; 0 failed"),
             "child did not run: {output}"
         );
-        assert_eq!(marker.exists(), invoked, "Cargo invocation order changed");
         assert_eq!(
-            std::fs::read(dir.path().join("Cargo.lock")).unwrap(),
-            before
+            std::fs::read_to_string(marker)
+                .unwrap()
+                .matches("called")
+                .count(),
+            if complete { 1 } else { 2 }
         );
     }
 }
