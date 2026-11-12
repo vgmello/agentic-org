@@ -79,18 +79,19 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 	});
 }
 
-for (const [screen, path, empty, emptyId] of [
-	['projects', '/projects', '/projects?org=empty', 'no-projects'],
-	['profile', '/projects/beacon', '/projects/ghost', 'project-gone'],
-	['chart', '/org-chart', '/org-chart?org=empty', '']
+for (const [screen, path, empty, emptyText] of [
+	['projects', '/projects', '/projects?org=empty', 'No projects yet'],
+	['profile', '/projects/beacon', '/projects/ghost', "This project isn't here any more."],
+	['chart', '/org-chart', '/org-chart?org=empty', 'No teams yet']
 ] as const) {
 	test(`E3 PROJ-1/3 TEAM-8 BUG-70: ${screen} preserves empty, loading, error and recovered states`, async ({ page }) => {
 		await create(page, 320, 2);
 		await visit(page, empty);
-		if (emptyId) await expect(page.getByTestId(emptyId)).toBeVisible();
-		else await expect(page.getByText('No teams yet', { exact: true })).toBeVisible();
+		const emptyState = page.getByText(emptyText, { exact: true });
+		await expect(emptyState).toBeVisible();
+		await emptyState.scrollIntoViewIfNeeded();
 		await expect(page.getByRole('button', { name: /^Remove Beacon from/ })).toHaveCount(0);
-		await shot(page, `non-chat-${screen}-empty`);
+		await shot(page, `non-chat-${screen}-empty`, { context: emptyState });
 		const response = await page.request.get('/e2e/fakes/org-api.ts');
 		expect(response.ok()).toBe(true);
 		const module = await response.text();
@@ -107,17 +108,21 @@ for (const [screen, path, empty, emptyId] of [
 			await expect(page.getByText('Pseudo-icon office unavailable', { exact: true })).toHaveCount(0);
 			await shot(page, `non-chat-${screen}-loading`, { settle: false });
 			release();
-			await expect(page.getByText('Pseudo-icon office unavailable', { exact: true })).toBeVisible();
+			const failure = page.getByText('Pseudo-icon office unavailable', { exact: true });
+			await expect(failure).toBeVisible();
+			await failure.scrollIntoViewIfNeeded();
 			await expect(page.getByRole('button', { name: /^Remove Beacon from/ })).toHaveCount(0);
-			await shot(page, `non-chat-${screen}-error`);
+			await shot(page, `non-chat-${screen}-error`, { context: failure });
 		} finally {
 			release();
 			await page.unrouteAll({ behavior: 'wait' });
 		}
 		await page.reload();
 		if (screen === 'chart') await showChart(page);
-		await expect(page.getByRole('button', { name: 'Remove Beacon from Web', exact: true })).toBeVisible();
-		await shot(page, `non-chat-${screen}-recovered`);
+		const recovered = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
+		await expect(recovered).toBeVisible();
+		await focusTarget(page, recovered);
+		await shot(page, `non-chat-${screen}-recovered`, { context: recovered });
 	});
 }
 
