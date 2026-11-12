@@ -13,7 +13,7 @@
 	},
 	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font", "focus-primitives-default-font.ts": "chromium-focus-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts"],
+	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts", "dialog-block-title.spec.ts"],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
@@ -102,7 +102,7 @@
 			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "e2e/focus-primitives.ts"]
 		},
 		"projects-work": {
-			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
+			"specs": ["projects.spec.ts", "project-profile.spec.ts", "work.spec.ts", "tasks.spec.ts", "dialog-block-title.spec.ts", "bugs.spec.ts", "non-chat-icons.spec.ts", "non-chat-icons-default-font.ts"],
 			"sources": [
 				"src/routes/(shell)/projects/**", "src/routes/(shell)/work/**", "src/lib/org/projects*", "src/lib/org/team-edit*", "src/lib/modules/copilot/**",
 				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
