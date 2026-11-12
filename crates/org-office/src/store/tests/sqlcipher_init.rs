@@ -455,13 +455,17 @@ fn override_policy(path: &Path, code: &str) {
             3,
             "store overrides must use the plain allow form"
         );
+    } else if path == Path::new("crates/org-supervise/src/lib.rs") {
+        assert_eq!(code.matches(lint).count(), 1);
+        assert!(code.contains(&format!("#![deny(clippy::{lint})]")));
+    } else if path == Path::new("crates/org-supervise/src/spawn.rs") {
+        // Preserve the existing test-only Command::status exception, not a SQL opener.
+        assert_eq!(code.matches(lint).count(), 1);
+        assert!(code.contains(&format!("#[expect(clippy::{lint},reason=)]")));
+        assert!(!code.contains("rusqlite") && !code.contains("Connection"));
     } else {
         assert!(
-            !(code.contains(lint)
-                && (code.contains("rusqlite")
-                    || code.contains("Connection")
-                    || code.contains("#![allow(")
-                    || code.contains("#![expect("))),
+            !code.contains(lint),
             "{} has an unapproved SQLCipher opener override",
             path.display()
         );
@@ -504,12 +508,47 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
         ))
         .is_err());
     }
-    // The existing unrelated child-wait exception stays legal, and quoted/comment
+    // The existing unrelated child-exec exception stays legal, and quoted/comment
     // lookalikes cannot satisfy a fence-order check or invent an override.
+    let child = format!("#[expect(clippy::{lint}, reason = \"test-only exec\")] fn child() {{}}");
     override_policy(
         Path::new("crates/org-supervise/src/spawn.rs"),
-        &rust_code(&plain),
+        &rust_code(&child),
     );
+    override_policy(
+        Path::new("crates/org-supervise/src/lib.rs"),
+        &rust_code(&format!("#![deny(clippy::{lint})]")),
+    );
+    for (path, source) in [
+        (
+            "crates/org-office/src/lib.rs",
+            format!("{plain} mod store;"),
+        ),
+        ("other.rs", child.clone()),
+        ("crates/org-supervise/src/lib.rs", plain.clone()),
+        ("crates/org-supervise/src/spawn.rs", plain.clone()),
+        (
+            "crates/org-supervise/src/spawn.rs",
+            format!("{child} fn rusqlite() {{}}"),
+        ),
+        (
+            "crates/org-supervise/src/spawn.rs",
+            format!("{child} fn Connection() {{}}"),
+        ),
+        (
+            "crates/org-supervise/src/spawn.rs",
+            format!("{child} {plain}"),
+        ),
+        (
+            "crates/org-supervise/src/spawn.rs",
+            format!("{child} fn bypass() {{ rusqlite::Connection::open(); }}"),
+        ),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| override_policy(Path::new(path), &rust_code(&source)))
+                .is_err()
+        );
+    }
     assert_eq!(
         rust_code(
             "// sqlcipher_ready()?;\n/* a /* nested */ sqlcipher_ready()? */ Connection::open(p)"
