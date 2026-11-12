@@ -1,0 +1,47 @@
+    ($($variant:ident($call:ident, $params:ident)),* $(,)?) => {
+        /// A work write, read from a request.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        #[non_exhaustive]
+        pub enum WorkCall {
+            $($variant($params),)*
+        }
+
+        impl WorkCall {
+            /// Reads `request` as a work write: `Ok(None)` if its method isn't one this build
+            /// handles, `Err(invalid_request)` if it is but its params aren't valid.
+            pub fn parse(request: &Request) -> Result<Option<Self>, ApiError> {
+                $(if request.is::<$call>() {
+                    return request
+                        .params::<$call>()
+                        .map(|p| Some(Self::$variant(p)))
+                        .map_err(|_| ApiError::new(
+                            ErrorCode::InvalidRequest,
+                            format!("the params of `{}` are not valid", request.method),
+                        ));
+                })*
+                Ok(None)
+            }
+
+            /// The method name.
+            pub fn method(&self) -> &'static str {
+                match self {
+                    $(Self::$variant(_) => $call::METHOD,)*
+                }
+            }
+
+            /// The client-made id that makes a retry get the same answer.
+            pub fn change_id(&self) -> &str {
+                match self {
+                    $(Self::$variant(p) => &p.change_id,)*
+                }
+            }
+
+            /// The params, re-encoded as JSON (for the params hash and the size check).
+            pub(crate) fn params_json(&self) -> serde_json::Value {
+                let encoded = match self {
+                    $(Self::$variant(p) => serde_json::to_value(p),)*
+                };
+                encoded.expect("work params always encode as JSON")
+            }
+        }
+    };

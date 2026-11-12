@@ -1,0 +1,3 @@
+    ($(fn $name:ident($($arg:ident: $ty:ty),*) -> $out:ty;)*) => {
+        $(fn $name(&self, $($arg: $ty),*) -> Result<$out, StoreError> { self.org.$name($($arg),*) })*
+    };

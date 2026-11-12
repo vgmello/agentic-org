@@ -1,0 +1,29 @@
+    ($name:ident) => {
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(String);
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Result<Self, InvalidValue> {
+                let value = value.into();
+                if !(1..=64).contains(&value.len())
+                    || !value.bytes().all(|b| b.is_ascii_alphanumeric())
+                {
+                    return Err(InvalidValue);
+                }
+                Ok(Self(value))
+            }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+        impl FromStr for $name {
+            type Err = InvalidValue;
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                Self::new(value)
+            }
+        }
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };

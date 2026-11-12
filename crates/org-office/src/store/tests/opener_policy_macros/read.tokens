@@ -1,0 +1,13 @@
+            ($($call:ident => $variant:ident),* $(,)?) => {
+                $(if request.is::<$call>() {
+                    return request
+                        .params::<$call>()
+                        .map(|params| Some(Self::$variant(params)))
+                        .map_err(|_| {
+                            ApiError::new(
+                                ErrorCode::InvalidRequest,
+                                format!("the params of `{}` are not valid", request.method),
+                            )
+                        });
+                })*
+            };
