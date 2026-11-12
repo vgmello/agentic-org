@@ -622,7 +622,7 @@ fn origin_upgrade_preserves_message_counter_and_shared_incarnation() {
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    5
+                    6
                 );
                 assert_eq!(
                     db.query_row(
@@ -893,7 +893,7 @@ fn origin_duplicate_across_appends_rolls_back_feed_prefix_and_counter_after_reop
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    5
+                    6
                 );
                 Ok(())
             })

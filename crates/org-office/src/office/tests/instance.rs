@@ -63,7 +63,12 @@ fn legacy_instance_office(version: i64, bound: Option<&str>) -> (TempDir, Key, P
                     "../../store/work/tests/fixtures/office-v4.sql"
                 ))
             },
-            5 => OFFICE_SCHEMA.create,
+            5 => |tx| {
+                tx.execute_batch(include_str!(
+                    "../../store/work/tests/fixtures/office-v5.sql"
+                ))
+            },
+            6 => OFFICE_SCHEMA.create,
             _ => unreachable!(),
         },
         upgrade: |_, _| unreachable!("fixture creates only its declared released schema"),
@@ -78,8 +83,8 @@ fn legacy_instance_office(version: i64, bound: Option<&str>) -> (TempDir, Key, P
 }
 
 #[test]
-fn v3_start_adopts_released_v1_through_v5_once_and_reopens() {
-    for version in 1..=5 {
+fn v3_start_adopts_v1_through_v6_once_and_reopens() {
+    for version in 1..=6 {
         let (_dir, key, folder) = legacy_instance_office(version, None);
         // A v2 open can migrate the schema but must never create the instance key.
         let office = Office::open(&folder, key.clone()).unwrap();
@@ -116,7 +121,7 @@ fn v3_start_adopts_released_v1_through_v5_once_and_reopens() {
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    5
+                    6
                 );
                 Ok(())
             })
@@ -125,8 +130,8 @@ fn v3_start_adopts_released_v1_through_v5_once_and_reopens() {
 }
 
 #[test]
-fn v3_mismatch_on_released_v1_through_v5_changes_neither_database() {
-    for version in 1..=5 {
+fn v3_mismatch_on_v1_through_v6_changes_neither_database() {
+    for version in 1..=6 {
         let (_dir, key, folder) = legacy_instance_office(version, Some(INSTANCE));
         let before: Vec<_> = [OFFICE_DB, ORG_DB]
             .map(|name| fs::read(folder.join(name)).unwrap())
@@ -321,7 +326,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
     .unwrap();
     store
         .write(|db| {
-            db.pragma_update(None, "user_version", 6)
+            db.pragma_update(None, "user_version", 7)
                 .map_err(OfficeError::storage)?;
             Ok(((), None))
         })
@@ -334,7 +339,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
     ));
     assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), before);
     let future = Schema {
-        version: 6,
+        version: 7,
         create: |_| unreachable!(),
         upgrade: |_, _| unreachable!(),
     };

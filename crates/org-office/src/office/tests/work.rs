@@ -237,3 +237,5 @@ fn c1_work_construction_is_between_workspace_and_genesis() {
     result.unwrap();
     assert_eq!(seen.get(), 3);
 }
+
+mod current;

@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 
 use org_proto::directory::{
-    MemberPresence, StatusSetParams, StatusSetResult, WhoParams, WhoResult,
+    MemberPresence, MemberPresenceChangedData, StatusSetParams, StatusSetResult, WhoParams,
+    WhoResult,
 };
-use org_proto::ApiError;
+use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
 use crate::office::Office;
@@ -29,12 +30,12 @@ impl RuntimeView for StoredLines {
 impl Office {
     /// Sets or clears `member_id`'s own status line (`status.set`). The member is the caller's
     /// bound one, never read from the call. `Err(ApiError)` inside the `Ok` is the caller's
-    /// mistake; the outer error is storage.
+    /// mistake; the outer error is storage. The tuple also carries the checked current task.
     pub fn set_status(
         &self,
         member_id: &str,
         params: &StatusSetParams,
-    ) -> Result<Result<StatusSetResult, ApiError>, OfficeError> {
+    ) -> Result<Result<(StatusSetResult, Option<String>), ApiError>, OfficeError> {
         let line = match check(params) {
             Ok(line) => line,
             Err(refusal) => return Ok(Err(refusal)),
@@ -44,25 +45,28 @@ impl Office {
         let stored = line.map(|(text, ttl)| (text, time::format_epoch_ms(now_ms + ttl)));
         let (member, at) = (member_id.to_owned(), now.clone());
         let to_write = stored.clone();
-        self.local_store().write(move |db| {
+        let current = self.local_store().write(move |db| {
             status::write(
                 db,
                 &member,
                 to_write.as_ref().map(|(t, e)| (t.as_str(), e.as_str())),
                 &at,
             )?;
-            Ok(((), None))
+            Ok((status::projection(db, &member)?.1, None))
         })?;
-        Ok(Ok(match stored {
-            Some((text, expires_at)) => StatusSetResult {
-                status: Some(text),
-                expires_at: Some(expires_at),
+        Ok(Ok((
+            match stored {
+                Some((text, expires_at)) => StatusSetResult {
+                    status: Some(text),
+                    expires_at: Some(expires_at),
+                },
+                None => StatusSetResult {
+                    status: None,
+                    expires_at: None,
+                },
             },
-            None => StatusSetResult {
-                status: None,
-                expires_at: None,
-            },
-        }))
+            current,
+        )))
     }
 
     /// `who`, with the status lines members have set.
@@ -70,25 +74,82 @@ impl Office {
         &self,
         params: &WhoParams,
     ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
-        let lines = self.local_store().read(status::all)?;
+        let lines = self.local_store().read(|db| {
+            let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+            let mut lines = status::all(&tx)?;
+            for line in &mut lines {
+                line.current_task_id = status::checked_current(&tx, line)?;
+            }
+            // Explicit rollback surfaces a rollback failure; dropping the transaction also rolls back.
+            tx.rollback().map_err(OfficeError::storage)?;
+            Ok(lines)
+        })?;
         let runtime = StoredLines(
             lines
                 .into_iter()
                 .map(|line| {
+                    let (status, status_expires_at) = line.status.unzip();
                     (
                         line.member_id,
                         MemberRuntime {
                             presence: MemberPresence::Offline,
                             last_seen_at: None,
-                            status: Some(line.text),
-                            status_expires_at: Some(line.expires_at),
-                            current_task_id: None,
+                            status,
+                            status_expires_at,
+                            current_task_id: line.current_task_id,
                         },
                     )
                 })
                 .collect(),
         );
         self.who(params, &runtime)
+    }
+}
+
+impl Office {
+    /// Sets or clears the bound agent's task. Validation and the local row write share one transaction.
+    pub fn set_current(
+        &self,
+        member: &str,
+        agent: bool,
+        item: Option<&str>,
+    ) -> Result<Result<MemberPresenceChangedData, ApiError>, OfficeError> {
+        let (member, item) = (member.to_owned(), item.map(str::to_owned));
+        self.local_store().write(move |db| {
+            let task = item
+                .as_deref()
+                .map(|id| crate::store::work::get_in(db, id))
+                .transpose()?
+                .flatten();
+            let invalid = |text| ApiError::new(ErrorCode::InvalidRequest, text);
+            let refusal = if item.is_some() && task.is_none() {
+                Some(ApiError::new(ErrorCode::NotFound, "no such work item"))
+            } else if !agent {
+                Some(invalid("the caller isn't an agent"))
+            } else if let Some(task) = &task {
+                org_work::kind_refusal(task, org_proto::work::ItemKind::Task)
+                    .err()
+                    .or_else(|| {
+                        if task.deleted {
+                            Some(invalid("the item is deleted"))
+                        } else if task.assignee_id.as_deref() != Some(member.as_str()) {
+                            Some(invalid("the task isn't assigned to you"))
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            };
+            if let Some(error) = refusal {
+                return Ok((Err(error), None));
+            }
+            let now = time::now_rfc3339();
+            status::write_current(db, &member, item.as_deref(), &now)?;
+            let (set, current) = status::projection(db, &member)?;
+            let event = presence_after_status(&member, &set, current);
+            Ok((Ok(event), None))
+        })
     }
 }
 
@@ -148,8 +209,8 @@ mod tests {
             .set_status(&member, &text(" Drafting "))
             .unwrap()
             .unwrap();
-        assert_eq!(set.status.as_deref(), Some("Drafting"));
-        assert!(set.expires_at.is_some());
+        assert_eq!(set.0.status.as_deref(), Some("Drafting"));
+        assert!(set.0.expires_at.is_some());
         assert_eq!(card_status(&office).as_deref(), Some("Drafting"));
 
         // A restart keeps it.
@@ -168,7 +229,7 @@ mod tests {
             .set_status(&member, &StatusSetParams::default())
             .unwrap()
             .unwrap();
-        assert_eq!((cleared.status, cleared.expires_at), (None, None));
+        assert_eq!((cleared.0.status, cleared.0.expires_at), (None, None));
         assert_eq!(card_status(&office), None);
     }
 
