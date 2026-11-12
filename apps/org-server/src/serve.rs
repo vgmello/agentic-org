@@ -53,7 +53,7 @@ pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, SnapshotFailure> + Sen
 pub type SubmitFn =
     Box<dyn Fn(OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync>;
 
-/// Reads a retained org operation for today's implicit owner connection.
+/// Reads a retained owner operation, after the office socket checks the binding.
 pub type OperationFn = Box<
     dyn Fn(&str) -> Result<Result<org_proto::OperationOutcome, ApiError>, String> + Send + Sync,
 >;
@@ -364,6 +364,15 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
 /// Accepts connections until `stop` says to quit, then closes every connection and waits for
 /// its thread, so nothing is still reading the office when the caller closes it.
 pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> bool) {
+    run_for_uid(listener, shared, stop, org_socket::effective_uid());
+}
+
+fn run_for_uid(
+    listener: &UnixListener,
+    shared: &Arc<Shared>,
+    stop: &dyn Fn() -> bool,
+    expected_uid: u32,
+) {
     let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Ends the held calls of a connection whose member stops being bindable, at once.
     let watching = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -382,6 +391,9 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
     while !stop() {
         match listener.accept() {
             Ok((stream, _)) => {
+                if !org_socket::peer_allowed(&stream, expected_uid) {
+                    continue; // no response, registration or connection slot for a foreign UID
+                }
                 if live.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
                     live.fetch_sub(1, Ordering::SeqCst);
                     continue; // dropped: closed at once
@@ -595,6 +607,19 @@ fn serve_connection_with_poll(
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
+            // This is the office-socket loop; host channels authenticate principals separately.
+            // Presence includes null and malformed values. Refuse before any binding effects.
+            if request.principal.is_some() {
+                let refusal = bind_error(
+                    request.id,
+                    ErrorCode::NotAuthorized,
+                    "a principal is not allowed on the office socket",
+                );
+                if !send(&out, request.id, &refusal, shared.timing) {
+                    break;
+                }
+                continue;
+            }
             // The member this connection acts as is checked on every call, not only at bind, and
             // the watcher may have ended the connection's held calls already.
             let member_lookup = if control.revoked.load(Ordering::SeqCst) {
@@ -839,8 +864,14 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 ),
             );
         }
-        // Before 2a.5 every supported connection acts as the owner (X-02 §4.2).
-        // Unverified request.principal must never become a stored-principal key.
+        // Retained owner and NULL-principal rows are private to app/owner bindings.
+        // Member-specific lookup is a later slice; never query this owner port for agents.
+        if !binding.is_app_bound() {
+            return Response::error(
+                request.id,
+                ApiError::new(ErrorCode::NotFound, "operation not found"),
+            );
+        }
         return match (shared.ports.operation_get)(&params.id) {
             Ok(Ok(outcome)) => Response::ok::<org_proto::OperationGet>(request.id, &outcome)
                 .unwrap_or_else(|_| internal(request.id)),
@@ -1207,6 +1238,7 @@ fn internal(id: u64) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod office_socket;
     mod work;
     use std::io::BufReader;
     use std::sync::atomic::AtomicBool;
@@ -1922,7 +1954,7 @@ mod tests {
             },
         )
         .unwrap();
-        let response = answer(&request, &shared, &mut Binding::Anonymous);
+        let response = answer(&request, &shared, &mut Binding::App);
         assert_eq!(code_of(response.outcome.clone()), ErrorCode::StorageError);
         assert!(!serde_json::to_string(&response).unwrap().contains("SECRET"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -2002,7 +2034,9 @@ mod tests {
                 },
             ] {
                 let response = answer(&request, &shared, &mut binding);
-                if matches!(outcome, org_proto::OperationOutcome::Unknown) {
+                if !binding.is_app_bound() {
+                    assert_eq!(code_of(response.outcome), ErrorCode::NotFound);
+                } else if matches!(outcome, org_proto::OperationOutcome::Unknown) {
                     assert_eq!(code_of(response.outcome), ErrorCode::StorageError);
                 } else {
                     assert_eq!(

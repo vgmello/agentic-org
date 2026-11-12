@@ -1017,9 +1017,12 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
         result: serde_json::to_value(accepted).unwrap(),
     };
     assert_eq!(lookup(&client, &command).unwrap(), expected);
-    // Before grants, even a legacy-first unbound connection acts as the owner for lookup.
+    // Owner/NULL rows are private even to a legacy-first unbound connection.
     let reader = Client::connect(socket(&world)).unwrap();
-    assert_eq!(lookup(&reader, &command).unwrap(), expected);
+    assert_eq!(
+        api_code(lookup(&reader, &command).unwrap_err()),
+        org_proto::ErrorCode::NotFound
+    );
     assert_eq!(
         api_code(lookup(&reader, "bad").unwrap_err()),
         org_proto::ErrorCode::InvalidRequest
