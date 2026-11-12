@@ -904,7 +904,32 @@ test('OFC-12 BUG-70 OF-2: the stretched row target does not intercept pointer Re
 });
 
 
-async function expectFullStatusWord(row: Locator) {
+// A truncated status needs enough room to paint its ellipsis, not just a positive box width.
+async function expectVisibleStatusText(row: Locator) {
+ const label = row.locator('[data-status-icon] > span').last();
+ await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+ const geometry = await label.evaluate(element => {
+  const css = getComputedStyle(element), canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d')!;
+  context.font = `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+  return { width: element.getBoundingClientRect().width, natural: element.scrollWidth, ellipsis: context.measureText('…').width };
+ });
+ expect(geometry.width, JSON.stringify(geometry)).toBeGreaterThan(0);
+ expect(geometry.width, JSON.stringify(geometry)).toBeGreaterThanOrEqual(Math.min(geometry.natural, geometry.ellipsis));
+}
+
+async function expectReadableOfficeName(row: Locator) {
+	const name = row.locator('button[aria-haspopup] > span').first();
+	const geometry = await name.evaluate(element => {
+		const css = getComputedStyle(element), context = document.createElement('canvas').getContext('2d')!;
+		context.font = `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+		const box = element.getBoundingClientRect(), parent = element.parentElement!.getBoundingClientRect();
+		return { visible: Math.min(box.right, parent.right) - Math.max(box.left, parent.left), minimum: Math.min(6 * context.measureText('0').width, context.measureText(element.getAttribute('title')!).width) };
+	});
+	expect(geometry.visible, JSON.stringify(geometry)).toBeGreaterThanOrEqual(geometry.minimum);
+}
+
+async function expectFullStatusWord(row: Locator, chevronOnNextLine = false) {
  const geometry = await row.evaluate(element => {
   const pill = element.querySelector('[data-status-icon]')!, label = pill.lastElementChild!, group = pill.parentElement!;
   const css = getComputedStyle(element), chevron = group.querySelector(':scope > svg')!;
@@ -916,7 +941,7 @@ async function expectFullStatusWord(row: Locator) {
  expect(geometry.chevronWidth).toBeGreaterThan(0);
  expect(geometry.chevronFits).toBe(true);
  expect(geometry.chevronEndGap).toBeCloseTo(0, 0);
- expect(geometry.chevronTop).toBeGreaterThanOrEqual(geometry.pillBottom);
+ if (chevronOnNextLine) expect(geometry.chevronTop).toBeGreaterThanOrEqual(geometry.pillBottom);
  expect(geometry.rowFits).toBe(true);
 }
 
@@ -926,7 +951,7 @@ for (const width of [320, 640, 960, 1280]) for (const text of [1, 2]) {
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
 		await page.addStyleTag({ content: `html { font-size: ${text * 100}% !important; }` });
-		await expect(page.locator('html')).toHaveCSS('font-size', `${text * (test.info().project.name === 'chromium-20px' ? 20 : 16)}px`);
+		await expect(page.locator('html')).toHaveCSS('font-size', `${text * (test.info().project.name.endsWith('-20px') ? 20 : 16)}px`);
 		const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
 		await shot(page, `of1-preflight-${width}-${text}-online`, { context: row });
 		expect(await row.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
@@ -934,7 +959,9 @@ for (const width of [320, 640, 960, 1280]) for (const text of [1, 2]) {
 		await expect(row.getByTestId('agent-count')).toHaveText('7 agents');
 		const pill = row.locator('[data-status-icon]');
 		await expect(pill).toHaveText('Online');
-		if (test.info().project.name === 'chromium-20px' && width === 960 && text === 2) await expectFullStatusWord(row);
+		await expectReadableOfficeName(row);
+		await expectVisibleStatusText(row);
+		if (test.info().project.name.endsWith('-20px') && width === 960 && text === 2) await expectFullStatusWord(row, true);
 		await opener.press('Enter');
 		await expect(page.getByRole('dialog')).toBeVisible();
 		await expect(page.getByTestId('office-details')).toContainText("This Mac (you're here)");
@@ -943,7 +970,9 @@ for (const width of [320, 640, 960, 1280]) for (const text of [1, 2]) {
 		await expect(opener).toBeFocused();
 		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'unavailable', status_reason: 'crashed' });
 		await expect(row).toContainText('Stopped');
-		if (test.info().project.name === 'chromium-20px' && width === 960 && text === 2) await expectFullStatusWord(row);
+		await expectReadableOfficeName(row);
+		await expectVisibleStatusText(row);
+		if (test.info().project.name.endsWith('-20px') && width === 960 && text === 2) await expectFullStatusWord(row, true);
 		await expect(opener).toHaveAccessibleName(/Engineering office with a long readable name, HQ/);
 		await shot(page, `of1-preflight-${width}-${text}-stopped`, { context: row });
 		expect(await row.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);
@@ -1030,7 +1059,8 @@ test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a n
  await pushOffice(page,{status:'unavailable',status_reason:'crashed'});
  await expect(row).toContainText('Stopped');
  await shot(page,'of1-narrow-content-full-status-40px',{context:row});
- await expectFullStatusWord(row);
+ await expectFullStatusWord(row, true);
+ await expectReadableOfficeName(row);
  const opener = row.locator('button[aria-haspopup]');
  await expect(row.getByRole('button')).toHaveCount(1);
  const arrow = await row.locator('[data-status-icon]').locator('..').locator(':scope > svg').boundingBox();
@@ -1041,34 +1071,84 @@ test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a n
  await expect(opener).toBeFocused();
 });
 
-for (const column of [299, 300]) {
- test(`OFC-13 BUG-70 BUG-91: narrow row gutters and wrapping switch at the ${column}px container boundary`, async ({ page }) => {
-  await page.setViewportSize({ width: 720 + column, height: 900 });
-  await openOffices(page);
-  const row = rows(page).first();
-  await expect(row).toContainText('Online');
-  await page.addStyleTag({ content: 'html { font-size: 250% !important; }' });
-  await expect(page.locator('html')).toHaveCSS('font-size', '40px');
-  await pushOffice(page, { status: 'unavailable', status_reason: 'crashed' });
-  await expect(row).toContainText('Stopped');
-  const box = await row.boundingBox();
-  expect(box!.width).toBeCloseTo(column, 0);
-  await shot(page, `of1-container-boundary-${column}`, { context: row });
-  if (column === 299) {
-   await expectFullStatusWord(row);
-   await expect(row).toHaveCSS('padding-left', `${(column * 0.05).toFixed(2)}px`);
-  } else {
-   await expect(row).toHaveCSS('padding-left', '60px');
-   expect(await row.evaluate(element => {
-    const pill = element.querySelector('[data-status-icon]')!.getBoundingClientRect();
-    const chevron = element.querySelector('[data-status-icon]')!.parentElement!.querySelector(':scope > svg')!.getBoundingClientRect();
-    return Math.abs((pill.top + pill.bottom) / 2 - (chevron.top + chevron.bottom) / 2);
-   })).toBeLessThanOrEqual(1);
-  }
-  const unplacedRow = page.getByTestId('unplaced-note').getByRole('listitem');
-  await expect(unplacedRow).toHaveCSS('padding-left', column === 299 ? '14.95px' : '60px');
-  expect(await unplacedRow.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-  expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
- });
+// Exercise the old failing pixels, including the viewport lg gutter transition at 304px.
+for (const column of [299, 300, 301, 304]) {
+	test(`OFC-13 BUG-70 BUG-91: readable status and name at the ${column}px content column`, async ({ page }) => {
+		await page.setViewportSize({ width: 720 + column, height: 900 });
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await page.addStyleTag({ content: 'html { font-size: 250% !important; }' });
+		await expect(page.locator('html')).toHaveCSS('font-size', '40px');
+		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'unavailable', status_reason: 'crashed' });
+		await expect(row).toContainText('Stopped');
+		expect((await row.boundingBox())!.width).toBeCloseTo(column, 0);
+		await shot(page, `of1-content-${column}-40px`, { context: row });
+		await expectVisibleStatusText(row);
+		await expectReadableOfficeName(row);
+		await expectFullStatusWord(row);
+		await expect(row).toHaveCSS('padding-left', `${Number((column * 0.05).toFixed(2))}px`);
+		const unplaced = page.getByTestId('unplaced-note').getByRole('listitem');
+		await expect(unplaced).toHaveCSS('padding-left', `${Number((column * 0.05).toFixed(2))}px`);
+		expect(await unplaced.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	});
+}
+
+for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
+	test(`OFC-13 BUG-70 BUG-91: compact row threshold ${offset < 0 ? 'inside' : 'outside'} at ${rootFont}px root`, async ({ page }) => {
+		const column = 21 * rootFont + offset;
+		// The desktop sidebar is 18rem at these viewport widths; mobile has none.
+		const sidebar = rootFont === 16 ? 0 : 18 * rootFont;
+		await page.setViewportSize({ width: sidebar + column, height: 1100 });
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await page.addStyleTag({ content: `html { font-size: ${rootFont / 16 * 100}% !important; }` });
+		await expect(page.locator('html')).toHaveCSS('font-size', `${rootFont}px`);
+		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'update_needed', status_reason: 'unsupported_version' });
+		await expect(row).toContainText('Update needed');
+		expect((await row.boundingBox())!.width).toBeCloseTo(column, 0);
+		await expectReadableOfficeName(row);
+		await expectVisibleStatusText(row);
+		const group = row.locator('[data-status-icon]').locator('..');
+		await expect(group).toHaveCSS('flex-wrap', offset < 0 ? 'wrap' : 'nowrap');
+		const gutter = offset < 0 ? Math.min(rootFont, column * 0.05) : rootFont * (rootFont === 16 ? 1 : 2);
+		await expect(row).toHaveCSS('padding-left', `${gutter}px`);
+		await expect(page.getByTestId('unplaced-note').getByRole('listitem')).toHaveCSS('padding-left', `${gutter}px`);
+		if (offset < 0) {
+			await expectFullStatusWord(row);
+			const layout = await row.evaluate(element => {
+				const button = element.querySelector('button[aria-haspopup]')!.getBoundingClientRect();
+				const group = element.querySelector('[data-status-icon]')!.parentElement!.getBoundingClientRect();
+				return { buttonBottom: button.bottom, groupTop: group.top, groupWidth: group.width, buttonWidth: button.width };
+			});
+			expect(layout.groupTop).toBeGreaterThanOrEqual(layout.buttonBottom);
+			expect(layout.groupWidth).toBeCloseTo(layout.buttonWidth, 0);
+		}
+		expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+		await shot(page, `of1-rem-boundary-${rootFont}-${offset}`, { context: row });
+	});
+}
+
+// WebKit has no Playwright default-font preference: these are explicit computed roots,
+// paired with the separate real Chromium default-20px run (Ada's approved proof).
+for (const rootFont of [20, 40]) for (const width of [300, 304, 960]) {
+	test(`OFC-13 BUG-70 BUG-91: readable row at ${width}px viewport with computed ${rootFont}px root`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 1100 });
+		await openOffices(page);
+		const row = rows(page).first();
+		await expect(row).toContainText('Online');
+		await page.addStyleTag({ content: `html { font-size: ${rootFont}px !important; }` });
+		await expect(page.locator('html')).toHaveCSS('font-size', `${rootFont}px`);
+		await expectReadableOfficeName(row);
+		await expectVisibleStatusText(row);
+		await pushOffice(page, { name: 'Engineering office with a long readable name', status: 'unavailable', status_reason: 'crashed' });
+		await expect(row).toContainText('Stopped');
+		await expectReadableOfficeName(row);
+		await expectVisibleStatusText(row);
+		await expectFullStatusWord(row, width === 960 && rootFont === 40);
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+		await shot(page, `of1-computed-root-${width}-${rootFont}`, { context: row });
+	});
 }

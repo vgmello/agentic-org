@@ -17,8 +17,14 @@
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
-	// Cap gutters only in a very narrow list; viewport breakpoints can leave little room at enlarged text.
-	const rowGutters = '@max-[300px]:px-[min(1rem,5cqi)]';
+	// 21rem reserves 4rem for 6ch of name, 9.375rem for the widest pill (7rem label +
+	// 2.375rem icon/gap/padding), 1.25rem chevron, 2rem gaps and 4rem gutters, rounded up.
+	// Scale with the list font so enlarged text cannot leave a tiny name or an icon-only pill.
+	const compactRow = {
+		gutters: '@max-[21rem]:px-[min(1rem,5cqi)]',
+		name: '@max-[21rem]:w-full @max-[21rem]:flex-none',
+		status: '@max-[21rem]:w-full @max-[21rem]:flex-wrap @max-[21rem]:justify-end @max-[21rem]:gap-y-2'
+	};
 
 	let { data } = $props();
 
@@ -234,10 +240,10 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 	<ul class="@container -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<DividedRow data-testid="office-row" data-office={office.id} class="{rowGutters} flex flex-wrap items-center gap-x-4 gap-y-2 hover:bg-white/[0.025]">
+			<DividedRow data-testid="office-row" data-office={office.id} class="{compactRow.gutters} flex flex-wrap items-center gap-x-4 gap-y-2 hover:bg-white/[0.025]">
 				<button
 					type="button"
-					class="min-w-0 flex-1 basis-32 text-left [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
+					class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
 					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), whyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={(event) => open(office.id, event.currentTarget)}
@@ -257,7 +263,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 					<span class="absolute inset-0" aria-hidden="true"></span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
-				<span class="inline-flex min-w-0 max-w-full items-center gap-x-4 @max-[300px]:flex-wrap @max-[300px]:justify-end @max-[300px]:gap-y-2" aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /><ChevronRight class="size-5 shrink-0 text-gray-400" aria-hidden="true" /></span>
+				<span class="inline-flex min-w-0 max-w-full items-center gap-x-4 {compactRow.status}" aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /><ChevronRight class="size-5 shrink-0 text-gray-400" aria-hidden="true" /></span>
 				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
 					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
 					<Button
@@ -272,7 +278,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 				{/if}
 			</DividedRow>
 		{:else}
-			<DividedRow class="{rowGutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
+			<DividedRow class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</DividedRow>
 		{/each}
 	</ul>
 
@@ -293,7 +299,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 			</Callout>
 			<ul class="@container -mx-4 sm:-mx-6 lg:-mx-8">
 				{#each unplaced as agent (agent.id)}
-					<DividedRow class="{rowGutters} flex items-center justify-between gap-x-3 text-sm/6 text-white">
+					<DividedRow class="{compactRow.gutters} flex items-center justify-between gap-x-3 text-sm/6 text-white">
 						<span class="min-w-0 [overflow-wrap:anywhere]">{agent.name}</span>
 						<!-- Placing an agent is its own flow, which comes later: shown, not hidden, so nobody looks for it. -->
 						<Button variant="outline" size="xs" disabled aria-label="Place… {agent.name}" aria-describedby="place-reason">Place…</Button>
