@@ -36,7 +36,7 @@
 		onnewmessage: (opener: HTMLElement) => void;
 	} = $props();
 
-	const item = 'flex w-full flex-wrap items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
+	const item = 'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
 	const on = 'bg-white/10 text-white';
 	const off = 'text-gray-300 hover:bg-white/5 hover:text-white';
 	const here = (v: ChatView, id?: string) => view.type === v.type && (v.type !== 'conversation' || (view.type === 'conversation' && view.id === id));
@@ -81,46 +81,55 @@
 {#snippet row(r: ConversationRow)}
 	{@const active = view.type === 'conversation' && view.id === r.conversation.id}
 	<li>
-		<button type="button" class="{item} flex-wrap {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
+		<button type="button" class="{item} {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
 			{#if r.conversation.kind === 'channel'}
-				<HeroIcon variant="outline" name="hashtag" />
-				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
+				<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="hashtag" />
 			{:else if r.other}
 				<span class="flex shrink-0" aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
-				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
-				{#if r.presence}<span class="ml-auto max-w-full shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}
-				<HeroIcon variant="outline" name="user-group" />
-				<span class="min-w-[4ch] flex-1 whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
+				<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="user-group" />
 			{/if}
-			{#if r.mentions > 0}
-				<span class="shrink-0 rounded-full bg-indigo-500 px-1.5 text-xs/5 font-semibold text-white" aria-label="{r.mentions} mentions" data-testid="mention-count">{r.mentions}</span>
-			{:else if r.unread > 0}
-				<span class="shrink-0 text-xs/5 font-semibold text-gray-200" aria-label="{r.unread} unread" data-testid="unread-count">{r.unread}</span>
-			{/if}
+			<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+				<span class="min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere] {r.unread ? 'font-semibold text-white' : ''}">{r.conversation.kind === 'channel' ? r.title.slice(1) : r.title}</span>
+				{#if r.other && r.presence}<span class="max-w-full shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
+				{#if r.mentions > 0}
+					<span class="shrink-0 rounded-full bg-indigo-500 px-1.5 text-xs/5 font-semibold text-white" aria-label="{r.mentions} mentions" data-testid="mention-count">{r.mentions}</span>
+				{:else if r.unread > 0}
+					<span class="shrink-0 text-xs/5 font-semibold text-gray-200" aria-label="{r.unread} unread" data-testid="unread-count">{r.unread}</span>
+				{/if}
+			</span>
 		</button>
 	</li>
 {/snippet}
 
 {#snippet navigation()}
-<nav bind:this={nav} class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-white/10 bg-black/10 p-3" aria-label="Chat">
+<nav bind:this={nav} class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-white/10 bg-black/10 p-[min(.75rem,12px)]" aria-label="Chat">
 	<ul class="space-y-0.5">
 		<li>
 			<button type="button" class="{item} {here({ type: 'needs' }) ? on : off}" aria-current={here({ type: 'needs' }) ? 'true' : undefined} data-testid="needs-you-link" onclick={() => onselect({ type: 'needs' })}>
-				<HeroIcon variant="outline" name="bell" /><span class="flex-1 {bar.needsYou.length ? 'font-semibold text-white' : ''}">Needs you</span>
-				{#if bar.needsYou.length}<span class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" data-testid="needs-you-count">{bar.needsYou.length}</span>{/if}
+				<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="bell" />
+				<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+					<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {bar.needsYou.length ? 'font-semibold text-white' : ''}">Needs you</span>
+				{#if bar.needsYou.length}<span class="shrink-0 rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" data-testid="needs-you-count">{bar.needsYou.length}</span>{/if}
+				</span>
 			</button>
 		</li>
 		<li>
 			<button type="button" class="{item} {here({ type: 'mentions' }) ? on : off}" aria-current={here({ type: 'mentions' }) ? 'true' : undefined} data-testid="mentions-link" onclick={() => onselect({ type: 'mentions' })}>
-				<HeroIcon variant="outline" name="at-symbol" /><span class="flex-1">Mentions</span>
-				{#if bar.mentions.length}<span class="text-xs/5 font-semibold text-gray-200">{bar.mentions.length}</span>{/if}
+				<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="at-symbol" />
+				<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+					<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]">Mentions</span>
+				{#if bar.mentions.length}<span class="shrink-0 text-xs/5 font-semibold text-gray-200">{bar.mentions.length}</span>{/if}
+				</span>
 			</button>
 		</li>
 		<li>
 			<button type="button" class="{item} {here({ type: 'threads' }) ? on : off}" aria-current={here({ type: 'threads' }) ? 'true' : undefined} data-testid="threads-link" onclick={() => onselect({ type: 'threads' })}>
-				<HeroIcon variant="outline" name="chat-bubble-left-right" /><span class="flex-1">Threads</span>
-				{#if unreadThreads}<span class="text-xs/5 font-semibold text-gray-200">{unreadThreads}</span>{/if}
+				<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="chat-bubble-left-right" />
+				<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+					<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]">Threads</span>
+				{#if unreadThreads}<span class="shrink-0 text-xs/5 font-semibold text-gray-200">{unreadThreads}</span>{/if}
+				</span>
 			</button>
 		</li>
 	</ul>
@@ -130,7 +139,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="channels">
 			{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
+		<button type="button" class="{item} flex-wrap items-center! gap-x-2! {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewchannel(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> Add channel</button>
 	</div>
 
 	<div>
@@ -138,7 +147,7 @@
 		<ul class="mt-1 space-y-0.5" data-testid="dms">
 			{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 		</ul>
-		<button type="button" class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
+		<button type="button" class="{item} flex-wrap items-center! gap-x-2! {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent" disabled={!officeRunning} onclick={(event) => onnewmessage(event.currentTarget)}><Plus class="size-4" aria-hidden="true" /> New message</button>
 	</div>
 
 	{#if bar.asOwner.length}
