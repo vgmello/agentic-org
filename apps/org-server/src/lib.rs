@@ -18,6 +18,7 @@
 mod bounded;
 pub mod fdswap;
 mod follow;
+pub mod inbox;
 mod launch;
 mod live;
 mod msg_calls;
