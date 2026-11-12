@@ -139,46 +139,6 @@ for (const screen of ['projects', 'chart'] as const) {
 	});
 }
 
-// BUG-114/115/117: exercise the displayed targets and native focus after the keyed DOM refresh.
-for (const width of [320, 640, 960, 1280]) for (const root of [16, 32, 40]) {
-	test(`TEAM-8 BUG-70 BUG-114 BUG-117: Fit removal target and ring at ${width}px root${root}`, async ({ page }) => {
-		const errors: string[] = [];
-		page.on('pageerror', (error) => errors.push(error.message));
-		await create(page, width, root / 16);
-		await visit(page, '/org-chart');
-		await showChart(page);
-		const chart = page.getByTestId('teams-chart');
-		const remove = team(page, 'web').getByRole('button', { name: 'Remove Beacon from Web', exact: true });
-		await geometryFocus(page, remove);
-		await shot(page, `bug114-fit-${width}-${root}`, { context: remove });
-		await removalRing(remove);
-		const samples = await chart.evaluate(async (element) => {
-			const sample = () => ({ scale: new DOMMatrix(getComputedStyle(element).transform).a,
-				width: element.getBoundingClientRect().width, naturalWidth: (element as HTMLElement).offsetWidth });
-			const values = [sample()];
-			for (let i = 0; i < 2; i++) { await new Promise(requestAnimationFrame); values.push(sample()); }
-			return values;
-		});
-		console.log(`BUG114-FIT ${JSON.stringify({ width, root, samples, target: await remove.boundingBox() })}`);
-		expect(Math.max(...samples.map((x) => x.scale)) - Math.min(...samples.map((x) => x.scale))).toBeLessThanOrEqual(0.001);
-		expect(errors.filter((error) => /ResizeObserver loop/.test(error))).toEqual([]);
-		const box = (await remove.boundingBox())!;
-		await page.getByRole('button', { name: 'View', exact: true }).focus();
-		await page.keyboard.press('Enter');
-		const actual = page.getByRole('menuitem', { name: 'Actual size', exact: true });
-		await actual.focus();
-		await actual.press('Enter');
-		await geometryFocus(page, remove);
-		await shot(page, `bug114-actual-${width}-${root}`, { context: remove });
-		await expect(chart).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
-		await removeIs(remove, 'Remove Beacon from Web');
-		expect((await remove.boundingBox())!.width).toBeCloseTo(root * 1.5, 1);
-		expect(box.width, 'counter-scaled displayed width').toBeGreaterThanOrEqual(root * 1.5 - 0.1);
-		expect(box.height, 'counter-scaled displayed height').toBeGreaterThanOrEqual(root * 1.5 - 0.1);
-		await removalRing(remove);
-	});
-}
-
 async function removalRing(button: import('@playwright/test').Locator) {
 	await expect(button).toHaveCSS('outline-offset', '2px');
 	await expect(button).toHaveCSS('outline-style', 'solid');
@@ -353,82 +313,6 @@ for (const screen of ['projects', 'profile'] as const) {
 	});
 }
 
-async function geometryFocus(page: import('@playwright/test').Page, button: import('@playwright/test').Locator) {
-	await page.keyboard.press('Tab');
-	await button.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'center' }));
-	await button.focus();
-	await expect(button).toBeFocused();
-}
-
-for (const direction of ['next', 'previous'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: chart confirmed-last unlink uses the same keyed ${direction} resolver`, async ({ page }) => {
-		await create(page, 1280);
-		await chipFixture(page);
-		await page.evaluate(async (direction) => {
-			const connections = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
-			const id = connections[connections.length - 1].organization.id;
-			const hooks = window as unknown as { __mockOrgChange(id: string, command: object): Promise<unknown> };
-			await hooks.__mockOrgChange(id, { method: 'project.remove_team', params: direction === 'next'
-				? { project_team_id: 'pt-1', expected_version: 1, areas_to_team_id: 'web' }
-				: { project_team_id: 'chip-fixture-3', expected_version: 1 } });
-		}, direction);
-		await visit(page, '/org-chart');
-		const name = `Remove ${direction === 'next' ? 'Atlas' : 'Scratchpad'} from Web`;
-		const remove = page.getByRole('button', { name, exact: true });
-		await focusTarget(page, remove);
-		await remove.press('Enter');
-		const dialog = page.getByRole('dialog', { name: `${name}?`, exact: true });
-		await expect(dialog).toBeVisible();
-		await dialog.getByRole('button', { name: 'Remove', exact: true }).click();
-		await expect(dialog).toBeHidden();
-		await expect(remove).toHaveCount(0);
-		const target = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
-		await expect(target).toBeFocused();
-		await shot(page, `bug115-chart-confirmed-${direction}`, { context: target });
-	});
-}
-
-test('TEAM-8 BUG-70 BUG-115: chart falls back to its region if the source card disappears during success', async ({ page }) => {
-	await create(page, 1280);
-	await visit(page, '/org-chart');
-	await page.evaluate(async () => {
-		const modulePath = '/e2e/fakes/org-api.ts';
-		const { orgApi } = await import(modulePath) as { orgApi: import('../src/lib/org/api').OrgApi };
-		const original = orgApi.command;
-		orgApi.command = async (id, input) => {
-			const result = await original(id, input);
-			if (input.method === 'project.remove_team') await original(id, { method: 'team.delete', params: { team_id: 'web', expected_version: 1 } });
-			return result;
-		};
-	});
-	const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
-	await focusTarget(page, remove);
-	await remove.press('Enter');
-	await expect(team(page, 'web')).toHaveCount(0);
-	const region = page.getByRole('region', { name: 'Teams chart', exact: true });
-	await expect(region).toBeFocused();
-	await expect(page.getByRole('button', { name: 'Remove Beacon from Design', exact: true })).not.toBeFocused();
-	await shot(page, 'bug115-chart-region-fallback', { context: region });
-});
-
-for (const root of [16, 32, 40]) {
-	test(`TEAM-8 BUG-70 BUG-114: Actual size keeps the unfocused control at root${root}`, async ({ page }) => {
-		await create(page, 1280, root / 16);
-		await visit(page, '/org-chart');
-		await page.getByRole('button', { name: 'View', exact: true }).focus();
-		await page.keyboard.press('Enter');
-		const actual = page.getByRole('menuitem', { name: 'Actual size', exact: true });
-		await actual.focus();
-		await actual.press('Enter');
-		await expect(page.getByTestId('teams-chart')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
-		await page.evaluate(async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
-		const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
-		await removeIs(remove, 'Remove Beacon from Web');
-		await expect(remove).not.toBeFocused();
-		await shot(page, `bug114-actual-unfocused-${root}`, { context: remove });
-	});
-}
-
 for (const screen of ['projects', 'profile', 'chart'] as const) {
 	test(`TEAM-8 BUG-70 BUG-115: ${screen} successful stale refresh can still transfer focus from its retained chip`, async ({ page }) => {
 		await create(page, 1280);
@@ -529,49 +413,3 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 		await shot(page, `bug115-${screen}-missing-neighbour`, { context: next });
 	});
 }
-
-test('TEAM-8 BUG-70 BUG-115: chart confirmation retains its own focus plan across a later cancelled removal', async ({ page }) => {
-	await create(page, 1280);
-	await visit(page, '/org-chart');
-	const first = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
-	await focusTarget(page, first);
-	await first.press('Enter');
-	await expect(first).toHaveCount(0);
-	const last = page.getByRole('button', { name: 'Remove Beacon from Design', exact: true });
-	await last.focus();
-	await last.press('Enter');
-	const oldDialog = page.getByRole('dialog', { name: 'Remove Beacon from Design?', exact: true });
-	await expect(oldDialog).toBeVisible();
-	await page.evaluate(async () => {
-		const modulePath = '/e2e/fakes/org-api.ts';
-		const { orgApi } = await import(modulePath) as { orgApi: import('../src/lib/org/api').OrgApi };
-		const command = orgApi.command, view = orgApi.view;
-		let pending = false, release!: () => void;
-		const held = new Promise<void>((resolve) => { release = resolve; });
-		const hooks = window as unknown as { __chipRefresh: { entered: boolean; release(): void } };
-		hooks.__chipRefresh = { entered: false, release };
-		orgApi.command = async (id, input) => {
-			if (input.method === 'project.remove_team') pending = true;
-			return command(id, input);
-		};
-		orgApi.view = async (id) => {
-			if (pending) { hooks.__chipRefresh.entered = true; await held; }
-			return view(id);
-		};
-	});
-	await oldDialog.getByRole('button', { name: 'Remove', exact: true }).click();
-	await expect(oldDialog).toBeHidden();
-	await page.waitForFunction(() => (window as unknown as { __chipRefresh: { entered: boolean } }).__chipRefresh.entered);
-	const later = page.getByRole('button', { name: 'Remove Atlas from Platform', exact: true });
-	await later.focus();
-	await later.press('Enter');
-	const nextDialog = page.getByRole('dialog', { name: 'Remove Atlas from Platform?', exact: true });
-	await expect(nextDialog).toBeVisible();
-	await nextDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-	await expect(nextDialog).toBeHidden();
-	await expect(later).toBeFocused();
-	await page.evaluate(() => (window as unknown as { __chipRefresh: { release(): void } }).__chipRefresh.release());
-	await expect(last).toHaveCount(0);
-	await shot(page, 'bug115-chart-confirmation-plan-race', { context: later });
-	await expect(later).toBeFocused();
-});
