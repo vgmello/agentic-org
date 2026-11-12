@@ -246,6 +246,43 @@ fn flags(value: &str) {
         }
     }
 }
+// Cargo manifests have extensible package/dependency metadata. Cargo configuration
+// is a separate input: only the tables and keys modeled by this fence are admitted.
+pub(super) fn cargo_config(source: &str) {
+    // No tracked Cargo configuration currently sets an environment variable:
+    // the reviewed environment-name allowlist is empty.
+    let mut section = Vec::new();
+    for line in statements(source) {
+        if line.starts_with('[') {
+            let header = line
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .expect("unsupported Cargo config table");
+            section = key(header);
+            let names = section.iter().map(String::as_str).collect::<Vec<_>>();
+            assert!(
+                matches!(
+                    names.as_slice(),
+                    ["build"] | ["target"] | ["target", _] | ["env"]
+                ),
+                "unknown Cargo config table"
+            );
+            continue;
+        }
+        let fields = split(&line, '=');
+        let [name, value] = fields.as_slice() else {
+            panic!("unsupported Cargo config key");
+        };
+        let mut path = section.clone();
+        path.extend(key(name));
+        let names = path.iter().map(String::as_str).collect::<Vec<_>>();
+        match names.as_slice() {
+            ["build", "rustflags"] | ["target", _, "rustflags"] => flags(value),
+            _ => panic!("unknown Cargo config key"),
+        }
+    }
+}
+
 pub(super) fn config(source: &str) {
     let mut section = Vec::new();
     for line in statements(source) {

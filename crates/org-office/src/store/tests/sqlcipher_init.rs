@@ -485,8 +485,15 @@ fn opener_policy_config(path: &Path) -> bool {
 
 fn check_opener_config(path: &Path, config: &str) {
     assert!(
-        std::panic::catch_unwind(|| opener_policy::config(config)).is_ok(),
-        "{} weakens the SQLCipher opener policy",
+        std::panic::catch_unwind(|| {
+            if path.file_name().is_some_and(|name| name == "Cargo.toml") {
+                opener_policy::config(config);
+            } else {
+                opener_policy::cargo_config(config);
+            }
+        })
+        .is_ok(),
+        "{} has unsupported or weakening SQLCipher opener configuration",
         path.display()
     );
 }
@@ -517,7 +524,7 @@ fn sqlcipher_policy_scans_source_directories_and_cargo_configuration() {
     ] {
         let path = Path::new(path);
         assert!(opener_policy_config(path));
-        check_opener_config(path, "[lints.clippy]\ntoo_many_arguments = \"allow\"");
+        check_opener_config(path, "[build]\nrustflags = ['-Dclippy::all']");
         for lint in ["disallowed_method", "disallowed_methods"] {
             for config in [
                 format!("[lints.clippy]\n{lint} = \"allow\""),
@@ -1265,6 +1272,74 @@ fn host_override_inventory_accepts_only_three_exact_statements() {
                 &accepted.replace(prefix, "")
             ))
             .is_err());
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_cargo_configuration_refuses_unknown_keys_and_tables() {
+    let path = Path::new(".cargo/config.toml");
+    let mut accepted = Vec::new();
+    for source in [
+        "include = ['lints.toml']",
+        "[[include]]\npath = 'lints.toml'",
+        "[unknown_table]",
+        "[build]\nunknown_key = 'value'",
+        "[build]\nrustc-wrapper = 'redirect'",
+        "[build]\nrustc-workspace-wrapper = 'redirect'",
+        "[target.x86_64-unknown-linux-gnu]\nlinker = 'redirect'",
+        "[alias]\ncheck = 'clippy -- --cap-lints=allow'",
+        "[env.OTHER.unknown_table]",
+        "[env]\nOTHER.unknown_key = 'value'",
+    ] {
+        if std::panic::catch_unwind(|| check_opener_config(path, source)).is_ok() {
+            accepted.push(source);
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted unknown Cargo configuration: {accepted:?}"
+    );
+}
+
+#[test]
+fn sqlcipher_cargo_configuration_preserves_known_keys_and_manifest_metadata() {
+    for source in [
+        "[build]\nrustflags = ['-Dclippy::all']",
+        "target.'cfg(unix)'.rustflags = '-D clippy::all'",
+        "target.'cfg(target_os = \"linux\")'.rustflags = '-D clippy::all'",
+        "[target.x86_64-unknown-linux-gnu]\nrustflags = '-D clippy::all'",
+        "[env]",
+    ] {
+        check_opener_config(Path::new(".cargo/config.toml"), source);
+    }
+    check_opener_config(
+        Path::new("Cargo.toml"),
+        "[package.metadata]\nnote = 'application-specific manifest metadata'",
+    );
+    for name in [
+        "CLIPPY_ARGS",
+        "CLIPPY_CONF_DIR",
+        "CLIPPY_FUTURE",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "OTHER",
+    ] {
+        for source in [
+            format!("[env]\n{name} = 'redirect'"),
+            format!("[env.{name}]\nvalue = 'redirect'"),
+            format!("[env]\n{name} = {{ value = 'redirect', force = true }}"),
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| check_opener_config(
+                    Path::new(".cargo/config.toml"),
+                    &source
+                ))
+                .is_err(),
+                "accepted {source}"
+            );
         }
     }
 }
