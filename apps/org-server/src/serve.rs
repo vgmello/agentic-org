@@ -1214,6 +1214,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn launch_auth_accepts_only_the_matching_legacy_app_token() {
+        let matching = AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]);
+        let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
+        let grants = LaunchAuth::Grants {
+            _key: org_proto::GrantKey::from_bytes([7; 32]),
+        };
+        assert!(!grants.accepts(&matching));
+        assert!(!grants.accepts(&wrong));
+
+        let legacy = LaunchAuth::Legacy(AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES]));
+        assert!(legacy.accepts(&matching));
+        assert!(!legacy.accepts(&wrong));
+    }
+
+    #[test]
     fn grants_bind_refuses_before_params_or_directory_and_clears_each_prior_binding() {
         struct ForbiddenDirectory;
         impl MemberDirectory for ForbiddenDirectory {
