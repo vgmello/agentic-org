@@ -449,6 +449,51 @@ describe('a manifest that cannot be read', () => {
 	});
 });
 
+describe('the command line with a manifest that cannot be read, on a clean tree', () => {
+	const realBun = execFileSync('which', ['bun'], { encoding: 'utf8' }).trim();
+	const sandbox = () => {
+		const dir = mkdtempSync(join(tmpdir(), 'ui-gate-clean-'));
+		const sh = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+		mkdirSync(join(dir, 'scripts'));
+		mkdirSync(join(dir, 'e2e'));
+		mkdirSync(join(dir, 'bin'));
+		for (const file of ['ui-gate.ts', 'ui-gate-lib.ts']) writeFileSync(join(dir, 'scripts', file), readFileSync(join(app, 'scripts', file)));
+		writeFileSync(join(dir, 'e2e/gate-manifest.json'), '{ not json');
+		// A stand-in for bun in the steps: `build` succeeds, any other call logs itself and exits with the status in FAKE_STATUS.
+		writeFileSync(join(dir, 'bin/bun'), '#!/bin/sh\n[ "$2" = build ] && exit 0\necho "$@" >> "$FAKE_LOG"\nexit "${FAKE_STATUS:-0}"\n', { mode: 0o755 });
+		sh('init', '-q');
+		sh('add', '-A');
+		sh('commit', '-q', '-m', 'x');
+		const run = (command: string, env: Record<string, string> = {}) => spawnSync(realBun, [join(dir, 'scripts/ui-gate.ts'), command, '--base', 'HEAD'], { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, FAKE_LOG: join(dir, 'fake.log'), ...env } });
+		return { dir, run };
+	};
+
+	it('plans the full suite, not journeys only, when nothing changed and the manifest is broken', () => {
+		const { dir, run } = sandbox();
+		try {
+			const selected = run('select');
+			expect(selected.status).toBe(0);
+			expect(selected.stdout).toContain('ordinary: full suite');
+			expect(selected.stdout).toContain('csp: full interactive');
+			expect(selected.stdout).toContain('gateway CSP');
+			expect(selected.stdout).not.toContain('ordinary: journeys');
+		} finally { rmSync(dir, { recursive: true, force: true }); }
+	});
+
+	it('exits with the status of the first failing step, and 0 only when all steps passed', () => {
+		const { dir, run } = sandbox();
+		try {
+			const red = run('run', { FAKE_STATUS: '7' });
+			expect(red.status).toBe(7);
+			expect(red.stdout).toContain('== ordinary: full suite');
+			expect(red.stdout).not.toContain('== csp: full interactive');
+			const green = run('run', { FAKE_STATUS: '0' });
+			expect(green.status).toBe(0);
+			expect(green.stdout).toContain('== gateway CSP (3 tests)');
+		} finally { rmSync(dir, { recursive: true, force: true }); }
+	});
+});
+
 describe('changed files from git', () => {
 	const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
 	const sandbox = () => {
