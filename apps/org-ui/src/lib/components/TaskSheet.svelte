@@ -64,8 +64,8 @@
 
 	async function load(reset: boolean) {
 		if (!taskId) return;
+		const forTask = taskId;
 		try {
-			const forTask = taskId;
 			const got = await workApi.get(organizationId, taskId);
 			if (forTask !== taskId) return;
 			item = got;
@@ -82,7 +82,8 @@
 				definitionOfDone = got.definition_of_done ?? '';
 			}
 		} catch (e) {
-			error = toAppError(e).message;
+			// An answer for a task that is no longer the one open says nothing about this one.
+			if (forTask === taskId) error = toAppError(e).message;
 		}
 	}
 
@@ -216,7 +217,7 @@
 					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
 
-				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-white" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
+				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
 				{#if fixed.length > 0}<p class="text-sm/6 text-gray-300" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
 
 				<div class="grid gap-4 sm:grid-cols-2">

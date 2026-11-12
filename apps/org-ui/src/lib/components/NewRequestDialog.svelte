@@ -102,8 +102,7 @@
 	$effect(() => {
 		const lookup = open ? find : undefined;
 		const needle = text.trim();
-		// What was found for the words before is not about these words: it goes at once.
-		similar = [];
+		// What was found stays on screen while the words change (the controls below do not jump), until the answer for the new words arrives or the words are too short.
 		if (!lookup || [...needle].length < 8) {
 			similar = [];
 			return;
@@ -140,7 +139,7 @@
 	const ambiguous = $derived(at?.kind === 'partial' ? at : undefined);
 	const textError = $derived(touched && words.trim() === '' ? (atMember && text.trim() !== '' ? `Write what you need after @${at?.kind === 'exact' ? at.token : ''}.` : 'Write what you need.') : undefined);
 	// Picking someone in the list instead settles it: the handle is then just words.
-	const cannotSend = $derived((unknownHandle !== undefined || ambiguous !== undefined) && !(picked !== undefined && pickStands));
+	const cannotSend = $derived((unknownHandle !== undefined || ambiguous !== undefined) && !(picked !== undefined && pickStands && scoperId !== undefined));
 	const sendLabel = $derived(confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
 
 	/** Whether closing now should ask first: words typed, nothing in flight. */
@@ -198,7 +197,13 @@
 		text = withHandle(text, m);
 		picked = undefined;
 		pickedAt = undefined;
-		queueMicrotask(() => field?.focus());
+		// The caret stays at the end of the handle, where the owner was, not at the end of the words.
+		const end = atSpan(text) ?? text.length;
+		queueMicrotask(() => {
+			field?.focus();
+			field?.setSelectionRange(end, end);
+			caret = end;
+		});
 	}
 
 	/** The words become a note on a request that was already there. */
@@ -273,12 +278,14 @@
 </script>
 
 <Dialog bind:open={() => open, setOpen}>
-	<DialogContent class="sm:max-w-xl">
+	<DialogContent class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl">
 		<DialogHeader>
 			<DialogTitle text={'New request'} />
 			<DialogDescription>A request isn't a task yet. Whoever scopes it turns it into a feature you can approve.</DialogDescription>
 		</DialogHeader>
-		<form class="space-y-4" onsubmit={(e) => (e.preventDefault(), void submit(true))} novalidate>
+		<form class="flex min-h-0 flex-col gap-4" onsubmit={(e) => (e.preventDefault(), void submit(true))} novalidate>
+			<!-- The body scrolls when the window or the text is too small for it; the buttons below it stay in view. -->
+			<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-0.5 py-0.5">
 			<div class="space-y-2">
 				<Label for="new-request-text">What do you need?</Label>
 				<textarea
@@ -296,6 +303,7 @@
 					onselect={trackCaret}
 					role="combobox"
 					aria-autocomplete="list"
+					aria-describedby={cannotSend ? 'handle-problem' : undefined}
 					aria-expanded={completions.length > 0}
 					aria-haspopup="listbox"
 					aria-controls={completions.length > 0 ? 'at-list' : undefined}
@@ -307,9 +315,8 @@
 				{#if completions.length > 0}
 					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
 						{#each completions as m, i (m.id)}
-							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)}>
-								<button type="button" tabindex="-1" class="rounded-md px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/10 {i === Math.min(activeAt, completions.length - 1) ? 'bg-white/15 outline-2 outline-indigo-400' : 'bg-white/5'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-gray-400">@{handleFor(m)}</span></button>
-							</li>
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)} class="cursor-pointer rounded-md px-2 py-1 text-sm/6 text-gray-100 hover:bg-white/10 {i === Math.min(activeAt, completions.length - 1) ? 'bg-white/15 outline-2 outline-indigo-400' : 'bg-white/5'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-gray-300">@{handleFor(m)}{m.agent?.title ? ` · ${m.agent.title}` : ''}{m.agent?.status === 'paused' ? ' · paused' : ''}</span></li>
 						{/each}
 					</ul>
 					<p class="text-xs/5 text-gray-400">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
@@ -345,18 +352,18 @@
 				<legend class="flex items-center gap-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
 				{#if atMember && !suggestions.some((x) => x.member.id === atMember.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onchange={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 						<span><span class="font-semibold text-white">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
 					</label>
 				{/if}
 				{#each suggestions as s (s.member.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onchange={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 						<span><span class="font-semibold text-white">{s.member.name}</span>, {s.why}</span>
 					</label>
 				{/each}
 				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
+					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5" />
 					<span class="flex flex-wrap items-center gap-2">Someone else…
 						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 							<option value="">Choose…</option>
@@ -369,7 +376,8 @@
 			{#if message && !scoperId}<p id="message-hint" class="text-xs/5 text-gray-400" data-testid="message-hint">Choose who to message.</p>{/if}
 			{#if warning}<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
-			<DialogFooter>
+			</div>
+			<DialogFooter class="shrink-0">
 				{#if asking}
 					<p class="mr-auto self-center text-sm/6 text-gray-200" role="alert" data-testid="keep-draft">Keep as a draft?</p>
 					<Button type="button" variant="outline" onclick={back}>Back</Button>

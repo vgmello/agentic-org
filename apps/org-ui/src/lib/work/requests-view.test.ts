@@ -317,7 +317,7 @@ describe('RQS-7 the queue filters', () => {
 
 describe('RQS-4 the words without the handle that routed them', () => {
 	it('drops the @handle at the start and the punctuation after it, and nothing else', () => {
-		expect([withoutHandle('@sam! fix'), withoutHandle('@sam fix the build time'), withoutHandle('  @sam: fix it'), withoutHandle('@sam, fix it @ada'), withoutHandle('@Éden.  Costs'), withoutHandle('ask @sam later'), withoutHandle('@sam'), withoutHandle('@@sam x')]).toEqual(['fix', 'fix the build time', 'fix it', 'fix it @ada', 'Costs', 'ask @sam later', '', '@@sam x']);
+		expect([withoutHandle('@sam! fix'), withoutHandle('@sam,, x'), withoutHandle('@sam — x'), withoutHandle('@sam - x'), withoutHandle('@sam fix the build time'), withoutHandle('  @sam: fix it'), withoutHandle('@sam, fix it @ada'), withoutHandle('@Éden.  Costs'), withoutHandle('ask @sam later'), withoutHandle('@sam'), withoutHandle('@@sam x')]).toEqual(['fix', 'x', 'x', 'x', 'fix the build time', 'fix it', 'fix it @ada', 'Costs', 'ask @sam later', '', '@@sam x']);
 	});
 });
 

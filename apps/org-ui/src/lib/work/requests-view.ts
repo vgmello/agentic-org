@@ -281,7 +281,7 @@ export const atSpan = (text: string): number | undefined => AT.exec(text)?.[0].l
 export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugOf(m.name);
 
 /** The words without the `@handle` that routed them (and the colon or comma after it): "fix the build time", not "@sam: fix the build time". */
-export const withoutHandle = (text: string): string => text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[:,;.!?]?\s*/u, '$1').trimStart();
+export const withoutHandle = (text: string): string => text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[\s:,;.!?\-–—]*/u, '$1').trimStart();
 
 /** The words with their `@token` at the start replaced by `@handle`. */
 export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);
