@@ -23,6 +23,8 @@ org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
 serde.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
