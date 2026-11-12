@@ -1172,13 +1172,20 @@ fn a_partly_written_event_ends_the_rendezvous_so_nothing_follows_the_truncated_f
     );
     let writer = Arc::new(Mutex::new(socket));
     // The host reads nothing, so the frame only partly fits before its deadline.
-    let error = write_event(
+    let start = std::time::Instant::now();
+    let error = write_event_within(
         &writer,
         &RendezvousEvent::FdsReceived {
             of: "x".repeat(org_proto::MAX_FRAME_BYTES / 2),
         },
+        // Room for encoding the half-max frame before the first byte, even on a busy runner.
+        Duration::from_millis(400),
     )
     .unwrap_err();
+    assert!(
+        start.elapsed() < Duration::from_secs(3),
+        "the test seam's deadline is used"
+    );
     assert!(
         matches!(error, LaunchError::Frame(FrameError::Io(_))),
         "unexpected bounded write outcome: {error}"
@@ -1213,4 +1220,65 @@ fn writer_is_available_only_for_the_authenticated_rendezvous_transport() {
     let writer = Arc::new(Mutex::new(socket));
     control.rendezvous = Some(Arc::clone(&writer));
     assert!(Arc::ptr_eq(&control.writer().unwrap(), &writer));
+}
+
+#[test]
+fn end_on_io_ends_the_rendezvous_only_after_an_io_error() {
+    let io_error = || LaunchError::Frame(FrameError::Io(io::ErrorKind::BrokenPipe.into()));
+    let cases: [(Result<(), LaunchError>, bool); 3] = [
+        (Ok(()), false),
+        (Err(LaunchError::Frame(FrameError::TooLargeToSend)), false),
+        (Err(io_error()), true),
+    ];
+    for (result, ends) in cases {
+        let (socket, mut peer) = UnixStream::pair().unwrap();
+        let _ = end_on_io(&socket, result);
+        // An ended rendezvous refuses later writes, and its peer reads EOF.
+        assert_eq!((&socket).write_all(b"late").is_err(), ends);
+        peer.set_read_timeout(Some(WAIT)).unwrap();
+        let mut first = [0; 4];
+        let read = peer.read(&mut first).unwrap();
+        assert_eq!(read == 0, ends);
+    }
+    // Ending an already ended rendezvous returns the write's error unchanged.
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    socket.shutdown(std::net::Shutdown::Both).unwrap();
+    assert!(end_on_io(&socket, Err::<(), _>(io_error())).is_err());
+}
+
+#[test]
+fn only_an_unexpected_shutdown_failure_is_logged() {
+    assert!(!worth_logging(&io::ErrorKind::NotConnected.into()));
+    assert!(worth_logging(&io::ErrorKind::BrokenPipe.into()));
+    assert!(worth_logging(&io::Error::from_raw_os_error(libc::EBADF)));
+}
+
+#[test]
+fn a_failed_handshake_ack_ends_the_rendezvous() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (_dir, listener, path) = listener();
+    let (mut control, _output) = launch(&first(&path, FirstLine::Start));
+    let (transfer, _host_end) = UnixDatagram::pair().unwrap();
+    let (done, hold) = std::sync::mpsc::channel::<()>();
+    let host = std::thread::spawn(move || {
+        let (stream, _reader) = accept(listener);
+        // The host stops reading (so the ACK fails) but stays connected and can still write.
+        stream.shutdown(std::net::Shutdown::Read).unwrap();
+        (&stream)
+            .write_all(&v3::encode_handoff(&handoff(FirstLine::Start)).unwrap())
+            .unwrap();
+        send_fds(&stream, v3::FD_MARKER, &[transfer.as_raw_fd()]);
+        let _ = hold.recv_timeout(WAIT);
+    });
+    let failed = control.read(FirstLine::Start);
+    assert!(matches!(failed, Err(LaunchError::Frame(FrameError::Io(_)))));
+    // The worker ended its own side too: it reads EOF at once though the host is connected.
+    let writer = control.rendezvous.as_ref().unwrap().lock().unwrap();
+    let mut ours = writer.try_clone().unwrap();
+    drop(writer);
+    ours.set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    assert_eq!(ours.read(&mut [0; 1]).unwrap(), 0);
+    done.send(()).unwrap();
+    host.join().unwrap();
 }

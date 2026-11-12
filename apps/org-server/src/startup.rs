@@ -94,7 +94,8 @@ impl Control {
                     .lock()
                     .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
                 let stream = &mut *writer;
-                frame::write_message(stream, &v3::ReadyForSecrets).map_err(LaunchError::Frame)?;
+                let ready = frame::write_message(stream, &v3::ReadyForSecrets);
+                end_on_io(stream, ready.map_err(LaunchError::Frame))?;
                 let receiver = self
                     .receiver
                     .insert(StreamReceiver::new(stream.try_clone().map_err(io_error)?));
@@ -116,12 +117,13 @@ impl Control {
                         receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &self.fence)
                     })?;
                     self.transfer = fds.pop();
-                    v3::write_rendezvous_event(
+                    let received = v3::write_rendezvous_event(
                         stream,
                         &RendezvousEvent::FdsReceived {
                             of: "handoff".into(),
                         },
-                    )?;
+                    );
+                    end_on_io(stream, received)?;
                 }
                 Ok(Some(Request::V3 { line, handoff }))
             }
@@ -299,16 +301,39 @@ pub(super) fn write_event(
     writer: &EventWriter,
     event: &RendezvousEvent,
 ) -> Result<(), LaunchError> {
+    write_event_within(writer, event, std::time::Duration::from_secs(5))
+}
+
+/// `write_event` with its whole-frame deadline as a parameter (tests use a short one).
+fn write_event_within(
+    writer: &EventWriter,
+    event: &RendezvousEvent,
+    limit: std::time::Duration,
+) -> Result<(), LaunchError> {
     let stream = writer
         .lock()
         .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
-    let mut output = crate::bounded::writer(&stream, std::time::Duration::from_secs(5));
+    let mut output = crate::bounded::writer(&stream, limit);
     let result = v3::write_rendezvous_event(&mut output, event);
+    end_on_io(&stream, result)
+}
+
+/// Every rendezvous write goes through this, with the writer lock still held: after an I/O
+/// error part of a frame may already be on the wire, so the rendezvous ends (both ways) and no
+/// later ACK or event can follow a truncated frame. Encoding errors fail before any byte is
+/// written and keep it open. A failed shutdown is logged unless the peer was already gone.
+fn end_on_io<T>(stream: &UnixStream, result: Result<T, LaunchError>) -> Result<T, LaunchError> {
     if let Err(LaunchError::Frame(FrameError::Io(_))) = &result {
-        // Part of the frame may already be on the wire: end the rendezvous while still holding
-        // the lock, so no later ACK or event can follow a truncated frame. Encoding errors fail
-        // before any byte is written and keep the rendezvous open.
-        let _ = stream.shutdown(std::net::Shutdown::Both);
+        if let Err(error) = stream.shutdown(std::net::Shutdown::Both) {
+            if worth_logging(&error) {
+                eprintln!("org-server: rendezvous shutdown failed: {error}");
+            }
+        }
     }
     result
+}
+
+/// `ENOTCONN` only says the peer already ended the connection; anything else is unexpected.
+fn worth_logging(shutdown: &io::Error) -> bool {
+    shutdown.kind() != io::ErrorKind::NotConnected
 }
