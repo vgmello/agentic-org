@@ -38,7 +38,7 @@ pub(super) fn checkpoint(step: u8) -> Result<(), Error> {
     Ok(())
 }
 #[derive(Default)]
-struct Secrets(Mutex<BTreeMap<Name, Vec<u8>>>);
+pub(super) struct Secrets(Mutex<BTreeMap<Name, Vec<u8>>>);
 impl HostSecrets for Secrets {
     fn put(&self, name: &Name, value: &Value) -> Result<(), crate::host_secrets::Error> {
         self.0
@@ -88,7 +88,7 @@ fn init(tls: bool) -> HostDbInit {
         }),
     }
 }
-fn fixture() -> (tempfile::TempDir, Secrets, HostDb) {
+pub(super) fn fixture() -> (tempfile::TempDir, Secrets, HostDb) {
     let home = home();
     let secrets = Secrets::default();
     let db = HostDb::create(home.path(), &secrets, &init(true)).unwrap();

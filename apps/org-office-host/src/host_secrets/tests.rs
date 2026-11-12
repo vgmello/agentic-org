@@ -8,7 +8,7 @@ struct Memory(Mutex<BTreeMap<Name, Value>>);
 impl HostSecrets for Memory {
     fn put(&self, n: &Name, v: &Value) -> Result<(), Error> {
         let mut values = self.0.lock().unwrap();
-        if n.as_str().starts_with("tls.") && values.contains_key(n) {
+        if n.is_add_only() && values.contains_key(n) {
             return Ok(());
         }
         values.insert(n.clone(), Value::new(v.expose().to_vec())?);
@@ -99,6 +99,14 @@ fn names_accept_only_the_three_frozen_forms() {
     ] {
         assert_eq!(Name::parse(&bad), Err(Error::InvalidName));
     }
+}
+#[test]
+fn only_tls_names_are_add_only() {
+    assert!(Name::parse(&format!("tls.{}", "a".repeat(64)))
+        .unwrap()
+        .is_add_only());
+    assert!(!Name::parse("registry").unwrap().is_add_only());
+    assert!(!Name::parse("recovery.Abc123").unwrap().is_add_only());
 }
 #[test]
 fn values_are_bounded_redacted_and_wiped() {
@@ -695,6 +703,55 @@ mod development {
     }
 
     #[test]
+    fn tls_collision_winner_removed_before_reread_is_refused() {
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        let raw = format!("tls.{}", "a".repeat(64));
+        let name = Name::parse(&raw).unwrap();
+        let first = raw.clone();
+        super::PUBLISH_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |dir| write(&dir.join(first), b"first")));
+        });
+        super::COLLISION_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |dir| fs::remove_file(dir.join(raw)).unwrap()));
+        });
+        assert_eq!(
+            store.put(&name, &Value::new(b"second".to_vec()).unwrap()),
+            Err(Error::Unsafe)
+        );
+        assert!(store.load(&name).unwrap().is_none());
+        assert!(fs::read_dir(f.dir(A)).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".put.")));
+    }
+
+    #[test]
+    fn existing_tls_returns_before_the_real_publish_hook() {
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        let name = Name::parse(&format!("tls.{}", "a".repeat(64))).unwrap();
+        store
+            .put(&name, &Value::new(b"first".to_vec()).unwrap())
+            .unwrap();
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = std::rc::Rc::clone(&calls);
+        super::PUBLISH_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |_| observed.set(observed.get() + 1)));
+        });
+        let result = store.put(&name, &Value::new(b"second".to_vec()).unwrap());
+        let unused = super::PUBLISH_HOOK.with(|hook| hook.borrow_mut().take());
+        result.unwrap();
+        assert_eq!(calls.get(), 0);
+        assert!(
+            unused.is_some(),
+            "fast path leaves the one-shot publication hook unused"
+        );
+        assert_eq!(store.load(&name).unwrap().unwrap().expose(), b"first");
+    }
+
+    #[test]
     fn tls_native_publish_collision_and_error_preserve_state_and_clean_temps() {
         for mode in ["existing", "symlink", "missing-temporary"] {
             let f = Fixture::new();
@@ -991,6 +1048,14 @@ fn release_factory_ignores_dev_base_and_uses_only_compiled_group() {
 type PublishHook = Box<dyn FnOnce(&std::path::Path)>;
 #[cfg(debug_assertions)]
 thread_local! { static PUBLISH_HOOK: std::cell::RefCell<Option<PublishHook>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(debug_assertions)]
+thread_local! { static COLLISION_HOOK: std::cell::RefCell<Option<PublishHook>> = const { std::cell::RefCell::new(None) }; }
+#[cfg(debug_assertions)]
+pub(super) fn after_collision(path: &std::path::Path) {
+    if let Some(hook) = COLLISION_HOOK.with(|hook| hook.borrow_mut().take()) {
+        hook(path);
+    }
+}
 #[cfg(debug_assertions)]
 pub(super) fn before_publish(path: &std::path::Path) {
     let hook = PUBLISH_HOOK.with(|hook| hook.borrow_mut().take());

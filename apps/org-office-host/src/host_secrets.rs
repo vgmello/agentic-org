@@ -41,6 +41,13 @@ impl Name {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
+    #[cfg_attr(
+        not(any(test, debug_assertions, target_os = "macos")),
+        expect(dead_code, reason = "host custody adapters")
+    )]
+    fn is_add_only(&self) -> bool {
+        self.0.starts_with("tls.")
+    }
 }
 
 pub(crate) struct Value(Vec<u8>);

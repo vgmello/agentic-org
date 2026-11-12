@@ -151,7 +151,7 @@ impl HostSecrets for DevSecrets {
             return Err(Error::TooLarge);
         }
         let _guard = self.gate.lock().map_err(|_| Error::Unsafe)?;
-        let add_only = name.as_str().starts_with("tls.");
+        let add_only = name.is_add_only();
         if self.item(name.as_str())?.is_some() && add_only {
             return Ok(());
         }
@@ -184,7 +184,9 @@ impl HostSecrets for DevSecrets {
                 if !add_only || error.kind() != io::ErrorKind::AlreadyExists {
                     return Err(error.into());
                 }
-                self.item(name.as_str())?;
+                #[cfg(test)]
+                super::tests::after_collision(&self.path);
+                self.item(name.as_str())?.ok_or(Error::Unsafe)?;
             }
             if add_only {
                 self.remove(&temporary)?;

@@ -116,7 +116,7 @@ impl HostSecrets for Keychain {
         add.extend(Self::add_policy());
         add.push((key, data));
         let add = dictionary(add);
-        if name.as_str().starts_with("tls.") {
+        if name.is_add_only() {
             return match self.calls.add(&add) {
                 Ok(()) | Err(DUPLICATE) => Ok(()),
                 Err(e) => Err(Error::Os(e)),
