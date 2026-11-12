@@ -771,6 +771,14 @@
   },
   "login_normalization": [
     {
+      "input": "Ａdmin",
+      "normalized": "ａdmin"
+    },
+    {
+      "input": "x²",
+      "normalized": "x²"
+    },
+    {
       "input": "Straße",
       "normalized": "strasse"
     },

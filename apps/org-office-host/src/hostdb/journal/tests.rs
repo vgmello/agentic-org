@@ -362,6 +362,7 @@ fn refusals_are_replayed_without_verifiers_and_unstored_errors_rollback() {
         org_proto::ErrorCode::NotAuthorized,
         org_proto::ErrorCode::Unavailable,
         org_proto::ErrorCode::StorageError,
+        org_proto::ErrorCode::Cancelled,
     ] {
         let ident = id(NOW, 3);
         assert!(matches!(
@@ -952,4 +953,119 @@ fn pruning_and_clock_roll_back_with_the_effect_and_delete_failures() {
         ),
         123
     );
+}
+
+#[test]
+fn deleting_one_accounts_verifiers_preserves_another_accounts_create_replay() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    let first = id(NOW, 1);
+    let second = id(NOW, 2);
+    let first = Attempt {
+        kind: "account.create",
+        ..attempt(&first)
+    };
+    let second = Attempt {
+        kind: "account.create",
+        ..attempt(&second)
+    };
+    db.write(&first, NOW, |_| Ok(create_effect("created-a")))
+        .unwrap();
+    db.write(&second, NOW, |_| {
+        let mut effect = create_effect("created-b");
+        effect.verifier = Some((
+            "created-b".into(),
+            Verifier::new("second-create-time-PHC".into()),
+        ));
+        Ok(effect)
+    })
+    .unwrap();
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_verifiers"), 2);
+    let change = id(NOW, 3);
+    db.write(&attempt(&change), NOW, |tx| {
+        delete_verifiers(tx, "created-a")?;
+        Ok(completed())
+    })
+    .unwrap();
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_verifiers"), 1);
+    assert!(matches!(
+        db.lookup(&first, NOW),
+        Err(Error::OperationReused)
+    ));
+    match db.lookup(&second, NOW).unwrap() {
+        Lookup::NeedsVerification { verifier, stored } => {
+            assert_eq!(verifier.expose(), "second-create-time-PHC");
+            assert_eq!(stored, create_effect("created-b").stored);
+        }
+        _ => panic!("the other account must retain its own create-time verifier"),
+    }
+}
+
+#[test]
+fn a_late_recorded_operation_expires_thirty_days_after_its_id() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    let ident = id(NOW, 1);
+    let op = attempt(&ident);
+    db.write(&op, NOW + DAY, |_| Ok(completed())).unwrap();
+    assert_replay(&db, &op, NOW + 30 * DAY - 1, completed().stored);
+    assert!(matches!(
+        db.lookup(&op, NOW + 30 * DAY),
+        Err(Error::Expired)
+    ));
+}
+
+#[test]
+fn a_failed_prune_commit_preserves_rows_verifiers_and_clock_after_reopen() {
+    let (home, secrets, db) = super::super::tests::fixture();
+    let ident = id(NOW, 1);
+    let op = Attempt {
+        kind: "account.create",
+        ..attempt(&ident)
+    };
+    db.write(&op, NOW, |_| Ok(create_effect("created")))
+        .unwrap();
+    db.connection
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE prune_commit_probe (
+             operation_id TEXT REFERENCES op_journal(operation_id) DEFERRABLE INITIALLY DEFERRED
+         );
+         CREATE TRIGGER fail_prune_commit AFTER DELETE ON op_journal
+         BEGIN INSERT INTO prune_commit_probe VALUES ('missing'); END;",
+        )
+        .unwrap();
+    assert_eq!(
+        db.prune(NOW + 30 * DAY),
+        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+    );
+    for table in ["op_journal", "op_verifiers"] {
+        assert_eq!(scalar(&db, &format!("SELECT count(*) FROM {table}")), 1);
+    }
+    assert_eq!(scalar(&db, "SELECT count(*) FROM prune_commit_probe"), 0);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='clock_high_ms'"
+        ),
+        NOW
+    );
+    drop(db);
+    let db = HostDb::open(home.path(), &secrets).unwrap();
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 1);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM op_verifiers"), 1);
+    assert_eq!(scalar(&db, "SELECT count(*) FROM prune_commit_probe"), 0);
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='clock_high_ms'"
+        ),
+        NOW
+    );
+    match db.lookup(&op, NOW).unwrap() {
+        Lookup::NeedsVerification { verifier, stored } => {
+            assert_eq!(verifier.expose(), "opaque-create-time-PHC");
+            assert_eq!(stored, create_effect("created").stored);
+        }
+        _ => panic!("failed pruning must preserve create replay after reopen"),
+    }
 }
