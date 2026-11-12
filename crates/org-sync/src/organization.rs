@@ -139,8 +139,9 @@ pub trait AuthorityVerifier: Send + Sync {
 }
 
 /// Issued by the trusted staging/codec adapter after manifest, data, schema, encryption and
-/// user-visible restore-warning checks. For initial materialization its base comes from
-/// the verified authority/enrollment record, never the replica's placeholder cursor.
+/// user-visible restore-warning checks. In v1, the initial base comes from the
+/// authenticated HQ peer's snapshot; enrollment's seq-0 digest is a placeholder.
+/// It is not verified against a signed record; that verification is deferred beyond v1.
 /// Not a peer-provided filesystem path or raw frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedSnapshot {
@@ -354,6 +355,13 @@ pub fn append_hq(
     Ok(OrgOutput::Published(event))
 }
 
+/// An accepted repeat means no state change, not a verified epoch base.
+/// Conflicts are detected only for a pending base or a materialized, unfenced (E,0)
+/// cursor; after an initial snapshot that is consistency, not base verification.
+/// Past seq 0, repeated same-epoch records are unchecked no-ops. This covers only
+/// records: a validated snapshot ahead of an unfenced cursor is not compared with
+/// the base. Events still chain from the accepted digest. Two live HQs on one CA
+/// are unsupported in v1 (X-05), with no claim to detect that equivocation.
 pub fn accept_authority(
     store: &dyn OrgStore,
     record: AuthorityRecord,
@@ -385,6 +393,10 @@ pub fn accept_authority(
             if current
                 .pending_restore_base
                 .is_some_and(|digest| digest != record.restored_digest)
+                || (!initial_snapshot
+                    && !current.restore_pending
+                    && current.position.seq == 0
+                    && current.digest != record.restored_digest)
             {
                 return Err(Refusal::Divergence.into());
             }

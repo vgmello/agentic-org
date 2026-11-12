@@ -597,6 +597,167 @@ mod tests {
             }
         );
     }
+    fn same_base_authority() -> (MemoryOffice, MemoryOffice, MemoryPeer, AuthorityRecord) {
+        let (hq, sat, peer) = pair();
+        let one = hq.publish(b"before restore").unwrap();
+        apply(&sat, &peer, one.clone()).unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        for office in [&hq, &sat] {
+            assert_eq!(
+                accept_authority(office, signed.clone(), Arc::new(Signature)).unwrap(),
+                OrgOutput::AuthorityAccepted {
+                    snapshot_required: false
+                }
+            );
+            let checkpoint = office.checkpoint();
+            assert_eq!(
+                checkpoint.position,
+                Position {
+                    epoch: signed.epoch,
+                    seq: 0
+                }
+            );
+            assert!(!checkpoint.restore_pending);
+            assert_eq!(checkpoint.pending_restore_base, None);
+        }
+        let peer = MemoryPeer::at_epoch(&peer, signed.epoch);
+        (hq, sat, peer, signed)
+    }
+    fn assert_repeat_unchanged(sat: &MemoryOffice, signed: AuthorityRecord) {
+        let before = sat.checkpoint();
+        let applied = sat.applied();
+        assert_eq!(
+            accept_authority(sat, signed, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: false
+            }
+        );
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(sat.applied(), applied);
+    }
+    fn assert_conflict_unchanged(sat: &MemoryOffice, mut signed: AuthorityRecord) {
+        let before = sat.checkpoint();
+        let applied = sat.applied();
+        signed.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(signed.restored_digest, before.digest);
+        let error = accept_authority(sat, signed, Arc::new(Signature)).unwrap_err();
+        assert!(error.aborts_batch());
+        assert!(matches!(error, SyncError::Refused(Refusal::Divergence)));
+        assert_eq!(sat.checkpoint(), before);
+        assert_eq!(sat.applied(), applied);
+    }
+    fn install_epoch_base(sat: &MemoryOffice, signed: &AuthorityRecord, payload: Arc<[u8]>) {
+        sat.stage("epochbase", vec![payload]);
+        install_snapshot(
+            sat,
+            ValidatedSnapshot {
+                org_id: signed.org_id.clone(),
+                authority: signed.epoch,
+                position: Position {
+                    epoch: signed.epoch,
+                    seq: 0,
+                },
+                digest: signed.restored_digest,
+                codec: Codec::new("conformance", 1).unwrap(),
+                staging_id: "epochbase".into(),
+                protocol_level: 1,
+            },
+        )
+        .unwrap();
+        assert!(!sat.checkpoint().restore_pending);
+        assert!(!sat.data.borrow().initial_snapshot_required);
+        assert_eq!(sat.checkpoint().pending_restore_base, None);
+    }
+    #[test]
+    fn identical_authority_at_same_base_is_an_unchanged_noop() {
+        let (_, sat, _, signed) = same_base_authority();
+        assert_repeat_unchanged(&sat, signed);
+    }
+    #[test]
+    fn conflicting_authority_at_same_base_is_divergence() {
+        let (_, sat, _, signed) = same_base_authority();
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn repeated_authority_checks_the_base_after_a_restore_snapshot_at_zero() {
+        let (hq, sat, _) = pair();
+        let one = hq.publish(b"restored").unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        accept_authority(&sat, signed.clone(), Arc::new(Signature)).unwrap();
+        assert!(sat.checkpoint().pending_restore_base.is_some());
+        install_epoch_base(&sat, &signed, one.payload);
+        assert_repeat_unchanged(&sat, signed.clone());
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn repeated_authority_boundary_not_detected_after_advance() {
+        let (hq, sat, peer, signed) = same_base_authority();
+        for payload in [b"first".as_slice(), b"second".as_slice()] {
+            apply(&sat, &peer, hq.publish(payload).unwrap()).unwrap();
+        }
+        assert_eq!(sat.checkpoint().position.seq, 2);
+        assert_repeat_unchanged(&sat, signed.clone());
+        let mut conflict = signed;
+        conflict.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(conflict.restored_digest, sat.checkpoint().digest);
+        assert_repeat_unchanged(&sat, conflict);
+        apply(&sat, &peer, hq.publish(b"third").unwrap()).unwrap();
+        assert_eq!(sat.checkpoint().position.seq, 3);
+        assert_eq!(sat.applied(), hq.applied());
+    }
+    #[test]
+    fn conflicting_authority_at_base_still_requires_a_verified_signature_first() {
+        let (_, sat, _, mut signed) = same_base_authority();
+        let before = sat.checkpoint();
+        signed.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(signed.restored_digest, before.digest);
+        signed.signature = Arc::from(b"invalid-proof".as_slice());
+        assert!(matches!(
+            accept_authority(&sat, signed, Arc::new(Signature)),
+            Err(SyncError::Refused(Refusal::NotAuthorized))
+        ));
+        assert_eq!(sat.checkpoint(), before);
+    }
+    #[test]
+    fn repeated_authority_checks_consistency_after_initial_snapshot_at_zero() {
+        let (hq, sat, _) = pair();
+        let one = hq.publish(b"initial materialization").unwrap();
+        let signed = record(&hq, one.position, one.digest);
+        {
+            let mut data = sat.data.borrow_mut();
+            data.initial_snapshot_required = true;
+            data.checkpoint.highest_epoch = signed.epoch;
+            data.checkpoint.position.epoch = signed.epoch;
+        }
+        assert_ne!(sat.checkpoint().digest, signed.restored_digest);
+        install_epoch_base(&sat, &signed, one.payload);
+        assert_repeat_unchanged(&sat, signed.clone());
+        assert_conflict_unchanged(&sat, signed);
+    }
+    #[test]
+    fn local_restore_fence_does_not_compare_a_placeholder_at_the_epoch_base() {
+        let (hq, sat, _) = pair();
+        let initial = sat.checkpoint();
+        let signed = record(&hq, initial.position, Digest::from_bytes([9; 32]));
+        {
+            let mut data = sat.data.borrow_mut();
+            data.checkpoint.highest_epoch = signed.epoch;
+            data.checkpoint.position.epoch = signed.epoch;
+            data.checkpoint.restore_pending = true;
+        }
+        let before = sat.checkpoint();
+        assert_ne!(before.digest, signed.restored_digest);
+        assert_eq!(before.position.seq, 0);
+        assert_eq!(before.pending_restore_base, None);
+        assert_eq!(
+            accept_authority(&sat, signed, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert_eq!(sat.checkpoint(), before);
+        assert!(sat.applied().is_empty());
+    }
     #[test]
     fn stale_org_event_on_current_hq_session_cannot_observe_restore_fence() {
         let (hq, sat, peer) = pair();
@@ -673,12 +834,23 @@ mod tests {
             data.checkpoint.position.epoch = signed.epoch;
         }
         assert_eq!(
-            accept_authority(&enrolled, signed, Arc::new(Signature)).unwrap(),
+            accept_authority(&enrolled, signed.clone(), Arc::new(Signature)).unwrap(),
             OrgOutput::AuthorityAccepted {
                 snapshot_required: true
             }
         );
         assert!(enrolled.data.borrow().initial_snapshot_required);
+        let before = enrolled.checkpoint();
+        let mut conflict = signed;
+        conflict.restored_digest = Digest::from_bytes([9; 32]);
+        assert_ne!(conflict.restored_digest, before.digest);
+        assert_eq!(
+            accept_authority(&enrolled, conflict, Arc::new(Signature)).unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: true
+            }
+        );
+        assert_eq!(enrolled.checkpoint(), before);
     }
     #[test]
     fn local_restore_fence_requires_new_signed_authority_before_snapshot_install() {
