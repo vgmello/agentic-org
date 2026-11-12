@@ -23,6 +23,7 @@ pub mod inbox;
 mod launch;
 mod live;
 mod msg_calls;
+pub mod owned_recovery;
 mod revocations;
 mod serve;
 mod signals;
