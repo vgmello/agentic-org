@@ -958,7 +958,7 @@ pub(super) fn function<'a>(source: &'a str, name: &str) -> Function<'a> {
     assert_eq!(
         functions.blocks.len(),
         1,
-        "exception must name exactly one function"
+        "exception must name exactly one function: {name}"
     );
     let block = functions.blocks[0];
     let open = block.brace_token.span.open().byte_range().end;
@@ -1799,6 +1799,73 @@ fn sqlcipher_policy_directions_preserve_grammar_and_opaque_data() {
         assert!(
             std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err(),
             "accepted {source}"
+        );
+    }
+}
+
+#[test]
+fn sqlcipher_macro_metadata_distinguishes_reviewed_and_opaque_inputs() {
+    let syntax = syn::parse_file("other! { #[$attribute] struct Data; }").unwrap();
+    let syn::Item::Macro(item) = &syntax.items[0] else {
+        panic!("macro fixture")
+    };
+    check_macro(&item.mac, true);
+    assert!(std::panic::catch_unwind(|| check_macro(&item.mac, false)).is_err());
+    for source in [
+        r#"other! { #[cfg_attr(target_os = "linux", doc = "ok")] struct Data; }"#,
+        "other! { #[cfg_attr(unix, doc = \"ok\")] struct Data; }",
+        "other! { #[cfg_attr(all(unix), derive(Debug), doc = \"ok\")] struct Data; }",
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        let syn::Item::Macro(item) = &syntax.items[0] else {
+            panic!("macro fixture")
+        };
+        check_macro(&item.mac, false);
+    }
+}
+
+#[test]
+fn sqlcipher_reserved_definition_name_refuses_aliased_invocations() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("input.rs");
+    std::fs::write(&file, "").unwrap();
+    modules(
+        temp.path(),
+        &file,
+        "use crate::identity as ordinary; ordinary!{Boundary}",
+    );
+    assert!(std::panic::catch_unwind(|| modules(
+        temp.path(),
+        &file,
+        "use crate::identity as macro_rules; macro_rules!{Boundary}"
+    ))
+    .is_err());
+}
+
+#[test]
+fn sqlcipher_cargo_config_pairs_strict_grammar_and_flag_refusals() {
+    for input in [
+        "[build]",
+        "[target]",
+        "[env]",
+        "build.rustflags='-Dclippy::all'",
+        "target.'cfg(target_os = \"linux\")'.rustflags=['-Dclippy::all']",
+        "[target.'cfg(unix)']\nrustflags='-Dclippy::all'",
+    ] {
+        cargo_config(input);
+    }
+    for input in [
+        "[build] = 'extra'",
+        "build.rustflags",
+        "[unknown]",
+        "include=['outside.toml']",
+        "[env]\nANY='data'",
+        "[target.'cfg(unix)']\nrustflags='-Aclippy::disallowed_methods'",
+        "[target.x86_64-unknown-linux-gnu]\nrustflags='--cap-lints=allow'",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| cargo_config(input)).is_err(),
+            "accepted {input}"
         );
     }
 }
