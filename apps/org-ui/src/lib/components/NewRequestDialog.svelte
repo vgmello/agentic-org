@@ -24,10 +24,8 @@
 		defaultProjectId,
 		find,
 		send,
-		message,
 		ondone,
-		onadded,
-		onmessaged
+		onadded
 	}: {
 		open: boolean;
 		snapshot: OrgSnapshot;
@@ -35,14 +33,10 @@
 		/** The open requests that read like these words (`request.similar`): offered while typing (RQS-13). Without it nothing is offered. */
 		find?: (text: string) => Promise<WorkItemSummary[]>;
 		send: (draft: WorkDraft) => Promise<WorkAccepted>;
-		/** Send the words to a member as an ordinary message instead (RQS-4). Without it there is no such button. */
-		message?: (memberId: string, text: string) => Promise<void>;
 		/** Saved: the request as the office numbered it, and who it was sent to, if anyone. */
 		ondone: (created: { ref: string; sentTo: string | undefined }) => void;
 		/** The words were added to a request that was already there. */
 		onadded?: (ref: string) => void;
-		/** The words went as a message. */
-		onmessaged?: (to: string) => void;
 	} = $props();
 
 	type Kind = Exclude<RequestKind, 'unknown'>;
@@ -78,6 +72,8 @@
 				busy = false;
 				confirmed = false;
 				asking = false;
+				active = { token: undefined, index: 0 };
+				closedFor = undefined;
 			});
 			// The words come first: the field has the focus as soon as the panel opens (RQS-1).
 			queueMicrotask(() => field?.focus());
@@ -98,6 +94,8 @@
 	// While a handle is unresolved no one is chosen (nothing is drawn as checked that Send would not use), until a pick settles it.
 	const unresolved = $derived(at?.kind === 'unknown' || at?.kind === 'partial');
 	const choice = $derived(unresolved && !(picked !== undefined && pickStands) ? 'none' : ((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none'));
+	/** The words as a note on a request that was already there: a routing @handle is not part of it. */
+	const noteBody = $derived(at?.kind === 'exact' ? withoutHandle(text, at.member) : text);
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
 	// After a pause in typing the office is asked which open requests read like the words (one call); up to 2 are offered.
@@ -161,19 +159,25 @@
 	const back = () => ((asking = false), queueMicrotask(() => field?.focus()));
 
 	// The agents a half-typed @handle could be: ↑↓ move, Enter or Tab pick, Esc closes the list (and not the panel).
-	let activeAt = $state(0);
-	let atClosed = $state(false);
+	let active = $state<{ token: string | undefined; index: number }>({ token: undefined, index: 0 });
+	let closedFor = $state<string | undefined>();
 	// Where the caret is: the list belongs to the handle at the start and only shows while the caret is in or at the end of it.
 	let caret = $state(0);
 	const atToken = $derived(at?.kind === 'partial' ? at.token : undefined);
-	$effect(() => {
-		void atToken;
-		activeAt = 0;
-		atClosed = false;
-	});
+	// The highlight and a closed list belong to the handle they were set for: another handle starts fresh.
+	const activeAt = $derived(active.token === atToken ? active.index : 0);
+	const atClosed = $derived(closedFor !== undefined && closedFor === atToken);
 	const inHandle = $derived(caret <= (atSpan(text) ?? -1));
 	const completions = $derived(at?.kind === 'partial' && !atClosed && inHandle ? at.matches : []);
 	const trackCaret = (e: Event) => (caret = (e.currentTarget as HTMLTextAreaElement).selectionStart ?? 0);
+	/** Typing: the highlight and a closed list were for one handle; with another in the words (or none) they start fresh. */
+	function typed(e: Event) {
+		trackCaret(e);
+		const next = atName((e.currentTarget as HTMLTextAreaElement).value, snapshot);
+		const token = next?.kind === 'partial' ? next.token : undefined;
+		if (token !== closedFor) closedFor = undefined;
+		if (token !== active.token) active = { token: undefined, index: 0 };
+	}
 	function onKey(e: KeyboardEvent) {
 		// A key that is part of composing text (an input method) is not a command.
 		if (e.isComposing || e.keyCode === 229) return;
@@ -185,14 +189,14 @@
 		if (completions.length === 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
 		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 			e.preventDefault();
-			activeAt = (activeAt + (e.key === 'ArrowDown' ? 1 : completions.length - 1)) % completions.length;
+			active = { token: atToken, index: (activeAt + (e.key === 'ArrowDown' ? 1 : completions.length - 1)) % completions.length };
 		} else if (e.key === 'Enter' || e.key === 'Tab') {
 			e.preventDefault();
 			complete(completions[Math.min(activeAt, completions.length - 1)]);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
-			atClosed = true;
+			closedFor = atToken;
 		}
 	}
 
@@ -211,33 +215,15 @@
 
 	/** The words become a note on a request that was already there. */
 	async function addTo(request: WorkItemSummary) {
-		if (busy) return;
+		const body = noteBody;
+		if (busy || body.trim() === '') return;
 		busy = true;
 		error = undefined;
 		try {
-			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body: at?.kind === 'exact' ? withoutHandle(text, at.member) : text });
+			await send({ method: 'work.comment', item_id: request.id, comment_id: newId(), body });
 			text = '';
 			open = false;
 			onadded?.(requestRef(request));
-		} catch (e) {
-			error = toAppError(e).message;
-		} finally {
-			busy = false;
-		}
-	}
-
-	/** The words go to the member as an ordinary message, not as a request (RQS-4). */
-	async function sendAsMessage() {
-		touched = true;
-		if (busy || !message || !scoperId || words.trim() === '' || cannotSend) return;
-		busy = true;
-		error = undefined;
-		try {
-			await message(scoperId, words);
-			const to = nameOf(snapshot, scoperId);
-			text = '';
-			open = false;
-			onmessaged?.(to);
 		} catch (e) {
 			error = toAppError(e).message;
 		} finally {
@@ -303,7 +289,7 @@
 					onkeydown={onKey}
 					onkeyup={trackCaret}
 					onclick={trackCaret}
-					oninput={trackCaret}
+					oninput={typed}
 					onselect={trackCaret}
 					role="combobox"
 					aria-autocomplete="list"
@@ -329,7 +315,7 @@
 				{#if similar.length > 0}
 					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
 						{#each similar as r (r.id)}
-							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
+							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong || noteBody.trim() === ''} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
 						{/each}
 					</ul>
 					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-red-300" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
@@ -378,7 +364,6 @@
 				</label>
 			</fieldset>
 
-			{#if message && !scoperId}<p id="message-hint" class="text-xs/5 text-gray-400" data-testid="message-hint">Choose who to message.</p>{/if}
 			{#if warning}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
@@ -390,7 +375,6 @@
 					<Button type="button" disabled={busy} onclick={() => void submit(false)}>Keep</Button>
 				{:else}
 					<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
-					{#if message}<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
 					<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
 					<Button type="submit" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
 				{/if}

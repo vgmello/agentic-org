@@ -1048,6 +1048,30 @@ test('F5/F7: focus rings use the specified style and offsets, and the empty-stat
 	expect((await ring(dialog.getByRole('radio').nth(1))).style).toBe('solid');
 });
 
+test('RQS-4: the handle list and its highlight start fresh when the handle changes, and when it comes back', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	const list = dialog.getByTestId('at-matches'), options = list.getByRole('option');
+	// Closed with Esc, the list stays closed for that handle, and comes back once the words stop being that handle.
+	await words.fill('@');
+	await expect(list).toBeVisible();
+	await words.press('Escape');
+	await expect(list).toHaveCount(0);
+	await words.fill('');
+	await words.fill('@');
+	await expect(list).toBeVisible();
+	// The highlight moves with the arrows and starts at the first option again for another handle.
+	await words.press('ArrowDown');
+	await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+	await words.fill('@s');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	await words.fill('@');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+});
+
 test('RQS-4: "@sam Okafor rest" saves just "rest"', async ({ page }) => {
 	await open(page);
 	await queue(page);
