@@ -69,6 +69,46 @@ test.describe('BUG-166: Retry on the Offices page', () => {
 		await expect(page.getByRole('heading', { level: 1 })).toBeFocused();
 	});
 
+	// The second counting call is held until the test lets it go, so what Retry does while it works can be seen.
+	for (const outcome of ['arrive', 'fail again'] as const) {
+		test(`BUG-166 BUG-70: a count Retry keeps focus while it works; when the counts ${outcome} focus ${outcome === 'arrive' ? 'goes to the page heading' : 'stays on Retry'}`, { tag: '@webkit' }, async ({ page }) => {
+			await clickDoesNotFocus(page);
+			await create(page);
+			await visit(page, '/offices?org=fails_once');
+			await expect(page.getByTestId('count-error')).toBeVisible();
+			await page.evaluate(async (fail) => {
+				const modulePath = '/e2e/fakes/org-api.ts';
+				const { orgApi } = await import(modulePath) as typeof import('../src/lib/org/api') & { orgApi: import('../src/lib/org/api').OrgApi };
+				const view = orgApi.view;
+				let held = false, release!: () => void;
+				const gate = new Promise<void>((resolve) => { release = resolve; });
+				(window as unknown as { __releaseCounts: () => void }).__releaseCounts = release;
+				orgApi.view = async (id) => {
+					if (!held) {
+						held = true;
+						await gate;
+						if (fail) throw new Error('Still unreadable.');
+					}
+					return view(id);
+				};
+			}, outcome === 'fail again');
+			const retry = page.getByTestId('count-error').getByRole('button', { name: /Retry|Retrying/ });
+			await retry.click();
+			await expect(retry).toHaveAttribute('aria-busy', 'true');
+			await expect(retry).toBeFocused();
+			await page.evaluate(() => (window as unknown as { __releaseCounts: () => void }).__releaseCounts());
+			if (outcome === 'arrive') {
+				await expect(page.getByTestId('count-error')).toHaveCount(0);
+				await expect(page.getByRole('heading', { level: 1 })).toBeFocused();
+			} else {
+				await expect(retry).toHaveAttribute('aria-busy', 'false');
+				await expect(page.getByTestId('count-error')).toContainText('Still unreadable.');
+				await expect(retry).toBeFocused();
+				await expect(page.getByRole('heading', { level: 1 })).not.toBeFocused();
+			}
+		});
+	}
+
 	test('BUG-166 BUG-70: a pointer Retry on an unreachable office is focused while it works', { tag: '@webkit' }, async ({ page }) => {
 		await clickDoesNotFocus(page);
 		await create(page);
