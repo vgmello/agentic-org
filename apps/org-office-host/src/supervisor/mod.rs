@@ -22,6 +22,7 @@
 
 mod child;
 mod office;
+mod rendezvous;
 mod state;
 
 use std::collections::HashMap;
