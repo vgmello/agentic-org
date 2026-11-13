@@ -66,11 +66,11 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 
 1. **Trigger:** the schedule, a delivered feature, or **Generate report**.
 2. **Facts** (the office, seconds): a snapshot of every number on the Status page for the period, plus **what changed** since the last report (features delivered, items done, new Critical bugs, cost added, decisions made).
-3. **Narrative** (a one-off run of the Reporter role, shown as "Reporter (one-off R-31)", about a minute): a 3–5 sentence summary, the top 3 risks with their evidence, and up to 3 recommendations ("Answer ada's questions: they block FEAT-0006"). Shown while it runs: "Writing the summary… **Stop**" (Stop cancels this run. It isn't the agent Stop, which means Pause.)
+3. **Narrative** (a one-off run of the Reporter role, shown as "Reporter (one-off run 31)", about a minute): a 3–5 sentence summary, the top 3 risks with their evidence, and up to 3 recommendations ("Answer ada's questions: they block FEAT-0006"). Shown while it runs: "Writing the summary… **Stop**" (Stop cancels this run. It isn't the agent Stop, which means Pause.)
 4. **Saved:** `docs/reports/2026-12-07-status.md` (Markdown with front matter: `kind: report`, `type: status`, `period`, `health`, `facts` (the snapshot), `run` (its cost)), committed through the docs flow (`decisions-and-tech-debt-ux.md` §0.2).
 5. **Delivered:** Home shows "Status report for Agentic Org: **At risk**" with **Read**. A change of health (On track → At risk) also goes to Needs you.
 
-**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off R-31) · ≈ $0.12") · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
+**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off run 31) · ≈ $0.12") · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
 
 **All reports** (Docs › Reports) lists the reports with their health, so the project's history reads as a line of badges: ● ● ● ◐ ●.
 
