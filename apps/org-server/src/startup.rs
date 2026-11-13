@@ -214,10 +214,7 @@ pub(super) fn drain(mut source: impl Read) {
 impl Drop for Control {
     fn drop(&mut self) {
         if let Some(stream) = &self.rendezvous {
-            let _ = stream
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .shutdown(std::net::Shutdown::Both);
+            shut_down(&stream.lock().unwrap_or_else(|p| p.into_inner()));
         }
     }
 }
@@ -351,19 +348,30 @@ fn write_event_within(
 /// Every rendezvous write goes through this, with the writer lock still held: after an I/O
 /// error part of a frame may already be on the wire, so the rendezvous ends (both ways) and no
 /// later ACK or event can follow a truncated frame. Encoding errors fail before any byte is
-/// written and keep it open. A failed shutdown is logged unless the peer was already gone.
+/// written and keep it open.
 fn end_on_io<T>(stream: &UnixStream, result: Result<T, LaunchError>) -> Result<T, LaunchError> {
     if let Err(LaunchError::Frame(FrameError::Io(_))) = &result {
-        if let Err(error) = stream.shutdown(std::net::Shutdown::Both) {
-            if worth_logging(&error) {
-                eprintln!("org-server: rendezvous shutdown failed: {error}");
-            }
-        }
+        shut_down(stream);
     }
     result
 }
 
-/// `ENOTCONN` only says the peer already ended the connection; anything else is unexpected.
+/// Ends the rendezvous both ways: the write half first, on its own, because on macOS SHUT_RDWR
+/// on a socket whose read half is already shut (the host half-closed) answers ENOTCONN and
+/// shuts nothing (as org-office-host's listener `shut_down`). A failure is logged, naming the
+/// half, unless it is ENOTCONN.
+fn shut_down(stream: &UnixStream) {
+    for half in [std::net::Shutdown::Write, std::net::Shutdown::Read] {
+        if let Err(error) = stream.shutdown(half) {
+            if worth_logging(&error) {
+                eprintln!("org-server: rendezvous shutdown ({half:?}) failed: {error}");
+            }
+        }
+    }
+}
+
+/// `ENOTCONN` only says that half (or the whole connection) was already shut, by us or by the
+/// host; anything else is unexpected.
 fn worth_logging(shutdown: &io::Error) -> bool {
     shutdown.kind() != io::ErrorKind::NotConnected
 }

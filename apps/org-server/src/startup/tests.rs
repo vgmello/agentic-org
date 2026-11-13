@@ -1306,3 +1306,39 @@ fn a_failed_ready_for_secrets_ends_the_rendezvous() {
 fn a_failed_handshake_ack_ends_the_rendezvous() {
     a_failed_handshake_write_ends_the_rendezvous(HandshakeWrite::FdsReceived);
 }
+
+/// BUG-189: after the host half-closes (its write half shut, so the worker's read half is
+/// already shut), a failed write must still end the worker's write half. On macOS a single
+/// SHUT_RDWR would return ENOTCONN and leave it open. Asserted from the worker's own side only.
+#[test]
+fn end_on_io_ends_the_write_half_after_the_host_half_closed() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut eof = [0; 1];
+    assert_eq!(
+        (&socket).read(&mut eof).unwrap(),
+        0,
+        "the worker sees the host's EOF"
+    );
+    let io_error = LaunchError::Frame(FrameError::Io(io::ErrorKind::BrokenPipe.into()));
+    assert!(end_on_io(&socket, Err::<(), _>(io_error)).is_err());
+    let late = (&socket).write_all(b"late");
+    assert_eq!(late.map_err(|e| e.kind()), Err(io::ErrorKind::BrokenPipe));
+    drop(peer);
+}
+
+/// BUG-189, the same for dropping Control: after the host half-closed, the drop must still end
+/// the worker's write half (a clone of the stream shows it).
+#[test]
+fn dropping_control_ends_the_write_half_after_the_host_half_closed() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.shutdown(std::net::Shutdown::Write).unwrap();
+    let (mut control, _) = control(b"");
+    let ours = socket.try_clone().unwrap();
+    control.rendezvous = Some(Arc::new(Mutex::new(socket)));
+    drop(control);
+    let late = (&ours).write_all(b"late");
+    assert_eq!(late.map_err(|e| e.kind()), Err(io::ErrorKind::BrokenPipe));
+    drop(peer);
+}
