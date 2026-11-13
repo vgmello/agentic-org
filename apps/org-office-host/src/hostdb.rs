@@ -76,7 +76,16 @@ pub(crate) struct HostDbInit {
     pub(crate) instance_id: String,
     pub(crate) clock_high_ms: i64,
     pub(crate) bootstrap: BootstrapRecord,
+    pub(crate) first_account: FirstAccount,
     pub(crate) tls_pair: Option<TlsPair>,
+}
+/// Prepared before registry creation; no password hashing runs under the database lock.
+/// The opaque verifier has no Debug implementation and zeroizes its owned PHC on drop.
+pub(crate) struct FirstAccount {
+    pub(crate) account_id: String,
+    pub(crate) login_key: String,
+    pub(crate) login: String,
+    pub(crate) verifier: journal::Verifier,
 }
 pub(crate) struct HostDb {
     connection: Mutex<Connection>,
@@ -87,6 +96,9 @@ impl HostDb {
         secrets: &dyn HostSecrets,
         init: &HostDbInit,
     ) -> Result<Self, Error> {
+        if init.first_account.account_id != init.bootstrap.account {
+            return Err(Error::Unsafe);
+        }
         let home = checked_home(home)?;
         absent(&home.join(DB), Error::Exists)?;
         for suffix in ["-wal", "-shm", "-journal"] {
@@ -155,6 +167,16 @@ impl HostDb {
         ] {
             tx.execute("INSERT INTO meta(key,value) VALUES (?1,?2)", (name, value))?;
         }
+        tx.execute(
+            "INSERT INTO accounts VALUES (?1,?2,?3,?4,1,?5,?5,NULL)",
+            (
+                &init.first_account.account_id,
+                &init.first_account.login_key,
+                &init.first_account.login,
+                init.first_account.verifier.expose(),
+                init.clock_high_ms,
+            ),
+        )?;
         if let Some(tls) = &init.tls_pair {
             tx.execute(
                 "INSERT INTO tls_pair VALUES (1,?1,?2,?3)",
@@ -175,7 +197,9 @@ impl HostDb {
         checked_file(&path, false)?
             .ok_or(Error::Empty)?
             .sync_all()?;
+        checkpoint(9)?; // Immediately before publishing the registry and its first account.
         install(&path, &home.join(DB))?;
+        checkpoint(10)?; // Process death after rename must reopen exactly one first admin.
         File::open(&home)?.sync_all()?;
         checkpoint(5)?;
         let opened = Self::open(&home, secrets)?;

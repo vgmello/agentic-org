@@ -6,6 +6,9 @@
 //! `on` and `off` are strings, `0777` is the integer 777, `1_000` is a string. Anchors, aliases,
 //! tags and `<<` merge keys are refused, as are duplicate or non-string keys, a root that isn't
 //! a mapping and a second document. Pure: no I/O.
+//!
+//! It also holds the shared check for text that one-line fields must not contain
+//! ([`is_invisible_or_break`]).
 
 #![warn(missing_docs)]
 
@@ -86,6 +89,38 @@ impl fmt::Display for FrontMatterError {
 }
 
 impl std::error::Error for FrontMatterError {}
+
+/// What `char::is_control` lets through but a one-line text field must not hold; callers check
+/// `char::is_control` too (`\n`, `\r` and the other control characters are not in this set).
+/// The set: the Unicode line and paragraph separators (U+2028, U+2029), the zero-width space
+/// (U+200B), the bidirectional embeddings, overrides and isolates (U+202A-202E, U+2066-2069),
+/// the word joiner and invisible operators (U+2060-2064), the deprecated formatting characters
+/// (U+206A-206F), the byte order mark (U+FEFF), the Mongolian vowel separator (U+180E), the
+/// interlinear annotation characters (U+FFF9-FFFB), the invisible fillers (U+115F, U+1160,
+/// U+3164, U+FFA0), the tag block (U+E0000-E007F) and the variation selectors supplement
+/// (U+E0100-E01EF). The zero-width joiner and non-joiner and the left/right marks are not in it:
+/// emoji sequences and Persian, Indic and mixed-direction text need them. The same set as
+/// org-office's status lines (organization/status.rs), which keeps its own copy.
+pub fn is_invisible_or_break(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2028}'
+            | '\u{2029}'
+            | '\u{200b}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{180e}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{115f}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{ffa0}'
+            | '\u{e0000}'..='\u{e007f}'
+            | '\u{e0100}'..='\u{e01ef}'
+    )
+}
 
 /// Splits `text` and parses its front matter. A doc has front matter only when it starts (after
 /// an optional byte-order mark) with a `---` line; it ends at the next `---` line.

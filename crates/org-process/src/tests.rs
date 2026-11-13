@@ -1,4 +1,5 @@
 use super::*;
+use crate::file::read;
 
 const ULID: &str = "01jd8z3f0000000000000000ab";
 const MEMBER: &str = "01JD8Z3F0000000000000000CD";
@@ -107,7 +108,13 @@ fn paths_map_to_their_place_and_nothing_else_does() {
         (Repo::Project(&key), "docs/processes/x/review.md", None),
     ];
     for (repo, path, expected) in cases {
-        assert_eq!(location(repo, path), expected, "{path}");
+        let found = location(repo, path);
+        assert_eq!(
+            found.clone().map(|at| at.place().clone()),
+            expected,
+            "{path}"
+        );
+        assert!(found.is_none_or(|at| !at.name_refused()), "{path}");
     }
 }
 
@@ -154,7 +161,9 @@ fn a_valid_file_reads_with_every_field() {
     assert_eq!(read.id, Some(format!("doc-{ULID}")));
     // A doc written with git has no id until its first save through the tool.
     assert_eq!(
-        super::read(&team(), &file(drop_key("id"))).unwrap().id,
+        crate::file::read(&team(), &file(drop_key("id")))
+            .unwrap()
+            .id,
         None
     );
     assert_eq!(read.key.as_str(), "review-and-merge");
@@ -189,13 +198,13 @@ fn a_valid_file_reads_with_every_field() {
             set("level", "organization")(l);
         });
         assert_eq!(
-            super::read(&Place::Organization, &org).unwrap().place,
+            crate::file::read(&Place::Organization, &org).unwrap().place,
             Place::Organization
         );
     }
     for (status, expected) in [("draft", Status::Draft), ("retired", Status::Retired)] {
         assert_eq!(
-            super::read(&team(), &file(set("status", status)))
+            crate::file::read(&team(), &file(set("status", status)))
                 .unwrap()
                 .status,
             expected
@@ -473,26 +482,87 @@ fn each_place_has_its_level_and_scope() {
     }
 }
 
+const REFUSED_NAMES: [&str; 9] = [
+    "a b",
+    "a\nb",
+    "a\tb",
+    "a\u{202e}b",
+    "-x",
+    "a\\b",
+    "a\u{200b}b",
+    "a\u{feff}",
+    "a\u{7}b",
+];
+
 #[test]
-fn file_names_a_doc_may_not_have_are_never_process_files() {
-    for name in [
-        "a b",
-        "a\nb",
-        "a\tb",
-        "a\u{202e}b",
-        "-x",
-        "a\\b",
-        "a\u{200b}b",
-        "a\u{feff}",
-        "a\u{7}b",
-    ] {
-        let path = format!("processes/{name}.md");
-        assert_eq!(location(Repo::Handbook, &path), None, "{name:?}");
+fn file_names_a_doc_may_not_have_are_never_handbook_process_files() {
+    for name in REFUSED_NAMES {
+        for folder in ["processes", "teams/web/processes"] {
+            let path = format!("{folder}/{name}.md");
+            assert_eq!(location(Repo::Handbook, &path), None, "{name:?}");
+        }
     }
+    let plain = location(Repo::Handbook, "processes/a-b_c.1.md").unwrap();
     assert_eq!(
-        location(Repo::Handbook, "processes/a-b_c.1.md"),
-        Some(Place::Organization)
+        (plain.place(), plain.name_refused()),
+        (&Place::Organization, false)
     );
+}
+
+#[test]
+fn a_project_file_with_a_refused_name_is_listed_with_a_file_name_problem() {
+    let key = project();
+    let place = Place::Project(key.clone());
+    let at = |level: &str, scope: &str| {
+        let (level, scope) = (level.to_owned(), scope.to_owned());
+        file(move |l| {
+            set("level", &level)(l);
+            set("scope", &scope)(l);
+            set("overridable", "false")(l);
+        })
+    };
+    for name in REFUSED_NAMES {
+        let found = location(Repo::Project(&key), &format!("docs/processes/{name}.md"));
+        let found = found.unwrap_or_else(|| panic!("{name:?} vanished"));
+        assert_eq!(
+            (found.place(), found.name_refused()),
+            (&place, true),
+            "{name:?}"
+        );
+        // Valid front matter or not, it is a problem that keeps the key and the seal.
+        let problem = found.read(&at("project", "atlas")).unwrap_err();
+        assert_eq!(
+            (problem.field.as_str(), problem.kind, problem.sealed),
+            ("file name", ProblemKind::FileName, Some(true)),
+            "{name:?}"
+        );
+        assert_eq!(problem.key.unwrap().as_str(), "review-and-merge");
+        let problem = found.read(&at("team", "atlas")).unwrap_err();
+        assert_eq!(
+            (problem.kind, problem.sealed),
+            (ProblemKind::FileName, Some(true))
+        );
+        let problem = found.read("no front matter").unwrap_err();
+        assert_eq!(
+            (problem.kind, problem.key, problem.sealed),
+            (ProblemKind::FileName, None, None)
+        );
+    }
+    // A plain name reads as `read` does.
+    let found = location(Repo::Project(&key), "docs/processes/review.md").unwrap();
+    assert!(!found.name_refused());
+    assert_eq!(
+        found.read(&at("project", "atlas")),
+        read(&place, &at("project", "atlas"))
+    );
+    // Hidden and nested files still aren't process files.
+    for path in [
+        "docs/processes/.x y.md",
+        "docs/processes/a b/c.md",
+        "docs/processes/ .txt",
+    ] {
+        assert_eq!(location(Repo::Project(&key), path), None, "{path}");
+    }
 }
 
 #[test]

@@ -55,6 +55,7 @@ Amended to match: `projects-git-github.md` (A56, A58, decision 14, the push rule
 ### 2.1 The process file (PROC-1)
 The front matter is the spec's §1. This design adds:
 - `process`: 1–64 of `[a-z0-9-]`, starting with a letter or digit. `summary`: one line, ≤ 200 characters. `moments`: ≤ 500 characters each. `checklist`: ≤ 50 steps.
+- `applies_to` is required: one line, ≤ 200 characters.
 - `level` and `scope` must match the location (§2.2). Only `active` and `off` resolve. `overrides: <key>@<version>` is for drift only.
 
 Parsing uses W7's front-matter rules and `org-docs`' parser. Invalid front matter never fails a read: the file is listed with a problem naming the field and left out of every set until fixed (PROC-16).
@@ -67,7 +68,7 @@ Parsing uses W7's front-matter rules and `org-docs`' parser. Invalid front matte
 | `project` | project key | project repo, `integration_branch` (else default), `docs/processes/` |
 | `agent` | member id | handbook, default branch, `agents/<member id>/processes/` |
 
-Only regular `*.md` blobs directly in those folders count (no symlinks or submodules); the front-matter key matches, not the file name (PROC-1). **Reads never use `work.git`**, whose refs agents can move: project files are read in `mirror.git` (W7 §4.9), handbook files in `handbook.git` (no `work.git`, so no sync step). W7's path rules apply, with the handbook's roots (`processes/`, `teams/`, `agents/`, `.templates/`, `README.md`), and its id reservations gain a repository key.
+Only regular `*.md` blobs directly in those folders count (no symlinks or submodules); the front-matter key matches, not the file name (PROC-1). In a project repo, a process file whose name is refused (a leading `-`, whitespace, control or invisible characters, or a backslash) is listed with a "file name" problem and left out of every set (PROC-16); in the handbook, which only the tool writes, such names aren't process files. **Reads never use `work.git`**, whose refs agents can move: project files are read in `mirror.git` (W7 §4.9), handbook files in `handbook.git` (no `work.git`, so no sync step). W7's path rules apply, with the handbook's roots (`processes/`, `teams/`, `agents/`, `.templates/`, `README.md`), and its id reservations gain a repository key.
 
 ### 2.3 The index (HQ)
 One row per file on a source branch: `{ repo, path, commit, blob, doc id, key, level, scope, version, status, overridable, overrides, problems }`. No text: names and summaries come from the blob. Old rows stay as a history (key, level, scope, version → commit) for drift diffs (PROC-9). It's rebuilt after each change to a source branch; while the handbook can't be read, reads answer from it with `stale_since` (PROC-16).
@@ -82,9 +83,11 @@ With no current work, it's **O ⊕ G** (PROC-2). The home session uses the curre
 ### 3.2 Rules, in order (`org_process::resolve`, pure)
 1. **Valid files only.** Invalid front matter or a level or scope mismatch: left out, with a problem. A `draft` or `retired` file is left out silently: it is a normal state, not a problem (amended 2026-11-09: ada, from the Processes screens' review).
 2. **Key clash.** Two files with one key at one (level, scope): both left out, with the clash problem (PROC-1). Seals fail closed: if a file left out for invalid front matter, a mismatch or a clash is sealed (or can't be read far enough to tell), the key stays sealed below. `draft` and `retired` files never seal.
+   A file whose key can't be read (no front matter, bad YAML or no valid `process`) seals every key below its place unless its `overridable` value can be read and is `true`, or it is a `draft` or `retired` one (ruled 2026-11-13: ada, R2b); what it refuses, and a private file whose key it might use, show "can't tell: <path> can't be read", not "sealed by" (ruled 2026-11-13: ada, R2). In rule 5 it counts as its chain's seal, as a seal does, but a conflict names it ("can't tell: <path> can't be read"), not its team, as sealing the key (ruled 2026-11-13: ada); the outermost team lower in that chain whose own file seals the key is named as sealing it too, beside the unreadable path (2026-11-13, from P3's review; how its name reaches a cached set: §3.3).
 3. **Seals inside a chain.** A file that overrides or turns off a key sealed by the organization, or by a team above it in its own chain, is refused, with the sealing level (PROC-3). A project file is refused if the organization sealed the key, or a team seal binds it and rule 5 finds no team-level conflict on the key (that check runs after rule 5). Otherwise this runs first, so a refused file never makes a conflict. The write path refuses these too (§5).
 4. **Fold each team chain**, outermost first, the nearer team winning.
 5. **Combine the chains** (decision 4, PROC-6). Only team-level winners count. One distinct winning team file applies. Two or more are a **conflict**: the organization's version applies, or nothing if it has none, except that a **sealed** team winner applies meanwhile (decision 13; two different seals: the organization's version, else the first by team id that isn't an `off`, A71). A sibling team's override or `off` never silently cancels a seal.
+   In a diamond, a sub-team's override that differs from a sibling chain's version is a conflict; only the same team reached twice is not (ruled 2026-11-13: ada, R1).
 6. **Project.** J's version wins over the result unless the key is sealed (rule 3). It settles any conflict on the key, a sealed one included (decision 13).
 7. **Turned off.** A surviving `off` removes the key and records "Turned off for <team or project name>: <reason>" (PROC-4).
 8. **Private only adds** (PROC-5). A private file isn't applied, and is flagged, if it sets `overrides` or `status: off`, or if its key appears in **any** O, T or J file of this project, whatever that file's state.
@@ -93,7 +96,7 @@ With no current work, it's **O ⊕ G** (PROC-2). The home session uses the curre
 **Output:** `EffectiveSet { inputs, entries, turned_off, conflicts, problems }`: per key, the winning file (with its kind: inherited, override or addition) and its **chain** of layers and what happened to each, which `process why` prints (PROC-8).
 
 ### 3.3 Caching and project-wide checks
-Sets are cached under a fingerprint of the handbook commit, the project's integration commit and the team chains (teams are org data). Any input change drops the sets that used it; they're recomputed at the next start, wake or read. The last good set per (agent, project) is kept with its time.
+Sets are cached under a fingerprint of the handbook commit, the project's integration commit and the team chains (teams are org data). Any change to those drops the sets that used it. Place names (the "Turned off for <name>", conflict and summary lines) are not in the fingerprint: when a team or project is renamed, the cache's owner drops the sets that name it (ruled 2026-11-13: ada). Dropped sets are recomputed at the next start, wake or read. The last good set per (agent, project) is kept with its time.
 
 **Conflicts belong to the project.** After each index or org change, HQ resolves O ⊕ T ⊕ J per affected project and keeps one Needs you item per (project, key) for its leads and the owner; clashes, invalid files and drift likewise. Agent leads and approvers get Needs you items in their inbox (spec decision 11).
 
@@ -101,7 +104,7 @@ Sets are cached under a fingerprint of the handbook commit, the project's integr
 
 ### 3.4 Delivery to sessions (PROC-7, PROC-12)
 `org_process::render` builds a **Your processes** section for the composed instructions (`agent-sessions.md` decision 8):
-- the set: each process's name, level, version and summary, plus turned-off ones and conflicts, in the spec §3 wording;
+- the set: each process's name, place (org, the team's or project's name, or private), version and summary, plus turned-off ones and conflicts, in the spec §3 wording (place names and the cache: §3.3);
 - **changed since last read**: the full text of each process whose winning blob isn't among the blobs the agent has read for that key (a new version, a new winner or a conflict fallback all count);
 - each process's `moments` prompt, after that moment's guidance text, only while the moment is On.
 
@@ -298,7 +301,7 @@ Each test must fail without its rule.
 **`org-process`, table-driven:**
 - Matching by key, never `id`; level order; nearer team wins; no current work gives O ⊕ G.
 - Seals: an org seal refuses lower overrides and `off` without a conflict; a team seal refuses its sub-teams' and projects'; on a shared project, a sibling's override is a conflict with the sealed version applying, and a project version settles it; two team seals give the A71 interim; a clashed sealed key stays sealed.
-- Conflicts: two team overrides give the org version (or none); one team's version applies; a project version settles it; a parent-and-sub-team link or a diamond isn't a conflict.
+- Conflicts: two team overrides give the org version (or none); one team's version applies; a project version settles it; a parent-and-sub-team link or a diamond isn't a conflict (the same team reached twice), but a sub-team's override in a diamond is (R1).
 - Turned off, private only adds, validity, drift, the fingerprint, the render cap and order, the checklist merge.
 - One branch: another task's record blocks, its own and docs branches don't; an exception is used once; only an approved `off` turns the rule off; can't compute counts as on. Own work: a tip at `base_sha` or in the integration branch is none; a commit beyond it, or uncommitted changes, is some.
 

@@ -72,16 +72,17 @@
 		e.preventDefault();
 		touched = true;
 		if (busy || !check.ok) return;
+		const added = check.name;
 		busy = true;
 		failure = undefined;
 		try {
-			const result = await addPerson(session, { name: check.name, contact: contact.trim() || undefined, teamIds: [...teamIds], managerId: manager || undefined }, teamName);
+			const result = await addPerson(session, { name: added, contact: contact.trim() || undefined, teamIds: [...teamIds], managerId: manager || undefined }, teamName);
 			if (result.created.error) {
 				failure = result.created.error;
 				return;
 			}
 			open = false;
-			ondone({ memberId: result.memberId, name: check.name, problems: result.steps.filter((s) => s.error).map((s) => `Couldn't ${s.what.charAt(0).toLowerCase()}${s.what.slice(1)}: ${s.error!.message}`) });
+			ondone({ memberId: result.memberId, name: added, problems: result.steps.filter((s) => s.error).map((s) => `Couldn't ${s.what.charAt(0).toLowerCase()}${s.what.slice(1)}: ${s.error!.message}`) });
 		} catch (error) {
 			failure = toAppError(error);
 		} finally {

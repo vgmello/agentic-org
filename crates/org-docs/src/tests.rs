@@ -342,3 +342,70 @@ fn a_refusal_reads_as_its_field_and_reason() {
         "front matter: Unclosed"
     );
 }
+
+#[test]
+fn line_breaks_and_hidden_text_are_flagged_but_joiners_and_marks_are_not() {
+    let flagged = [
+        '\u{2028}',
+        '\u{2029}',
+        '\u{200b}',
+        '\u{202a}',
+        '\u{202e}',
+        '\u{2060}',
+        '\u{2064}',
+        '\u{2066}',
+        '\u{206f}',
+        '\u{feff}',
+        '\u{180e}',
+        '\u{fff9}',
+        '\u{fffb}',
+        '\u{115f}',
+        '\u{1160}',
+        '\u{3164}',
+        '\u{ffa0}',
+        '\u{e0000}',
+        '\u{e007f}',
+        '\u{e0100}',
+        '\u{e01ef}',
+    ];
+    for c in flagged {
+        assert!(is_invisible_or_break(c), "{:04x}", c as u32);
+    }
+    // The (non-)joiners, direction marks, variation selector 16, ordinary text, the newline
+    // (a control character, for `char::is_control`) and the neighbours of each range stay.
+    let kept = [
+        '\n',
+        '\r',
+        '\u{205f}',
+        '\u{180d}',
+        '\u{fefe}',
+        '\u{ff00}',
+        '\u{fff8}',
+        '\u{115e}',
+        '\u{1161}',
+        '\u{3163}',
+        '\u{3165}',
+        '\u{ff9f}',
+        '\u{ffa1}',
+        '\u{e00ff}',
+        '\u{200c}',
+        '\u{200d}',
+        '\u{200e}',
+        '\u{200f}',
+        '\u{fe0f}',
+        'a',
+        'é',
+        '中',
+        '\u{2027}',
+        '\u{202f}',
+        '\u{2065}',
+        '\u{2070}',
+        '\u{fffc}',
+        '\u{e0080}',
+        '\u{e01f0}',
+        '\u{180f}',
+    ];
+    for c in kept {
+        assert!(!is_invisible_or_break(c), "{:04x}", c as u32);
+    }
+}
