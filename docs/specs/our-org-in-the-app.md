@@ -13,6 +13,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
+**Revision 22 (2026-11-13): agent Cost tab.** The profile gains a **Cost** tab after Sessions, as `costs-and-insights-ux.md` rev 6 and `costs-and-budgets-v1` §6 ask. No criteria changed.
+
 **Fixes within revision 21 (2026-11-10, review of 98fa8fe).** Still revision 21
 (not yet on v1 with these fixes). STAFF-4 is rewritten (Add agent record uses
 existing roles only) and STAFF-8 is added (a hire never waits); the rest:
@@ -31,8 +33,6 @@ existing roles only) and STAFF-8 is added (a hire never waits); the rest:
 - A hire never waits for running agents: the owning office relaunches its own
   affected sessions between turns (§7), unlike a new organization or office
   (`offices-and-teams-ux.md` rev 15).
-
-**Revision 22 (2026-11-13): agent Cost tab.** The profile gains a **Cost** tab after Sessions, as `costs-and-insights-ux.md` rev 6 and `costs-and-budgets-v1` §6 ask. No criteria changed.
 
 **Revision 21 (2026-11-10): hiring when the HR lead can't run (O-7, the owner via ada).**
 Hire and Add agent record both work without the HR lead. When it can't run (the

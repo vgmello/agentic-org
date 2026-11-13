@@ -2,7 +2,7 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 10
+revision: 11
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-13"
@@ -22,6 +22,8 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 **Acceptance-criterion IDs** are new prefixes (PRJ, TSK, BUG, TRI, FIX, AREA, DOC, WORK) so they never collide with v1's PROJ and TASKS. They're stable from this revision: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 11 (2026-11-13): A110 resolved (Rowan).** The fix-task reopen counts on the bug through the existing status event; no criteria changed.
 
 **Revision 10 (2026-11-13): a reopened fix task reopens its bug.** When a fix task is reopened while its bug is Fixed, the bug goes back to In progress and reads as reopened: the same **Reopened** badge as a bug reopened directly, and a line linking the fix task. It counts once, on the bug. This keeps the bug page in agreement with the away digest (`away-digest-and-timezones-v1.md`, "Fix task reopened") (§7.2). **Criteria rewritten (same ID):** FIX-2 *(rev 10)*.
 
@@ -612,7 +614,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - ~~A12~~ · *Resolved in rev 3:* no permissions in phase 1. Anyone may triage or verify, the UI suggests the area lead and the reporter, and the activity records who acted.
 - ~~A13~~ · *Resolved (ada, W7):* General can't be deleted. Can General be deleted? I've made it renamable and movable to another of the project's teams, but not deletable, so "a bug never lacks an area" always holds.
 
-- A110 · *(rev 10)* A fix task reopened while its bug is Fixed counts as the bug reopened (§7.2, FIX-2, `away-digest-and-timezones-v1`): Reopened badge, `reopen_count + 1`, and the activity line "Reopened: fix task T-n was reopened". `docs/design/tasks-projects-docs.md` l.180 makes `fixed → in_progress` automatic with no count change, and `org-proto` `work.rs` l.839–840 documents `Reopened` only for `bug.reopen` ("to `triaged`, or to `new` when it had been closed as a duplicate"). Please update the design and the event kind (or a new one) for this reopen.
+- ~~A110~~ · *Resolved (Rowan, 2026-11-13; rev 11):* the automatic `fixed → in_progress` move adds `reopen_count + 1`, and its StatusChanged event's cause points at the fix task's reopen, so Activity reads "Reopened: fix task T-n was reopened". No new event kind. Only that edge counts: a fix task starting while the bug is Triaged doesn't. `docs/design/tasks-projects-docs.md` l.180 is updated.
 **For the user**
 - ~~U7~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, Critical bugs always reach you in Needs you, whoever triages them.
 - ~~U8~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, the Work badge counts only what needs you (bugs to triage or verify, your blocked tasks).

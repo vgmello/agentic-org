@@ -423,7 +423,7 @@ A one-off is a **run with no Member** (decided with Eden, A28 and RUN-12). It's 
 - **Identity:** the run's **run-scoped session token**. `org-agent` binds with it alone (`msg.bind { session_token }`, no `agent`), and the office maps the token to the run.
   - The bind also needs **peer ancestry**, as for agents (see "Messaging").
   - Its address is a **run address**, `run:<office id>/<run id>`, a reserved form that's never a member id or handle. It carries the office, so HQ routes replies there like a placed agent's. ADR-0003 is amended to accept it in `from`/`to`, in its authorization rows and in routing.
-  - Its messages show as "<role> (one-off R-n)". They're authorized by the token.
+  - Its messages show as "{Role} (one-off run {n})", where {n} is the run's per-office number (A108 in `agent-run-modes-ux.md`; "{Role} (one-off run)" until runs carry it). They're authorized by the token.
   - Once the run has ended, a message to it is dead-lettered with `delivery_failed` (reason `run_ended`).
   - It reads only its own messages, like an agent-bound connection. It can call `who`, but not `status.set`.
 - **Workspace:** with a project, a worktree from `org-git`, attached to its work item. Without one, the empty `ws/` folder inside the run's own temp folder (`<runs>/<run>/`, see `TMPDIR`), removed at the run's end (rev 3.7). Concurrent one-offs of one office can see run folders started after their own launch, an accepted limit: one-offs act for the organization's owners. The worktree is removed **only after its branch is pushed through the office** (`projects-git-github.md`). Otherwise it's kept and flagged in Needs you.
