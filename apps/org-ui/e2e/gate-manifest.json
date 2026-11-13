@@ -5,7 +5,7 @@
 		"Journeys are the tests tagged @journey in the specs. Each entry names one test declaration (spec + a unique substring of its test( line) and how many Playwright tests it expands to.",
 		"A change that matches a category's sources runs that whole category in addition to the journeys. A path that matches nothing and is not ignored runs the full suite (fail closed).",
 		"webkit: true marks journeys that are also in the WebKit subset; the flag must equal whether the journey's test( line carries the @webkit tag that the webkit project in playwright.config.ts selects.",
-		"webkitExempt lists the files Playwright runs that exercise keyboard or focus (directly or through a local e2e helper) but have no @webkit test, each with a reason; ui-gate.test.ts fails on such a file that is neither tagged nor listed, and on a stale entry."
+		"webkitExempt lists the files Playwright runs that exercise keyboard or focus (directly or through a local e2e helper) but that the webkit project does not select (a statically skipped test does not count), each with a reason; ui-gate.test.ts (reading Playwright's own --list) fails on such a file that is not listed, and on a stale entry. A @webkit tag counts only where the webkit project selects it. Known limits (README-gate.md): coverage is per file, so one @webkit test covers the whole file (BUG-169c), and a skip decided at run time is not visible to --list."
 	],
 	"budget": {
 		"maxJourneyTests": 60,
