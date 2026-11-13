@@ -321,6 +321,27 @@ fn an_authenticated_discard_leaves_no_read_timeout() {
     assert_eq!(handed.events.get_ref().read_timeout().unwrap(), None);
 }
 
+/// A worker that sends its receipt and a `failed` line and exits at once: the receipt is still
+/// read (macOS refuses a timeout change once the peer closed), and the line reaches the reader.
+#[test]
+fn a_receipt_from_a_worker_that_already_exited_is_read() {
+    let dir = runtime();
+    let (host, mut child) = connected(dir.path());
+    let sending = thread::spawn(move || hand_off(host, start_handoff(), later()));
+    let _ = receive(&child, 1);
+    child
+        .write_all(b"{\"v\":3,\"event\":\"fds_received\",\"of\":\"handoff\"}\n{\"v\":3,\"event\":\"discarded\"}\n")
+        .unwrap();
+    drop(child);
+    let mut events = sending.join().unwrap().unwrap().events;
+    assert!(matches!(
+        v3::read_server_event(&mut events),
+        Ok(Some(RendezvousEvent::Server(
+            org_office_launch::ServerEvent::Discarded
+        )))
+    ));
+}
+
 /// Rule 14: the receipt wait is one 5 s deadline, however slowly a worker trickles bytes.
 #[test]
 fn a_trickled_receipt_still_ends_at_the_deadline() {

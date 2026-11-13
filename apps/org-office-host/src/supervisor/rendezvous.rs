@@ -198,8 +198,13 @@ fn read_line(stream: &UnixStream, max: usize, deadline: Instant) -> Option<Vec<u
     let mut byte = [0u8; 1];
     let read = loop {
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() || line.len() >= max || stream.set_read_timeout(Some(left)).is_err() {
+        if left.is_zero() || line.len() >= max {
             break None;
+        }
+        // EINVAL: the peer already closed; what it sent is still read, then the EOF.
+        match stream.set_read_timeout(Some(left)) {
+            Err(e) if e.raw_os_error() != Some(libc::EINVAL) => break None,
+            _ => {}
         }
         match (&*stream).read(&mut byte) {
             Ok(1) if byte[0] == b'\n' => break Some(line),
@@ -208,8 +213,7 @@ fn read_line(stream: &UnixStream, max: usize, deadline: Instant) -> Option<Vec<u
             _ => break None,
         }
     };
-    // macOS refuses (EINVAL) a timeout change on a connection its peer already closed: its
-    // reader then just reads to the EOF.
+    // macOS refuses (EINVAL) a timeout change on a connection its peer already closed.
     match stream.set_read_timeout(None) {
         Err(e) if e.raw_os_error() != Some(libc::EINVAL) => None,
         _ => read,
