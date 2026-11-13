@@ -126,9 +126,9 @@
 		<div class="mt-3 flex flex-wrap items-center gap-2">
 			{#each message.options ?? [] as o (o.id)}
 				{#if message.approval && o.id === 'reject'}
-					<Button type="button" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal px-[min(.625rem,8px)] py-1.5 text-left max-[640px]:min-h-[44px]" variant="outline" disabled={busy} onclick={() => ((rejecting = !rejecting), (replying = false))}>{o.label}</Button>
+					<Button type="button" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[640px]:min-h-[max(44px,2rem)]" variant="outline" disabled={busy} onclick={() => ((rejecting = !rejecting), (replying = false))}>{o.label}</Button>
 				{:else}
-					<Button type="button" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal px-[min(.625rem,8px)] py-1.5 text-left max-[640px]:min-h-[44px]" variant={message.approval ? 'default' : 'outline'} disabled={busy} onclick={() => go(() => onanswer({ option_id: o.id }))}>{o.label}</Button>
+					<Button type="button" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[640px]:min-h-[max(44px,2rem)]" variant={message.approval ? 'default' : 'outline'} disabled={busy} onclick={() => go(() => onanswer({ option_id: o.id }))}>{o.label}</Button>
 				{/if}
 			{/each}
 			{#if !message.approval}
