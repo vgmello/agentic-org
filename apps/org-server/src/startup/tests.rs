@@ -1289,8 +1289,9 @@ fn a_failed_handshake_write_ends_the_rendezvous(at: HandshakeWrite) {
     let writer = control.rendezvous.as_ref().unwrap().lock().unwrap();
     let mut ours = writer.try_clone().unwrap();
     drop(writer);
-    ours.set_read_timeout(Some(Duration::from_millis(500)))
-        .unwrap();
+    // Non-blocking, not a read timeout: macOS refuses SO_RCVTIMEO (EINVAL) on a shut socket.
+    // Ended both ways, the read is Ok(0) at once; with only the write half shut, WouldBlock.
+    ours.set_nonblocking(true).unwrap();
     assert_eq!(ours.read(&mut [0; 1]).unwrap(), 0, "{at:?}");
     done.send(()).unwrap();
     host.join().unwrap();
