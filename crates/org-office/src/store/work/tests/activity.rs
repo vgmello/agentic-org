@@ -748,13 +748,14 @@ fn activity_before_must_be_a_stored_position_at_or_below_the_ceiling() {
     ));
 }
 
-/// Freeze decision 7's budgets (release, Mac): run with
+/// Freeze decision 7's budgets (rev 4.6; release, Mac): run with
 /// `cargo test -p org-office --release -- --ignored activity_budget --nocapture`.
 #[test]
 #[ignore = "benchmark: 100,000 events; run in release"]
 fn activity_budget_100k_events_2000_items_one_hot_item() {
     let fx = setup(true);
     let projects: Vec<String> = (0..7).map(|p| format!("p{p}")).collect();
+    let pad = "x".repeat(1500);
     fx.store
         .write(move |db| {
             // 2,000 items with 45 events each, plus H with 10,000: one event per feed row.
@@ -773,10 +774,11 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
                     .map_err(OfficeError::storage)?;
                 insert_event(db, &ev(&target, T0 + n), seq)?;
             }
+            // Items as the store keeps them: about 1.5 KB of JSON each (a typical description).
             db.execute(
                 "UPDATE work_items SET data = json_set(data, '$.project_id',
-                     'p' || (unicode(substr(id, -1)) % 7))",
-                [],
+                     'p' || (unicode(substr(id, -1)) % 7), '$.description', ?1)",
+                [&pad],
             )
             .map_err(OfficeError::storage)?;
             Ok(((), None))
@@ -796,6 +798,12 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
     nothing.member = Some("nobody".into());
     let page = time("selective page, no match, scan 2000", &|| {
         let page = fx.reads.activity_page(&nothing).unwrap();
+        assert!(page.entries.is_empty() && !page.exhausted);
+    });
+    let mut elsewhere = query(100_000);
+    elsewhere.project = Some("p-none".into());
+    let project_page = time("project page, no match, scan 2000", &|| {
+        let page = fx.reads.activity_page(&elsewhere).unwrap();
         assert!(page.entries.is_empty() && !page.exhausted);
     });
     let mut hot = query(100_000);
@@ -822,6 +830,8 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
             page <= 20.0 && resume <= 20.0 && search <= 20.0,
             "page budget"
         );
+        // Each item's whole row is read for its project: no item-to-project index without DDL.
+        assert!(project_page <= 40.0, "project page budget");
         assert!(recency <= 30.0, "recency budget");
     }
 }

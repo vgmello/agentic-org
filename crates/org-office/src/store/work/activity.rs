@@ -26,11 +26,12 @@ impl OfficeWorkActivity {
     ) -> Result<R, StoreError> {
         self.0
             .read(|db| {
-                // Explicit, so a failed ROLLBACK never pools a reader still in this snapshot.
+                // Explicit, so a failed ROLLBACK never pools a reader in this snapshot (the
+                // read's own error wins over it).
                 let tx = sql(db.unchecked_transaction())?;
                 let out = work(&tx);
-                sql(tx.rollback())?;
-                out
+                let rolled_back = sql(tx.rollback());
+                out.and_then(|out| rolled_back.map(|()| out))
             })
             .map_err(StoreError::new)
     }
@@ -103,7 +104,6 @@ fn stored_position(
 }
 
 fn page(db: &Connection, q: &WorkActivityQuery) -> Result<WorkActivityPage, OfficeError> {
-    // At least one row and one entry, so every page moves on.
     let (scan, limit) = (q.scan.max(1), q.limit.max(1) as usize);
     let resume = q.before.as_ref();
     let start = resume.map_or(q.ceiling, |b| b.feed_seq);
@@ -114,78 +114,68 @@ fn page(db: &Connection, q: &WorkActivityQuery) -> Result<WorkActivityPage, Offi
     let mut rows = sql(feed.query(params![bound(start), i64::from(scan) + 2]))?;
     let (mut key, mut scanned, mut scanned_to) = (q.prev_key, 0, None);
     let mut entries: Vec<WorkActivityEntry> = Vec::new();
-    while let Some(row) = sql(rows.next())? {
-        let seq = column(row, 0)?;
-        let partial = resume.filter(|b| b.feed_seq == seq);
-        // The rest of a row the previous page started doesn't count against the cap again,
-        // so every page that scans moves on.
-        if partial.is_none() {
-            if scanned == scan {
-                return Ok(WorkActivityPage {
-                    entries,
-                    scanned_to,
-                    frontier: key,
-                    exhausted: false,
-                });
-            }
-            scanned += 1;
-        }
-        let targets: String = sql(row.get(1))?;
-        let mut targets: Vec<String> =
-            serde_json::from_str(&targets).map_err(OfficeError::storage)?;
-        targets.sort_unstable_by(|a, b| b.cmp(a));
-        targets.dedup();
-        // The start of the row: where the next page resumes when it holds no events.
-        scanned_to = Some(WorkActivityPosition {
-            feed_seq: seq,
-            target_id: String::new(),
-            version: 0,
-        });
-        for target in targets {
-            if let Some(b) = partial {
-                if target > b.target_id {
-                    continue;
-                } else if target == b.target_id {
-                    walk.lowest.insert(target.clone(), b.version);
+    let (scanned_to, frontier, exhausted) = 'walk: {
+        while let Some(row) = sql(rows.next())? {
+            let seq = column(row, 0)?;
+            let partial = resume.filter(|b| b.feed_seq == seq);
+            // The rest of a row a previous page started doesn't count against the cap again.
+            if partial.is_none() {
+                if scanned == scan {
+                    break 'walk (scanned_to, key, false);
                 }
+                scanned += 1;
             }
-            for (version, event) in walk.events_at(&target, seq)? {
-                let at_ms = org_work::parse_ms(&event.at);
-                key = at_ms.map_or(key, |at| at.min(key));
-                let position = WorkActivityPosition {
-                    feed_seq: seq,
-                    target_id: target.clone(),
-                    version,
-                };
-                if q.involves(&event) && walk.in_project(&target, q.project.as_deref())? {
-                    // More matches than fit (limit ≥ 1, so one was returned): resume right
-                    // after the last one returned.
-                    if let Some(last) = entries.last().filter(|_| entries.len() == limit) {
-                        let (scanned_to, frontier) = (Some(last.position.clone()), last.key);
-                        return Ok(WorkActivityPage {
-                            entries,
-                            scanned_to,
-                            frontier,
-                            exhausted: false,
+            let targets: String = sql(row.get(1))?;
+            let mut targets: Vec<String> =
+                serde_json::from_str(&targets).map_err(OfficeError::storage)?;
+            targets.sort_unstable_by(|a, b| b.cmp(a));
+            targets.dedup();
+            // The start of the row: where the next page resumes when it holds no events.
+            scanned_to = Some(WorkActivityPosition {
+                feed_seq: seq,
+                target_id: String::new(),
+                version: 0,
+            });
+            for target in targets {
+                if let Some(b) = partial {
+                    if target > b.target_id {
+                        continue;
+                    } else if target == b.target_id {
+                        walk.lowest.insert(target.clone(), b.version);
+                    }
+                }
+                for (version, event) in walk.events_at(&target, seq)? {
+                    let at_ms = org_work::parse_ms(&event.at);
+                    key = at_ms.map_or(key, |at| at.min(key));
+                    let position = WorkActivityPosition {
+                        feed_seq: seq,
+                        target_id: target.clone(),
+                        version,
+                    };
+                    if q.involves(&event) && walk.in_project(&target, q.project.as_deref())? {
+                        // More matches than fit (limit ≥ 1, so one was returned): resume right
+                        // after the last one returned.
+                        if let Some(last) = entries.last().filter(|_| entries.len() == limit) {
+                            break 'walk (Some(last.position.clone()), last.key, false);
+                        }
+                        entries.push(WorkActivityEntry {
+                            position: position.clone(),
+                            event,
+                            at_ms,
+                            key,
                         });
                     }
-                    let position = position.clone();
-                    entries.push(WorkActivityEntry {
-                        position,
-                        event,
-                        at_ms,
-                        key,
-                    });
+                    scanned_to = Some(position);
                 }
-                scanned_to = Some(position);
             }
         }
-    }
+        (scanned_to, key, true)
+    };
     Ok(WorkActivityPage {
         entries,
         scanned_to,
-        frontier: key,
-        exhausted: true,
+        frontier,
+        exhausted,
     })
 }
 
@@ -194,16 +184,15 @@ fn latest_by_project(
     ceiling: u64,
     projects: &[String],
 ) -> Result<Vec<(String, LatestActivity)>, OfficeError> {
-    let mut query = sql(db.prepare(
-        "SELECT id, json_extract(data, '$.project_id') FROM work_items
-         WHERE json_extract(data, '$.project_id') IN (SELECT value FROM json_each(?1))",
-    ))?;
-    let ids = serde_json::to_string(projects).map_err(OfficeError::storage)?;
-    let mut rows = sql(query.query([ids]))?;
+    let mut query = sql(db.prepare("SELECT id, data FROM work_items"))?;
+    let mut rows = sql(query.query([]))?;
     let walk = Walk::new(db);
     let mut newest: HashMap<String, (u64, String, u64)> = HashMap::new();
     while let Some(row) = sql(rows.next())? {
-        let (id, project): (String, String) = (sql(row.get(0))?, sql(row.get(1))?);
+        let Some(project) = project_of(row)?.filter(|project| projects.contains(project)) else {
+            continue;
+        };
+        let id: String = sql(row.get(0))?;
         if let Some((version, seq)) = walk.last_at(&id, ceiling)? {
             let candidate = (seq, id, version);
             if newest.get(&project).is_none_or(|best| candidate > *best) {
@@ -347,14 +336,25 @@ impl<'a> Walk<'a> {
         if let Some(&known) = self.in_project.get(target) {
             return Ok(known);
         }
-        let mut q = sql(self.db.prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM work_items
-             WHERE id = ?1 AND json_extract(data, '$.project_id') = ?2)",
-        ))?;
-        let known = sql(q.query_row(params![target, project], |r| r.get(0)))?;
+        let item = "SELECT data FROM work_items WHERE id = ?1";
+        let mut q = sql(self.db.prepare_cached(item))?;
+        let found = sql(q.query_row([target], |r| Ok(project_of(r))).optional())?;
+        let known = found.transpose()?.flatten().as_deref() == Some(project);
         self.in_project.insert(target.to_owned(), known);
         Ok(known)
     }
+}
+
+/// An item's project. serde skips the rest unbuilt; `json_extract` parses it all (1.3x slower).
+fn project_of(row: &rusqlite::Row<'_>) -> Result<Option<String>, OfficeError> {
+    #[derive(serde::Deserialize)]
+    struct Item {
+        project_id: Option<String>,
+    }
+    let data = sql(row.get_ref("data").and_then(|v| Ok(v.as_bytes()?)))?;
+    serde_json::from_slice(data)
+        .map(|item: Item| item.project_id)
+        .map_err(OfficeError::storage)
 }
 
 fn sql<T>(result: rusqlite::Result<T>) -> Result<T, OfficeError> {
