@@ -212,3 +212,116 @@ fn aliases_never_resolve() {
     assert_eq!(refused("a: &x 1\nb: *x\n"), ("a".into(), Reason::Anchor));
     assert!(matches!(refused("a: [1, *x]\n").1, Reason::Syntax(_)));
 }
+
+#[test]
+fn tags_and_anchors_are_refused_on_every_node_kind() {
+    // Scalars are covered in `every_refusal_names_its_field`; these are the other places a tag or
+    // an anchor can sit: on a sequence, on a mapping, on a key, on the root. A refusal on a key
+    // names the mapping that holds the key (as `NonStringKey` does), not the key itself.
+    let cases = [
+        ("a: !!seq [1]\n", "a", Reason::Tag),
+        ("a: !!map {b: 1}\n", "a", Reason::Tag),
+        ("a: &s [1]\n", "a", Reason::Anchor),
+        ("a: &m {b: 1}\n", "a", Reason::Anchor),
+        ("a:\n  - &s [1]\n", "a[0]", Reason::Anchor),
+        ("a:\n  - !!map {b: 1}\n", "a[0]", Reason::Tag),
+        ("&k a: x\n", "", Reason::Anchor),
+        ("!!str a: x\n", "", Reason::Tag),
+        ("m:\n  &k a: x\n", "m", Reason::Anchor),
+        ("{&k a: 1}\n", "", Reason::Anchor),
+        ("&r\na: 1\n", "", Reason::Anchor),
+        ("!!map\na: 1\n", "", Reason::Tag),
+    ];
+    for (yaml, field, reason) in cases {
+        assert_eq!(refused(yaml), (field.into(), reason), "{yaml:?}");
+    }
+}
+
+#[test]
+fn a_refusal_names_the_index_it_is_at() {
+    // The path index counts the items before it and is popped after each one: a refusal in the
+    // third item is `[2]`, not `[0]` and not a path left over from the items before.
+    assert_eq!(
+        refused("checklist:\n  - {text: a}\n  - {text: b}\n  - {text: &x c}\n"),
+        ("checklist[2].text".into(), Reason::Anchor)
+    );
+    assert_eq!(refused("a: [1, &x 2]\n"), ("a[1]".into(), Reason::Anchor));
+    assert_eq!(
+        refused("a: [[1, 2], [3, &x 4]]\n"),
+        ("a[1][1]".into(), Reason::Anchor)
+    );
+}
+
+#[test]
+fn numbers_out_of_range_are_refused_not_nulled() {
+    // `f64` parses these to infinity, which JSON cannot hold; `Value::from` would turn that into
+    // null, so the refusal has to come from `Number::from_f64`.
+    for bad in [
+        "1e999", "-1e999", "1.5e999", ".5e999", "+1e999", ".nan", ".NAN", ".INF", "+.inf",
+    ] {
+        assert_eq!(
+            refused(&format!("v: {bad}\n")),
+            ("v".into(), Reason::BadNumber),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn core_float_edges_follow_the_yaml_1_2_pattern() {
+    // `( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`, and a float needs a dot or
+    // an exponent; everything else that is not a number is a string.
+    let cases = [
+        (".", json!(".")),
+        ("1e", json!("1e")),
+        ("1e+", json!("1e+")),
+        ("1.e5", json!(100_000.0)),
+        ("1.E5", json!(100_000.0)),
+        (".e5", json!(".e5")),
+        ("e5", json!("e5")),
+        (".5e1", json!(5.0)),
+        ("1e+5", json!(100_000.0)),
+        ("1E-2", json!(0.01)),
+        ("-.5e1", json!(-5.0)),
+        ("1.5.2", json!("1.5.2")),
+        ("1e5e5", json!("1e5e5")),
+    ];
+    for (scalar, expected) in cases {
+        assert_eq!(
+            front(&format!("v: {scalar}\n")).unwrap()["v"],
+            expected,
+            "{scalar:?}"
+        );
+    }
+}
+
+#[test]
+fn the_fence_lines_are_read_exactly() {
+    // Kept behaviour, pinned: the opening fence is exactly `---` and a line end (`\n` or `\r\n`,
+    // after an optional byte-order mark). `--- ` with trailing space, with a comment, with a
+    // fourth dash or with no line end is not a fence, so the doc silently has no front matter and
+    // the whole text is the body. The closing fence is read the same way, so `--- ` there leaves
+    // the front matter unclosed.
+    for text in [
+        "--- \na: 1\n---\nbody\n",
+        "---  # c\na: 1\n---\nbody\n",
+        "----\na: 1\n---\nbody\n",
+        "---",
+    ] {
+        let doc = parse(text).unwrap();
+        assert_eq!((doc.front_matter, doc.body), (None, text), "{text:?}");
+    }
+    assert_eq!(
+        parse("---\na: 1\n--- \nbody\n").unwrap_err().reason,
+        Reason::Unclosed
+    );
+}
+
+#[test]
+fn a_bare_digit_run_is_not_a_core_float() {
+    // `typed` reads integers first, so this guard is defensive: a float needs a dot or an
+    // exponent, and `is_core_float` says so on its own.
+    assert!(!is_core_float("12"));
+    assert!(is_core_float("12."));
+    assert!(is_core_float("12e1"));
+}
