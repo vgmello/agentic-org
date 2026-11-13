@@ -45,13 +45,15 @@ impl Layout {
         }
     }
 
-    /// Every office socket in a home has the same length (12-character handles), so checking
-    /// `host.sock` and one sample office socket up front means no create can fail on it later.
+    /// Every office socket and every rendezvous in a home has the same length, so checking
+    /// `host.sock` and one sample of each up front means no create or start fails on it later.
     pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
             location::office_socket_in(&self.run, &sample_id).expect("the sample id is plain");
-        for path in [&self.host_socket, &sample] {
+        // A spawn's rendezvous, `<run>/r/<16 hex>`, is one byte longer still.
+        let rendezvous = self.run.join("r").join("0".repeat(16));
+        for path in [&self.host_socket, &sample, &rendezvous] {
             location::check_socket_path(path).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),
                 len: e.len,
@@ -475,10 +477,11 @@ mod tests {
 
     #[test]
     fn socket_paths_are_checked_against_the_macos_limit() {
-        // 103 bytes is the limit; run/<12>.sock adds 22 bytes to the home.
-        let ok = PathBuf::from(format!("/{}", "a".repeat(80)));
+        // 103 bytes is the limit; run/r/<16 hex>, the longest, adds 23 bytes to the home
+        // (run/<12>.sock 22).
+        let ok = PathBuf::from(format!("/{}", "a".repeat(79)));
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(81)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(80)));
         match Layout::new(&long).check_socket_paths() {
             Err(HostError::SocketPathTooLong { len, .. }) => assert_eq!(len, 104),
             other => panic!("{other:?}"),

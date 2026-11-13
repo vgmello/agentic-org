@@ -696,8 +696,7 @@ mod tests {
         Supervisor::new(SupervisorConfig {
             program,
             home: dir.to_path_buf(),
-            // The rendezvous folder goes here, so its paths stay short.
-            runtime_dir: Some(dir.to_path_buf()),
+            runtime_dir: Some(dir.to_path_buf()), // short rendezvous paths
             instance_id: "01JINSTANCE000000000000000".into(),
             logs_dir: dir.join("logs"),
             log_max_bytes: 1024,
