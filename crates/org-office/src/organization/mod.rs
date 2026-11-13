@@ -1,5 +1,6 @@
 //! Organization-owned membership, structure, people, directory and status policies.
 //! Persistence remains in the private store; root facades compose it with these capabilities.
+pub mod activity;
 mod apply;
 pub mod directory;
 mod people;
