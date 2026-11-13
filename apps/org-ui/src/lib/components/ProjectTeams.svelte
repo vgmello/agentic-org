@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { openerFrom } from '$lib/a11y/focus-return';
 	import HeroIcon from './HeroIcon.svelte';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
@@ -32,7 +33,8 @@
 	let removing = $state<{ projectId: string; projectName: string; teamName: string; teamId: string } | undefined>();
 
 	let chips = $state<HTMLDivElement>();
-	let restoreLast: (() => Promise<void>) | undefined;
+	// The Remove button that opened the last-team question: Cancel and Escape give focus back to it.
+	let removeOpener = $state<HTMLElement | null>(null);
 	function removalFocus(teamId: string) {
 		const removed = chips?.querySelector(`[data-team="${CSS.escape(teamId)}"]`);
 		const keys = row.teams.map((team) => team.id), at = keys.indexOf(teamId);
@@ -44,17 +46,12 @@
 			(next ?? chips?.querySelector<HTMLButtonElement>('[data-assign-team]'))?.focus();
 		};
 	}
-	async function removed(r: { message?: string }) {
-		const restore = restoreLast;
-		await done(r);
-		if (r.message) await restore?.();
-	}
-	async function take(teamId: string, teamName: string) {
+	async function take(e: MouseEvent, teamId: string, teamName: string) {
 		const restore = removalFocus(teamId);
 		// No confirmation while other teams remain; the last one asks first (it becomes unassigned).
 		if (isLastTeam(snapshot, row.project.id, teamId)) {
 			removing = { projectId: row.project.id, projectName: row.project.name, teamName, teamId };
-			restoreLast = restore;
+			removeOpener = openerFrom(e);
 			removeOpen = true;
 			return;
 		}
@@ -80,7 +77,7 @@
 		<span class="inline-flex items-center gap-x-1 rounded-md bg-white/10 py-0.5 pr-0.5 pl-2 text-xs/5 text-gray-100" data-testid="project-team" data-team={team.id}>
 			{team.name}
 			<button type="button" aria-label="Remove {row.project.name} from {team.name}"
-					title="Remove {row.project.name} from {team.name}" onclick={() => take(team.id, team.name)} class="inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
+					title="Remove {row.project.name} from {team.name}" onclick={(e) => take(e, team.id, team.name)} class="inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
 		</span>
 	{/each}
 	{#if row.shared}<Badge variant="secondary">Shared</Badge>{/if}
@@ -89,4 +86,4 @@
 </div>
 
 <ProjectTeamDialog bind:open={assignOpen} project={row.project} {snapshot} {session} ondone={done} />
-<RemoveProjectDialog bind:open={removeOpen} target={removing} {session} ondone={removed} />
+<RemoveProjectDialog bind:open={removeOpen} target={removing} {session} opener={removeOpener} fallback={() => chips?.querySelector<HTMLElement>('[data-assign-team]') ?? null} ondone={done} />

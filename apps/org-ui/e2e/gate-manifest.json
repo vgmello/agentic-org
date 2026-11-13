@@ -127,7 +127,7 @@
 			"sources": ["src/routes/(shell)/offices/**", "src/lib/offices/**", "src/lib/components/Office*.svelte", "src/lib/components/testing/office-status.*"]
 		},
 		"shell-look": {
-			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "focus-primitives-default-font.ts", "shot.spec.ts"],
+			"specs": ["navigation.spec.ts", "shell-*.spec.ts", "desktop-navigation-focus.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "pointer-focus.spec.ts", "focus-primitives-default-font.ts", "shot.spec.ts"],
 			"sources": ["src/routes/(shell)/[section=section]/**", "src/lib/components/testing/look-primitives.*", "src/lib/components/testing/focus-primitives.*", "e2e/focus-primitives.ts"]
 		},
 		"projects-work": {
@@ -183,6 +183,7 @@
 		], "why": "Every migrated DialogTitle consumer also runs exact heading/accessible name/selection, closing text and word geometry regressions in the title category. Existing owning categories, shared FULL and unknown fail-closed mappings remain in effect. Route visits live in the helper; the literal route scanner cannot inventory them." }
 	],
 	"allowedCoupling": [
+		{ "from": "e2e/pointer-focus.spec.ts", "to": "src/routes/(shell)/{org-chart,offices,projects}/+page.svelte", "why": "Dedicated pointer-focus regressions (BUG-158/166/168): each asserts focus return on the page whose shared primitive or handler is fixed (the org chart View menu, the Offices Retry buttons, the project Remove dialog); the shared primitives are covered by shell-look." },
 		{ "from": "e2e/focus-primitives.spec.ts", "to": "src/routes/(shell)/processes/+page.svelte", "why": "Dedicated ProcessSheet caller-override regression for the shared Button outline. The helper also samples nine consumer families (documented route-scanner limit); shared primitive changes select FULL, page-only changes retain their category and journey coverage." },
 		{ "from": "src/routes/(shell)/+layout.svelte", "to": "src/lib/modules/messaging/index.ts", "why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys." },
 		{ "from": "e2e/*.spec.ts", "to": "src/routes/(onboarding)/*/+page.svelte", "why": "Every spec creates its organization through /create or /welcome as set-up; the org-lifecycle category and the create/open journeys cover those pages." },
@@ -200,7 +201,7 @@
 			"src/lib/components/ui/**", "src/app.*", "src/hooks.*", "src/params/**", "src/routes/+*", "src/routes/(shell)/+*", "src/routes/(onboarding)/+*",
 			"src/lib/utils.ts", "src/lib/name.ts", "src/lib/office/**", "src/lib/work/**", "src/lib/org/agents*", "src/lib/org/reporting*", "src/lib/modules/messaging/drafts/**", "src/lib/nav.ts", "src/lib/format.ts", "src/lib/proto*.ts",
 			"src/lib/org/{actions,api,commands,live,live-state.svelte,load,model,reducer,sample,session}.ts",
-			"src/lib/platform/{feature-factory,unavailable-api}.ts", "src/lib/platform/http/**", "src/lib/platform/tooling/**", "src/lib/platform/shell/**",
+			"src/lib/a11y/**", "src/lib/platform/{feature-factory,unavailable-api}.ts", "src/lib/platform/http/**", "src/lib/platform/tooling/**", "src/lib/platform/shell/**",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*", "static/**",
 			"vite.config.ts", "svelte.config.js", "tsconfig.json", "package.json", "bun.lock", "components.json", "playwright.config.ts",
 			"e2e/gate-manifest.json", "e2e/fakes/**", "../../.github/workflows/**", "e2e/ready.ts", "e2e/shot.ts", "e2e/vite-composition.ts"

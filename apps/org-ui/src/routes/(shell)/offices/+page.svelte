@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
+	import { openerFrom } from '$lib/a11y/focus-return';
+	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
 	import { createProbe } from '$lib/offices/probe';
 	import { invalidate } from '$app/navigation';
@@ -69,11 +71,34 @@
 			if (pending !== data.counts) return;
 			counts = r;
 			retrying = false;
+			// A pointer Retry that worked removes the button focus was on (in WebKit, or on the page already): the page heading takes it.
+			if (pendingCountRetry) {
+				pendingCountRetry = undefined;
+				if (!('error' in r)) void tick().then(() => (stranded() ? focusDestinationHeading() : undefined));
+			}
 		});
 	});
-	function retry() {
+	// The count-error Retry a person clicked, until the counts it asked for arrive.
+	let pendingCountRetry: HTMLElement | undefined;
+	/** Focus is on the page itself: nothing is left where the person was (WebKit leaves it there on a click; a removed button leaves it there too). */
+	const stranded = () => {
+		const active = document.activeElement;
+		return !active || active === document.body || active === document.documentElement;
+	};
+	function retry(e: MouseEvent) {
+		pendingCountRetry = openerFrom(e) ?? undefined;
+		// WebKit does not focus a clicked button: do it, so Retry keeps focus while it works like in the other engines.
+		pendingCountRetry?.focus({ preventScroll: true });
 		retrying = true;
 		invalidate('app:offices');
+	}
+	// The row Retry a person clicked, until its check ends.
+	let pendingRetry: HTMLElement | undefined;
+	function retryOffice(e: MouseEvent) {
+		if (check === 'checking') return;
+		pendingRetry = openerFrom(e) ?? undefined;
+		pendingRetry?.focus({ preventScroll: true });
+		probe.run('explicit');
 	}
 	const snapshot = $derived(counts && 'snapshot' in counts ? counts.snapshot : undefined);
 	const sample = $derived(!!counts && 'snapshot' in counts && counts.sample);
@@ -111,8 +136,14 @@
 			capabilities = caps;
 			void refreshOffices();
 		}
-		// A Retry that worked removes the button the keyboard was on: move focus to the row instead of dropping it.
-		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
+		// A Retry that worked removes the button focus was on: move focus to the row instead of dropping it. A background
+		// check only does so while focus is on Retry; a pointer Retry (pending) also when WebKit left focus on the page.
+		if (next !== 'checking') {
+			const onRetry = !!document.activeElement?.matches('[data-testid=retry-office]');
+			const clicked = pendingRetry !== undefined && stranded();
+			pendingRetry = undefined;
+			if (next === 'up' && (onRetry || clicked)) rowButton(here.id)?.focus();
+		}
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
 // A new deadline gets an immediate sample, which anchors its stable live-status announcement.
@@ -280,7 +311,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 						aria-label="{check === 'checking' ? 'Retrying…' : 'Retry'} reaching {office.name}"
 						aria-disabled={check === 'checking'}
 						aria-busy={check === 'checking'}
-						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
+						onclick={retryOffice}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
 					<ChevronRight class="{compactRow.chevron} ml-2 size-5 shrink-0 text-gray-400" aria-hidden="true" />
 				</span>
@@ -294,7 +325,7 @@ const deadlineObservedAt = (office: OfficeInfo) => {
 		<p class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="count-error">
 			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
 			<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
-			<Button variant="outline" size="xs" class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60" aria-disabled={retrying} aria-busy={retrying} onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button>
+			<Button variant="outline" size="xs" class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60" aria-disabled={retrying} aria-busy={retrying} onclick={(e) => !retrying && retry(e)}>{retrying ? 'Retrying…' : 'Retry'}</Button>
 		</p>
 	{/if}
 

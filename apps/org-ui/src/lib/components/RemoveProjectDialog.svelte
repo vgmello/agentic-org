@@ -11,12 +11,19 @@
 		open = $bindable(false),
 		target,
 		session,
+		opener,
+		fallback,
 		ondone
 	}: {
 		open: boolean;
 		target: { projectId: string; projectName: string; teamName: string; teamId: string } | undefined;
 		session: OrgSession;
-		ondone: (result: { message?: string }) => void;
+		/** The Remove button that opened this: Cancel and Escape give focus back to it. Passing it (even `null`) also makes Confirm wait for `ondone` before closing. */
+		opener?: HTMLElement | null;
+		/** Where focus goes when that button is gone (the team was removed and the page reloaded). */
+		fallback?: () => HTMLElement | null;
+		/** Done (or refused): the page reloads. Awaited, so the dialog closes once what is behind it is up to date. */
+		ondone: (result: { message?: string }) => void | Promise<void>;
 	} = $props();
 
 	let busy = $state(false);
@@ -38,11 +45,14 @@
 		busy = true;
 		try {
 			await removeProjectTeam(session, shown.projectId, shown.teamId);
+			const done = ondone({ message: `Removed ${shown.projectName} from ${shown.teamName}.` });
+			// With an opener (the project page) the dialog closes once the page behind it is up to date, so focus can go to a row that exists.
+			if (opener !== undefined) await done;
 			open = false;
-			ondone({ message: `Removed ${shown.projectName} from ${shown.teamName}.` });
 		} catch (e) {
 			error = toAppError(e).message;
-			ondone({});
+			// A refusal must not hold Cancel and Escape until the reload is done.
+			void ondone({});
 		} finally {
 			busy = false;
 		}
@@ -50,7 +60,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent {opener} {fallback}>
 		<DialogHeader>
 			<DialogTitle text={`Remove ${shown?.projectName ?? ''} from ${shown?.teamName ?? ''}?`} />
 			<DialogDescription class="[overflow-wrap:anywhere]">It will have no team and show under Unassigned projects.</DialogDescription>
