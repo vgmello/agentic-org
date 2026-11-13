@@ -20,8 +20,7 @@ struct Row {
     changes: Vec<OrgChange>,
 }
 
-/// One epoch's log from a top row down, read lazily in blocks. Row `k` is the `k`-th row below
-/// the top, so lookback windows count rows, not pages.
+/// One epoch's log from a top row down, read lazily in blocks; lookbacks count its rows.
 #[derive(Default)]
 struct Log {
     rows: Vec<Row>,
@@ -41,9 +40,9 @@ impl Log {
             let top = self.rows.last().map_or(top, |row| row.seq as i64 - 1);
             let mut statement = db
                 .prepare_cached(
-                    "SELECT e.seq, e.command_id, e.at, e.body, c.principal_member
-                     FROM events e LEFT JOIN commands c ON c.command_id = e.command_id
-                     WHERE e.epoch = ?1 AND e.seq <= ?2 ORDER BY e.seq DESC LIMIT ?3",
+                    "SELECT e.seq, e.command_id, e.at, e.body, c.principal_member FROM events e
+                     LEFT JOIN commands c USING (command_id) WHERE e.kind = 'org.changed'
+                     AND e.epoch = ?1 AND e.seq <= ?2 ORDER BY e.seq DESC LIMIT ?3",
                 )
                 .map_err(OfficeError::storage)?;
             let read = statement

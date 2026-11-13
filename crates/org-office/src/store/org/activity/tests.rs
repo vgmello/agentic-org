@@ -131,17 +131,31 @@ fn read(store: &Store, query: &OrgActivityQuery) -> Result<ActivityPage, Activit
 }
 
 /// Every entry, paging until exhausted and feeding each page's position and key back.
-fn all(store: &Store, mut query: OrgActivityQuery) -> Vec<ActivityEntry> {
+fn all(store: &Store, query: OrgActivityQuery) -> Vec<ActivityEntry> {
+    paged(store, query, usize::MAX)
+}
+
+/// [`all`] in at most `max` pages, each stopping strictly below the previous one: a resume that
+/// does not move on fails instead of looping.
+fn paged(store: &Store, mut query: OrgActivityQuery, max: usize) -> Vec<ActivityEntry> {
     let mut entries = Vec::new();
-    loop {
+    for _ in 0..max {
         let page = read(store, &query).unwrap();
         entries.extend(page.entries);
         if page.exhausted {
             return entries;
         }
+        let below = |before| page.scanned_to < Some(before);
+        let moved = page.scanned_to.is_some() && query.before.is_none_or(below);
+        assert!(
+            moved,
+            "a page resumed at {:?} stopped at {:?}",
+            query.before, page.scanned_to
+        );
         query.before = page.scanned_to;
         query.prev_key = page.frontier;
     }
+    panic!("not exhausted in {max} pages");
 }
 
 fn verbs(entries: &[ActivityEntry]) -> Vec<&str> {
@@ -559,6 +573,51 @@ fn another_epochs_first_row_is_not_the_genesis() {
     assert_eq!(page.entries.len(), 3);
 }
 
+#[test]
+fn rows_of_another_event_kind_are_not_read() {
+    let (_dir, store) = store();
+    append(&store, filler(1));
+    store.run_sql_for_test(
+        "INSERT INTO events (epoch, seq, kind, command_id, at, body)
+         VALUES (1, 3, 'a.kind.from.the.future', 'X3', 'not a time', 'not json')",
+    );
+    append(&store, filler(1));
+    let entries = all(&store, query(4));
+    let seqs: Vec<_> = entries.iter().map(|e| e.position.seq).collect();
+    assert_eq!(seqs, [4, 2, 1]);
+}
+
+#[test]
+fn a_storage_error_drops_the_reader_and_a_snapshot_answer_keeps_it() {
+    use crate::{NewOffice, Office, OfficeRole};
+    let dir = TempDir::new().unwrap();
+    let new = NewOffice {
+        office_id: "HQ".into(),
+        office_name: "HQ".into(),
+        role: OfficeRole::Hq,
+        org_id: "ORG".into(),
+        org_name: "Organization".into(),
+    };
+    let office = Office::create(dir.path().join("HQ"), &new, Key::from_bytes([3; 32])).unwrap();
+    let head = office.org_head().unwrap();
+    let mut q = query(head.seq);
+    (q.epoch, q.before) = (head.epoch + 1, None);
+    let idle = |query: &OrgActivityQuery| {
+        office.org_store().idle_readers().clear();
+        let answer = office.org_activity(query);
+        (answer, office.org_store().idle_readers().len())
+    };
+    let (answer, readers) = idle(&q);
+    assert!(matches!(answer, Err(ActivityError::SnapshotRequired)) && readers == 1);
+    office
+        .org_store()
+        .run_sql_for_test("UPDATE events SET body = 'not json'");
+    q.epoch = head.epoch;
+    let (answer, readers) = idle(&q);
+    assert!(matches!(answer, Err(ActivityError::Store(_))), "{answer:?}");
+    assert_eq!(readers, 0, "the reader that failed is not reused");
+}
+
 // ---- filters ---------------------------------------------------------------------------------
 
 /// `rows` as the oldest after the genesis, under 101 filler rows; a limit-3 page of `filter`.
@@ -734,6 +793,34 @@ fn more_matches_than_the_limit_end_the_page_at_its_last_entry() {
 }
 
 #[test]
+fn a_page_past_its_limit_keeps_its_last_entrys_key_when_older_times_fall() {
+    let (_dir, store) = store();
+    append(
+        &store,
+        vec![
+            (at(T0 + 50), vec![project("P7", 2, false)]),
+            (at(T0 + 1), vec![team("T1", 2)]),
+            (at(T0 + 40), vec![project("P7", 3, false)]),
+            (at(T0 + 30), vec![project("P7", 4, false)]),
+        ],
+    );
+    let mut q = query(5);
+    (q.project, q.limit) = (Some("P7".into()), 2);
+    let page = read(&store, &q).unwrap();
+    let found: Vec<_> = page.entries.iter().map(|e| (e.position, e.key)).collect();
+    assert_eq!(
+        found,
+        [(position(5, 0), T0 + 30), (position(4, 0), T0 + 30)]
+    );
+    // The next match (seq 2) sits below the unmatched seq 3, whose time is lower.
+    assert_eq!(
+        (page.scanned_to, page.frontier),
+        (Some(position(4, 0)), T0 + 30)
+    );
+    assert!(!page.exhausted);
+}
+
+#[test]
 fn a_limit_or_scan_of_0_counts_as_1() {
     let (_dir, store) = store();
     append(&store, filler(3));
@@ -788,16 +875,24 @@ fn independence_log() -> Rows {
 fn entries_do_not_depend_on_how_pages_fall() {
     let (_dir, store) = store();
     append(&store, independence_log());
-    let run = |limit, scan| {
-        let mut q = query(4_500);
+    // Unfiltered, every page returns an entry; at most `max` pages.
+    let run = |ceiling, limit, scan, max| {
+        let mut q = query(ceiling);
         (q.limit, q.scan) = (limit, scan);
-        all(&store, q)
+        paged(&store, q, max)
     };
-    let whole = run(100, 2_000);
+    let whole = run(4_500, 100, 2_000, usize::MAX);
     assert_eq!(whole.len(), 6_168);
     assert!(whole.windows(2).all(|pair| pair[0].key >= pair[1].key));
     for (limit, scan) in [(1, 2_000), (3, 2_000), (100, 7)] {
-        assert!(run(limit, scan) == whole, "limit {limit}, scan {scan}");
+        let paged = run(4_500, limit, scan, whole.len());
+        assert!(paged == whole, "limit {limit}, scan {scan}");
+    }
+    // One row per page, over the lookback edges at 2,100 to 2,401: a row has at most two
+    // changes, so a limit of 3 takes one page per row and a limit of 1 one per entry.
+    let lower = run(2_500, 100, 2_000, usize::MAX);
+    for (limit, max) in [(3, 2_500), (1, lower.len())] {
+        assert!(run(2_500, limit, 1, max) == lower, "limit {limit}, scan 1");
     }
     let at = |seq| whole.iter().find(|e| e.position.seq == seq).unwrap();
     assert_eq!(
@@ -826,6 +921,7 @@ fn an_upsert_read_for_the_page_but_outside_its_window_does_not_resolve() {
                 log.rows.iter().any(|row| row.seq == 200),
                 "the upsert is in the read"
             );
+            assert!(log.rows.len() <= 1 + LOOKBACK_ROWS + 511 && !log.end);
             assert_eq!(
                 (verb.as_str(), subject),
                 ("org.membership.removed", Default::default())
@@ -834,6 +930,37 @@ fn an_upsert_read_for_the_page_but_outside_its_window_does_not_resolve() {
             assert!(log.has(source, 0)?);
             let (_, subject) = log.describe(source, 0, 0)?;
             assert_eq!(subject.member.as_deref(), Some("M1"));
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn a_lookback_without_an_upsert_in_its_window_reads_no_further() {
+    let (_dir, store) = store();
+    let mut rows = independence_log();
+    // Seq 4,000 removes `SB0`, last upserted at seq 100; seq 3,000 removes a never-logged id.
+    rows[4_000 - 2].1 = vec![removed("membership", "SB0")];
+    rows[3_000 - 2].1 = vec![removed("membership", "GHOST")];
+    append(&store, rows);
+    store
+        .read(|db| {
+            for k in [500, 1_500] {
+                let (source, mut log) = ((db, 1, 4_500), Log::default());
+                assert!(log.has(source, k)?);
+                assert_eq!(log.rows[k].seq, 4_500 - k as u64);
+                let (verb, subject) = log.describe(source, k, 0)?;
+                assert_eq!(
+                    (verb.as_str(), subject),
+                    ("org.membership.removed", Default::default())
+                );
+                // At most the window and one growing block past it; never the whole log.
+                let read = log.rows.len();
+                assert!(
+                    read <= k + 1 + LOOKBACK_ROWS + 511 && !log.end,
+                    "row {k}: {read}"
+                );
+            }
             Ok(())
         })
         .unwrap();

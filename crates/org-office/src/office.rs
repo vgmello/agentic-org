@@ -660,9 +660,10 @@ impl Office {
 
     /// One page of org activity, newest first, from one read transaction (IA-12).
     pub fn org_activity(&self, query: &OrgActivityQuery) -> Result<ActivityPage, ActivityError> {
-        self.stores
-            .org
-            .read(|db| Ok(org_db::activity::page(db, query)))?
+        (self.stores.org).read(|db| match org_db::activity::page(db, query) {
+            Err(ActivityError::Store(error)) => Err(error),
+            page => Ok(page),
+        })?
     }
 
     /// A number that changes whenever a command has been committed or a live event has been
