@@ -669,6 +669,22 @@ fn a_capped_page_without_matches_is_empty_but_not_exhausted() {
 }
 
 #[test]
+fn a_scan_that_reads_exactly_the_remaining_rows_is_exhausted() {
+    let (_dir, store) = store();
+    append(&store, filler(3));
+    let rows = head_seq(&store) as usize;
+    let mut q = query(head_seq(&store));
+    q.scan = rows;
+    let page = read(&store, &q).unwrap();
+    assert!(page.exhausted, "every retained row fits the scan");
+    assert_eq!(page.scanned_to, Some(position(1, 0)));
+    q.scan = rows - 1;
+    let page = read(&store, &q).unwrap();
+    assert!(!page.exhausted, "the genesis row is left for the next page");
+    assert_eq!(page.scanned_to, Some(position(2, 0)));
+}
+
+#[test]
 fn more_matches_than_the_limit_end_the_page_at_its_last_entry() {
     let (_dir, store) = store();
     let mut rows: Vec<_> = (0..5)
