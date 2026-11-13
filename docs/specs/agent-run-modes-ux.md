@@ -19,7 +19,7 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
-**Revision 10 (2026-11-13): one-off label (costs-and-budgets-v1 §12.3, F28).** R-n is now the release key (`projects-planning-v1`), so one-offs show as "{Role} (one-off run {n})", for example "Reviewer (one-off run 12)", where {n} is the run's number as shown in Activity. The label has no key-style prefix, so it can't collide with the P, R, M, T, B, RT, RI or REQ keys (decision 8). **Criteria rewritten (same ID):** RUN-12 *(rev 10)*.
+**Revision 10 (2026-11-13): one-off label (costs-and-budgets-v1 §12.3, F28).** R-n is now the release key (`projects-planning-v1`), so one-offs show as "{Role} (one-off run {n})", for example "Reviewer (one-off run 12)", where {n} is the run's short number (open question A108). The label has no key-style prefix, so it can't collide with the P, R, M, T, B, RT, RI or REQ keys (decision 8). Where {n} comes from is open (A108). **Criteria rewritten (same ID):** RUN-12 *(rev 10)*.
 
 **Revision 9 (2026-11-10): before the office runs agents, and the HR lead when it can't run (O-7).** Hire's Review shows How it runs only once the office runs agents; until then it's left out, and agents hired before then get **On call** (U19) when runs arrive (§2, `our-org-in-the-app.md` §7). When the HR lead's run fails to start, hiring doesn't wait for it (§3, `our-org-in-the-app.md` §2a). **Criteria rewritten (same ID):** RUN-1 *(rev 9)*.
 
@@ -119,7 +119,7 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-9 · *(rev 2)* A missing or signed-out runtime raises a Needs you item at once with the fix. Other failures do so after three failed wakes in a row. Waiting messages are kept.
 - RUN-10 · HQ durably accepts Pause with pending office stop if disconnected; the office applies current state before admitting schedules/wakes and acknowledges stopping. Resume restores the mode without stale Pause delivery overriding it (DEAL-3, SRV-28).
 - RUN-11 · The wake-up guidance is shown and editable in How it runs, per agent, and every wake starts with it.
-- RUN-12 · *(rev 10)* One-off agents can be started from a job (review, task). They show as "{Role} (one-off run {n})", for example "Reviewer (one-off run 12)": {n} is the run's number as shown in Activity, with no key-style prefix. They never appear in the org chart (they aren't members), and their result, cost and duration are attached to the job.
+- RUN-12 · *(rev 10)* One-off agents can be started from a job (review, task). They show as "{Role} (one-off run {n})", for example "Reviewer (one-off run 12)": {n} is the run's short number (A108), with no key-style prefix. They never appear in the org chart (they aren't members), and their result, cost and duration are attached to the job.
 - RUN-13 · How it runs shows the agent's recent runs and cost, and explains that on-call and scheduled agents only cost while they run.
 
 - RUN-14 · *(new, rev 7)* Every office-managed employee has the supervision state described by EMP-1..14. Sleeping/paused records persist without model monitoring turns. Pause, offboard and placement changes stop/reconcile internal delegates, helpers and subprocesses; recovery never overrides Pause. Person-started sessions show supervision unavailable.
@@ -133,6 +133,7 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - ~~A26~~ · *Resolved (ada):* `run_mode` and `schedule` live on AgentProfile (org data at HQ). The agent's office fires the schedule under the login service, so schedules work with the app closed.
 - ~~A27~~ · *Resolved (ada):* derived, not stored. Asleep = an on-call or scheduled agent with no live run. Offline = an always-on agent with no live session.
 - ~~A28~~ · *Resolved (ada):* a one-off is a Run of a role or template with a temporary workspace, attached to its work item, with no Member. The workspace is cleaned up, and the transcript and outcome stay on the run record (so its **Open session log** link keeps working).
+- A108 · *(rev 10)* Where does a one-off's short number {n} come from? Runs are addressed `run:<office id>/<run id>`, with no short number today. I'd like a per-office sequence shown in Activity ("Reviewer (one-off run 12)"). Until one exists, the label is "{Role} (one-off run)" and the job it's on says which. ADR-0003 (l.246) and `docs/design/agent-sessions.md` (l.426) still say "<role> (one-off R-n)"; please update them to this label.
 
 **For the user**
 - ~~U19~~ · *Resolved (the user, 2026-11-08): as recommended.* The modes I recommend for our team (§4): HR lead and the reviewer On call, builders On call, ada Always on during pushes. OK?
