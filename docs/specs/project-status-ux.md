@@ -19,7 +19,7 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
-**Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task, bug or agent stop, `costs-and-budgets-v1` §5.4). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). No criteria changed.
+**Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task or bug stopped or held by its budget, `costs-and-budgets-v1` §5.4; an agent's budget pause belongs to the agent, not a project, so it doesn't count). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). No criteria changed.
 
 **Revision 4 (2026-11-08): review fixes.** Revision 3's note on waiting on you now states the narrow rule for decisions, as §4 does: only a task Blocked waiting for your decision on a proposed ADR, while it's the blocker. No criteria changed.
 
