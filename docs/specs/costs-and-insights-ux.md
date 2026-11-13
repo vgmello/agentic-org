@@ -2,7 +2,7 @@
 kind: spec
 title: "Costs, tokens, time and insights (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-13"
@@ -20,6 +20,8 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 > For each project we invoke the agents. We need to see how much the sessions cost, the number of tokens, and insights: how long tasks take, the speed of tasks, the cost of a particular task and overall project costs. We need a structure for this.
 
 > *(rev 2, the user)* No clients: the point is to see **what each project has cost (the investment)**. Immediate figures are fine. Don't worry about plans: value everything by its tokens at **API prices**, in **US dollars**.
+
+**Revision 7 (2026-11-13): A109 (Emery).** The monthly report saved to `docs/reports/` carries no cost amounts or budget figures (`project-status-ux.md` STATUS-7). **Criteria rewritten (same ID):** INS-5 *(rev 7)*.
 
 **Revision 6 (2026-11-13): aligned with costs-and-budgets-v1 Rev 13 §12.1, D42.** The PRD (`costs-and-budgets-v1.md`) wins where this spec differs, and its §5.4 and §5.4a hold the full budget rules. The unit is the usage record, rolled up agent × task, not the session (decision 1). An agent on a subscription plan shows "API-equivalent cost" (decision 3). Attribution follows the PRD's order: work for a task, the current task at the time, the one-In-progress fallback, else **Not on a task**. The session-start task and "Not linked to a task" are gone (decision 4). Budgets are on tasks, agents and releases, and task and agent budgets stop work at 100%. Monthly project budgets that never stop agents are gone (decision 8, §4). The Budget reached item isn't dismissible, and after an Allow 20% more once the next stop offers only Raise budget and Stop (§4). Past costs are never re-estimated, and the owner edits the price list in Settings › Costs with an effective date, forward only (§5). Copilot runs are attributed like any run, with no separate Copilot line (decision 9). The Kind breakdown gains work type. Insights leads with Progress, and the Cost section follows (INS-5, `project-insights-v1` D3). **Criteria rewritten (same ID):** COST-1 to COST-6, INS-2, INS-5, BUD-1, BUD-2. **Added:** BUD-3. §1 gains the release header, Agent profile › Cost, Organization › Cost and who sees amounts (`costs-and-budgets-v1` §5.5, §6). To do (Eden): `our-org-in-the-app.md` l.201's profile tabs need **Cost** (PRD §6). For ada: `docs/design/smart-features.md` l.24 ("Copilot" per project) and l.132 still say this spec shows copilot runs as "Copilot"; they are now attributed like any run (COST-6). `docs/design/tasks-projects-docs.md` l.915 lists project settings for "`costs-and-insights-ux.md` (budget)", but monthly project budgets are gone; budgets are on tasks, agents and releases.
 
@@ -112,7 +114,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 
 - **Project › Insights** *(rev 6)*: its Cost section, after Progress and Speed, opens with **Investment**: "Agentic Org has cost ≈ $1,240 so far (since 7 Nov) · agent work: — (not tracked yet) · 180 tasks and 64 bugs done", then this month.
 - **Insights › Projects** (org-wide): project · investment to date · this month · last month · change · working time · items done.
-- **Export ▾:** **CSV** (one row per usage record *(rev 6)*, with project, task, how it was attributed, agent, runtime, model, tokens, cost, the cost source and time) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with totals, the breakdowns and the insights).
+- **Export ▾:** **CSV** (one row per usage record *(rev 6)*, with project, task, how it was attributed, agent, runtime, model, tokens, cost, the cost source and time) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with the breakdowns and the insights in tokens and "Budget reached", never cost amounts, per `project-status-ux.md` STATUS-7 and A109 *(rev 7)*).
 
 ## 4. Flow · Budgets
 
@@ -164,7 +166,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 - INS-2 · *(rev 6)* Breakdowns by team, area, agent, model and kind (with work type) are available, each with a table view for screen readers.
 - INS-3 · Insights are sentences with a link to the items behind them. At least these exist: an outlier task or bug (≥ 3× its team's median), waiting on you this period, and a cost concentration (one area or team ≥ 40%).
 - INS-4 · A runtime with no usage data is marked in every total it affects, never counted as zero.
-- INS-5 · *(rev 6, `project-insights-v1` D3)* The project's Insights leads with Progress. Its Cost section follows Progress and Speed and opens with the investment to date. The org-wide Insights lists projects by investment, and Export gives a per-record CSV and a monthly report doc in `docs/reports/`.
+- INS-5 · *(rev 7; rev 6, `project-insights-v1` D3)* The project's Insights leads with Progress. Its Cost section follows Progress and Speed and opens with the investment to date. The org-wide Insights lists projects by investment, and Export gives a per-record CSV and a monthly report doc in `docs/reports/` (no cost amounts in the file, A109) *(rev 7)*.
 
 **Budgets (BUD)**
 - BUD-1 · *(rev 6)* A task or bug, an agent (per day, per month) and a release can have a budget in US dollars or total tokens, never both. At 80%, whoever last set or changed it gets one neutral notice, never an Inbox item. At 100%, work on the task stops and an agent pauses, each with one amber Budget reached Inbox item for the owner per budget reached (an agent at both limits gets two). A release cap only warns. The full rules are `costs-and-budgets-v1.md` §5.4 and §5.4a.
