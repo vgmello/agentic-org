@@ -11,7 +11,8 @@ mod resolve;
 pub use file::{read, Moments, Problem, ProblemKind, ProcessFile, Status, Step};
 pub use place::{location, Level, Location, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
 pub use resolve::{
-    resolve, Conflict, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome, Winner, Work,
+    resolve, Conflict, Drift, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome,
+    PrivateReason, TurnedOff, Winner, Work,
 };
 
 #[cfg(test)]

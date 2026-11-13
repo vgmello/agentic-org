@@ -1,7 +1,7 @@
 //! §3.2's rules, table-driven (processes.md Appendix C): each case fails without its rule.
 
 use super::*;
-use crate::{read, Location, MemberId, ProjectKey, TeamId};
+use crate::{read, Location};
 
 const MEMBER: &str = "01JD8Z3F0000000000000000CD";
 const OTHER: &str = "01JD8Z3F0000000000000000EF";
@@ -104,15 +104,26 @@ fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
 fn work(chains: &[&[&str]]) -> Option<Work> {
     let chain = |c: &&[&str]| c.iter().map(|id| TeamId::new(id).unwrap()).collect();
     Some(Work {
+        project: ProjectKey::new("atlas").unwrap(),
         chains: chains.iter().map(chain).collect(),
     })
 }
 
 fn resolved(work: Option<Work>, files: Vec<Input>) -> EffectiveSet {
-    resolve(&Inputs { work, files })
+    let mut names: BTreeMap<Place, String> = ["web", "mobile", "platform"]
+        .into_iter()
+        .map(|id| (team(id), id[..1].to_uppercase() + &id[1..]))
+        .collect();
+    names.insert(atlas(), "Atlas".into());
+    resolve(&Inputs {
+        agent: MemberId::new(MEMBER).unwrap(),
+        work,
+        files,
+        names,
+    })
 }
 
-/// The set in words: each key's winner, each conflict and problem (sorted).
+/// The set in words: each key's winner, each turned-off key, conflict and problem (sorted).
 fn summary(set: &EffectiveSet) -> Vec<String> {
     let mut out = Vec::new();
     for entry in &set.entries {
@@ -121,6 +132,9 @@ fn summary(set: &EffectiveSet) -> Vec<String> {
             None => "none".into(),
         };
         out.push(format!("{}: {winner}", entry.key.as_str()));
+    }
+    for off in &set.turned_off {
+        out.push(format!("{}: {}", off.key.as_str(), off.message()));
     }
     for c in &set.conflicts {
         let teams: Vec<String> = c.teams.iter().map(label).collect();
@@ -144,6 +158,7 @@ fn summary(set: &EffectiveSet) -> Vec<String> {
                 Outcome::Invalid(problem) => format!("invalid {}", problem.field),
                 Outcome::Clashed => "clash".into(),
                 Outcome::Refused { sealed_by } => format!("sealed by {}", label(sealed_by)),
+                Outcome::PrivateOnlyAdds(reason) => format!("private {reason:?}"),
                 other => panic!("{other:?} isn't a problem"),
             };
             format!("{}: {kind}", p.path)
@@ -186,15 +201,16 @@ fn matching_level_order_and_the_nearer_team() {
             vec!["checks: web v2 Addition", "review: web v2 Override"],
         ),
         (
-            "the lower level wins, whatever the input order",
+            "the lowest level wins, whatever the input order",
             work(&[&["web"]]),
             vec![
+                at(atlas(), "review", 3, ""),
                 at(team("web"), "review", 2, ""),
                 at(team("web"), "checks", 2, ""),
                 at(org(), "review", 1, ""),
                 at(org(), "checks", 1, ""),
             ],
-            vec!["checks: web v2 Override", "review: web v2 Override"],
+            vec!["checks: web v2 Override", "review: atlas v3 Override"],
         ),
         (
             "the nearer team wins, the outermost folded first",
@@ -207,7 +223,7 @@ fn matching_level_order_and_the_nearer_team() {
             vec!["checks: platform v1 Addition", "review: web v2 Override"],
         ),
         (
-            "with no current work, the teams' files take no part",
+            "no current work gives O ⊕ G",
             None,
             vec![
                 at(org(), "review", 1, ""),
@@ -217,7 +233,13 @@ fn matching_level_order_and_the_nearer_team() {
                 at(me(), "mine", 1, ""),
                 at(Place::Agent(MemberId::new(OTHER).unwrap()), "theirs", 1, ""),
             ],
-            vec!["review: org v1 Inherited"],
+            vec!["mine: me v1 Addition", "review: org v1 Inherited"],
+        ),
+        (
+            "with no current work, a private key a team uses only adds",
+            None,
+            vec![at(team("web"), "checks", 1, ""), at(me(), "checks", 1, "")],
+            vec!["checks: me v1 Addition"],
         ),
         (
             "an unlinked team's files take no part",
@@ -242,23 +264,27 @@ fn seals() {
                 at(org(), "review", 1, "sealed"),
                 at(team("web"), "review", 2, ""),
                 at(team("mobile"), "review", 2, "off"),
+                at(atlas(), "review", 3, ""),
             ],
             vec![
                 "review: org v1 Inherited",
+                "atlas/review.md: sealed by org",
                 "mobile/review.md: sealed by org",
                 "web/review.md: sealed by org",
             ],
         ),
         (
-            "a team seal refuses its sub-teams' versions",
+            "a team seal refuses its sub-teams' and projects' versions",
             work(&[&["platform", "web"]]),
             vec![
                 at(org(), "review", 1, ""),
                 at(team("platform"), "review", 2, "sealed"),
                 at(team("web"), "review", 3, ""),
+                at(atlas(), "review", 4, "off"),
             ],
             vec![
                 "review: platform v2 Override",
+                "atlas/review.md: sealed by platform",
                 "web/review.md: sealed by platform",
             ],
         ),
@@ -278,6 +304,17 @@ fn seals() {
                 "checks conflict mobile,web sealed [web] -> web",
                 "review conflict mobile,web sealed [web] -> web",
             ],
+        ),
+        (
+            "a project version settles a conflict with a seal",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "review", 2, "sealed"),
+                at(team("mobile"), "review", 3, ""),
+                at(atlas(), "review", 4, ""),
+            ],
+            vec!["review: atlas v4 Override"],
         ),
         (
             "two team seals: the organization's version, else the first by team id not an off",
@@ -310,10 +347,12 @@ fn seals() {
                 at(team("platform"), "checks", 1, "sealed"),
                 at(team("platform"), "checks", 1, "as:checks-2"),
                 at(team("web"), "checks", 2, ""),
+                at(atlas(), "checks", 3, ""),
             ],
             vec![
                 "checks: none",
                 "review: none",
+                "atlas/checks.md: sealed by platform",
                 "org/review-2.md: clash",
                 "org/review.md: clash",
                 "platform/checks-2.md: clash",
@@ -362,10 +401,13 @@ fn seals() {
                 at(team("platform"), "broken", 1, "garbage"),
                 at(team("platform"), "checks", 1, ""),
                 at(team("web"), "review", 2, ""),
+                at(atlas(), "plan", 1, ""),
             ],
             vec![
                 "checks: platform v1 Addition",
+                "plan: none",
                 "review: org v1 Inherited",
+                "atlas/plan.md: sealed by platform",
                 "platform/broken.md: invalid NoFrontMatter",
                 "web/review.md: sealed by platform",
             ],
@@ -394,14 +436,33 @@ fn conflicts() {
             ],
         ),
         (
-            "one team's version applies",
+            "one team's version applies, an off included",
             work(&[&["web"], &["mobile"]]),
             vec![
                 at(org(), "review", 1, ""),
                 at(team("web"), "review", 2, ""),
-                at(team("mobile"), "checks", 2, ""),
+                at(org(), "checks", 1, ""),
+                at(team("mobile"), "checks", 2, "off"),
             ],
-            vec!["checks: mobile v2 Addition", "review: web v2 Override"],
+            vec![
+                "checks: none",
+                "review: web v2 Override",
+                "checks: Turned off for Mobile: we report daily",
+            ],
+        ),
+        (
+            "a project version settles a conflict",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "review", 2, ""),
+                at(team("mobile"), "review", 3, ""),
+                at(atlas(), "review", 4, ""),
+                at(team("web"), "checks", 2, ""),
+                at(team("mobile"), "checks", 3, ""),
+                at(atlas(), "checks", 4, ""),
+            ],
+            vec!["checks: atlas v4 Override", "review: atlas v4 Override"],
         ),
         (
             "a parent-and-sub-team link isn't a conflict",
@@ -463,24 +524,98 @@ fn conflicts() {
 }
 
 #[test]
-fn validity_and_clashes() {
+fn turned_off_private_and_validity() {
     check(vec![
         (
-            "valid files only: invalid and misplaced out; drafts and retired silently",
+            "a surviving off removes the key, named for its team or project",
+            work(&[&["platform", "web"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "review", 2, "off"),
+                at(org(), "checks", 1, ""),
+                at(atlas(), "checks", 2, "off"),
+                at(org(), "plan", 1, ""),
+                at(team("platform"), "plan", 2, "off"),
+                at(team("web"), "plan", 3, ""),
+            ],
+            vec![
+                "checks: none",
+                "plan: web v3 Override",
+                "review: none",
+                "checks: Turned off for Atlas: we report daily",
+                "review: Turned off for Web: we report daily",
+            ],
+        ),
+        (
+            "private files only add",
+            work(&[&["web"]]),
+            vec![
+                at(me(), "mine", 1, ""),
+                at(org(), "review", 1, ""),
+                at(me(), "review", 1, ""),
+                at(me(), "plan", 1, "over1"),
+                at(me(), "quiet", 1, "off"),
+                at(team("web"), "drafted", 1, "draft"),
+                at(me(), "drafted", 1, ""),
+                at(atlas(), "old", 1, "retired"),
+                at(me(), "old", 1, ""),
+                at(org(), "broken", 1, "bad"),
+                at(me(), "broken", 1, ""),
+                at(team("web"), "twice", 1, ""),
+                at(team("web"), "twice", 1, "as:twice-2"),
+                at(me(), "twice", 1, ""),
+            ],
+            vec![
+                "broken: none",
+                "drafted: none",
+                "mine: me v1 Addition",
+                "old: none",
+                "plan: none",
+                "quiet: none",
+                "review: org v1 Inherited",
+                "twice: none",
+                "me/broken.md: private Inherited",
+                "me/drafted.md: private Inherited",
+                "me/old.md: private Inherited",
+                "me/plan.md: private Overrides",
+                "me/quiet.md: private TurnsOff",
+                "me/review.md: private Inherited",
+                "me/twice.md: private Inherited",
+                "org/broken.md: invalid version",
+                "web/twice-2.md: clash",
+                "web/twice.md: clash",
+            ],
+        ),
+        (
+            "a private key might be an unreadable file's",
+            work(&[&["web"]]),
+            vec![at(atlas(), "broken", 1, "garbage"), at(me(), "mine", 1, "")],
+            vec![
+                "mine: none",
+                "atlas/broken.md: invalid NoFrontMatter",
+                "me/mine.md: private Inherited",
+            ],
+        ),
+        (
+            "valid files only: invalid, misplaced and refused names out; drafts silently",
             work(&[&["web"]]),
             vec![
                 at(org(), "review", 1, ""),
                 at(team("web"), "review", 2, "bad"),
                 at(org(), "checks", 1, ""),
                 at(team("web"), "checks", 2, "draft"),
-                at(team("web"), "plan", 1, "retired"),
+                at(atlas(), "plan", 1, "retired"),
                 at(org(), "steps", 1, ""),
                 at(team("web"), "steps", 2, "at:mobile"),
+                at(org(), "notes", 1, ""),
+                at(atlas(), "notes", 2, "badname"),
             ],
             vec![
                 "checks: org v1 Inherited",
+                "notes: org v1 Inherited",
                 "review: org v1 Inherited",
                 "steps: org v1 Inherited",
+                "atlas/notes.md: invalid file name",
                 "web/review.md: invalid version",
                 "web/steps.md: invalid level",
             ],
@@ -511,6 +646,57 @@ fn validity_and_clashes() {
 }
 
 #[test]
+fn drift_compares_an_override_with_its_parent() {
+    let drift = |work, files: Vec<Input>| -> Vec<(String, Option<Drift>)> {
+        let set = resolved(work, files);
+        let winners = set.entries.into_iter().filter_map(|e| e.winner);
+        winners
+            .map(|w| (w.file.key.as_str().to_owned(), w.drift))
+            .collect()
+    };
+    let changed = |place, version| {
+        Some(Drift::ParentChanged {
+            parent: place,
+            version,
+        })
+    };
+    let one = drift(
+        work(&[&["web"]]),
+        vec![
+            at(org(), "review", 2, ""),
+            at(team("web"), "review", 3, "over1"),
+            at(org(), "checks", 2, ""),
+            at(team("web"), "checks", 3, "over2"),
+            at(org(), "plan", 2, ""),
+            at(team("web"), "plan", 3, ""),
+            at(org(), "notes", 1, ""),
+            at(team("web"), "extra", 1, "over1"),
+            at(team("web"), "steps", 4, ""),
+            at(atlas(), "steps", 5, "over3"),
+        ],
+    );
+    let expected = vec![
+        ("checks".to_owned(), Some(Drift::Current)),
+        ("extra".to_owned(), None),
+        ("notes".to_owned(), None),
+        ("plan".to_owned(), Some(Drift::Unknown)),
+        ("review".to_owned(), changed(org(), 2)),
+        ("steps".to_owned(), changed(team("web"), 4)),
+    ];
+    assert_eq!(one, expected);
+    // A project version that settles a conflict with nothing applying has no parent version.
+    let two = drift(
+        work(&[&["web"], &["mobile"]]),
+        vec![
+            at(team("web"), "review", 2, ""),
+            at(team("mobile"), "review", 3, ""),
+            at(atlas(), "review", 4, "over3"),
+        ],
+    );
+    assert_eq!(two, vec![("review".to_owned(), Some(Drift::Unknown))]);
+}
+
+#[test]
 fn why_shows_every_layer_and_what_happened_to_it() {
     let invalid = |field: &str| {
         Outcome::Invalid(Problem {
@@ -523,19 +709,27 @@ fn why_shows_every_layer_and_what_happened_to_it() {
     let set = resolved(
         work(&[&["platform", "web"], &["mobile"]]),
         vec![
+            at(me(), "review", 1, ""),
             at(team("mobile"), "review", 4, ""),
             at(team("web"), "review", 3, ""),
             at(team("platform"), "review", 2, "sealed"),
             at(org(), "review", 1, ""),
             at(team("web"), "review", 3, "bad as:review-bad"),
-            at(team("platform"), "checks", 1, ""),
+            at(team("platform"), "checks", 1, "off"),
             at(org(), "checks", 1, ""),
             at(team("web"), "checks", 1, "draft"),
         ],
     );
     assert_eq!(
         set.inputs,
-        vec![org(), team("platform"), team("web"), team("mobile"),]
+        vec![
+            org(),
+            team("platform"),
+            team("web"),
+            team("mobile"),
+            atlas(),
+            me()
+        ]
     );
     let why = |key: &str| {
         let entry = set.why(&ProcessKey::new(key).unwrap()).unwrap();
@@ -555,30 +749,40 @@ fn why_shows_every_layer_and_what_happened_to_it() {
             ("web/review-bad.md".into(), None, invalid("version")),
             ("web/review.md".into(), Some(3), Outcome::Clashed),
             ("mobile/review.md".into(), Some(4), Outcome::Conflict),
+            (
+                "me/review.md".into(),
+                Some(1),
+                Outcome::PrivateOnlyAdds(PrivateReason::Inherited)
+            ),
         ]
     );
     assert_eq!(
         why("checks"),
         vec![
             ("org/checks.md".into(), Some(1), Outcome::Overridden),
-            ("platform/checks.md".into(), Some(1), Outcome::Applied),
+            ("platform/checks.md".into(), Some(1), Outcome::TurnedOff),
         ]
     );
-    // A refused version, and the version a sibling's conflicts with.
+    // A refused version, and a conflict the project settled.
     let set = resolved(
         work(&[&["platform", "web"], &["mobile"]]),
         vec![
             at(team("platform"), "review", 2, "sealed"),
             at(team("web"), "review", 3, ""),
             at(team("mobile"), "review", 4, ""),
+            at(atlas(), "review", 5, ""),
         ],
     );
     let chain = &set.why(&ProcessKey::new("review").unwrap()).unwrap().chain;
     let outcomes: Vec<&Outcome> = chain.iter().map(|l| &l.outcome).collect();
     assert_eq!(
         outcomes,
-        vec![&Outcome::Applied, &refused, &Outcome::Conflict]
+        vec![
+            &Outcome::Overridden,
+            &refused,
+            &Outcome::Overridden,
+            &Outcome::Applied
+        ]
     );
-    assert_eq!(set.conflicts.len(), 1);
-    assert!(set.why(&ProcessKey::new("x").unwrap()).is_none());
+    assert!(set.conflicts.is_empty() && set.why(&ProcessKey::new("x").unwrap()).is_none());
 }

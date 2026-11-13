@@ -1,14 +1,13 @@
 //! Which processes apply to an agent's work (processes.md §3): [`resolve`] applies §3.2's rules
-//! 1-9, in order, to plain data, and says what happened to every file (PROC-2 to PROC-9). This
-//! slice applies rules 1 to 5 to the organization's and the teams' files; the project, private
-//! files and drift come next.
+//! 1-9, in order, to plain data, and says what happened to every file (PROC-2 to PROC-9).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::file::{Problem, ProblemKind, ProcessFile, Status};
-use crate::place::{Place, ProcessKey, TeamId};
+use crate::place::{MemberId, Place, ProcessKey, ProjectKey, TeamId};
 
 mod chains;
+mod lower;
 
 /// One file at one of §2.2's places, as read: the valid file, or its problem.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,36 +20,45 @@ pub struct Input {
     pub read: Result<ProcessFile, Problem>,
 }
 
-/// The agent's current work: its project's teams (§3.1).
+/// The agent's current work: a project and its teams (§3.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Work {
+    /// The project.
+    pub project: ProjectKey,
     /// For each team linked to the project, its chain from the outermost parent down to it. A
     /// chain that is a prefix of another (a linked ancestor of another linked team) or a copy of
     /// one is dropped.
     pub chains: Vec<Vec<TeamId>>,
 }
 
-/// What the set is computed from.
+/// What agent A's set is computed from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inputs {
-    /// The current work; with none only the organization's files take part.
+    /// A.
+    pub agent: MemberId,
+    /// A's current work; with none the set is O ⊕ G (PROC-2).
     pub work: Option<Work>,
-    /// The files: O and the teams'. A file of a place that takes no part (for now, a project,
-    /// an agent, or a team not linked to the work) is left out.
+    /// The files: O, the teams', J (none without a repository) and G. A file of another place
+    /// (another agent, project or team) takes no part.
     pub files: Vec<Input>,
+    /// The names the app shows for places, for "Turned off for <name>: <reason>".
+    pub names: BTreeMap<Place, String>,
 }
 
 /// The effective set (§3.2 Output).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectiveSet {
-    /// The places that took part, in resolution order: the organization, then the chains'
-    /// teams outermost first.
+    /// The places that took part, in resolution order: the organization, the chains' teams
+    /// outermost first, the project, the agent.
     pub inputs: Vec<Place>,
     /// One per key a taking-part file has (drafts and retired files aside), by key.
     pub entries: Vec<Entry>,
+    /// The keys a surviving `off` removed (rule 7).
+    pub turned_off: Vec<TurnedOff>,
     /// Team versions that disagree, which the project hasn't settled (rule 5).
     pub conflicts: Vec<Conflict>,
-    /// Every file left out with something to fix: invalid, clashed or refused (sealed).
+    /// Every file left out with something to fix: invalid, clashed, refused (sealed) or a
+    /// private file that doesn't only add.
     pub problems: Vec<Layer>,
 }
 
@@ -59,9 +67,9 @@ pub struct EffectiveSet {
 pub struct Entry {
     /// The key.
     pub key: ProcessKey,
-    /// What applies; none when nothing does (refused, a conflict with no fallback).
+    /// What applies; none when nothing does (turned off, refused, a conflict with no fallback).
     pub winner: Option<Winner>,
-    /// Each file with the key, organization first; drafts and retired files aside.
+    /// Each file with the key, organization first, private last; drafts and retired files aside.
     pub chain: Vec<Layer>,
 }
 
@@ -74,6 +82,8 @@ pub struct Winner {
     pub file: ProcessFile,
     /// How it came to apply.
     pub kind: Kind,
+    /// For an override: whether its parent changed since it was written (rule 9).
+    pub drift: Option<Drift>,
 }
 
 /// How the winning file relates to the levels above it.
@@ -85,6 +95,22 @@ pub enum Kind {
     Override,
     /// A key nothing above it has.
     Addition,
+}
+
+/// An override's drift (PROC-9).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Drift {
+    /// It was written against the parent's current version.
+    Current,
+    /// "Parent changed": its `overrides` names a version below the parent's current one.
+    ParentChanged {
+        /// The parent's place.
+        parent: Place,
+        /// The parent's current version.
+        version: u32,
+    },
+    /// It has no `overrides`, or it settles a conflict with no version applying.
+    Unknown,
 }
 
 /// One file's part in resolving its key.
@@ -107,6 +133,8 @@ pub struct Layer {
 pub enum Outcome {
     /// It applies.
     Applied,
+    /// It applies as an `off`: the key is turned off (rule 7).
+    TurnedOff,
     /// A nearer or lower version won.
     Overridden,
     /// A team version in a conflict that doesn't apply (rule 5).
@@ -120,6 +148,39 @@ pub enum Outcome {
         /// The sealing level.
         sealed_by: Place,
     },
+    /// A private file that doesn't only add (rule 8).
+    PrivateOnlyAdds(PrivateReason),
+}
+
+/// The case a private file is flagged for (processes-ux.md decision 5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrivateReason {
+    /// It sets `overrides`.
+    Overrides,
+    /// It is `status: off`.
+    TurnsOff,
+    /// An organization, team or project file of this work uses its key, in any state.
+    Inherited,
+}
+
+/// A key turned off: "Turned off for <name>: <reason>" (PROC-4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnedOff {
+    /// The key.
+    pub key: ProcessKey,
+    /// The place of the `off`.
+    pub place: Place,
+    /// That place's name, from [`Inputs::names`].
+    pub name: String,
+    /// Its reason.
+    pub reason: String,
+}
+
+impl TurnedOff {
+    /// The app's line.
+    pub fn message(&self) -> String {
+        format!("Turned off for {}: {}", self.name, self.reason)
+    }
 }
 
 /// Teams that disagree on a key, which the project hasn't settled (decision 4, PROC-6).
@@ -159,13 +220,14 @@ struct Item<'a> {
 }
 
 struct Resolver<'a> {
+    inputs: &'a Inputs,
     chains: Vec<Vec<Place>>,
     items: Vec<Item<'a>>,
-    /// What each override replaced: a version (or, for a settled conflict, none).
+    /// What each override replaced (rule 9): a version, or none for a settled conflict.
     parents: BTreeMap<usize, Option<usize>>,
 }
 
-/// The effective set for the work: §3.2's rules, in order.
+/// Agent A's effective set for its work: §3.2's rules 1-9, in order.
 pub fn resolve(inputs: &Inputs) -> EffectiveSet {
     let mut places = vec![Place::Organization];
     let mut chains = Vec::new();
@@ -176,8 +238,11 @@ pub fn resolve(inputs: &Inputs) -> EffectiveSet {
                 places.push(place.clone());
             }
         }
+        places.push(Place::Project(work.project.clone()));
     }
+    places.push(Place::Agent(inputs.agent.clone()));
     let mut r = Resolver {
+        inputs,
         chains,
         items: read_files(inputs, &places),
         parents: BTreeMap::new(),
@@ -261,6 +326,9 @@ impl<'a> Resolver<'a> {
     fn key(&mut self, key: &ProcessKey, set: &mut EffectiveSet) {
         let org = self.live(&Place::Organization, key);
         let (folds, winner, conflict) = self.teams(key, org);
+        let (winner, conflict) = self.project(key, &folds, winner, conflict);
+        let off = self.turn_off(key, winner, set);
+        let winner = self.private(key).or(winner.filter(|_| off.is_none()));
         let conflicting =
             |n: &usize| conflict.is_some() && folds.iter().any(|f| f.winner == Some(*n));
         let mut chain = Vec::new();
@@ -270,6 +338,7 @@ impl<'a> Resolver<'a> {
             }
             let outcome = item.outcome.clone().unwrap_or(match Some(n) {
                 n if n == winner => Outcome::Applied,
+                n if n == off => Outcome::TurnedOff,
                 Some(n) if conflicting(&n) => Outcome::Conflict,
                 _ => Outcome::Overridden,
             });
@@ -296,6 +365,7 @@ impl<'a> Resolver<'a> {
             path: self.items[w].input.path.clone(),
             file: file.clone(),
             kind,
+            drift: parent.map(|parent| self.drift(file, parent)),
         }
     }
 
