@@ -43,7 +43,7 @@ in. Tier A. Each slice is at most 250 non-test code lines.
        (none recorded yet) or remote head (never pushed) is normal, not own work (amended in
        P5b: §4.1 has `own_tip?`, and §4.2's "missing branch" is the `work.git` branch);
      - or any copy is unrelated (neither descends from the base nor is in the integration
-       branch, e.g. a reset onto someone else's branch): fail closed (P5b reading, for ada).
+       branch, e.g. a reset onto someone else's branch): fail closed (ruled 2026-11-13: ada).
    - `Merged` applies only when `own_tip` is in the integration branch and no copy has work
      beyond it.
    - Otherwise it is `None`, which covers a tip at `base_sha` or a tip in the integration branch.

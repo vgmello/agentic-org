@@ -94,7 +94,7 @@ impl OwnWork {
 ///   `own_tip` or remote head is not own work: §4.1's record has `own_tip?`, a branch never
 ///   pushed has no remote head, and §4.2's "missing branch" is the `work.git` branch. An
 ///   unrelated tip (history from outside the base, e.g. a reset onto another branch) fails
-///   closed, whether or not `own_tip` is merged (§4.2's reading, for ada's confirmation).
+///   closed, whether or not `own_tip` is merged (§4.2, ruled 2026-11-13).
 /// - Otherwise [`Found::Merged`] when `own_tip` is [`Tip::Integrated`]: every copy is then at the
 ///   base, missing, or in the integration branch, so none has work beyond it.
 /// - Otherwise [`Found::None`].
