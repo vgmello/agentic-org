@@ -60,7 +60,7 @@ async function conversations(page: Page) {
 }
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 1.25, 2]) {
-	test(`E1–E3 CHAT-1/5/8/14 BUG-70: Chat UI uses labelled icons at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+	test(`E1–E3 CHAT-1/5/8/14 BUG-70: Chat UI uses labelled icons at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await page.addInitScript((scale) => {
 			const apply = () => document.documentElement.style.setProperty('font-size', `${scale * 100}%`, 'important');

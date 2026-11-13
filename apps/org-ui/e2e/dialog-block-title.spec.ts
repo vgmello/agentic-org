@@ -43,11 +43,11 @@ async function namedWhileClosing(page:Page,dialog:Locator,reference:string,via:'
  }
 }
 
-test('BUG-143/144: Block dialog name stays Block T-1 through the closing transition',async({page})=>{
+test('BUG-143/144: Block dialog name stays Block T-1 through the closing transition',{ tag: '@webkit' },async({page})=>{
  await openBoard(page);const dialog=await blockNewTask(page,'First title');await shot(page,'block-title-open-t1');
  await namedWhileClosing(page,dialog,'T-1','Escape');
 });
-test('BUG-143/144: Block title updates on each open and survives Cancel',async({page})=>{
+test('BUG-143/144: Block title updates on each open and survives Cancel',{ tag: '@webkit' },async({page})=>{
  await openBoard(page);let dialog=await blockNewTask(page,'First title');
  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
  dialog=await blockNewTask(page,'Second title');await expect(dialog).toHaveAccessibleName('Block T-2');await shot(page,'block-title-open-t2');

@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, posix, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { categorySpecs, changedFiles, changedOrUnknown, classify, explicitFiles, loadManifest, matches, plan, runSteps, specFiles, steps, UNKNOWN_CHANGES, type Manifest, type Step } from '../../../../scripts/ui-gate-lib';
@@ -11,9 +11,145 @@ const app = fileURLToPath(new URL('../../../../', import.meta.url));
 const read = (path: string) => readFileSync(join(app, path), 'utf8');
 const manifest: Manifest & { journeys: Manifest['journeys'] } = JSON.parse(read('e2e/gate-manifest.json'));
 const specs = specFiles(readdirSync(join(app, 'e2e')), manifest);
-const declarations = (spec: string) => read(`e2e/${spec}`).split('\n').filter((line) => /\btest\(/.test(line));
+const numberedDeclarations = (spec: string) => read(`e2e/${spec}`).split('\n').map((text, index) => ({ text, line: index + 1 })).filter(({ text }) => /\btest\(/.test(text));
+const declarations = (spec: string) => numberedDeclarations(spec).map(({ text }) => text);
 const ui = (path: string) => `apps/org-ui/${path}`;
 const names = (files: string[], options = {}) => steps(plan(files, manifest), manifest, specs, options).map((step) => step.name);
+
+// WebKit coverage of keyboard and focus. Playwright itself decides the universe and the selection: one
+// `--list --reporter=json` over every project (PW_WEBKIT=1) gives each test's loaded file, declaration (file:line), tags
+// and project. The universe is every file some project loads; a file is on WebKit when the webkit project lists one of
+// its tests. A test is keyed by the file that loads it as well as where it is declared, so a helper that declares tests
+// for several runner files counts once per runner. A file exercises
+// keyboard or focus when its source, or that of a local e2e module it imports (static, re-export or dynamic relative
+// imports, followed transitively), matches KEYBOARD_OR_FOCUS. Each such file needs a test the webkit project selects or a
+// webkitExempt entry with a reason; a @webkit tag the webkit project never selects counts for nothing (and fails a1).
+const KEYBOARD_OR_FOCUS = /keyboard\.|\.press(?:Sequentially)?\(|\.type\(|toBeFocused|\.(?:focus|blur)\(|activeElement|hasFocus\(|:focus|dispatchEvent\(\s*['"`](?:key|focus|blur)|KeyboardEvent|FocusEvent|\bfocus(?:in|out)\b/;
+type ListedTest = { file: string; declared: string; title: string; project: string; tags: string[]; skipped?: boolean };
+type PlaywrightSuite = { title?: string; file?: string; specs?: { title: string; file: string; line: number; tags?: string[]; tests: { projectName: string; expectedStatus?: string }[] }[]; suites?: PlaywrightSuite[] };
+type ListReport = { config?: { projects?: { name: string; testIgnore?: unknown[] }[] }; suites?: PlaywrightSuite[]; errors?: { message?: string }[] };
+/**
+ * Flattens Playwright's JSON list into one row per test per project; `file` is the loaded file (the top-level suite) and
+ * `title` the describe titles and the test title below it, so tests a loop declares on one line stay apart.
+ */
+const listedTests = (report: ListReport): ListedTest[] => {
+	const rows: ListedTest[] = [];
+	const walk = (file: string, suite: PlaywrightSuite, path: string[]) => {
+		for (const spec of suite.specs ?? [])
+			for (const test of spec.tests) rows.push({ file, declared: `${spec.file}:${spec.line}`, title: [...path, spec.title].join(' › '), project: test.projectName, tags: spec.tags ?? [], ...(test.expectedStatus === 'skipped' ? { skipped: true } : {}) });
+		(suite.suites ?? []).forEach((child) => walk(file, child, [...path, child.title ?? '']));
+	};
+	(report.suites ?? []).forEach((suite) => walk(suite.file ?? '', suite, []));
+	return rows;
+};
+/**
+ * Pure: the files Playwright loads, the files the webkit project runs, what it selects vs what carries @webkit in any
+ * project (keyed by declaration, prefixed with the loaded file when a helper declares it), and the files the production
+ * project runs that WebKit also runs (production-unavailable runs only against the static release).
+ */
+const webkitSelection = (tests: ListedTest[]) => {
+	const at = ({ file, declared, title }: ListedTest) => `${declared.startsWith(`${file}:`) ? declared : `${file} › ${declared}`} › ${title}`;
+	const webkit = tests.filter(({ project }) => project === 'webkit');
+	// A file is on WebKit only through a test WebKit will run: a statically skipped (test.skip/fixme) test does not count.
+	const onWebkit = new Set(webkit.filter(({ skipped }) => !skipped).map(({ file }) => file));
+	const productionFiles = [...new Set(tests.filter(({ project }) => project === 'production').map(({ file }) => file))].sort();
+	return {
+		files: [...new Set(tests.map(({ file }) => file))].sort(),
+		declaredFiles: [...new Set(tests.map(({ declared }) => declared.replace(/:\d+$/, '')))].sort(),
+		onWebkit,
+		selected: [...new Set(webkit.map(at))].sort(),
+		tagged: [...new Set(tests.filter(({ tags }) => tags.includes('webkit')).map(at))].sort(),
+		productionFiles,
+		productionOnWebkit: productionFiles.filter((file) => onWebkit.has(file))
+	};
+};
+// A one-line string literal, scanned in order so a closing quote never opens the next match.
+const STRING_LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+const WEBKIT_TAG = /(?:^|\s)@webkit(?![\w-])/;
+// A test's title (its first argument) and a `tag:` option (a string or a one-line array of strings).
+const TEST_TITLE = /\btest(?:\.(?:only|skip|fixme|fail|slow))?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
+const TAG_OPTION = /\btag\s*:\s*(\[[^\]\n]*\]|(['"`])(?:\\.|(?!\2)[^\\\n])*\2)/g;
+/** Whether a source declares a test carrying @webkit, in its title or its tag option (not any string that mentions it). */
+const hasWebkitTag = (source: string) =>
+	[...source.matchAll(TEST_TITLE)].some(([, , title]) => WEBKIT_TAG.test(title)) ||
+	[...source.matchAll(TAG_OPTION)].some(([, option]) => [...option.matchAll(STRING_LITERAL)].some(([, , body]) => WEBKIT_TAG.test(body)));
+/** Pure: e2e sources that declare a @webkit test (tag option or title) although no project loads them and no listed test is declared in them. */
+const orphanWebkitTags = ({ files, declaredFiles, sources }: { files: string[]; declaredFiles: string[]; sources: Record<string, string> }) =>
+	Object.keys(sources).filter((file) => !files.includes(file) && !declaredFiles.includes(file) && hasWebkitTag(sources[file])).sort();
+/** Pure: a project's resolved testIgnore patterns, as Playwright reports them (whatever the config's formatting). */
+const projectIgnores = (report: ListReport, project: string) => (report.config?.projects ?? []).find(({ name }) => name === project)?.testIgnore?.map(String) ?? [];
+const REPORTER_ENV = ['PLAYWRIGHT_JSON_OUTPUT_DIR', 'PLAYWRIGHT_JSON_OUTPUT_NAME', 'PW_TEST_REPORTER'];
+/**
+ * The child's environment: PW_WEBKIT=1 adds the webkit project, the JSON report goes to `out` (so nothing a spec or the
+ * config prints on stdout can corrupt it), and the caller's reporter settings (output dir/name, an extra reporter) are dropped.
+ */
+const listEnv = (env: Record<string, string | undefined>, out: string) => ({ ...Object.fromEntries(Object.entries(env).filter(([key]) => !REPORTER_ENV.includes(key))), PLAYWRIGHT_JSON_OUTPUT_FILE: out, PW_WEBKIT: '1' });
+/** Pure: the report a `--list --reporter=json` run wrote (`report`, null if none), or an error carrying Playwright's own errors (or its output). */
+const readList = ({ status, report: text, stdout, stderr, error }: { status: number | null; report: string | null; stdout: string | null; stderr: string | null; error?: Error }): ListReport => {
+	// Errors lead (a config SyntaxError is stderr's first line); a long stderr keeps its head and its last lines.
+	const err = stderr ?? '';
+	const output = `stdout starts ${JSON.stringify((stdout ?? '').slice(0, 500))}; stderr ${err.length > 2500 ? `${err.slice(0, 2000)} … ${err.slice(-500)}` : err}`;
+	let report: unknown;
+	try {
+		report = JSON.parse(text ?? '');
+	} catch {
+		report = undefined;
+	}
+	if (!report || typeof report !== 'object') throw new Error(`playwright --list wrote no JSON report (exit ${status}${error ? `, ${error.message}` : ''}): ${output}`);
+	const errors = ((report as ListReport).errors ?? []).map((e) => e.message ?? JSON.stringify(e));
+	if (errors.length > 0 || status !== 0) throw new Error(`playwright --list failed (exit ${status}): ${errors.join('\n') || output}`);
+	return report as ListReport;
+};
+type WebkitCoverage = { files: string[]; sources: Record<string, string>; onWebkit: Set<string>; exempt: { spec: string; why: string }[] };
+const usesKeyboardOrFocus = (file: string, sources: Record<string, string>, seen = new Set<string>()): boolean => {
+	if (seen.has(file) || !(file in sources)) return false;
+	seen.add(file);
+	if (KEYBOARD_OR_FOCUS.test(sources[file])) return true;
+	return [...sources[file].matchAll(/\b(?:from|import)\s*(?:\(\s*)?['"`](\.{1,2}\/[^'"`]+)['"`]/g)].some(([, spec]) => {
+		const base = posix.normalize(posix.join(posix.dirname(file), spec));
+		return [base, `${base}.ts`, `${base}.js`, `${base}.mjs`, `${base}/index.ts`, `${base}/index.js`, base.replace(/\.([mc]?)js$/, '.$1ts')].some((candidate) => usesKeyboardOrFocus(candidate, sources, seen));
+	});
+};
+/** Pure check: files that exercise keyboard or focus without running on WebKit or an exemption, and exemptions that are not real. */
+const webkitCoverage = ({ files, sources, onWebkit, exempt }: WebkitCoverage) => {
+	const focus = files.filter((file) => usesKeyboardOrFocus(file, sources));
+	const listed = new Set(exempt.map(({ spec }) => spec));
+	const missing = focus.filter((file) => !onWebkit.has(file) && !listed.has(file));
+	const stale: string[] = [];
+	exempt.forEach(({ spec, why }, index) => {
+		if (!files.includes(spec)) stale.push(`${spec}: not a file Playwright runs`);
+		else if (!focus.includes(spec)) stale.push(`${spec}: does not exercise keyboard or focus, so drop its exemption`);
+		if (onWebkit.has(spec)) stale.push(`${spec}: runs on WebKit, so it cannot also be exempt`);
+		if ((why ?? '').trim().length < 20) stale.push(`${spec}: give a reason of at least 20 characters`);
+		if (exempt.findIndex((other) => other.spec === spec) !== index) stale.push(`${spec}: listed twice`);
+	});
+	return { missing, stale };
+};
+let playwrightReport: ListReport | undefined;
+/** Playwright's own list over every project, spawned once per test file run (no browsers or web server; about 2 s). */
+const playwrightList = () => {
+	if (!playwrightReport) {
+		const dir = mkdtempSync(join(tmpdir(), 'ui-gate-list-'));
+		try {
+			const out = join(dir, 'list.json');
+			const run = spawnSync('bunx', ['playwright', 'test', '--list', '--reporter=json'], { cwd: app, encoding: 'utf8', env: listEnv(process.env, out), timeout: 150_000, maxBuffer: 64 * 1024 * 1024 });
+			playwrightReport = readList({ ...run, report: existsSync(out) ? readFileSync(out, 'utf8') : null });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}
+	return { ...webkitSelection(listedTests(playwrightReport)), webkitIgnores: projectIgnores(playwrightReport, 'webkit') };
+};
+const e2eSources = (dir = ''): Record<string, string> =>
+	Object.assign({}, ...readdirSync(join(app, 'e2e', dir), { withFileTypes: true }).filter((entry) => entry.name !== 'node_modules').map((entry) => {
+		const file = dir ? `${dir}/${entry.name}` : entry.name;
+		if (entry.isDirectory()) return e2eSources(file);
+		return entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name) ? { [file]: read(`e2e/${file}`) } : {};
+	}));
+const repoWebkitCoverage = (): WebkitCoverage => {
+	const { files, onWebkit } = playwrightList();
+	return { files, sources: e2eSources(), onWebkit, exempt: manifest.webkitExempt ?? [] };
+};
 
 describe('gate manifest guard', () => {
 	it('assigns every e2e spec file to exactly one category', () => {
@@ -62,15 +198,178 @@ describe('gate manifest guard', () => {
 		expect(budget.measured.chromiumSeconds).toBeLessThanOrEqual(budget.maxChromiumSeconds);
 	});
 
-	it('keeps the WebKit subset equal to playwright.config.ts and its journeys flagged', () => {
-		const config = read('playwright.config.ts');
-		const testMatch = [...config.match(/testMatch:\s*\[([^\]]*)\]/)![1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-		const grep = new RegExp(config.match(/grep:\s*\/(.+)\/,/)![1]);
-		expect([...manifest.webkitSpecs].sort()).toEqual([...testMatch].sort());
+	it('makes the WebKit project list exactly the tests that carry @webkit, in every file any project runs', { timeout: 180_000 }, () => {
+		// Playwright's own selection and tags, so a tag that does not reach the project (a file the webkit project never
+		// selects, such as a *-default-font.ts project file) or a grep that reaches more is caught.
+		const { selected, tagged, productionFiles, productionOnWebkit, webkitIgnores, files, declaredFiles } = playwrightList();
+		expect(orphanWebkitTags({ files, declaredFiles, sources: e2eSources() }), 'a @webkit test declared in an e2e file whose tests no Playwright project lists (name it *.spec.ts, or call it from one)').toEqual([]);
+		expect(selected, 'tag each WebKit case on its test( line with @webkit, in a file the webkit project runs; nothing else may be selected').toEqual(tagged);
+		expect(tagged.length).toBeGreaterThan(0);
+		expect(productionFiles.length, 'the production project lists no test').toBeGreaterThan(0);
+		expect(productionOnWebkit, 'the webkit project must ignore what only runs against the static release (its testIgnore)').toEqual([]);
+		expect(webkitIgnores, 'production-unavailable runs only against the static release').toContain('production-unavailable.spec.ts');
+	});
+
+	it('selects WebKit cases by the @webkit tag only, with no testMatch or BUG-id grep', () => {
+		const project = read('playwright.config.ts').match(/\.\.\.\(webkit \? \[\{[\s\S]*?\}\] : \[\]\)/)![0];
+		expect(project).not.toContain('testMatch');
+		expect(project).not.toMatch(/BUG-\d/);
+	});
+
+	it('flags exactly the journeys whose test( line carries @webkit', () => {
 		for (const { spec, match, webkit } of manifest.journeys.flatMap((journey) => journey.tests)) {
 			const line = declarations(spec).find((candidate) => candidate.includes(match))!;
-			expect(!!webkit, `${spec} "${match}": webkit flag must equal whether the WebKit project runs it`).toBe(testMatch.includes(spec) && grep.test(line));
+			expect(!!webkit, `${spec} "${match}": webkit flag must equal whether its test( line carries '@webkit'`).toBe(line.includes("'@webkit'"));
 		}
+	});
+
+	it('runs every keyboard or focus file on WebKit, or exempts it with a reason', { timeout: 180_000 }, () => {
+		const coverage = repoWebkitCoverage();
+		expect(coverage.files.length, 'playwright --list found no test file').toBeGreaterThan(0);
+		expect(coverage.files.filter((file) => !(file in coverage.sources)), 'files Playwright runs whose source the e2e walk did not read').toEqual([]);
+		const { missing } = webkitCoverage(coverage);
+		expect(missing.map((file) => `${file}: exercises keyboard or focus; tag one of its tests '@webkit' (in a file the webkit project runs) or add it to webkitExempt in e2e/gate-manifest.json with a reason`)).toEqual([]);
+	});
+
+	it('keeps every webkitExempt entry real: a keyboard or focus file Playwright runs, not on WebKit, listed once, with a reason', { timeout: 180_000 }, () => {
+		expect(Array.isArray(manifest.webkitExempt), 'e2e/gate-manifest.json needs a webkitExempt list').toBe(true);
+		expect(webkitCoverage(repoWebkitCoverage()).stale).toEqual([]);
+	});
+
+	it('refuses an untagged, unexempted keyboard spec and follows local imports to a .focus() call', () => {
+		const why = 'not yet run on WebKit (BUG-169b)';
+		const sources = {
+			'new.spec.ts': "test('x', async ({ page }) => { await page.keyboard.press('Tab'); });",
+			'via-helper.spec.ts': "import { land } from './helpers/land';\ntest('y', async ({ page }) => land(page));",
+			'helpers/land.ts': "import { again } from '../via-helper.spec';\nexport const land = (page) => page.getByRole('button').focus();",
+			'plain.spec.ts': "import { proto } from '../src/lib/proto';\ntest('z', async ({ page }) => { await page.click('a'); });"
+		};
+		const files = ['new.spec.ts', 'via-helper.spec.ts', 'plain.spec.ts'];
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(), exempt: [] })).toEqual({ missing: ['new.spec.ts', 'via-helper.spec.ts'], stale: [] });
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(['new.spec.ts']), exempt: [{ spec: 'via-helper.spec.ts', why }] })).toEqual({ missing: [], stale: [] });
+		// A non-last file violates alone while the last one is fine; only a middle exemption is stale.
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(['via-helper.spec.ts']), exempt: [] })).toEqual({ missing: ['new.spec.ts'], stale: [] });
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(), exempt: [{ spec: 'new.spec.ts', why }, { spec: 'plain.spec.ts', why }, { spec: 'via-helper.spec.ts', why }] })).toEqual({ missing: [], stale: ['plain.spec.ts: does not exercise keyboard or focus, so drop its exemption'] });
+		const exempt = [{ spec: 'plain.spec.ts', why }, { spec: 'gone.spec.ts', why }, { spec: 'new.spec.ts', why }, { spec: 'via-helper.spec.ts', why: 'later' }, { spec: 'via-helper.spec.ts', why }];
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(['new.spec.ts']), exempt }).stale).toEqual([
+			'plain.spec.ts: does not exercise keyboard or focus, so drop its exemption',
+			'gone.spec.ts: not a file Playwright runs',
+			'new.spec.ts: runs on WebKit, so it cannot also be exempt',
+			'via-helper.spec.ts: give a reason of at least 20 characters',
+			'via-helper.spec.ts: listed twice'
+		]);
+	});
+
+	it('counts a file as on WebKit only when the webkit project selects it, and pairs every @webkit tag with a selection', () => {
+		// One fixture per universe class: a spec the webkit project selects (a, z), a spec it excludes (testIgnore, run by
+		// another project) and a non-spec project file (focus-default-font.ts). The two middle files carry @webkit but
+		// WebKit never runs them.
+		const row = (file: string, line: number, project: string, tags: string[] = [], title = 't') => ({ file, declared: `${file}:${line}`, title, project, tags });
+		const tests = [
+			row('a.spec.ts', 3, 'chromium', ['webkit']),
+			row('a.spec.ts', 3, 'webkit', ['webkit']),
+			row('excluded.spec.ts', 2, 'production', ['webkit']),
+			row('focus-default-font.ts', 4, 'chromium-focus-default-font', ['webkit']),
+			row('z.spec.ts', 5, 'chromium'),
+			row('z.spec.ts', 9, 'chromium', ['journey', 'webkit']),
+			row('z.spec.ts', 9, 'webkit', ['journey', 'webkit'])
+		];
+		const selection = webkitSelection(tests);
+		expect(selection.files).toEqual(['a.spec.ts', 'excluded.spec.ts', 'focus-default-font.ts', 'z.spec.ts']);
+		expect(selection.productionFiles).toEqual(['excluded.spec.ts']);
+		expect(selection.productionOnWebkit).toEqual([]);
+		expect([...selection.onWebkit].sort()).toEqual(['a.spec.ts', 'z.spec.ts']);
+		expect(selection.selected).toEqual(['a.spec.ts:3 › t', 'z.spec.ts:9 › t']);
+		expect(selection.tagged, 'a1 then fails: the tags on excluded.spec.ts:2 and focus-default-font.ts:4 reach no WebKit run').toEqual(['a.spec.ts:3 › t', 'excluded.spec.ts:2 › t', 'focus-default-font.ts:4 › t', 'z.spec.ts:9 › t']);
+		const sources = { 'a.spec.ts': "await page.keyboard.press('Tab');", 'excluded.spec.ts': "await page.keyboard.press('Tab');", 'focus-default-font.ts': 'await button.focus();', 'z.spec.ts': 'await expect(x).toBeFocused();' };
+		expect(webkitCoverage({ files: selection.files, sources, onWebkit: selection.onWebkit, exempt: [] })).toEqual({ missing: ['excluded.spec.ts', 'focus-default-font.ts'], stale: [] });
+		// A grep that reaches an untagged test shows up as a selection without a tag, also when a loop declares it on the
+		// same line as a tagged one.
+		expect(webkitSelection([...tests, row('z.spec.ts', 5, 'webkit')]).selected).toEqual(['a.spec.ts:3 › t', 'z.spec.ts:5 › t', 'z.spec.ts:9 › t']);
+		const loop = webkitSelection([row('loop.spec.ts', 2, 'chromium', ['webkit'], 'loop a'), row('loop.spec.ts', 2, 'webkit', ['webkit'], 'loop a'), row('loop.spec.ts', 2, 'chromium', ['other'], 'loop b'), row('loop.spec.ts', 2, 'webkit', ['other'], 'loop b')]);
+		expect(loop).toMatchObject({ selected: ['loop.spec.ts:2 › loop a', 'loop.spec.ts:2 › loop b'], tagged: ['loop.spec.ts:2 › loop a'] });
+		// A file whose only WebKit test is statically skipped (test.fixme/skip) is selected but not on WebKit.
+		const parked = webkitSelection([...tests, { ...row('parked.spec.ts', 7, 'webkit', ['webkit']), skipped: true }, row('parked.spec.ts', 7, 'chromium', ['webkit'])]);
+		expect(parked.selected).toContain('parked.spec.ts:7 › t');
+		expect(parked.onWebkit.has('parked.spec.ts')).toBe(false);
+		expect(webkitCoverage({ files: parked.files, sources: { ...sources, 'parked.spec.ts': 'await page.keyboard.press("Tab");' }, onWebkit: parked.onWebkit, exempt: [] }).missing).toEqual(['excluded.spec.ts', 'focus-default-font.ts', 'parked.spec.ts']);
+		// A webkit project that stops ignoring the production-only file shows up even when every selected test is tagged.
+		expect(webkitSelection([...tests, row('excluded.spec.ts', 2, 'webkit', ['webkit'])]).productionOnWebkit).toEqual(['excluded.spec.ts']);
+		// A helper that declares a tagged test for two runner files: only the runner WebKit loads is selected.
+		const helper = (file: string, project: string) => ({ file, declared: 'hdecl.ts:2', title: 'h', project, tags: ['webkit'] });
+		const shared = webkitSelection([helper('focus.spec.ts', 'chromium'), helper('focus.spec.ts', 'webkit'), helper('focus-default-font.ts', 'chromium-focus-default-font')]);
+		expect(shared).toMatchObject({ files: ['focus-default-font.ts', 'focus.spec.ts'], selected: ['focus.spec.ts › hdecl.ts:2 › h'], tagged: ['focus-default-font.ts › hdecl.ts:2 › h', 'focus.spec.ts › hdecl.ts:2 › h'] });
+		expect([...shared.onWebkit]).toEqual(['focus.spec.ts']);
+		// The JSON list's nesting (loaded-file suite, describe suites, specs, one test per project) flattens to these rows:
+		// the title path starts below the file suite, and a test declared in a helper keeps the loaded file.
+		const report = {
+			suites: [
+				{ title: 'a.spec.ts', file: 'a.spec.ts', specs: [{ title: 't', file: 'a.spec.ts', line: 3, tags: ['webkit'], tests: [{ projectName: 'chromium', expectedStatus: 'passed' }, { projectName: 'webkit', expectedStatus: 'skipped' }] }] },
+				{ title: 'z.spec.ts', file: 'z.spec.ts', suites: [{ title: 'd', suites: [{ title: 'e', specs: [{ title: 't', file: 'z.spec.ts', line: 5, tests: [{ projectName: 'chromium' }] }, { title: 'h', file: 'hdecl.ts', line: 2, tags: ['webkit'], tests: [{ projectName: 'webkit' }] }] }] }] }
+			]
+		};
+		expect(listedTests(report)).toEqual([tests[0], { ...tests[1], skipped: true }, { ...tests[4], title: 'd › e › t' }, { file: 'z.spec.ts', declared: 'hdecl.ts:2', title: 'd › e › h', project: 'webkit', tags: ['webkit'] }]);
+		// A tagged file no project loads is an orphan; a helper whose declared test a loaded file lists is not.
+		const orphanSources = { 'a.spec.ts': "test('t', { tag: '@webkit' }, () => {});", 'orphan-flow.ts': "test('kb', { tag: ['@journey', '@webkit'] }, () => {});", 'hdecl.ts': "export const declare = () => test('h', { tag: '@webkit' }, () => {});", 'plain.ts': "export const x = 'webkit';", 'later.ts': 'test(`k`, { tag: `@webkit` }, () => {});', 'runner.spec.ts': "declareFor({ tag: '@webkit' });", 'title-flow.ts': "test('kb @webkit', async () => {});", 'near.ts': "test('kb', { tag: '@webkitish' }, () => {}); // mentions @webkit only in a comment",
+			'consts.ts': "export const WEBKIT = '@webkit';",
+			'comment-flow.ts': "// don't tag it @webkit, it's slow\ntest('x', () => {});",
+			'hyphen-flow.ts': "test('x', { tag: '@webkit-only' }, () => {});",
+			'array-flow.ts': "test.fixme('x', { tag: ['@journey', \"@webkit\"] }, () => {});" };
+		// runner.spec.ts is loaded, but its only test is declared in a helper: it passes the tag, so it is no orphan.
+		expect(orphanWebkitTags({ files: ['a.spec.ts', 'runner.spec.ts'], declaredFiles: ['a.spec.ts', 'hdecl.ts'], sources: orphanSources })).toEqual(['array-flow.ts', 'later.ts', 'orphan-flow.ts', 'title-flow.ts']);
+		// The quadratic-backtracking guard: a long whitespace run after `import` stays fast.
+		const started = performance.now();
+		expect(webkitCoverage({ files: ['ws.spec.ts'], sources: { 'ws.spec.ts': `import${' '.repeat(200_000)}x` }, onWebkit: new Set(), exempt: [] }).missing).toEqual([]);
+		expect(performance.now() - started).toBeLessThan(2_000);
+		expect(webkitSelection([helper('focus.spec.ts', 'webkit')]).declaredFiles).toEqual(['hdecl.ts']);
+		// The testIgnore is read from the named project only.
+		const config = { projects: [{ name: 'chromium', testIgnore: ['production-unavailable.spec.ts'] }, { name: 'webkit', testIgnore: [] }, { name: 'firefox' }] };
+		expect(projectIgnores({ config }, 'webkit')).toEqual([]);
+		expect(projectIgnores({ config }, 'chromium')).toEqual(['production-unavailable.spec.ts']);
+		expect(projectIgnores({ config }, 'firefox')).toEqual([]);
+		expect(projectIgnores({}, 'webkit')).toEqual([]);
+	});
+
+	it('reads the --list report file or fails with Playwright\'s own error, whatever else reaches stdout or the environment', () => {
+		const ok = { suites: [], errors: [] };
+		const run = (status: number | null, report: unknown, stdout: string | null = '', stderr: string | null = '') => ({ status, report: typeof report === 'string' || report === null ? report : JSON.stringify(report), stdout, stderr });
+		// Stray stdout (a console.log in a spec or the config) does not touch the report file.
+		expect(readList(run(0, ok, 'loaded navigation\n'))).toEqual(ok);
+		expect(() => readList(run(1, { suites: [], errors: [{ message: 'SyntaxError: Unexpected token in e2e/x.spec.ts' }] }))).toThrow('SyntaxError: Unexpected token in e2e/x.spec.ts');
+		expect(() => readList(run(0, { errors: [{ message: 'no tests found' }] }))).toThrow('no tests found');
+		expect(() => readList(run(1, ok, 'Listing', 'worker crashed'))).toThrow('failed (exit 1): stdout starts "Listing"; stderr worker crashed');
+		const long = `SyntaxError: playwright.config.ts: Unexpected token (41:6)\n${'    at loader (node:internal/modules/esm/loader:501:31)\n'.repeat(60)}    at runTests (last frame)`;
+		expect(() => readList(run(1, null, '', long))).toThrow(/stderr SyntaxError: playwright\.config\.ts: Unexpected token \(41:6\)\n[\s\S]* … [\s\S]*at runTests \(last frame\)$/);
+		expect(() => readList(run(0, null, 'Listing tests:', 'json went elsewhere'))).toThrow('wrote no JSON report (exit 0): stdout starts "Listing tests:"; stderr json went elsewhere');
+		expect(() => readList({ ...run(null, null, null, null), error: new Error('spawnSync bunx ENOENT') })).toThrow('wrote no JSON report (exit null, spawnSync bunx ENOENT)');
+		expect(() => readList(run(0, 'null'))).toThrow('wrote no JSON report');
+		expect(() => readList(run(0, '{"suites": ['))).toThrow('wrote no JSON report');
+		const env = listEnv({ PATH: '/bin', PW_WEBKIT: '0', PLAYWRIGHT_JSON_OUTPUT_FILE: 'a', PLAYWRIGHT_JSON_OUTPUT_DIR: 'b', PLAYWRIGHT_JSON_OUTPUT_NAME: 'c', PW_TEST_REPORTER: 'list' }, '/tmp/ui-gate-list-x/list.json');
+		expect(env).toEqual({ PATH: '/bin', PLAYWRIGHT_JSON_OUTPUT_FILE: '/tmp/ui-gate-list-x/list.json', PW_WEBKIT: '1' });
+	});
+
+	it('detects the other keyboard and focus forms, and helpers reached through .js, re-export or dynamic imports', () => {
+		const forms = ["await field.pressSequentially('hi');", "await field.type('hi');", "await field.dispatchEvent('keydown');", "await field.dispatchEvent(`focus`);", 'await page.evaluate(() => document.hasFocus());', "el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }))", "el.dispatchEvent(new FocusEvent('focus'))", "el.dispatchEvent(new Event('focusin'))", "el.dispatchEvent(new Event('focusout'))", 'await field.focus({ preventScroll: true });', 'await field.blur();', 'document.activeElement', "page.locator(':focus-visible')"];
+		for (const form of forms) expect(webkitCoverage({ files: ['x.spec.ts'], sources: { 'x.spec.ts': form }, onWebkit: new Set(), exempt: [] }).missing, form).toEqual(['x.spec.ts']);
+		for (const prose of ["test('stops focusing the composer on send', async () => {});", '// refocusing is the dialog\'s job', "const typeLabel = 'focused';"])
+			expect(webkitCoverage({ files: ['x.spec.ts'], sources: { 'x.spec.ts': prose }, onWebkit: new Set(), exempt: [] }).missing, prose).toEqual([]);
+		const sources = {
+			'js.spec.ts': "import { go } from './helpers/go.js';",
+			'dynamic.spec.ts': "const { go } = await import('./helpers/go');",
+			'reexport.spec.ts': "export { go } from './helpers/go';",
+			'template.spec.ts': "const { go } = await import(`./helpers/go`);",
+			'mjs.spec.ts': "import { go } from './helpers/mgo.mjs';",
+			'jsx.spec.ts': "import { go } from './helpers/jgo';",
+			'jsdir.spec.ts': "import { go } from './jsdir';",
+			'helpers/jgo.js': "export const go = (page) => page.keyboard.type('x');",
+			'jsdir/index.js': 'export const go = (field) => field.blur();',
+			'helpers/mgo.mts': "export const go = (page) => page.keyboard.type('x');",
+			'plain.spec.ts': "import { go } from './helpers/none.js';\nawait page.click('a');",
+			'helpers/go.ts': "export const go = (page) => page.keyboard.type('x');",
+			'helpers/none.ts': "export const go = (page) => page.click('a');"
+		};
+		const files = ['js.spec.ts', 'dynamic.spec.ts', 'plain.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts'];
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(), exempt: [] }).missing).toEqual(['js.spec.ts', 'dynamic.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts']);
 	});
 
 	it('keeps every alsoRuns entry real: a known category, a reason, and globs that match a current file', () => {

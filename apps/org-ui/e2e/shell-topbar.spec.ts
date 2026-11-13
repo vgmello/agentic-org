@@ -12,7 +12,7 @@ async function openOffice(page: Page, createPath = '/create') {
 }
 
 for (const width of [720, 960]) {
-	test(`BUG-70 chrome: the heading follows prototype spacing at ${width}px`, async ({ page }) => {
+	test(`BUG-70 chrome: the heading follows prototype spacing at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffice(page);
 		const header = page.locator('[data-shell-header]');
@@ -26,7 +26,7 @@ for (const width of [720, 960]) {
 	});
 }
 
-test('BUG-70 topbar: the current mobile Menu and page heading remain accessible', async ({ page }) => {
+test('BUG-70 topbar: the current mobile Menu and page heading remain accessible', { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 600 });
 	await openOffice(page);
 	const header = page.locator('[data-shell-header]');
@@ -43,7 +43,7 @@ test('BUG-70 topbar: the current mobile Menu and page heading remain accessible'
 });
 
 for (const width of [320, 720]) {
-	test(`BUG-70 chrome: route navigation retains the heading id and focusability at ${width}px`, async ({ page }) => {
+	test(`BUG-70 chrome: route navigation retains the heading id and focusability at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 600 });
 		await openOffice(page);
 		if (width < 640) {
@@ -105,7 +105,7 @@ async function expectHeaderFits(page: Page, name: string, width: number, textSca
 
 for (const width of [320, 640, 960, 1280]) {
 	for (const textScale of [1, 2]) {
-		test(`BUG-70 preflight: all shell render paths at ${width}px and ${textScale * 100}% text`, async ({ page }) => {
+		test(`BUG-70 preflight: all shell render paths at ${width}px and ${textScale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			test.setTimeout(120_000);
 			await page.setViewportSize({ width, height: 900 });
 			await openOffice(page);
@@ -125,7 +125,7 @@ for (const [path, heading, state] of [
 	['/chat?chat=offline&c=c-general', 'Chat', 'offline'],
 	['/chat?chat=fail&c=c-general', 'Chat', 'failure']
 ] as const) {
-	test(`BUG-70 preflight: ${path} keeps the header in the ${state} fixture`, async ({ page }) => {
+	test(`BUG-70 preflight: ${path} keeps the header in the ${state} fixture`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 900 });
 		await openOffice(page);
 		await visit(page, path);
@@ -144,7 +144,7 @@ for (const [path, heading, state] of [
 }
 
 
-test('BUG-70 preflight: stopped office fixture keeps chrome at 200% text', async ({ page }) => {
+test('BUG-70 preflight: stopped office fixture keeps chrome at 200% text', { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 900 });
 	await openOffice(page, '/create?office=crashed');
 	await expect(page.getByTestId('office-row')).toContainText('It stopped unexpectedly');
@@ -153,7 +153,7 @@ test('BUG-70 preflight: stopped office fixture keeps chrome at 200% text', async
 	await shot(page, 'bug70-fixture-stopped-text200', { context: page.locator('[data-shell-header]') });
 });
 
-test('BUG-70 chrome: breakpoint boundaries, gap and sticky frame preserve navigation geometry', async ({ page }) => {
+test('BUG-70 chrome: breakpoint boundaries, gap and sticky frame preserve navigation geometry', { tag: '@webkit' }, async ({ page }) => {
 	await openOffice(page);
 	for (const width of [639, 640, 959, 960, 1023, 1024]) {
 		await page.setViewportSize({ width, height: 600 });

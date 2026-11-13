@@ -6,7 +6,7 @@ import { create, iconIs, removeIs, focusTarget, team, showChart } from './non-ch
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 1.25, 2]) {
 	for (const screen of ['projects', 'profile', 'chart'] as const) {
-		test(`E3 PROJ-2/3 TEAM-8 BUG-70: ${screen} uses non-text icons at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		test(`E3 PROJ-2/3 TEAM-8 BUG-70: ${screen} uses non-text icons at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			await create(page, width, scale);
 			await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 			if (screen === 'chart') await showChart(page);
@@ -54,7 +54,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 1.25, 2]) {
 }
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
-	test(`E3 PROJ-2/3 TEAM-8 BUG-70: ${screen} remove icons keep keyboard commands and last-team cancel`, async ({ page }) => {
+	test(`E3 PROJ-2/3 TEAM-8 BUG-70: ${screen} remove icons keep keyboard commands and last-team cancel`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		if (screen === 'chart') await viewAction(page, 'Actual size');
@@ -84,7 +84,7 @@ for (const [screen, path, empty, emptyText] of [
 	['profile', '/projects/beacon', '/projects/ghost', "This project isn't here any more."],
 	['chart', '/org-chart', '/org-chart?org=empty', 'No teams yet']
 ] as const) {
-	test(`E3 PROJ-1/3 TEAM-8 BUG-70: ${screen} preserves empty, loading, error and recovered states`, async ({ page }) => {
+	test(`E3 PROJ-1/3 TEAM-8 BUG-70: ${screen} preserves empty, loading, error and recovered states`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 320, 2);
 		await visit(page, empty);
 		const emptyState = page.getByText(emptyText, { exact: true });
@@ -127,7 +127,7 @@ for (const [screen, path, empty, emptyText] of [
 }
 
 for (const screen of ['projects', 'chart'] as const) {
-	test(`E3 PROJ-2 TEAM-8 BUG-70: ${screen} remove icon inherits the button hover colour`, async ({ page }) => {
+	test(`E3 PROJ-2 TEAM-8 BUG-70: ${screen} remove icon inherits the button hover colour`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'chart' ? '/org-chart' : '/projects');
 		if (screen === 'chart') await viewAction(page, 'Actual size');
@@ -171,7 +171,7 @@ async function chipFixture(page: import('@playwright/test').Page) {
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
 	for (const direction of ['next', 'previous', 'middle'] as const) {
-		test(`TEAM-8 BUG-70 BUG-115: ${screen} unlink focuses keyed ${direction} in its own group`, async ({ page }) => {
+		test(`TEAM-8 BUG-70 BUG-115: ${screen} unlink focuses keyed ${direction} in its own group`, { tag: '@webkit' }, async ({ page }) => {
 			await create(page, 1280);
 			await chipFixture(page);
 			await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
@@ -185,7 +185,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 			await shot(page, `bug115-${screen}-${direction}`, { context: target });
 		});
 	}
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} immediate and confirmed-last unlink keep local fallback`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} immediate and confirmed-last unlink keep local fallback`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
@@ -205,7 +205,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 		await expect(target).toBeFocused();
 		await shot(page, `bug115-${screen}-last-success`, { context: target });
 	});
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} refusal, cancel and Escape preserve the opening remove`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} refusal, cancel and Escape preserve the opening remove`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
@@ -259,7 +259,7 @@ async function releaseUnlink(page: import('@playwright/test').Page) {
 }
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} pending unlink does not steal moved-away focus`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} pending unlink does not steal moved-away focus`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		await holdUnlink(page);
@@ -275,7 +275,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 		await expect(away).toBeFocused();
 		await shot(page, `bug115-${screen}-no-steal`, { context: away });
 	});
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} resolves the next key after a live reorder`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} resolves the next key after a live reorder`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await chipFixture(page);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
@@ -303,7 +303,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 }
 
 for (const screen of ['projects', 'profile'] as const) {
-	test(`PROJ-2/3 BUG-70 BUG-117: ${screen} removal ring clears clipped ancestors`, async ({ page }) => {
+	test(`PROJ-2/3 BUG-70 BUG-117: ${screen} removal ring clears clipped ancestors`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 320, 2);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : '/projects');
 		const remove = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
@@ -314,7 +314,7 @@ for (const screen of ['projects', 'profile'] as const) {
 }
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} successful stale refresh can still transfer focus from its retained chip`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} successful stale refresh can still transfer focus from its retained chip`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		await page.evaluate(async () => {
@@ -344,7 +344,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 }
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} cancelled refusal refresh never runs success focus recovery`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} cancelled refusal refresh never runs success focus recovery`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
 		const first = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });
@@ -387,7 +387,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 }
 
 for (const screen of ['projects', 'profile', 'chart'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: ${screen} skips a neighbour that disappeared during the request`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: ${screen} skips a neighbour that disappeared during the request`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await chipFixture(page);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : screen === 'chart' ? '/org-chart' : '/projects');
@@ -415,7 +415,7 @@ for (const screen of ['projects', 'profile', 'chart'] as const) {
 }
 
 for (const screen of ['projects', 'profile'] as const) {
-	test(`PROJ-2/3 TEAM-8 BUG-70 BUG-115: ${screen} confirmed unlink retains its own plan across live reassignment and a later Cancel`, async ({ page }) => {
+	test(`PROJ-2/3 TEAM-8 BUG-70 BUG-115: ${screen} confirmed unlink retains its own plan across live reassignment and a later Cancel`, { tag: '@webkit' }, async ({ page }) => {
 		await create(page, 1280);
 		await visit(page, screen === 'profile' ? '/projects/beacon' : '/projects');
 		const first = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });

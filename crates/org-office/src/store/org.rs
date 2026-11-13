@@ -33,6 +33,7 @@ use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
+pub(crate) mod activity;
 mod operation;
 mod replication;
 #[cfg_attr(
@@ -670,6 +671,10 @@ pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, 
     })
 }
 
+pub(crate) fn is_replication_hq(db: &Connection) -> Result<bool, OfficeError> {
+    replication::native_binding(db).map(|binding| binding.is_none_or(|(hq, _)| hq))
+}
+
 /// Up to `limit` committed commands after `after`, oldest first, as the `org.changed` events'
 /// data. The log stores each command's changes verbatim, so this is a read, not a rebuild.
 pub(crate) fn changes_after(
@@ -728,7 +733,7 @@ pub(crate) fn head(db: &Connection) -> Result<Position, OfficeError> {
 }
 
 /// Test seam: the organization as `members` (and nothing else) applied up to `position`.
-#[cfg(test)]
+#[cfg(any(test, feature = "testkit"))]
 pub(crate) fn seed_for_test(
     db: &Connection,
     members: &[Member],

@@ -299,6 +299,7 @@ pub struct Shared {
     /// The connections bound as a member, for the watcher.
     bound: Bound,
     pub(crate) inbox: Option<crate::inbox::Hq>,
+    hint: Option<crate::inbox::Hint>,
 }
 
 impl Shared {
@@ -323,6 +324,7 @@ impl Shared {
             timing: Timing::default(),
             bound: Mutex::default(),
             inbox: None,
+            hint: None,
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -348,16 +350,47 @@ impl Shared {
     }
 
     /// Only a known HQ composition registers real sources; other offices stay dark.
-    pub(crate) fn register_inbox(&mut self, inbox: crate::inbox::Hq) {
-        if self
-            .hello
-            .office
-            .as_ref()
-            .is_some_and(|office| office.office.role == OfficeRole::Hq)
-        {
-            self.inbox = Some(inbox);
-            self.hello.capabilities.push("inbox.list".into());
+    pub(crate) fn register_inbox(
+        &mut self,
+        inbox: crate::inbox::Hq,
+        authority: Result<bool, org_office::OfficeError>,
+    ) {
+        match authority {
+            Ok(true) => {
+                self.inbox = Some(inbox);
+                self.hello.capabilities.push("inbox.list".into());
+            }
+            Ok(false) => {}
+            Err(_) => eprintln!("org-server: inbox disabled (authority read unavailable)"),
         }
+    }
+
+    pub(crate) fn enable_inbox_hints(&mut self) -> Result<(), String> {
+        if self.inbox.is_some() && self.hint.is_none() {
+            self.hint = Some(crate::inbox::Hint::new(
+                self.ports.feed.head()?,
+                self.ports.live.mailbox_head(),
+            ));
+            self.hello.capabilities.push("inbox.changed".into());
+        }
+        Ok(())
+    }
+}
+
+struct Subscriber<'a> {
+    binding: &'a Binding,
+    wire: &'a follow::Wire<'a>,
+}
+
+fn deliver_hint(
+    shared: &Shared,
+    subscriber: &Subscriber<'_>,
+    data: &org_proto::inbox::InboxChangedData,
+) -> bool {
+    if shared.hint.is_some() && matches!(live_owner(shared, subscriber.binding), Ok(true)) {
+        subscriber.wire.emit::<org_proto::inbox::InboxChanged>(data)
+    } else {
+        true
     }
 }
 
@@ -517,7 +550,18 @@ fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
                 }
             }
         }
-        shared.ports.feed.wait(token, shared.timing.idle);
+        let sleep = match (&shared.inbox, &shared.hint) {
+            (Some(hq), Some(hint)) => hint
+                .poll(
+                    hq,
+                    &*shared.ports.feed,
+                    &shared.ports.live,
+                    std::time::Instant::now,
+                )
+                .min(shared.timing.idle),
+            _ => shared.timing.idle,
+        };
+        shared.ports.feed.wait(token, sleep);
     }
 }
 
@@ -608,7 +652,7 @@ pub(super) fn serve_context(
             org_socket::READ_TICK,
             org_socket::poll_readable,
         ),
-        Context::HostChannel(context) => host::serve(stream, *context, stopping),
+        Context::HostChannel(context) => host::serve(stream, shared, *context, stopping),
     }
 }
 
@@ -804,7 +848,16 @@ fn serve_connection_with_poll(
                             seq: &sent,
                             timing: shared.timing,
                         };
-                        pusher = Some(scope.spawn(move || follow::push(feed, live, &wire, start)));
+                        let binding = binding.clone();
+                        pusher = Some(scope.spawn(move || {
+                            let subscriber = Subscriber {
+                                binding: &binding,
+                                wire: &wire,
+                            };
+                            follow::push_with_hint(feed, live, &wire, start, |data| {
+                                deliver_hint(shared, &subscriber, data)
+                            });
+                        }));
                         continue;
                     }
                     Err(refusal) => Response::error(request.id, refusal),
@@ -2028,7 +2081,7 @@ mod tests {
         assert_eq!(mailbox.held_waits(), 0);
     }
 
-    fn shared(path: &Path) -> Arc<Shared> {
+    pub(super) fn shared(path: &Path) -> Arc<Shared> {
         Arc::new(Shared::new(
             &test_info(),
             path,
@@ -2124,7 +2177,7 @@ mod tests {
         AppToken::from_bytes([7; org_proto::APP_TOKEN_BYTES])
     }
 
-    fn test_info() -> org_office::OfficeInfo {
+    pub(super) fn test_info() -> org_office::OfficeInfo {
         org_office::OfficeInfo {
             office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
             office_name: "HQ".into(),
@@ -2135,7 +2188,7 @@ mod tests {
         }
     }
 
-    fn ports(snapshot: SnapshotFn) -> OfficePorts {
+    pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         let (mailbox, directory) = messaging();
         OfficePorts {
             work: Box::new(|_, _| Err("none".into())),
@@ -2614,10 +2667,30 @@ mod tests {
 
     impl Client {
         fn connect(path: &Path) -> Self {
-            let stream = UnixStream::connect(path).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            Self::from_stream(UnixStream::connect(path).unwrap())
+        }
+
+        fn from_stream(stream: UnixStream) -> Self {
+            let timeout = stream.set_read_timeout(Some(Duration::from_secs(10)));
+            Self::with_timeout_result(stream, timeout)
+        }
+
+        fn with_timeout_result(mut stream: UnixStream, timeout: std::io::Result<()>) -> Self {
+            if let Err(error) = timeout {
+                // Darwin may reject socket options after the server has refused this peer.
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(libc::EINVAL),
+                    "set test client read timeout: {error}"
+                );
+                stream.set_nonblocking(true).unwrap();
+                let closed = std::io::Read::read(&mut stream, &mut [0]);
+                stream.set_nonblocking(false).unwrap();
+                assert!(
+                    matches!(closed, Ok(0)),
+                    "set test client read timeout: {error}; expected peer EOF, got {closed:?}"
+                );
+            }
             let reader = BufReader::new(stream.try_clone().unwrap());
             Self {
                 stream,

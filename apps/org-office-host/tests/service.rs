@@ -4,6 +4,9 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
+// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
+// helpers are unused.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -176,6 +179,7 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
 /// Shutdown with clients connected (idle, subscribed, and one with a create in flight) ends
 /// promptly. It would hang if waking the accept thread or ending a connection's writer broke,
 /// so a watchdog turns that into a failure instead of a stuck test run.
+#[cfg(target_os = "macos")]
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
     let home = TestHome::registered();
@@ -228,6 +232,7 @@ fn shutdown_with_clients_connected_finishes_promptly() {
 /// organization a subscriber has heard of is in every list answer that comes after the event.
 /// List calls stream in on one subscribed connection (handled up to 16 at a time) while
 /// organizations are created on another.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
     use std::collections::{HashMap, HashSet};
@@ -380,6 +385,7 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
 /// A subscriber that creates organizations on its own connection gets each answer before any
 /// event about that organization: the answer, `organization.created` and the office's status
 /// changes go out in that order.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_subscribed_creator_gets_its_answer_before_any_event_about_it() {
     use std::collections::HashSet;

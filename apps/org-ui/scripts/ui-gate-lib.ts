@@ -7,7 +7,7 @@ export type Rules = { ignore: string[]; noImpact: string[]; shared: string[]; cs
 export type Category = { specs: string[]; sources: string[] };
 export type Manifest = {
 	budget: { maxJourneyTests: number; maxChromiumSeconds: number; measured: { tests: number; chromiumSeconds: number } };
-	allowedCoupling?: { from: string; to: string; why: string }[]; webkitSpecs: string[]; projectFiles?: Record<string, string>; alsoRuns?: { category: string; files: string[]; why: string }[]; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
+	allowedCoupling?: { from: string; to: string; why: string }[]; projectFiles?: Record<string, string>; webkitExempt: { spec: string; why: string }[]; alsoRuns?: { category: string; files: string[]; why: string }[]; cspIgnoredSpecs: string[]; journeys: Journey[]; categories: Record<string, Category>; rules: Rules;
 };
 export type Effect = { kind: 'ignore' | 'outside' | 'all' | 'category' | 'cspFull' | 'gateway' | 'unknown'; rule: string; category?: string; also?: boolean };
 export type Plan = { all: boolean; categories: string[]; cspFull: boolean; gateway: boolean; effects: [string, Effect[]][] };

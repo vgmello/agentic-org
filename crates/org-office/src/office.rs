@@ -9,6 +9,7 @@ use crate::error::OfficeError;
 use crate::key::Key;
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
+use crate::organization::activity::{ActivityError, ActivityPage, OrgActivityQuery};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
@@ -30,7 +31,7 @@ use crate::store::{messages, origin, status, work};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
-use org_work::{Caller, StoreError, TxnOutput, WorkCall, WorkService};
+use org_work::{Caller, StoreError, TxnOutput, WorkActivityReads, WorkCall, WorkService};
 
 /// How long `create`, `open` and `discard` wait for the folder's lock: a slow-exiting old
 /// server and its replacement never overlap.
@@ -63,7 +64,8 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// members' status lines. Version 4 adds work items, IDs, events, feed and origin ledger. An older file
 /// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3.
 /// Version 5 adds change results, number counters and a clock, and is closed.
-/// Version 6 decouples current tasks from status lines; it stays open until B1-11's final slice.
+/// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
+/// reads (B1-12); it stays open until B1-11's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     version: 6,
     create: |tx| {
@@ -72,7 +74,8 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         status::create_table(tx)?;
         origin::create_tables(tx)?;
         work::create_tables(tx)?;
-        work::create_v5_tables(tx)
+        work::create_v5_tables(tx)?;
+        crate::store::owned_processes::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -89,6 +92,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 5 {
             work::create_v5_tables(tx)?;
+        }
+        if from < 6 {
+            crate::store::owned_processes::create_table(tx)?;
         }
         Ok(())
     },
@@ -523,6 +529,12 @@ impl Office {
         org_db::replication_checkpoint(&self.stores.org)
     }
 
+    /// Whether this office owns HQ reads, including before federation is bound.
+    /// A local restore fence blocks writes, not reads of the current HQ state.
+    pub fn is_replication_hq(&self) -> Result<bool, OfficeError> {
+        self.stores.org.read(org_db::is_replication_hq)
+    }
+
     /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
     pub fn replication_events_after(
         &self,
@@ -651,6 +663,14 @@ impl Office {
             .read(|db| org_db::changes_after(db, after, limit))
     }
 
+    /// One page of org activity, newest first, from one read transaction (IA-12).
+    pub fn org_activity(&self, query: &OrgActivityQuery) -> Result<ActivityPage, ActivityError> {
+        (self.stores.org).read(|db| match org_db::activity::page(db, query) {
+            Err(ActivityError::Store(error)) => Err(error),
+            page => Ok(page),
+        })?
+    }
+
     /// A number that changes whenever a command has been committed or a live event has been
     /// published (`Office::wake_followers`). Read it BEFORE reading the
     /// log, then [`Office::wait_for_org_change`] with it: a commit in between is not missed.
@@ -682,15 +702,11 @@ impl Office {
         &self.stores.org
     }
 
-    /// Test seam: replaces the organization's members with `members`, as an organization applied
+    /// Test fixtures only: replaces the organization's members with `members`, as an organization applied
     /// up to `position` (the members are written raw, as a damaged or foreign organization could
     /// hold them).
-    #[cfg(test)]
-    pub(crate) fn seed_organization_for_test(
-        &self,
-        members: &[org_proto::Member],
-        position: Position,
-    ) {
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn seed_organization_for_test(&self, members: &[org_proto::Member], position: Position) {
         let members = members.to_vec();
         self.stores
             .org
@@ -704,6 +720,11 @@ impl Office {
     /// Executes one work write as the bound member, with durable retry semantics.
     pub fn work_call(&self, caller: Caller, call: WorkCall) -> Result<TxnOutput, StoreError> {
         self.stores.work.call(caller, call)
+    }
+
+    /// The owner's work activity (IA-12), read from office.db's read pool; never writes.
+    pub fn work_activity(&self) -> impl WorkActivityReads + Send + Sync + 'static {
+        work::activity::OfficeWorkActivity(Arc::clone(&self.stores.local))
     }
 
     /// What `office.json` records about this office.

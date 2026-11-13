@@ -81,7 +81,7 @@ async function holdSend(page: Page) {
 }
 
 for (const place of ['conversation', 'thread'] as const) {
-	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, { tag: '@journey' }, async ({ page }) => {
+	test(`CHAT-1/8 BUG-66: ${place} offers a delivered message once, without its pending row or counters`, { tag: ['@journey', '@webkit'] }, async ({ page }) => {
 		await open(page);
 		const root = page.getByTestId('message-list').getByTestId('replies-link').first();
 		const previousCount = await root.innerText();
@@ -117,7 +117,7 @@ for (const place of ['conversation', 'thread'] as const) {
 	});
 }
 
-test('CHAT-8 BUG-66: the first reply adds an accessible counter without announcing it', async ({ page }) => {
+test('CHAT-8 BUG-66: the first reply adds an accessible counter without announcing it', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	const handoff = page.getByTestId('message-list').getByTestId('message').filter({ has: page.getByTestId('handoff-card') });
 	await handoff.getByRole('button', { name: 'Reply…', exact: true }).click();
@@ -136,7 +136,7 @@ test('CHAT-8 BUG-66: the first reply adds an accessible counter without announci
 	await shot(page, 'chat-live-first-reply-readable-counter');
 });
 
-test('CHAT-1 BUG-66: the first delivered channel message is offered without the day divider', async ({ page }) => {
+test('CHAT-1 BUG-66: the first delivered channel message is offered without the day divider', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	await page.getByRole('navigation', { name: 'Chat', exact: true }).getByRole('button', { name: 'Add channel', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Add a channel', exact: true });
@@ -156,7 +156,7 @@ test('CHAT-1 BUG-66: the first delivered channel message is offered without the 
 	await shot(page, 'chat-live-first-channel-message');
 });
 
-test('CHAT-5/6 BUG-66: minute ticks and refresh leave readable ask clocks silent', async ({ page }) => {
+test('CHAT-5/6 BUG-66: minute ticks and refresh leave readable ask clocks silent', { tag: '@webkit' }, async ({ page }) => {
 	await page.clock.install();
 	await open(page, 'c-project-atlas');
 	const waiting = page.getByTestId('message-list').getByTestId('waiting').first();
@@ -173,7 +173,7 @@ test('CHAT-5/6 BUG-66: minute ticks and refresh leave readable ask clocks silent
 	await shot(page, 'chat-live-readable-silent-clocks');
 });
 
-test('CHAT-1 BUG-66: an added reaction count remains accessible without another message announcement', async ({ page }) => {
+test('CHAT-1 BUG-66: an added reaction count remains accessible without another message announcement', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	const message = page.getByTestId('message-list').getByTestId('message').filter({ hasText: 'your part and status for Phase 1' });
 	const originalRow = await message.elementHandle();
@@ -205,7 +205,7 @@ test('CHAT-1 BUG-66: an added reaction count remains accessible without another 
 	await shot(page, 'chat-live-readable-silent-reaction');
 });
 
-test('CHAT-1/8 BUG-66: switching threads mounts a silent new log', async ({ page }) => {
+test('CHAT-1/8 BUG-66: switching threads mounts a silent new log', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	await page.getByTestId('replies-link').first().click();
 	const log = page.getByRole('log', { name: 'Thread messages', exact: true });
@@ -221,7 +221,7 @@ test('CHAT-1/8 BUG-66: switching threads mounts a silent new log', async ({ page
 	await shot(page, 'chat-live-silent-thread-switch');
 });
 
-test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', { tag: '@journey' }, async ({ page }) => {
+test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conversation stays silent', { tag: ['@journey', '@webkit'] }, async ({ page }) => {
 	await page.clock.install();
 	await open(page, 'c-dm-ines');
 	const composer = page.getByTestId('composer');
@@ -245,7 +245,7 @@ test('CHAT-1/7 BUG-66: an incoming open-DM reply is offered once; another conver
 	await shot(page, 'chat-live-background-dm-silent');
 });
 
-test('CHAT-1/13/33 BUG-66: channel, Search and history changes do not offer old messages', async ({ page }) => {
+test('CHAT-1/13/33 BUG-66: channel, Search and history changes do not offer old messages', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	await page.getByRole('navigation', { name: 'Chat', exact: true }).locator('[data-conversation="c-general"]').click();
 	await expect(page.getByTestId('conversation-title')).toHaveText('#general');
@@ -267,7 +267,7 @@ test('CHAT-1/13/33 BUG-66: channel, Search and history changes do not offer old 
 });
 
 for (const width of [1440, 960]) {
-	test(`CHAT-8 BUG-71: only the open Thread offers its Also-send delivery at ${width}px`, async ({ page }) => {
+	test(`CHAT-8 BUG-71: only the open Thread offers its Also-send delivery at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page);
 		await page.setViewportSize({ width, height: 900 });
 		const main = page.getByTestId('message-list');
@@ -324,7 +324,7 @@ for (const width of [1440, 960]) {
 }
 
 for (const context of ['closed', 'another Thread'] as const) {
-	test(`CHAT-8 BUG-71: a held Also-send reply reaches the channel with its Thread ${context}`, async ({ page }) => {
+	test(`CHAT-8 BUG-71: a held Also-send reply reaches the channel with its Thread ${context}`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page);
 		const main = page.getByTestId('message-list');
 		await main.getByTestId('replies-link').first().click();
@@ -356,7 +356,7 @@ for (const context of ['closed', 'another Thread'] as const) {
 }
 
 for (const mode of ['muted', 'digest'] as const) {
-	test(`CHAT-8/11 BUG-71: an incoming Also-send copy in expanded ${mode} messages is offered only by Thread`, async ({ page }) => {
+	test(`CHAT-8/11 BUG-71: an incoming Also-send copy in expanded ${mode} messages is offered only by Thread`, { tag: '@webkit' }, async ({ page }) => {
 		await page.clock.install();
 		await open(page);
 		const main = page.getByTestId('message-list');

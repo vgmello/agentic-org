@@ -142,7 +142,7 @@ impl Wire<'_> {
     /// Writes one event. `false` when the pusher must stop: the generation moved on (no event
     /// goes out, and none takes a number it does not send) or the write failed (the connection
     /// is shut down).
-    fn emit<K: EventKind>(&self, data: &K::Data) -> bool {
+    pub(crate) fn emit<K: EventKind>(&self, data: &K::Data) -> bool {
         let stream = self.out.lock().unwrap_or_else(|p| p.into_inner());
         // Checked under the writer lock: once a re-bind has moved the generation on, not one more
         // event goes out.
@@ -236,7 +236,18 @@ impl PresenceGate {
 /// Pushes the events after `start` until the connection's generation moves on from `mine` (a
 /// re-bind, or the reader is gone) or a write fails. A failure to read the log or to write an
 /// event closes the connection: the client reconnects and resumes from the last position it got.
+#[cfg(test)]
 pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start) {
+    push_with_hint(feed, live, wire, start, |_| true);
+}
+
+pub(crate) fn push_with_hint(
+    feed: &dyn OrgFeed,
+    live: &LiveEvents,
+    wire: &Wire<'_>,
+    start: Start,
+    deliver_hint: impl Fn(&org_proto::inbox::InboxChangedData) -> bool,
+) {
     let mut last = start.position;
     let mut messages_cursor = start.live.messages;
     let mut presence_cursor = start.live.presence;
@@ -278,6 +289,7 @@ pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start
             let sent = match event {
                 Live::Received(data) => wire.emit::<MessageReceived>(&data),
                 Live::StateChanged(data) => wire.emit::<MessageStateChanged>(&data),
+                Live::InboxChanged(data) => deliver_hint(&data),
             };
             if !sent {
                 return;

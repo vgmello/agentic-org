@@ -25,7 +25,10 @@ fn exchange(
 fn host_pair() -> (std::io::BufReader<UnixStream>, std::thread::JoinHandle<()>) {
     let (socket, peer) = UnixStream::pair().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-    let thread = std::thread::spawn(move || serve(socket, context(), &Default::default()));
+    let thread = std::thread::spawn(move || {
+        let shared = super::super::tests::shared(Path::new("unused-office.sock"));
+        serve(socket, &shared, context(), &Default::default());
+    });
     (std::io::BufReader::new(peer), thread)
 }
 #[test]
@@ -70,3 +73,6 @@ fn host_hello_checks_both_range_edges_and_malformed_params_before_version_lock()
     assert!(frame::read_line(&mut peer).unwrap().is_none());
     thread.join().unwrap();
 }
+
+#[path = "tests/policy.rs"]
+mod policy;

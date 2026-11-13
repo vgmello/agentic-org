@@ -59,7 +59,7 @@ async function fits(locator: Locator) {
 }
 
 for (const scale of [1, 2]) {
-	test(`AGENT-3 F-3 BUG-70 BUG-76: roster status stays one line at 390px and ${scale * 100}% text`, async ({ page }) => {
+	test(`AGENT-3 F-3 BUG-70 BUG-76: roster status stays one line at 390px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 390, height: 900 });
 		await open(page);
 		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
@@ -77,7 +77,7 @@ for (const scale of [1, 2]) {
 }
 
 for (const width of [320, 640, 960, 1280]) {
-	test(`AGENT-3 BUG-70: a readable outlined status pill preserves roster and filters at ${width}px`, async ({ page }) => {
+	test(`AGENT-3 BUG-70: a readable outlined status pill preserves roster and filters at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await open(page);
 		const roster = page.getByRole('table', { name: 'Agents', exact: true });
@@ -109,7 +109,7 @@ for (const width of [320, 640, 960, 1280]) {
 		await shot(page, `look-pill-${width}`, { context: status });
 	});
 
-	test(`PROJ-1 BUG-70: native divided rows and a quiet neutral callout at ${width}px`, async ({ page }) => {
+	test(`PROJ-1 BUG-70: native divided rows and a quiet neutral callout at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await open(page, '/projects');
 		const list = page.getByRole('list', { name: 'Projects', exact: true });
@@ -134,7 +134,7 @@ for (const width of [320, 640, 960, 1280]) {
 }
 
 for (const width of [320, 960]) {
-	test(`AGENT-3 BUG-70: BUG-76: status text truncates inside a constrained cell at 200% text and ${width}px`, async ({ page }) => {
+	test(`AGENT-3 BUG-70: BUG-76: status text truncates inside a constrained cell at 200% text and ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await open(page);
 		await page.addStyleTag({ content: 'html { font-size: 200%; }' });
@@ -155,7 +155,7 @@ for (const width of [320, 960]) {
 		await shot(page, `look-pill-200-${width}`, { context: status });
 	});
 
-	test(`PROJ-1 BUG-70: a long project name and callout wrap at 200% text and ${width}px`, async ({ page }) => {
+	test(`PROJ-1 BUG-70: a long project name and callout wrap at 200% text and ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await open(page);
 		const long = 'Project' + 'x'.repeat(64);
@@ -197,7 +197,7 @@ for (const width of [320, 960]) {
 	});
 }
 
-test('AGENT-3 BUG-70: Paused keeps its words, warning tint and keyboard filter', async ({ page }) => {
+test('AGENT-3 BUG-70: Paused keeps its words, warning tint and keyboard filter', { tag: '@webkit' }, async ({ page }) => {
 	await open(page, '/org-chart');
 	await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
 	await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
@@ -217,7 +217,7 @@ test('AGENT-3 BUG-70: Paused keeps its words, warning tint and keyboard filter',
 	await shot(page, 'look-pill-paused', { context: status });
 });
 
-test('PROJ-2/3 BUG-70: row links and keyboard assignment keep their behavior', async ({ page }) => {
+test('PROJ-2/3 BUG-70: row links and keyboard assignment keep their behavior', { tag: '@webkit' }, async ({ page }) => {
 	await open(page, '/projects');
 	const row = page.locator('[data-testid=project-row][data-project=scratch]');
 	const assign = row.getByRole('button', { name: 'Assign a team to Scratchpad', exact: true });
@@ -238,7 +238,7 @@ test('PROJ-2/3 BUG-70: row links and keyboard assignment keep their behavior', a
 });
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`F-3 BUG-70 BUG-76: primitives keep status words, caller roles and native list attributes at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+	test(`F-3 BUG-70 BUG-76: primitives keep status words, caller roles and native list attributes at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 1000 });
 		await open(page);
 		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
@@ -311,7 +311,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 }
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test('AGENT-3 BUG-70: flat roster keeps all states at ' + width + 'px and ' + scale * 100 + '% text', async ({ page }) => {
+	test('AGENT-3 BUG-70: flat roster keeps all states at ' + width + 'px and ' + scale * 100 + '% text', { tag: '@webkit' }, async ({ page }) => {
 		await open(page);
 		await page.setViewportSize({ width, height: 900 });
 		await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);

@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -147,6 +153,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -264,6 +271,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
  "hashbrown",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
 ]
 
 [[package]]
@@ -475,6 +491,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-docs"
+version = "0.0.0"
+dependencies = [
+ "saphyr-parser",
+ "serde_json",
+]
+
+[[package]]
 name = "org-gateway"
 version = "0.0.0"
 dependencies = [
@@ -582,6 +606,7 @@ dependencies = [
 name = "org-server"
 version = "0.0.0"
 dependencies = [
+ "hmac",
  "libc",
  "org-client",
  "org-mailbox",
@@ -589,9 +614,14 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "org-socket",
+ "org-supervise",
+ "org-sync",
  "org-work",
+ "proc-macro2",
  "serde",
  "serde_json",
+ "sha2",
+ "syn 2.0.119",
  "tempfile",
 ]
 
@@ -869,6 +899,16 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "untrusted",
+]
+
+[[package]]
+name = "saphyr-parser"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48cf5a82d41247a625f040af08e91008fec945bce3b0bffba992c44af092caa2"
+dependencies = [
+ "arraydeque",
+ "thiserror",
 ]
 
 [[package]]

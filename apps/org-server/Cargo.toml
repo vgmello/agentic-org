@@ -14,6 +14,10 @@ path = "src/main.rs"
 name = "launch"
 path = "tests/launch.rs"
 
+[[test]]
+name = "owned_recovery"
+path = "tests/owned_recovery.rs"
+
 [dependencies]
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
@@ -21,11 +25,18 @@ org-office = { path = "../../crates/org-office" }
 org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
+org-supervise = { path = "../../crates/org-supervise" }
 libc.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
+org-sync = { path = "../../crates/org-sync" }
+org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
 org-client = { path = "../../crates/org-client" }
 tempfile.workspace = true
-serde_json.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"

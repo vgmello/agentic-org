@@ -13,13 +13,14 @@
 
 mod employees;
 mod organization;
-pub use organization::directory;
+pub use organization::{activity, directory};
 mod error;
 mod key;
 mod messaging;
 mod model;
 mod office;
 mod office_file;
+mod owned_processes;
 mod private_fs;
 pub mod rules;
 mod status;
@@ -32,6 +33,7 @@ pub use key::Key;
 pub use messaging::{OfficeDirectory, OfficeMessageStore};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};
+pub use owned_processes::{OwnedProcess, OwnedProcessKey, SavedIdentity, SavedLeader, SavedTarget};
 pub use status::presence_after_status;
 pub use store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
 pub use store::sqlcipher_ready;

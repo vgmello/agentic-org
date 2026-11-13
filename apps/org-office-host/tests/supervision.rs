@@ -3,6 +3,9 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
+// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
+// helpers are unused.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -42,6 +45,7 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
     });
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_crashed_server_is_restarted_with_growing_backoff() {
     let home = TestHome::registered();
@@ -60,6 +64,7 @@ fn a_crashed_server_is_restarted_with_growing_backoff() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn in_use_and_unknown_failures_are_retried() {
     let home = TestHome::registered();
@@ -75,6 +80,7 @@ fn in_use_and_unknown_failures_are_retried() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     let home = TestHome::registered();
@@ -95,6 +101,7 @@ fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_is_never_ready_is_killed_and_restarted() {
     let home = TestHome::registered();
@@ -111,6 +118,7 @@ fn a_server_that_is_never_ready_is_killed_and_restarted() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
     let home = TestHome::registered();
@@ -216,6 +224,7 @@ fn a_second_host_on_the_same_home_fails_fast() {
     first.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
     let home = TestHome::registered();
@@ -236,6 +245,7 @@ fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
     support::restart_host(&home, &home.config()).shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
     let home = TestHome::registered();
@@ -277,6 +287,7 @@ fn a_home_too_long_for_its_sockets_refuses_to_start() {
     assert!(!long.exists(), "it touched the home before refusing");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn server_stderr_goes_to_an_owner_only_log_rotated_at_the_cap() {
     let home = TestHome::registered();
@@ -302,6 +313,7 @@ fn server_stderr_goes_to_an_owner_only_log_rotated_at_the_cap() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
     // The server finds an organization committed in the folder's databases (already_exists),
@@ -331,6 +343,7 @@ fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discarded() {
     const MISPLACED: &str = "01MISPLACEDMISPLACEDMISPLA";
@@ -368,6 +381,7 @@ fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discard
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
     let home = TestHome::registered();
@@ -390,6 +404,7 @@ fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
     let home = TestHome::registered();
@@ -411,6 +426,7 @@ fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
     home.kill_orphans();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
     let home = TestHome::registered();
@@ -440,6 +456,7 @@ fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
     home.kill_orphans();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() {
     let home = TestHome::registered();
@@ -461,6 +478,7 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for_it() {
     let home = TestHome::registered();
@@ -495,6 +513,7 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_during_a_too_slow_startup_gets_not_ready() {
     let home = TestHome::registered();

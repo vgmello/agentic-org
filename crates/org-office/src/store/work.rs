@@ -10,6 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::OfficeError;
 
+pub(crate) mod activity;
 pub(crate) mod assembly;
 mod call;
 mod metadata;

@@ -3,20 +3,20 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { buttons, menu, consumerFocus, keyboardFocus, outline, token, setupFocus, readable, outlineContrast } from './focus-primitives';
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`BUG-101 BUG-70: menu keyboard and pointer contract at ${width}/${scale * 100}`, async ({ page }) => { await menu(page, width, scale); });
-	test(`BUG-102 BUG-70: Button six variants and native actions at ${width}/${scale * 100}`, async ({ page }) => { await buttons(page, width, scale); });
-	test(`BUG-101/102 BUG-70: nine consumer families at ${width}/${scale * 100}`, async ({ page }) => { await consumerFocus(page, width, scale); });
+	test(`BUG-101 BUG-70: menu keyboard and pointer contract at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => { await menu(page, width, scale); });
+	test(`BUG-102 BUG-70: Button six variants and native actions at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => { await buttons(page, width, scale); });
+	test(`BUG-101/102 BUG-70: nine consumer families at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => { await consumerFocus(page, width, scale); });
 }
 
 // WebKit has no exposed default-font preference in Playwright. This proves 40px-root rendering,
 // while the dedicated Chromium project separately proves a real 20px browser default at 200%.
 for (const width of [320, 640, 960, 1280]) {
-	test(`BUG-101/102 BUG-70: explicit 40px root matrix at ${width}`, async ({ page }) => { await buttons(page, width, 2.5); });
-	test(`BUG-101 BUG-70: explicit 40px root menu at ${width}`, async ({ page }) => { await menu(page, width, 2.5); });
-	test(`BUG-102 BUG-70: explicit 40px root consumers at ${width}`, async ({ page }) => { await consumerFocus(page, width, 2.5); });
+	test(`BUG-101/102 BUG-70: explicit 40px root matrix at ${width}`, { tag: '@webkit' }, async ({ page }) => { await buttons(page, width, 2.5); });
+	test(`BUG-101 BUG-70: explicit 40px root menu at ${width}`, { tag: '@webkit' }, async ({ page }) => { await menu(page, width, 2.5); });
+	test(`BUG-102 BUG-70: explicit 40px root consumers at ${width}`, { tag: '@webkit' }, async ({ page }) => { await consumerFocus(page, width, 2.5); });
 }
 
-test('BUG-102 BUG-70: ProcessSheet caller override uses the same indigo focus and closes', async ({ page }) => {
+test('BUG-102 BUG-70: ProcessSheet caller override uses the same indigo focus and closes', { tag: '@webkit' }, async ({ page }) => {
 	await visit(page, '/create'); await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click(); await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/processes?place=team:web'); await page.locator('[data-testid=process-row][data-key="code-review"]').click();
@@ -26,7 +26,7 @@ test('BUG-102 BUG-70: ProcessSheet caller override uses the same indigo focus an
 	await close.press('Enter'); await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('BUG-101/102 BUG-70: outline and readable-text guards allow real controls and catch collapsed or weak ones', async ({ page }) => {
+test('BUG-101/102 BUG-70: outline and readable-text guards allow real controls and catch collapsed or weak ones', { tag: '@webkit' }, async ({ page }) => {
 	const fixture = await setupFocus(page, 320, 2);
 	const control = fixture.getByRole('group', { name: 'default', exact: true }).getByRole('button');
 	await expect(control).toHaveCount(1);
@@ -49,7 +49,7 @@ test('BUG-101/102 BUG-70: outline and readable-text guards allow real controls a
 	await outline(control, 2, await token(page)); await readable(control);
 });
 
-test('BUG-101 BUG-70: keyboard-to-pointer handoff keeps the pinned menu indication', async ({ page }) => {
+test('BUG-101 BUG-70: keyboard-to-pointer handoff keeps the pinned menu indication', { tag: '@webkit' }, async ({ page }) => {
 	const fixture = await setupFocus(page, 320, 1);
 	const trigger = fixture.getByRole('button', { name: 'Commands', exact: true });
 	await keyboardFocus(page, trigger); await trigger.press('ArrowDown');

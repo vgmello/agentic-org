@@ -14,7 +14,7 @@ async function open(page: Page, width: number) {
 
 for (const width of [1440, 960, 320]) {
 	for (const close of ['Close', 'Escape'] as const) {
-		test(`CHAT-31 BUG-65: ${close} restores a mouse-opened Thread to its replies button at ${width}px`, async ({ page }) => {
+		test(`CHAT-31 BUG-65: ${close} restores a mouse-opened Thread to its replies button at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 			await open(page, width);
 			const opener = page.getByTestId('message-list').getByTestId('replies-link').first();
 			const originalOpener = await opener.elementHandle();
@@ -38,7 +38,7 @@ for (const width of [1440, 960, 320]) {
 }
 
 for (const width of [1440, 960]) {
-	test(`CHAT-31 BUG-65: a keyboard-opened Thread returns visible focus at ${width}px`, async ({ page }) => {
+	test(`CHAT-31 BUG-65: a keyboard-opened Thread returns visible focus at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page, width);
 		const opener = page.getByTestId('message-list').getByTestId('replies-link').first();
 		const originalOpener = await opener.elementHandle();
@@ -59,7 +59,7 @@ for (const width of [1440, 960]) {
 }
 
 for (const trigger of ['toolbar', 'handoff'] as const) {
-	test(`CHAT-31 BUG-65: Thread returns to its ${trigger} opening button`, async ({ page }) => {
+	test(`CHAT-31 BUG-65: Thread returns to its ${trigger} opening button`, { tag: '@webkit' }, async ({ page }) => {
 		await open(page, 960);
 		const messages = page.getByTestId('message-list').getByTestId('message');
 		const message = messages.filter({ hasText: trigger === 'handoff' ? 'Please review the store traits' : 'your part and status for Phase 1' });
@@ -78,7 +78,7 @@ for (const trigger of ['toolbar', 'handoff'] as const) {
 	});
 }
 
-test('CHAT-31 BUG-65: Close restores the original opener after a reply re-renders the thread', async ({ page }) => {
+test('CHAT-31 BUG-65: Close restores the original opener after a reply re-renders the thread', { tag: '@webkit' }, async ({ page }) => {
 	await open(page, 960);
 	const opener = page.getByTestId('message-list').getByTestId('replies-link').first();
 	const originalOpener = await opener.elementHandle();
