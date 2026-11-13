@@ -991,7 +991,7 @@ test('F1: with room (1280 wide, 100% text) the capture panel body shows everythi
 	expect(body.scroll).toBeLessThanOrEqual(body.client + 1);
 });
 
-test('N3: at 320px with 200% text the steps of a request (approve, route, decline) do not scroll sideways', async ({ page }) => {
+test('N3: at 320px with 200% text the steps of a request (approve, ask for changes) do not scroll sideways', async ({ page }) => {
 	await largeText(page);
 	await page.setViewportSize({ width: 320, height: 640 });
 	await open(page);

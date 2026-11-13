@@ -284,7 +284,7 @@
 								{#each drafts as d, i (i)}
 									<li class="flex flex-wrap items-center gap-x-2">
 										<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
-										<Input bind:value={d.title} class="min-w-0 flex-1 basis-40" disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
+										<Input bind:value={d.title} class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
 										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-team">loses its team</span>{/if}
 										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-person">loses its assignee</span>{/if}
 									</li>
@@ -292,7 +292,7 @@
 							</ul>
 						{:else}
 							<Label for="req-note">{step === 'changes' ? 'What should change' : 'Why'}</Label>
-							<Input id="req-note" bind:value={note} autocomplete="off" />
+							<Input id="req-note" bind:value={note} class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" autocomplete="off" />
 						{/if}
 						<div class="flex flex-wrap gap-2">
 							<Button size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" disabled={busy || !canSubmit} onclick={submitStep}>

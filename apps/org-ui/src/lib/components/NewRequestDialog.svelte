@@ -382,7 +382,7 @@
 			{#if warning}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
-			<DialogFooter class="min-w-0 shrink-0 flex-row flex-wrap justify-end">
+			<DialogFooter class="min-w-0 shrink-0 flex-row flex-wrap justify-end pb-1">
 				{#if asking}
 					<p class="mr-auto self-center text-sm/6 text-gray-200" role="alert" data-testid="keep-draft">Keep as a draft?</p>
 					<Button type="button" variant="outline" onclick={back}>Back</Button>
