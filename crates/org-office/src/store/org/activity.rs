@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use org_proto::org::{OrgChange, Position};
+use org_proto::org::Position;
 use rusqlite::Connection;
 
 use crate::error::OfficeError;
@@ -21,7 +21,7 @@ struct Row {
     command_id: String,
     at: String,
     actor: Option<String>,
-    changes: Vec<OrgChange>,
+    changes: Vec<rules::Change>,
 }
 
 /// One epoch's log from a top row down, read lazily in blocks; lookbacks count its rows.
@@ -67,7 +67,7 @@ impl Log {
                 .map_err(OfficeError::storage)?;
             self.end = read.len() < block;
             for (seq, command_id, at, body, actor) in read {
-                let changes: Vec<OrgChange> = serde_json::from_str(&body)
+                let changes: Vec<rules::Change> = serde_json::from_str(&body)
                     .map_err(|_| OfficeError::Invalid("a logged entry is not readable"))?;
                 for (index, change) in changes.iter().enumerate().rev() {
                     if let Some(((kind, id), true)) = rules::entity(change) {
@@ -225,10 +225,7 @@ pub(crate) fn latest_by_project(
         for index in (0..log.rows[k].changes.len()).rev() {
             let (_, subject) = log.describe(source, k, index)?;
             if let Some(id) = subject.project.filter(|id| wanted.remove(id.as_str())) {
-                match at_ms {
-                    Some(at) => _ = out.latest_ms.insert(id, at),
-                    None => out.degraded = true,
-                }
+                out.insert(id, at_ms);
             }
         }
         k += 1;

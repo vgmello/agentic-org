@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use org_proto::org::OrgChange;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -1024,27 +1025,21 @@ fn latest_by_project_is_the_first_entry_activity_returns_for_it() {
     append(&store, filler(30));
     let ids = ["PN", "PT1", "PT2", "PC", "PR", "PA", "PU"];
     let found = latest(&store, &ids);
+    // PN has no activity (absent); PU's newest entry has an unparseable time (None).
     let expected = [
-        ("PT1", ms(30)),
-        ("PT2", ms(30)),
-        ("PC", ms(20)),
-        ("PR", ms(40)),
-        ("PA", ms(30)),
+        ("PT1", Some(ms(30))),
+        ("PT2", Some(ms(30))),
+        ("PC", Some(ms(20))),
+        ("PR", Some(ms(40))),
+        ("PA", Some(ms(30))),
+        ("PU", None),
     ];
-    assert_eq!(
-        found.latest_ms,
-        expected.map(|(id, at)| (id.to_string(), at)).into()
-    );
-    assert!(found.degraded);
+    assert_eq!(found, expected.map(|(id, at)| (id.to_string(), at)).into());
     for id in ids {
         let mut q = query(head_seq(&store));
         (q.project, q.limit) = (Some(id.into()), 1);
-        let first = read(&store, &q)
-            .unwrap()
-            .entries
-            .first()
-            .and_then(|e| e.at_ms);
-        assert_eq!(found.latest_ms.get(id).copied(), first, "{id}");
+        let first = read(&store, &q).unwrap().entries.first().map(|e| e.at_ms);
+        assert_eq!(found.get(id).copied(), first, "{id}");
     }
 }
 
@@ -1146,14 +1141,17 @@ fn budget_org_activity_on_a_20000_row_log() {
         let page = read(&store, &q).unwrap();
         assert!(page.entries.is_empty() && !page.exhausted);
     });
-    // Reported, not asserted: absent projects make the pass read all 20,000 rows.
+    // Reported, not asserted (Rowan, option a): a requested project with no retained activity
+    // makes the pass read every row down to the genesis. That happens only with truncated or
+    // legacy history, since a project's creation is logged. Measured on this Mac at about
+    // 34-36 ms; decrypting and reading the 20,000 rows alone is about 11-15 ms.
     time("latest_by_project (7 projects, 3 absent)", &|| {
         let found = latest(&store, &["P1", "P2", "P3", "P499", "X1", "X2", "X3"]);
-        assert_eq!(found.latest_ms.len(), 4);
+        assert_eq!(found.len(), 4);
     });
     let recency = time("latest_by_project (7 projects, all present)", &|| {
         let found = latest(&store, &["P1", "P2", "P3", "P499", "P0", "P250", "P7"]);
-        assert_eq!(found.latest_ms.len(), 7);
+        assert_eq!(found.len(), 7);
     });
     if !cfg!(debug_assertions) {
         assert!(plain.as_millis() <= 20 && selective.as_millis() <= 20);

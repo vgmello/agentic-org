@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use org_proto::org::OrgChange;
+use serde::Deserialize;
 
 /// How many rows below its own row a change looks for its entity's last upsert.
 pub(crate) const LOOKBACK_ROWS: usize = 2_000;
@@ -73,12 +73,9 @@ pub struct ActivityPage {
     pub history_truncated: bool,
 }
 
-/// Per project, its newest entry's `at_ms` (absent: none, or unparseable and `degraded`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ProjectActivity {
-    pub latest_ms: BTreeMap<String, u64>,
-    pub degraded: bool,
-}
+/// Per project with activity, its newest entry's `at_ms`: `None` when that `at` is unparseable
+/// (degraded). A project with no retained activity is absent.
+pub type ProjectActivity = BTreeMap<String, Option<u64>>;
 
 #[derive(Debug)]
 pub enum ActivityError {
@@ -111,54 +108,101 @@ pub(crate) fn merge_key(previous: u64, at_ms: Option<u64>) -> u64 {
     at_ms.map_or(previous, |at| at.min(previous))
 }
 
+/// A logged change as the contract's JSON (`OrgChange`) has it, keeping only ids, versions and
+/// flags: names and every other text are never decoded into it.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum Change {
+    TeamUpserted {
+        team: Entity,
+    },
+    TeamDeleted {
+        team_id: String,
+    },
+    MemberUpserted {
+        member: Entity,
+    },
+    MemberRemoved {
+        member_id: String,
+    },
+    MembershipUpserted {
+        membership: Entity,
+    },
+    MembershipRemoved {
+        membership_id: String,
+    },
+    ProjectTeamAdded {
+        project_team: Entity,
+    },
+    ProjectTeamRemoved {
+        project_team_id: String,
+    },
+    ProjectUpserted {
+        project: Entity,
+    },
+    AreaUpserted {
+        area: Entity,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// An upserted entity's ids and flags; each kind has the ones it has.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Entity {
+    id: String,
+    #[serde(default)]
+    version: u64,
+    member_id: Option<String>,
+    team_id: Option<String>,
+    project_id: Option<String>,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    deleted: bool,
+}
+
 /// An upsert's version, ids (member, team, project) and `archived` (project) or `deleted` (area).
 type Upsert<'a> = (u64, [Option<&'a String>; 3], bool);
 
 /// A change's entity (verb kind, id) and what it upserts; `None` for `Unknown`.
-fn facts(change: &OrgChange) -> Option<(&'static str, &String, Option<Upsert<'_>>)> {
-    use OrgChange as C;
-    Some(match change {
-        C::TeamUpserted { team: e } => {
-            let ids = [None, Some(&e.id), None];
-            ("team", &e.id, Some((e.version, ids, false)))
-        }
-        C::MemberUpserted { member: e } => {
-            let ids = [Some(&e.id), None, None];
-            ("member", &e.id, Some((e.version, ids, false)))
-        }
-        C::MembershipUpserted { membership: e } => {
-            let ids = [Some(&e.member_id), Some(&e.team_id), None];
-            ("membership", &e.id, Some((e.version, ids, false)))
-        }
-        C::ProjectTeamAdded { project_team: e } => {
-            let ids = [None, Some(&e.team_id), Some(&e.project_id)];
-            ("project_team", &e.id, Some((e.version, ids, false)))
-        }
-        C::ProjectUpserted { project: e } => {
-            let ids = [None, None, Some(&e.id)];
-            ("project", &e.id, Some((e.version, ids, e.archived)))
-        }
-        C::AreaUpserted { area: e } => {
-            let ids = [None, None, Some(&e.project_id)];
-            ("area", &e.id, Some((e.version, ids, e.deleted)))
-        }
-        C::TeamDeleted { team_id: id } => ("team", id, None),
-        C::MemberRemoved { member_id: id } => ("member", id, None),
-        C::MembershipRemoved { membership_id: id } => ("membership", id, None),
+fn facts(change: &Change) -> Option<(&'static str, &String, Option<Upsert<'_>>)> {
+    use Change as C;
+    let (kind, e, ids, flag) = match change {
+        C::TeamUpserted { team: e } => ("team", e, [None, Some(&e.id), None], false),
+        C::MemberUpserted { member: e } => ("member", e, [Some(&e.id), None, None], false),
+        C::MembershipUpserted { membership: e } => (
+            "membership",
+            e,
+            [e.member_id.as_ref(), e.team_id.as_ref(), None],
+            false,
+        ),
+        C::ProjectTeamAdded { project_team: e } => (
+            "project_team",
+            e,
+            [None, e.team_id.as_ref(), e.project_id.as_ref()],
+            false,
+        ),
+        C::ProjectUpserted { project: e } => ("project", e, [None, None, Some(&e.id)], e.archived),
+        C::AreaUpserted { area: e } => ("area", e, [None, None, e.project_id.as_ref()], e.deleted),
+        C::TeamDeleted { team_id: id } => return Some(("team", id, None)),
+        C::MemberRemoved { member_id: id } => return Some(("member", id, None)),
+        C::MembershipRemoved { membership_id: id } => return Some(("membership", id, None)),
         C::ProjectTeamRemoved {
             project_team_id: id,
-        } => ("project_team", id, None),
-        _ => return None,
-    })
+        } => return Some(("project_team", id, None)),
+        C::Unknown => return None,
+    };
+    Some((kind, &e.id, Some((e.version, ids, flag))))
 }
 
 /// The entity whose last upsert `describe` needs, and whether the change upserts it.
-pub(crate) fn entity(change: &OrgChange) -> Option<((&'static str, &str), bool)> {
+pub(crate) fn entity(change: &Change) -> Option<((&'static str, &str), bool)> {
     facts(change).map(|(kind, id, upsert)| ((kind, id.as_str()), upsert.is_some()))
 }
 
 /// Whether `describe` reads the previous upsert (membership/project-team removals, project edits).
-pub(crate) fn needs_previous(change: &OrgChange) -> bool {
+pub(crate) fn needs_previous(change: &Change) -> bool {
     facts(change).is_some_and(|(kind, _, upsert)| match upsert {
         None => !matches!(kind, "team" | "member"),
         Some((version, ..)) => kind == "project" && version != 1,
@@ -166,10 +210,7 @@ pub(crate) fn needs_previous(change: &OrgChange) -> bool {
 }
 
 /// The verb and subject of `change`, given its entity's last upsert within the lookback.
-pub(crate) fn describe(
-    change: &OrgChange,
-    previous: Option<&OrgChange>,
-) -> (String, ActivitySubject) {
+pub(crate) fn describe(change: &Change, previous: Option<&Change>) -> (String, ActivitySubject) {
     let Some((kind, id, upsert)) = facts(change) else {
         return ("org.changed".into(), ActivitySubject::default());
     };
