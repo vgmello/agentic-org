@@ -774,6 +774,37 @@ mod tests {
         office
     }
 
+    #[test]
+    fn inbox_hq_authority_uses_binding_ignores_restore_and_propagates_read_errors() {
+        let dir = TempDir::new().unwrap();
+        let unbound = new_office(&dir, "UNBOUND");
+        assert!(unbound.is_replication_hq().unwrap());
+        let hq = bound_office(&dir, "HQ");
+        assert!(hq.is_replication_hq().unwrap());
+        hq.org_store()
+            .run_sql_for_test("UPDATE org_replica SET restore_pending = 1");
+        assert!(
+            hq.is_replication_hq().unwrap(),
+            "a local write fence does not change HQ read authority"
+        );
+        let satellite = bound_office(&dir, "SAT");
+        assert!(!satellite.is_replication_hq().unwrap());
+        satellite
+            .org_store()
+            .run_sql_for_test("UPDATE org_replica SET awaiting_snapshot = 1");
+        assert!(
+            !satellite.is_replication_hq().unwrap(),
+            "initial replicas are satellites before their snapshot"
+        );
+        unbound
+            .org_store()
+            .run_sql_for_test("DROP TABLE org_replica");
+        assert!(
+            unbound.is_replication_hq().is_err(),
+            "read errors cannot silently become unbound HQ"
+        );
+    }
+
     fn event(seq: u64, previous: Digest, id: &str, name: &str) -> OrgEvent {
         OrgEvent::new(
             OrgId::new("ORG").unwrap(),

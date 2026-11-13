@@ -299,6 +299,7 @@ pub struct Shared {
     /// The connections bound as a member, for the watcher.
     bound: Bound,
     pub(crate) inbox: Option<crate::inbox::Hq>,
+    hint: Option<crate::inbox::Hint>,
 }
 
 impl Shared {
@@ -323,6 +324,7 @@ impl Shared {
             timing: Timing::default(),
             bound: Mutex::default(),
             inbox: None,
+            hint: None,
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -348,16 +350,47 @@ impl Shared {
     }
 
     /// Only a known HQ composition registers real sources; other offices stay dark.
-    pub(crate) fn register_inbox(&mut self, inbox: crate::inbox::Hq) {
-        if self
-            .hello
-            .office
-            .as_ref()
-            .is_some_and(|office| office.office.role == OfficeRole::Hq)
-        {
-            self.inbox = Some(inbox);
-            self.hello.capabilities.push("inbox.list".into());
+    pub(crate) fn register_inbox(
+        &mut self,
+        inbox: crate::inbox::Hq,
+        authority: Result<bool, org_office::OfficeError>,
+    ) {
+        match authority {
+            Ok(true) => {
+                self.inbox = Some(inbox);
+                self.hello.capabilities.push("inbox.list".into());
+            }
+            Ok(false) => {}
+            Err(_) => eprintln!("org-server: inbox disabled (authority read unavailable)"),
         }
+    }
+
+    pub(crate) fn enable_inbox_hints(&mut self) -> Result<(), String> {
+        if self.inbox.is_some() && self.hint.is_none() {
+            self.hint = Some(crate::inbox::Hint::new(
+                self.ports.feed.head()?,
+                self.ports.live.mailbox_head(),
+            ));
+            self.hello.capabilities.push("inbox.changed".into());
+        }
+        Ok(())
+    }
+}
+
+struct Subscriber<'a> {
+    binding: &'a Binding,
+    wire: &'a follow::Wire<'a>,
+}
+
+fn deliver_hint(
+    shared: &Shared,
+    subscriber: &Subscriber<'_>,
+    data: &org_proto::inbox::InboxChangedData,
+) -> bool {
+    if shared.hint.is_some() && matches!(live_owner(shared, subscriber.binding), Ok(true)) {
+        subscriber.wire.emit::<org_proto::inbox::InboxChanged>(data)
+    } else {
+        true
     }
 }
 
@@ -517,7 +550,18 @@ fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
                 }
             }
         }
-        shared.ports.feed.wait(token, shared.timing.idle);
+        let sleep = match (&shared.inbox, &shared.hint) {
+            (Some(hq), Some(hint)) => hint
+                .poll(
+                    hq,
+                    &*shared.ports.feed,
+                    &shared.ports.live,
+                    std::time::Instant::now,
+                )
+                .min(shared.timing.idle),
+            _ => shared.timing.idle,
+        };
+        shared.ports.feed.wait(token, sleep);
     }
 }
 
@@ -804,7 +848,16 @@ fn serve_connection_with_poll(
                             seq: &sent,
                             timing: shared.timing,
                         };
-                        pusher = Some(scope.spawn(move || follow::push(feed, live, &wire, start)));
+                        let binding = binding.clone();
+                        pusher = Some(scope.spawn(move || {
+                            let subscriber = Subscriber {
+                                binding: &binding,
+                                wire: &wire,
+                            };
+                            follow::push_with_hint(feed, live, &wire, start, |data| {
+                                deliver_hint(shared, &subscriber, data)
+                            });
+                        }));
                         continue;
                     }
                     Err(refusal) => Response::error(request.id, refusal),

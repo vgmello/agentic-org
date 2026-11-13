@@ -523,6 +523,12 @@ impl Office {
         org_db::replication_checkpoint(&self.stores.org)
     }
 
+    /// Whether this office owns HQ reads, including before federation is bound.
+    /// A local restore fence blocks writes, not reads of the current HQ state.
+    pub fn is_replication_hq(&self) -> Result<bool, OfficeError> {
+        self.stores.org.read(org_db::is_replication_hq)
+    }
+
     /// Reads retained HQ events after a peer's verified cursor. `None` requests a snapshot.
     pub fn replication_events_after(
         &self,
@@ -682,15 +688,11 @@ impl Office {
         &self.stores.org
     }
 
-    /// Test seam: replaces the organization's members with `members`, as an organization applied
+    /// Test fixtures only: replaces the organization's members with `members`, as an organization applied
     /// up to `position` (the members are written raw, as a damaged or foreign organization could
     /// hold them).
-    #[cfg(test)]
-    pub(crate) fn seed_organization_for_test(
-        &self,
-        members: &[org_proto::Member],
-        position: Position,
-    ) {
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn seed_organization_for_test(&self, members: &[org_proto::Member], position: Position) {
         let members = members.to_vec();
         self.stores
             .org

@@ -3,8 +3,10 @@
 use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxState};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod hint;
 mod list;
 mod org_source;
+pub(crate) use hint::Hint;
 
 /// HQ's real source registration and the clock also used by hint delivery.
 pub(crate) struct Hq {

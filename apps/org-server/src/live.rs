@@ -8,6 +8,7 @@
 //! wakes the followers, which are asleep on the organization's change signal.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use org_mailbox::{MessageEvent, MessageEvents};
@@ -22,6 +23,7 @@ pub(crate) const CAPACITY: usize = 1024;
 pub(crate) enum Live {
     Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
+    InboxChanged(org_proto::inbox::InboxChangedData),
 }
 
 /// What a reader got from [`LiveEvents::since`].
@@ -53,6 +55,7 @@ pub(crate) struct LiveEvents {
     ring: Mutex<Ring>,
     presence: Mutex<Presence>,
     wake: Box<dyn Fn() + Send + Sync>,
+    mailbox_changes: AtomicU64,
 }
 
 impl LiveEvents {
@@ -68,7 +71,12 @@ impl LiveEvents {
                 latest: HashMap::new(),
             }),
             wake,
+            mailbox_changes: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn mailbox_head(&self) -> u64 {
+        self.mailbox_changes.load(Ordering::Acquire)
     }
 
     pub(crate) fn publish_live(&self, event: Live) {
@@ -158,6 +166,10 @@ pub(crate) struct Head {
 /// The mailbox publishes its events here.
 impl MessageEvents for LiveEvents {
     fn publish(&self, event: MessageEvent) {
+        // DeliveryFailed is an additional notification for the same Received commit.
+        if !matches!(&event, MessageEvent::DeliveryFailed(_)) {
+            self.mailbox_changes.fetch_add(1, Ordering::Release);
+        }
         match event {
             MessageEvent::Received(data) => self.publish_live(Live::Received(data)),
             MessageEvent::StateChanged(data) => self.publish_live(Live::StateChanged(data)),
@@ -201,6 +213,42 @@ mod tests {
             expired_waiting_person: false,
             updated_at: "2026-11-09T12:00:00.000Z".to_owned(),
         })
+    }
+
+    #[test]
+    fn mailbox_change_counter_ignores_secondary_notifications_presence_and_its_own_hint() {
+        let _spawn = crate::transfer::tests::without_process_spawn();
+        let live = LiveEvents::new(Box::new(|| {}));
+        let Live::StateChanged(data) = state("M1") else {
+            unreachable!()
+        };
+        live.publish(MessageEvent::StateChanged(data));
+        assert_eq!(live.mailbox_head(), 1);
+        live.publish(MessageEvent::DeliveryFailed(
+            org_proto::msg::MessageDeliveryFailedData {
+                id: "notice".into(),
+                original_id: "M1".into(),
+                thread_id: "T".into(),
+                from_member_id: "owner".into(),
+                recipient_id: "agent".into(),
+                recipient_name: "Agent".into(),
+                reason: org_proto::msg::DeliveryFailedReason::Expired,
+            },
+        ));
+        live.publish_presence(presence("agent", "working"));
+        live.publish_live(Live::InboxChanged(org_proto::inbox::InboxChangedData {
+            counts: Default::default(),
+            as_of: org_proto::inbox::InboxPosition {
+                epoch: "instance".into(),
+                seq: 1,
+            },
+            degraded: vec![],
+        }));
+        assert_eq!(
+            live.mailbox_head(),
+            1,
+            "one transition, no recursive hint trigger"
+        );
     }
 
     #[test]

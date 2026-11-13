@@ -942,12 +942,13 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
 
 #[test]
 fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_restart() {
+    let _processes = process_isolation();
     use org_proto::inbox::{InboxCounts, InboxList, InboxListParams, InboxState};
     let world = World::new();
     let mut first = create(&world);
     let client = Client::connect(socket(&world)).unwrap();
     assert!(client.hello().unwrap().supports("inbox.list"));
-    assert!(!client.hello().unwrap().supports("inbox.changed"));
+    assert!(client.hello().unwrap().supports("inbox.changed"));
     let params = InboxListParams {
         state: InboxState::Open,
         kinds: None,
@@ -1856,3 +1857,6 @@ fn c1_work_writes_use_the_real_office_and_replay_refusals_after_restart() {
 
 #[path = "launch/v3_activation.rs"]
 mod v3_activation;
+
+#[path = "launch/inbox_hint.rs"]
+mod inbox_hint;
