@@ -1282,3 +1282,25 @@ fn budget_org_activity_on_a_20000_row_log() {
         );
     }
 }
+
+#[test]
+fn activity_errors_render_and_chain_to_the_storage_cause() {
+    use std::error::Error as _;
+    let snapshot = ActivityError::SnapshotRequired;
+    assert_eq!(
+        snapshot.to_string(),
+        "the activity history requires a fresh snapshot"
+    );
+    assert!(snapshot.source().is_none());
+    let store = ActivityError::from(crate::OfficeError::Invalid(
+        "a logged entry is not readable",
+    ));
+    assert_eq!(
+        store.to_string(),
+        crate::OfficeError::Invalid("a logged entry is not readable").to_string()
+    );
+    assert_eq!(
+        store.source().map(ToString::to_string),
+        Some(crate::OfficeError::Invalid("a logged entry is not readable").to_string())
+    );
+}

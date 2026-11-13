@@ -91,6 +91,24 @@ impl From<crate::OfficeError> for ActivityError {
     }
 }
 
+impl std::fmt::Display for ActivityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SnapshotRequired => f.write_str("the activity history requires a fresh snapshot"),
+            Self::Store(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ActivityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::SnapshotRequired => None,
+            Self::Store(error) => Some(error),
+        }
+    }
+}
+
 impl OrgActivityQuery {
     /// Criteria combine with AND, each internally OR.
     pub(crate) fn matches(&self, actor: Option<&str>, subject: &ActivitySubject) -> bool {
