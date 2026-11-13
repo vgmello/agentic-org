@@ -241,6 +241,15 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
 }
 
 #[test]
+fn test_client_setup_accepts_an_already_closed_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    let mut client = Client::from_stream(stream);
+    assert!(client.connection_ended());
+}
+
+#[test]
 fn accepted_office_socket_serves_only_matching_peer_uid_in_both_modes() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let uid = org_socket::effective_uid();

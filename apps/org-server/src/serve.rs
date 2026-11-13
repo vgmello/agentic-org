@@ -2667,10 +2667,17 @@ mod tests {
 
     impl Client {
         fn connect(path: &Path) -> Self {
-            let stream = UnixStream::connect(path).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            Self::from_stream(UnixStream::connect(path).unwrap())
+        }
+
+        fn from_stream(stream: UnixStream) -> Self {
+            if let Err(error) = stream.set_read_timeout(Some(Duration::from_secs(10))) {
+                // Darwin may reject socket options after the server has refused this peer.
+                assert!(
+                    matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ECONNRESET)),
+                    "set test client read timeout: {error}"
+                );
+            }
             let reader = BufReader::new(stream.try_clone().unwrap());
             Self {
                 stream,
