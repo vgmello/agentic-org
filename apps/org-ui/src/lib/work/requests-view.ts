@@ -239,3 +239,118 @@ export function activityLines(events: WorkEvent[], snapshot: OrgSnapshot, me: st
 		}
 	});
 }
+
+// ---- capture: @name routing and similar requests (§1) ----------------------------------------------------------------
+
+/** Lower case without accents, so `@Éden` finds Eden. */
+const plain = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const handleOf = (m: Member) => plain(m.agent?.messaging_name ?? '');
+/** A display name as a handle: "Juno Park" is `juno-park`. */
+const slugOf = (name: string) => plain(name).trim().replace(/\s+/g, '-');
+/** `@handle` at the start of the words: letters, numbers, `-` and `_` only, so `@eden:` and `@eden,` still name Eden; `@@x` names nobody. */
+const AT = /^(\s*)@(?!@)([\p{L}\p{N}_-]*)/u;
+
+export type AtName = { kind: 'exact'; member: Member; token: string } | { kind: 'partial'; matches: Member[]; token: string } | { kind: 'unknown'; token: string };
+
+/**
+ * Starting the words with `@` and a handle sends the request straight to that agent (decision 5): the messaging name
+ * (`@ac-product-designer-eden`), the display name as a slug (`@juno-park`) or a first name (`@juno`) when only one agent
+ * has it. While the handle is still being typed, the agents it could become are offered, and a handle nobody has is
+ * `unknown` (Send is disabled until it is fixed or removed). The words themselves are never changed.
+ */
+export function atName(text: string, snapshot: OrgSnapshot): AtName | undefined {
+	const found = AT.exec(text);
+	if (!found) return undefined;
+	const token = plain(found[2]);
+	const agents = snapshot.members.filter((m) => m.kind === 'agent' && !isFormer(m));
+	const keys = (m: Member) => [handleOf(m), slugOf(m.name), slugOf(m.name).split('-')[0]].filter(Boolean);
+	if (token === '') return { kind: 'partial', matches: agents.slice(0, 5), token };
+	const exact = agents.filter((m) => keys(m).includes(token));
+	// A full handle or slug wins; a first name only when nobody else shares it.
+	const strong = exact.filter((m) => handleOf(m) === token || slugOf(m.name) === token);
+	if (strong.length === 1) return { kind: 'exact', member: strong[0], token };
+	if (strong.length === 0 && exact.length === 1) return { kind: 'exact', member: exact[0], token };
+	const matches = agents.filter((m) => keys(m).some((k) => k.startsWith(token)) || plain(m.name).split(/\s+/).some((p) => p.startsWith(token)));
+	return matches.length > 0 ? { kind: 'partial', matches: matches.slice(0, 5), token } : { kind: 'unknown', token: found[2] };
+}
+
+/** How far the `@handle` at the start reaches: the characters from the start of the text to the end of the handle (nothing when there is none). */
+export const atSpan = (text: string): number | undefined => AT.exec(text)?.[0].length;
+
+/** What the handle in `@handle` is replaced by when a match is chosen: the messaging name, which is always unique. */
+export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugOf(m.name);
+
+/** The words without the `@handle` that routed them (and the colon or comma after it): "fix the build time", not "@sam: fix the build time". */
+export function withoutHandle(text: string, member?: Member): string {
+	const found = AT.exec(text);
+	let rest = text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[\s:,;.!?\-–—]*/u, '$1').trimStart();
+	// "@sam Okafor fix it": the rest of the display name that the handle began is part of the handle too, but only all of it.
+	if (member && found) {
+		const parts = plain(member.name).trim().split(/\s+/);
+		const at = parts.indexOf(plain(found[2]));
+		let cut = rest;
+		let whole = at >= 0 && at < parts.length - 1;
+		for (const word of at >= 0 ? parts.slice(at + 1) : []) {
+			const next = /^(\S+)(\s+|$)/u.exec(cut);
+			if (!next || plain(next[1]).replace(/[:,;.!?]+$/u, '') !== word) {
+				whole = false;
+				break;
+			}
+			cut = cut.slice(next[0].length);
+		}
+		if (whole) rest = cut.replace(/^[\s:,;.!?\-–—]+/u, '');
+	}
+	return rest;
+}
+
+/** The words with their `@token` at the start replaced by `@handle`. */
+export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);
+
+// ---- the queue's filters and search (§2) -------------------------------------------------------------------------------
+
+/** What the State filter can say: Open is the default; the groups of the queue; All. */
+export type RequestStateFilter = 'open' | RequestGroupId | 'all';
+export const STATE_FILTERS: readonly { id: RequestStateFilter; label: string }[] = [
+	{ id: 'open', label: 'Open' },
+	{ id: 'needs_you', label: 'Needs you' },
+	{ id: 'with_agents', label: 'With agents' },
+	{ id: 'not_routed', label: 'Not routed' },
+	{ id: 'approved', label: 'Approved' },
+	{ id: 'closed', label: 'Declined and merged' },
+	{ id: 'all', label: 'All' }
+];
+
+export interface RequestFilter {
+	/** Open (the default, like a to-do list): New, Routed, being scoped or Scoped. */
+	state: RequestStateFilter;
+	/** Anyone (empty), `none` (not routed), `scoped:<member id>` or `raised:<member id>`. */
+	who: string;
+	/** A project id, `none` for no project, or any. */
+	project: string;
+	query: string;
+}
+
+/** The filters as the queue opens: Open, nothing else. */
+export const NO_FILTER: RequestFilter = { state: 'open', who: '', project: '', query: '' };
+
+/** Whether the queue is narrowed by who, project or words (not by the state, which only changes what it opens on). */
+export const narrowed = (f: RequestFilter): boolean => f.who !== '' || f.project !== '' || f.query.trim() !== '';
+
+/** Whether anything differs from how the queue opens. */
+export const filterActive = (f: RequestFilter): boolean => f.state !== NO_FILTER.state || f.who !== '' || f.project !== '' || f.query.trim() !== '';
+
+/** The requests that pass the filters: the words of the search must all be in the title, and a REQ-n is the number itself. */
+export function filterRequests(items: WorkItemSummary[], f: RequestFilter): WorkItemSummary[] {
+	const terms = f.query.toLowerCase().split(/\s+/).filter(Boolean);
+	return items.filter((i) => {
+		if (f.state === 'open' ? !OPEN_STATUSES.includes(i.status) : f.state !== 'all' && groupOf(i) !== f.state) return false;
+		if (f.who === 'none' ? !!i.assignee_id : f.who.startsWith('scoped:') ? i.assignee_id !== f.who.slice(7) : f.who.startsWith('raised:') ? i.created_by !== f.who.slice(7) : false) return false;
+		if (f.project === 'none' ? !!i.project_id : f.project !== '' && i.project_id !== f.project) return false;
+		const title = i.title.toLowerCase();
+		// A request number is matched on the number itself (REQ-1 is not REQ-12); other words are looked for in the title.
+		return terms.every((t) => {
+			const number = /^req-(\d+)$/.exec(t);
+			return number ? i.number === Number(number[1]) : title.includes(t);
+		});
+	});
+}

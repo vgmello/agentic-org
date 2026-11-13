@@ -349,6 +349,15 @@ export interface WorkUnlink {
 	link_id: string;
 }
 
+/** `request.similar` (read-only): open requests that read like some words, best first. */
+export interface RequestSimilarQuery {
+	/** At most 200 characters; a leading `@handle` is not part of the words. */
+	text: string;
+	project_id?: string;
+	/** Default 5, at most 10. */
+	limit?: number;
+}
+
 /** `work.comment`: a note on any item. The mock keeps plain notes only (no question, answer or asks yet). */
 export interface WorkCommentCall {
 	change_id: string;
