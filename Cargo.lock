@@ -588,6 +588,10 @@ dependencies = [
 [[package]]
 name = "org-process"
 version = "0.0.0"
+dependencies = [
+ "org-docs",
+ "serde_json",
+]
 
 [[package]]
 name = "org-proto"
