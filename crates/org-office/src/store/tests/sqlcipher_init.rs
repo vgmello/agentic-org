@@ -1,5 +1,7 @@
 #[path = "opener_build.rs"]
 mod opener_build;
+#[path = "opener_build_routes.rs"]
+mod opener_build_routes;
 #[path = "opener_build_tests.rs"]
 mod opener_build_tests;
 #[path = "opener_inventory.rs"]

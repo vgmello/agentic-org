@@ -1,4 +1,4 @@
-//! Closed workspace build-code admission. Third-party/toolchain build code remains trusted.
+//! Workspace build-script pins and proc-macro refusal. Third-party/toolchain code remains trusted.
 use super::opener_scope::SourceScope;
 use std::path::Path;
 
@@ -50,10 +50,14 @@ pub(super) fn dependency(package: &str, value: &serde_json::Value) {
 }
 
 pub(super) fn target(scope: &SourceScope, package: &str, value: &serde_json::Value, path: &Path) {
-    let kinds = value["kind"].as_array().expect("missing Cargo target kind");
-    assert!(!kinds.is_empty(), "empty Cargo target kind");
+    let kinds = value["kind"]
+        .as_array()
+        .unwrap_or_else(|| panic!("missing Cargo target kind for {package}"));
+    assert!(!kinds.is_empty(), "empty Cargo target kind for {package}");
     for kind in kinds {
-        let kind = kind.as_str().expect("invalid Cargo target kind");
+        let kind = kind
+            .as_str()
+            .unwrap_or_else(|| panic!("invalid Cargo target kind for {package}"));
         assert!(
             [
                 "lib",
@@ -61,7 +65,6 @@ pub(super) fn target(scope: &SourceScope, package: &str, value: &serde_json::Val
                 "dylib",
                 "staticlib",
                 "cdylib",
-                "proc-macro",
                 "bin",
                 "test",
                 "example",
@@ -69,7 +72,7 @@ pub(super) fn target(scope: &SourceScope, package: &str, value: &serde_json::Val
                 "custom-build"
             ]
             .contains(&kind),
-            "unknown Cargo target kind: {kind}"
+            "unreviewed Cargo target kind for {package}: {kind}"
         );
         if kind == "custom-build" {
             script(scope, package, path);

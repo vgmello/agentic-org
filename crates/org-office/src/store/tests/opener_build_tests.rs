@@ -27,6 +27,7 @@ fn host_fixture() -> tempfile::TempDir {
         ("build.rs", HOST_SOURCE),
         ("other.rs", HOST_SOURCE),
         ("scripts/helper.rs", HOST_SOURCE),
+        ("vendor/apps/org-office-host/build.rs", HOST_SOURCE),
         (
             PIN,
             "// Protected pin fixture. The compiled policy supplies the reviewed tokens.",
@@ -48,7 +49,12 @@ fn sqlcipher_build_inventory_refuses_unknown_scripts_in_every_position() {
     let dir = host_fixture();
     let scope = tracked(dir.path());
     let good = package(&scope, "good", "src/lib.rs", json!(["lib"]));
-    for path in ["build.rs", "other.rs", "scripts/helper.rs"] {
+    for path in [
+        "build.rs",
+        "other.rs",
+        "scripts/helper.rs",
+        "vendor/apps/org-office-host/build.rs",
+    ] {
         for kind in [
             json!(["custom-build"]),
             json!(["custom-build", "bin"]),
@@ -174,9 +180,10 @@ fn sqlcipher_build_inventory_refuses_build_helpers_and_unknown_metadata_kinds() 
         json!(["unknown", "lib"]),
     ] {
         let value = inventory(&scope, vec![package(&scope, "fixture", "src/lib.rs", kind)]);
-        error(|| {
+        let message = error(|| {
             metadata(&scope, &value);
         });
+        assert!(message.contains("fixture"), "{message}");
     }
     for kind in [
         "lib",
@@ -184,7 +191,6 @@ fn sqlcipher_build_inventory_refuses_build_helpers_and_unknown_metadata_kinds() 
         "dylib",
         "staticlib",
         "cdylib",
-        "proc-macro",
         "bin",
         "test",
         "example",
@@ -328,5 +334,70 @@ fn sqlcipher_build_script_checks_source_scope_before_reading() {
         std::fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
         error(|| super::opener_build::script(&scope, "host", &path));
+    }
+}
+
+#[test]
+fn sqlcipher_build_inventory_refuses_workspace_proc_macros_in_every_position() {
+    let dir = host_fixture();
+    let scope = tracked(dir.path());
+    let good = package(&scope, "good", "src/lib.rs", json!(["lib"]));
+    for kinds in [
+        json!(["proc-macro"]),
+        json!(["proc-macro", "lib"]),
+        json!(["lib", "proc-macro"]),
+    ] {
+        let bad = package(&scope, "workspace-macro", "src/lib.rs", kinds);
+        for packages in [
+            vec![bad.clone(), good.clone()],
+            vec![good.clone(), bad.clone()],
+        ] {
+            let message = error(|| {
+                metadata(&scope, &inventory(&scope, packages));
+            });
+            assert!(
+                message.contains("workspace-macro") && message.contains("proc-macro"),
+                "{message}"
+            );
+        }
+        for targets in [
+            json!([bad["targets"][0], good["targets"][0]]),
+            json!([good["targets"][0], bad["targets"][0]]),
+        ] {
+            let mut value = inventory(&scope, vec![good.clone()]);
+            value["packages"][0]["id"] = json!("workspace-macro");
+            value["packages"][0]["targets"] = targets;
+            error(|| {
+                metadata(&scope, &value);
+            });
+        }
+    }
+}
+
+#[test]
+fn sqlcipher_build_inventory_cargo_refuses_workspace_proc_macros() {
+    for declaration in [
+        "[dependencies]\nmacro-helper={path='macro-helper'}",
+        "[dev-dependencies.macro-helper]\npath='macro-helper'",
+        "[dev_dependencies]\nmacro-helper={path='macro-helper'}",
+        "[target.'cfg(any())'.dependencies]\nmacro-helper={path='macro-helper'}",
+        "[target.'cfg(any())'.dev-dependencies.macro-helper]\npath='macro-helper'",
+        "[build-dependencies]\nmacro-helper={path='macro-helper'}",
+        "[target.'cfg(any())'.build_dependencies.macro-helper]\npath='macro-helper'",
+        "[dependencies.alias]\npackage='macro-helper'\npath='macro-helper'",
+        "[workspace.dependencies]\nmacro-helper={path='macro-helper'}\n[dependencies]\nmacro-helper.workspace=true",
+    ] {
+        let manifest = format!("[workspace]\nmembers=['macro-helper']\n[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n{declaration}\n");
+        let dir = fixture(&[
+            ("Cargo.toml", &manifest),
+            ("Cargo.lock", "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'\ndependencies=['macro-helper']\n[[package]]\nname='macro-helper'\nversion='0.1.0'\n"),
+            ("src/lib.rs", "pub struct Allowed;"),
+            ("macro-helper/Cargo.toml", "[package]\nname='macro-helper'\nversion='0.1.0'\nedition='2021'\n[lib]\nproc-macro=true\n"),
+            ("macro-helper/src/lib.rs", ""),
+        ]);
+        let lock = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
+        let message = error(|| super::check_source_inventory(dir.path()));
+        assert!(message.contains("macro-helper") && (message.contains("proc-macro") || message.contains("build dependency")), "{declaration}: {message}");
+        assert_eq!(std::fs::read(dir.path().join("Cargo.lock")).unwrap(), lock);
     }
 }
