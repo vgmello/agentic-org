@@ -55,6 +55,7 @@ Amended to match: `projects-git-github.md` (A56, A58, decision 14, the push rule
 ### 2.1 The process file (PROC-1)
 The front matter is the spec's §1. This design adds:
 - `process`: 1–64 of `[a-z0-9-]`, starting with a letter or digit. `summary`: one line, ≤ 200 characters. `moments`: ≤ 500 characters each. `checklist`: ≤ 50 steps.
+- `applies_to` is required: one line, ≤ 200 characters.
 - `level` and `scope` must match the location (§2.2). Only `active` and `off` resolve. `overrides: <key>@<version>` is for drift only.
 
 Parsing uses W7's front-matter rules and `org-docs`' parser. Invalid front matter never fails a read: the file is listed with a problem naming the field and left out of every set until fixed (PROC-16).
@@ -67,7 +68,7 @@ Parsing uses W7's front-matter rules and `org-docs`' parser. Invalid front matte
 | `project` | project key | project repo, `integration_branch` (else default), `docs/processes/` |
 | `agent` | member id | handbook, default branch, `agents/<member id>/processes/` |
 
-Only regular `*.md` blobs directly in those folders count (no symlinks or submodules); the front-matter key matches, not the file name (PROC-1). **Reads never use `work.git`**, whose refs agents can move: project files are read in `mirror.git` (W7 §4.9), handbook files in `handbook.git` (no `work.git`, so no sync step). W7's path rules apply, with the handbook's roots (`processes/`, `teams/`, `agents/`, `.templates/`, `README.md`), and its id reservations gain a repository key.
+Only regular `*.md` blobs directly in those folders count (no symlinks or submodules); the front-matter key matches, not the file name (PROC-1). In a project repo, a process file whose name is refused (a leading `-`, whitespace, control or invisible characters, or a backslash) is listed with a "file name" problem and left out of every set (PROC-16); in the handbook, which only the tool writes, such names aren't process files. **Reads never use `work.git`**, whose refs agents can move: project files are read in `mirror.git` (W7 §4.9), handbook files in `handbook.git` (no `work.git`, so no sync step). W7's path rules apply, with the handbook's roots (`processes/`, `teams/`, `agents/`, `.templates/`, `README.md`), and its id reservations gain a repository key.
 
 ### 2.3 The index (HQ)
 One row per file on a source branch: `{ repo, path, commit, blob, doc id, key, level, scope, version, status, overridable, overrides, problems }`. No text: names and summaries come from the blob. Old rows stay as a history (key, level, scope, version → commit) for drift diffs (PROC-9). It's rebuilt after each change to a source branch; while the handbook can't be read, reads answer from it with `stale_since` (PROC-16).
