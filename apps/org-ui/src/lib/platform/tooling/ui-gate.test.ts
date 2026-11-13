@@ -69,7 +69,7 @@ const WEBKIT_TAG = /(?:^|\s)@webkit(?![\w-])/;
 // A test's title (its first argument).
 const TEST_TITLE = /\btest(?:\.(?:only|skip|fixme|fail|slow))?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 // A test or describe call of the file's own (not `x.test(`, such as a regex test).
-const TEST_CALL = /(?<![\w$.])test(?:\.(?:only|skip|fixme|fail|slow|describe(?:\.(?:only|skip|fixme|serial|parallel))?))?\s*\(/;
+const TEST_CALL = /(?<![\w$.])test(?:\.(?:only|skip|fixme|fail|slow)|\.describe(?:\.(?:only|skip|fixme|serial|parallel))*)?\s*\(/;
 // A `tag:` literal: a string or a one-line array of strings. The array form stops at a `[` too, so a line of unclosed `tag:[` is scanned once, not once per `tag:`.
 const TAG_OPTION = /\btag\s*:\s*(\[[^\][\n]*\]|(['"`])(?:\\.|(?!\2)[^\\\n])*\2)/g;
 /**
@@ -328,10 +328,11 @@ describe('gate manifest guard', () => {
 			'uses-const.spec.ts': "import { WEBKIT } from './tags';\ntest('x', WEBKIT, () => {});",
 			'const-flow.ts': "const ONLY = { tag: '@webkit' };\ntest('x', ONLY, () => {});",
 			'describe-flow.ts': "test.describe('d', { tag: '@webkit' }, () => {});",
+			'serial-flow.ts': "test.describe.serial.only('d', { tag: '@webkit' }, () => {});",
 			'nested-flow.ts': "test(`k`, {\n\tannotation: { type: 'issue' },\n\ttag: '@webkit'\n}, async () => {});",
 			'loop-flow.ts': "for (const name of names) test(name, { tag: '@webkit' }, () => {});" };
 		// runner.spec.ts is loaded, but its only test is declared in a helper: it passes the tag, so it is no orphan.
-		expect(orphanWebkitTags({ files: ['a.spec.ts', 'runner.spec.ts', 'uses-const.spec.ts'], declaredFiles: ['a.spec.ts', 'hdecl.ts'], sources: orphanSources })).toEqual(['array-flow.ts', 'const-flow.ts', 'describe-flow.ts', 'later.ts', 'loop-flow.ts', 'nested-flow.ts', 'orphan-flow.ts', 'title-flow.ts']);
+		expect(orphanWebkitTags({ files: ['a.spec.ts', 'runner.spec.ts', 'uses-const.spec.ts'], declaredFiles: ['a.spec.ts', 'hdecl.ts'], sources: orphanSources })).toEqual(['array-flow.ts', 'const-flow.ts', 'describe-flow.ts', 'later.ts', 'loop-flow.ts', 'nested-flow.ts', 'orphan-flow.ts', 'serial-flow.ts', 'title-flow.ts']);
 		// The quadratic-backtracking guard: a long whitespace run after `import` stays fast.
 		const started = performance.now();
 		expect(webkitCoverage({ files: ['ws.spec.ts'], sources: { 'ws.spec.ts': `import${' '.repeat(200_000)}x` }, onWebkit: new Set(), exempt: [] }).missing).toEqual([]);
