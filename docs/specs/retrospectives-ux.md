@@ -2,10 +2,10 @@
 kind: spec
 title: "Retrospectives: learn from each delivery, and apply it to every agent (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-13"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [features-ux, decisions-and-tech-debt-ux, work-items-ux, costs-and-insights-ux, agent-run-modes-ux]
@@ -18,6 +18,8 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 ## The request (the user, 2026-11-08)
 
 > From time to time, after a larger delivery, the agents run a **retrospective**: what could we have done better, what did we do well that we should keep doing, what should we **stop** doing because it doesn't work, and why did problems happen, so they don't happen next time. Agents work fast, so retros are more frequent: at the end of each feature, or every X hours (every hour, three or four hours), **configurable**, **whichever comes first**. On a time interval, only the features **finished** in that period are included, never the ones in flight. After the retro, the **action items** become **tasks** and updated **procedures**, so next time every agent applies them. For example, if running tests always takes too long, the process for running tests (say, on a single branch) is improved and applied to all agents.
+
+**Revision 5 (2026-11-13): saved retro files carry no amounts (A109, Emery).** A109 applies to every file in the repo, so `docs/retros/` files carry no cost amounts or budget figures: tokens and "Budget reached" instead, with a link to the retro in the app. The retro page in the app shows amounts only to those who see cost (`costs-and-budgets-v1` §5.5). **Criteria rewritten (same ID):** RETRO-3, RETRO-10 *(rev 5)*.
 
 **Revision 4 (2026-11-08): where Process items land.** A Process item for a handbook process (organization, team or private) goes on its own branch in the organization's handbook, and the owner's approval of the retro is the level approval for every Process item, with no second approval (`processes-ux.md` decision 8). Project processes and the other procedure changes still go on the project's docs branch. Each branch shows its own "Waiting to merge", and "Applied to all agents" shows once every branch the retro produced is merged (decisions 6 and 7, §3). **[diff]** also shows process files (§3). **Criteria rewritten (same ID):** RETRO-6, RETRO-7 *(rev 4)*.
 
@@ -35,7 +37,7 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief) · **Process** (a change to a process file, `processes-ux.md`) *(rev 3)*. Each has an owner and, for non-tasks, the exact proposed change (a diff). A Process item lands through the merge flow once the owner approves the retro's items. *(rev 4)* That approval is also the process's level approval: the owner can approve a process change at every level (`processes-ux.md` decision 8), so no second approval is needed. For a handbook process (organization, team or private) it goes on its own branch in the organization's handbook, since that's another repository. For a project process it goes on the project's docs branch with the other procedure changes.
 7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches): *(rev 4)* one docs branch in the project for project processes and the other procedure changes, and one handbook branch for each Process item on a handbook process (decision 6). The retro shows "Applied to all agents" once every branch it produced is merged. Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
 8. **The next retro checks the last one's actions:** "Last time: run tests on a single branch. Did it help?" with the before and after numbers when they exist (median test time 14 min → 6 min). Items that didn't help can be reverted from there.
-9. **A retro is a persistent record:** `docs/retros/<date>-<slug>.md` with front matter (period, features, participants, action-item ids, status). The action-item tasks are database work items linked to it.
+9. **A retro is a persistent record:** `docs/retros/<date>-<slug>.md` with front matter (period, features, participants, action-item ids, status). *(rev 5)* The file carries no cost amounts or budget figures (A109): its evidence gives tokens and "Budget reached" where it applies, with a link to the retro in the app. The action-item tasks are database work items linked to it.
 
 ## 1. Flow 1 · Settings (project › Settings › Retrospectives)
 
@@ -111,14 +113,14 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 
 - RETRO-1 · Project settings let the owner run retros after each delivered feature, every chosen interval, or both (whichever comes first), and show the next expected retro.
 - RETRO-2 · A retro includes only features (and their tasks and bugs) finished since the last retro. In-flight work is excluded, and a period with nothing finished is skipped and noted.
-- RETRO-3 · Each retro starts with an evidence panel: features with cycle time, review rounds, waiting on the owner and blocked time, plus tests, debt, reopened bugs, failed runs and cost when available.
+- RETRO-3 · *(rev 5)* Each retro starts with an evidence panel: features with cycle time, review rounds, waiting on the owner and blocked time, plus tests, debt, reopened bugs, failed runs and cost when available. Cost amounts show only to the owner and the project's manager (`costs-and-budgets-v1` §5.5); others see tokens.
 - RETRO-4 · Every agent with finished work in the scope is asked for Keep doing, Do better, Stop doing and Problems (with why and prevention), and on-call agents are woken for it.
 - RETRO-5 · The facilitator's synthesis groups duplicates with a count and links each item to its evidence.
 - RETRO-6 · *(rev 4)* Each action item has a kind (Task, Guidance, Checklist, Template, Decision, Rule, Process), an owner, and for non-tasks the exact change as a diff. A Process item proposes a diff to a process file and lands through the merge flow (the project's docs branch, or its own handbook branch for a handbook process), with the owner's retro approval as the level approval (RETRO-7).
 - RETRO-7 · *(rev 4)* Approve creates the tasks and proposes the procedure changes through the merge flow: project processes and the other procedure changes on one docs branch in the project, and each Process item on a handbook process (organization, team or private) on its own handbook branch, with the owner's retro approval as the level approval (no second approval). Each item shows "Waiting to merge" until its branch is merged, and the retro shows "Applied to all agents" once every branch it produced is merged.
 - RETRO-8 · After the merge, each agent sees the change at its next start or wake.
 - RETRO-9 · The next retro shows the previous action items with "Did it help?" and before/after numbers when they exist, and offers to revert one.
-- RETRO-10 · Each retro is saved as `docs/retros/<date>-<slug>.md` with front matter, and listed in Docs › Retrospectives.
+- RETRO-10 · *(rev 5)* Each retro is saved as `docs/retros/<date>-<slug>.md` with front matter, and listed in Docs › Retrospectives. The file has no cost amounts or budget figures: tokens and "Budget reached" instead, with a link to the retro in the app (A109).
 - RETRO-11 · The owner can turn on applying guidance and checklist changes without their own approval (they still land through review, go and merge). Other kinds always need approval.
 - RETRO-12 · `org-agent retro input|show|synthesize|list` work like the app, with the same words.
 
