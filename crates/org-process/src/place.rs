@@ -162,27 +162,66 @@ pub enum Repo<'a> {
     Project(&'a ProjectKey),
 }
 
-/// The place of the file at `path` (relative, `/`-separated) in `repo`, if it is a process file:
-/// a `*.md` (not hidden) directly in one of §2.2's folders, never nested.
-pub fn location(repo: Repo<'_>, path: &str) -> Option<Place> {
+/// Where a process file is: its place, and whether its file name is one a process may not have.
+/// Built only by [`location`], from the file's path, so only a project file's name can be
+/// refused:
+///
+/// ```compile_fail,E0451
+/// use org_process::{Location, Place};
+/// let made = Location { place: Place::Organization, name_refused: true };
+/// ```
+///
+/// Read it with [`Location::read`], which turns a refused name into a problem.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    place: Place,
+    name_refused: bool,
+}
+
+impl Location {
+    /// The level and scope the folder gives.
+    pub fn place(&self) -> &Place {
+        &self.place
+    }
+
+    /// The name is refused (`plain_name`): the file is listed with a "file name" problem and left
+    /// out of every set (processes.md §2.2, §3.2 rule 1; PROC-16). Only a project repository's
+    /// file can be one.
+    pub fn name_refused(&self) -> bool {
+        self.name_refused
+    }
+}
+
+/// Where the file at `path` (relative, `/`-separated) in `repo` is, if it is a process file: a
+/// `*.md` (not hidden) directly in one of §2.2's folders, never nested. In a project repository
+/// a file whose name is refused still is one, so it can't vanish from the view; in the handbook,
+/// which only the tool writes, it isn't.
+pub fn location(repo: Repo<'_>, path: &str) -> Option<Location> {
     let parts: Vec<&str> = path.split('/').collect();
     let (file, folders) = parts.split_last()?;
     let markdown = file
         .strip_suffix(".md")
         .is_some_and(|stem| !stem.is_empty())
-        && !file.starts_with('.')
-        && plain_name(file);
+        && !file.starts_with('.');
     // The folders must match exactly and ids have strict shapes, so `..`, `.` and empty
     // segments can never select a place.
     if !markdown {
         return None;
     }
-    match (repo, folders) {
+    let place = match (repo, folders) {
         (Repo::Handbook, ["processes"]) => Some(Place::Organization),
         (Repo::Handbook, ["teams", id, "processes"]) => TeamId::new(id).map(Place::Team),
         (Repo::Handbook, ["agents", id, "processes"]) => MemberId::new(id).map(Place::Agent),
         (Repo::Project(key), ["docs", "processes"]) => Some(Place::Project(key.clone())),
         _ => None,
+    }?;
+    let name_refused = !plain_name(file);
+    match repo {
+        Repo::Handbook if name_refused => None,
+        _ => Some(Location {
+            place,
+            name_refused,
+        }),
     }
 }
 
@@ -212,8 +251,8 @@ pub(crate) fn is_invisible_or_break(c: char) -> bool {
 }
 
 /// A file name that can name a process: none that starts with `-`, and none with whitespace,
-/// control or invisible characters, or a backslash. Narrower than W7's ASCII-only rule for paths
-/// the tool writes (tasks-projects-docs.md §4.9): other letters are allowed here, since the
+/// control or invisible characters, or a backslash. Unlike W7's ASCII-only rule for paths the
+/// tool writes (tasks-projects-docs.md §4.9), non-ASCII letters are allowed here, since the
 /// front-matter key, not the file name, matches a process (processes.md §2.2).
 fn plain_name(name: &str) -> bool {
     let odd =
