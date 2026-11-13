@@ -217,17 +217,7 @@ fn decide(ctx: &mut Ctx, call: &WorkCall) -> Result<Plan, Fail> {
         WorkCall::BugClose(p) => bugs::close(ctx, p),
         WorkCall::BugReopen(p) => bugs::reopen(ctx, p),
     }?;
-    // Validate the decided state before any number allocation or write, including automatic
-    // drafts. NumberScope owns which item kinds require a project for their key.
-    for draft in &plan.drafts {
-        let item = &draft.item;
-        if matches!(item.kind, ItemKind::Task | ItemKind::Bug)
-            && item.number.is_some()
-            && NumberScope::of(item.kind, item.project_id.as_deref()).is_none()
-        {
-            return Err(invalid("a numbered task or bug must have a project"));
-        }
-    }
+    plan.validate_number_scope()?;
     Ok(plan)
 }
 
@@ -322,6 +312,24 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    /// Refuse numbered Task/Bug drafts without a project as InvalidRequest.
+    /// NumberScope owns the scopes; callers validate before allocating keys or writing drafts.
+    pub fn validate_number_scope(&self) -> Result<(), ApiError> {
+        for draft in &self.drafts {
+            let item = &draft.item;
+            if matches!(item.kind, ItemKind::Task | ItemKind::Bug)
+                && item.number.is_some()
+                && NumberScope::of(item.kind, item.project_id.as_deref()).is_none()
+            {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "a numbered task or bug must have a project",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn of(drafts: Vec<Draft>) -> Self {
         Self {
             drafts,
