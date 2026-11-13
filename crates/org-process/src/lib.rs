@@ -10,7 +10,9 @@ mod resolve;
 
 pub use file::{read, Moments, Problem, ProblemKind, ProcessFile, Status, Step};
 pub use place::{location, Level, Location, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
-pub use resolve::{resolve, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome, Winner};
+pub use resolve::{
+    resolve, Conflict, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome, Winner, Work,
+};
 
 #[cfg(test)]
 mod tests;

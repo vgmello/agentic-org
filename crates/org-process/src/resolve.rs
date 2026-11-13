@@ -1,11 +1,14 @@
 //! Which processes apply to an agent's work (processes.md §3): [`resolve`] applies §3.2's rules
 //! 1-9, in order, to plain data, and says what happened to every file (PROC-2 to PROC-9). This
-//! slice applies rules 1 and 2 to the organization's files; the lower levels come next.
+//! slice applies rules 1 to 5 to the organization's and the teams' files; the project, private
+//! files and drift come next.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::file::{Problem, ProblemKind, ProcessFile, Status};
-use crate::place::{Place, ProcessKey};
+use crate::place::{Place, ProcessKey, TeamId};
+
+mod chains;
 
 /// One file at one of §2.2's places, as read: the valid file, or its problem.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,22 +21,36 @@ pub struct Input {
     pub read: Result<ProcessFile, Problem>,
 }
 
+/// The agent's current work: its project's teams (§3.1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Work {
+    /// For each team linked to the project, its chain from the outermost parent down to it. A
+    /// chain that is a prefix of another (a linked ancestor of another linked team) or a copy of
+    /// one is dropped.
+    pub chains: Vec<Vec<TeamId>>,
+}
+
 /// What the set is computed from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inputs {
-    /// The files. A file of a place that takes no part (for now, any but the organization's)
-    /// is left out.
+    /// The current work; with none only the organization's files take part.
+    pub work: Option<Work>,
+    /// The files: O and the teams'. A file of a place that takes no part (for now, a project,
+    /// an agent, or a team not linked to the work) is left out.
     pub files: Vec<Input>,
 }
 
 /// The effective set (§3.2 Output).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectiveSet {
-    /// The places that took part, in resolution order.
+    /// The places that took part, in resolution order: the organization, then the chains'
+    /// teams outermost first.
     pub inputs: Vec<Place>,
     /// One per key a taking-part file has (drafts and retired files aside), by key.
     pub entries: Vec<Entry>,
-    /// Every file left out with something to fix: invalid or clashed.
+    /// Team versions that disagree, which the project hasn't settled (rule 5).
+    pub conflicts: Vec<Conflict>,
+    /// Every file left out with something to fix: invalid, clashed or refused (sealed).
     pub problems: Vec<Layer>,
 }
 
@@ -42,7 +59,7 @@ pub struct EffectiveSet {
 pub struct Entry {
     /// The key.
     pub key: ProcessKey,
-    /// What applies; none when nothing does.
+    /// What applies; none when nothing does (refused, a conflict with no fallback).
     pub winner: Option<Winner>,
     /// Each file with the key, organization first; drafts and retired files aside.
     pub chain: Vec<Layer>,
@@ -90,10 +107,32 @@ pub struct Layer {
 pub enum Outcome {
     /// It applies.
     Applied,
+    /// A nearer or lower version won.
+    Overridden,
+    /// A team version in a conflict that doesn't apply (rule 5).
+    Conflict,
     /// "Details not recognized (<field>)": front matter, place or file name (rule 1).
     Invalid(Problem),
     /// Another file uses its key at its level and scope (rule 2).
     Clashed,
+    /// It overrides or turns off a sealed key (rule 3).
+    Refused {
+        /// The sealing level.
+        sealed_by: Place,
+    },
+}
+
+/// Teams that disagree on a key, which the project hasn't settled (decision 4, PROC-6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conflict {
+    /// The key.
+    pub key: ProcessKey,
+    /// The disagreeing versions' places (a team that sealed what it inherited stands for it).
+    pub teams: Vec<Place>,
+    /// The teams that sealed the key.
+    pub sealed_by: Vec<Place>,
+    /// What applies until the project decides: the organization's, a sealed team's, or nothing.
+    pub applies: Option<Place>,
 }
 
 impl EffectiveSet {
@@ -113,19 +152,35 @@ struct Item<'a> {
     file: Option<&'a ProcessFile>,
     /// A valid draft or retired file: left out silently.
     quiet: bool,
+    /// It seals its key, or can't be shown not to (rule 2).
+    seals: bool,
     /// Set when a rule leaves it out.
     outcome: Option<Outcome>,
 }
 
 struct Resolver<'a> {
+    chains: Vec<Vec<Place>>,
     items: Vec<Item<'a>>,
+    /// What each override replaced: a version (or, for a settled conflict, none).
+    parents: BTreeMap<usize, Option<usize>>,
 }
 
-/// The effective set: §3.2's rules, in order.
+/// The effective set for the work: §3.2's rules, in order.
 pub fn resolve(inputs: &Inputs) -> EffectiveSet {
-    let places = vec![Place::Organization];
-    let r = Resolver {
+    let mut places = vec![Place::Organization];
+    let mut chains = Vec::new();
+    if let Some(work) = &inputs.work {
+        chains = chains::kept(&work.chains);
+        for place in chains.iter().flatten() {
+            if !places.contains(place) {
+                places.push(place.clone());
+            }
+        }
+    }
+    let mut r = Resolver {
+        chains,
         items: read_files(inputs, &places),
+        parents: BTreeMap::new(),
     };
     let keys: BTreeSet<ProcessKey> = r
         .items
@@ -167,9 +222,9 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
             }),
             Err(problem) => Err(problem.clone()),
         };
-        let key = match &read {
-            Ok(file) => Some(file.key.clone()),
-            Err(problem) => problem.key.clone(),
+        let (key, seals) = match &read {
+            Ok(file) => (Some(file.key.clone()), file.seals()),
+            Err(problem) => (problem.key.clone(), problem.sealed != Some(false)),
         };
         let file = read.as_ref().ok().copied();
         items.push(Item {
@@ -178,6 +233,7 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
             key,
             quiet: file.is_some_and(|f| matches!(f.status, Status::Draft | Status::Retired)),
             file,
+            seals,
             outcome: read.err().map(Outcome::Invalid),
         });
     }
@@ -202,28 +258,45 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
 }
 
 impl<'a> Resolver<'a> {
-    fn key(&self, key: &ProcessKey, set: &mut EffectiveSet) {
-        let winner = self.live(&Place::Organization, key);
+    fn key(&mut self, key: &ProcessKey, set: &mut EffectiveSet) {
+        let org = self.live(&Place::Organization, key);
+        let (folds, winner, conflict) = self.teams(key, org);
+        let conflicting =
+            |n: &usize| conflict.is_some() && folds.iter().any(|f| f.winner == Some(*n));
         let mut chain = Vec::new();
-        for item in &self.items {
+        for (n, item) in self.items.iter().enumerate() {
             if item.quiet || item.key.as_ref() != Some(key) {
                 continue;
             }
-            chain.push(layer(
-                item,
-                item.outcome.clone().unwrap_or(Outcome::Applied),
-            ));
+            let outcome = item.outcome.clone().unwrap_or(match Some(n) {
+                n if n == winner => Outcome::Applied,
+                Some(n) if conflicting(&n) => Outcome::Conflict,
+                _ => Outcome::Overridden,
+            });
+            chain.push(layer(item, outcome));
         }
-        let winner = winner.map(|w| Winner {
-            path: self.items[w].input.path.clone(),
-            file: self.file(w).clone(),
-            kind: Kind::Inherited,
-        });
+        let winner = winner.map(|w| self.winner(w));
         set.entries.push(Entry {
             key: key.clone(),
             winner,
             chain,
         });
+        set.conflicts.extend(conflict);
+    }
+
+    fn winner(&self, w: usize) -> Winner {
+        let file = self.file(w);
+        let parent = self.parents.get(&w).copied();
+        let kind = match (&file.place, parent) {
+            (Place::Organization, _) => Kind::Inherited,
+            (_, Some(_)) => Kind::Override,
+            (_, None) => Kind::Addition,
+        };
+        Winner {
+            path: self.items[w].input.path.clone(),
+            file: file.clone(),
+            kind,
+        }
     }
 
     /// The live file with `key` at `place`: valid, active or off, not left out by a rule.
