@@ -21,7 +21,7 @@ The first set (the phases below are these three features):
 5. **No secrets in prompts.** The office adds only what the feature's registry entry names. It never adds environment variables, tokens, keys, file contents or paths. The input is also checked for obvious secret shapes (private keys, access tokens, the 64-hex app token), and a match refuses the run without echoing it.
 6. **It runs in the office server.** Not in the WebView and not in the app's Rust shell. The app asks `copilot.features` and `copilot.draft` like any other call.
 7. **Hidden when it can't work.** With no runtime set up, `copilot.features` is empty and the app hides every smart button. A screen never shows a smart button that will only fail.
-8. **Honest cost.** Each run reports its usage when the runtime does, and a copilot run is attributed like any run (`costs-and-insights-ux.md` rev 6 decision 4, COST-6), with no separate "Copilot" line. `costs-and-budgets-v1` records copilot runs from v1.1.
+8. **Honest cost.** Each run reports its usage when the runtime does, and a copilot run is attributed like any run (`costs-and-insights-ux.md` rev 6 decision 9, COST-6), with no separate "Copilot" line. `costs-and-budgets-v1` records copilot runs from v1.1.
 9. **Replaceable.** The runtimes sit behind a port the crate owns. The crate has no process or network code.
 
 ## The pieces

@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 22
+revision: 23
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-13"
@@ -12,6 +12,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
+
+**Revision 23 (2026-11-13): agent budget bars owner only (Emery).** On the profile's Cost tab, the agent's daily and monthly budgets show to the owner only; a project manager sees the agent's cost for their own projects only, labelled "in your projects" (`costs-and-insights-ux.md` rev 8, COST-7). No criteria changed here.
 
 **Revision 22 (2026-11-13): agent Cost tab.** The profile gains a **Cost** tab after Sessions, as `costs-and-insights-ux.md` rev 6 and `costs-and-budgets-v1` §6 ask. No criteria changed.
 
@@ -200,7 +202,7 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 - **Card (org chart):** avatar (agent square) · name · title · status dot + word (Working · Waiting · Idle · Needs you · Paused · Offline) · team role (Lead). There's no runtime on cards (decision 3).
 - **Quick view:** name, title, status, **Runs on Codex** · messaging name (mono, copy) · office (its service machine/instance) · teams · reports to · current task · last activity ("Sent ada a status reply · 4 min ago"). Actions: **Message** · **Assign task** · **Move to team…** · ⋯ (Add to team… · Pause · Offboard…).
 - **Profile header** (v1 §3.5, extended): name · messaging name · title · focus · runtime · model · office · status · **View session** · **Assign task** · ⋯.
-- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · **Cost** (spend by period and project, and the agent's daily and monthly budgets: `costs-and-insights-ux.md` §1 "Agent profile › Cost"; amounts only to the owner and the project manager for their projects, `costs-and-budgets-v1` §5.5; other members don't see the tab, and an agent sees its own budgets through the CLI, `costs-and-budgets-v1` req 26–27) *(rev 22)* · Knowledge (authorized server-provided content; no direct browser filesystem access) · Processes (what it follows, `processes-ux.md` §2) · **Role** (its effective role: the role it was hired as, its own override, and what processes supersede, `roles-ux.md` §1) *(rev 17)* · Settings (the record, editable: title, focus, model and runtime; home path is server-managed and read-only, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*, and **Can approve hires** and **Can approve processes** (§7.1, `processes-ux.md` decision 8), and **Change role…** (`roles-ux.md` decision 7) *(rev 17)*).
+- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · **Cost** (spend by period and project, and the agent's daily and monthly budgets: `costs-and-insights-ux.md` §1 "Agent profile › Cost"; amounts only to the owner and the project manager for their projects, `costs-and-budgets-v1` §5.5; the daily and monthly budgets to the owner only, because they span every project the agent works on *(rev 23)*; other members don't see the tab, and an agent sees its own budgets through the CLI, `costs-and-budgets-v1` req 26–27) *(rev 22)* · Knowledge (authorized server-provided content; no direct browser filesystem access) · Processes (what it follows, `processes-ux.md` §2) · **Role** (its effective role: the role it was hired as, its own override, and what processes supersede, `roles-ux.md` §1) *(rev 17)* · Settings (the record, editable: title, focus, model and runtime; home path is server-managed and read-only, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*, and **Can approve hires** and **Can approve processes** (§7.1, `processes-ux.md` decision 8), and **Change role…** (`roles-ux.md` decision 7) *(rev 17)*).
 - **Missing data** reads plainly, never blank: "Runtime not set · **Set runtime**", "No home folder (this agent runs elsewhere)".
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
