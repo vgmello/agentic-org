@@ -760,6 +760,7 @@ mod tests {
     use crate::keys::memory::MemoryKeys;
     use crate::supervisor::SupervisorConfig;
     use std::fs;
+    #[cfg(target_os = "macos")]
     use std::os::unix::fs::PermissionsExt;
 
     #[cfg(target_os = "macos")]

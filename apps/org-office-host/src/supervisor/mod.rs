@@ -681,7 +681,9 @@ mod tests {
     use org_proto::{AppToken, DbKey, OfficeRole};
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
+    #[cfg(target_os = "macos")]
     use crate::peer::AuditToken;
+    #[cfg(target_os = "macos")]
     use crate::server_check::{Scripted, Step};
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -938,6 +940,7 @@ mod tests {
     }
 
     /// A check scripted by the test: `admit` and `still` answer as `script` says.
+    #[cfg(target_os = "macos")]
     fn scripted(
         script: impl Fn(Step, u32) -> Result<Option<AuditToken>, String> + Send + Sync + 'static,
     ) -> ServerCheck {

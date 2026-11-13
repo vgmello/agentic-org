@@ -55,6 +55,7 @@ pub(crate) enum ServerCheck {
     Refuse,
     /// Tests only: the admission and the re-check's token come from the test.
     #[cfg(test)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Scripted(Scripted),
 }
 

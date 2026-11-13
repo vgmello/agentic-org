@@ -3,6 +3,9 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
+// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
+// helpers are unused.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -46,6 +49,7 @@ fn status_of(client: &mut Client, office_id: &str) -> OfficeStatus {
         .unwrap_or(OfficeStatus::Unknown)
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn create_stores_the_office_starts_it_and_tells_subscribers() {
     let home = TestHome::registered();
@@ -123,6 +127,7 @@ fn invalid_names_are_refused_before_anything_starts() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_duplicate_name_ignoring_case_already_exists() {
     let home = TestHome::registered();
@@ -136,6 +141,7 @@ fn a_duplicate_name_ignoring_case_already_exists() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn concurrent_creates_of_one_name_have_exactly_one_winner() {
     let home = TestHome::registered();
@@ -162,6 +168,7 @@ fn concurrent_creates_of_one_name_have_exactly_one_winner() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn server_failures_map_to_errors_clean_up_and_emit_nothing() {
     let home = TestHome::registered();
@@ -215,6 +222,7 @@ fn server_failures_map_to_errors_clean_up_and_emit_nothing() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn already_exists_from_the_server_keeps_the_folder() {
     let home = TestHome::registered();
@@ -232,6 +240,7 @@ fn already_exists_from_the_server_keeps_the_folder() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_crash_before_created_is_a_storage_error_and_cleans_up() {
     let home = TestHome::registered();
@@ -254,6 +263,7 @@ fn a_crash_before_created_is_a_storage_error_and_cleans_up() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_that_stored_its_office_but_never_reported_succeeds() {
     // The server writes office.json, then crashes, reports a failure, or hangs until the create
@@ -296,6 +306,7 @@ fn a_create_that_stored_its_office_but_never_reported_succeeds() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_that_stored_another_office_but_never_reported_is_refused() {
     for action in ["crash", "fail"] {
@@ -322,6 +333,7 @@ fn a_create_that_stored_another_office_but_never_reported_is_refused() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_that_stored_an_unreadable_office_keeps_it_and_its_name() {
     let home = TestHome::registered();
@@ -355,6 +367,7 @@ fn a_create_that_stored_an_unreadable_office_keeps_it_and_its_name() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_that_never_answers_times_out_kills_the_server_and_cleans_up() {
     let home = TestHome::registered();
@@ -375,6 +388,7 @@ fn a_create_that_never_answers_times_out_kills_the_server_and_cleans_up() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_crash_right_after_created_still_succeeds_and_the_office_restarts() {
     let home = TestHome::registered();
@@ -390,6 +404,7 @@ fn a_crash_right_after_created_still_succeeds_and_the_office_restarts() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_created_office_other_than_the_one_asked_for_is_refused_and_moved_aside() {
     for report in [
@@ -457,6 +472,7 @@ fn a_created_office_other_than_the_one_asked_for_is_refused_and_moved_aside() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_created_office_reported_under_another_offices_id_leaves_that_office_alone() {
     const OTHER: &str = "01OTHEROFFICEOTHEROFFICE00";
@@ -505,6 +521,7 @@ fn a_created_office_reported_under_another_offices_id_leaves_that_office_alone()
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_discard_refused_with_already_exists_after_a_failed_create_is_left_alone() {
     let home = TestHome::registered();
@@ -523,6 +540,7 @@ fn a_discard_refused_with_already_exists_after_a_failed_create_is_left_alone() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_of_another_name_proceeds_while_one_waits_and_a_duplicate_is_refused_at_once() {
     let home = TestHome::registered();
@@ -566,6 +584,7 @@ fn a_create_of_another_name_proceeds_while_one_waits_and_a_duplicate_is_refused_
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_shutdown_during_a_create_stops_its_server_adopts_nothing_and_sends_no_event() {
     let home = TestHome::registered();
@@ -603,6 +622,7 @@ fn a_shutdown_during_a_create_stops_its_server_adopts_nothing_and_sends_no_event
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn an_adopted_server_gets_its_full_ready_wait_from_adoption() {
     let home = TestHome::registered();
@@ -624,6 +644,7 @@ fn an_adopted_server_gets_its_full_ready_wait_from_adoption() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn subscribing_twice_on_one_connection_sends_each_event_once() {
     let home = TestHome::registered();
@@ -649,6 +670,7 @@ fn subscribing_twice_on_one_connection_sends_each_event_once() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn at_most_four_creates_run_at_once_and_a_fifth_waits_then_gets_unavailable() {
     let home = TestHome::registered();
@@ -685,6 +707,7 @@ fn at_most_four_creates_run_at_once_and_a_fifth_waits_then_gets_unavailable() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_waiting_create_goes_ahead_as_soon_as_a_slot_frees() {
     let home = TestHome::registered();

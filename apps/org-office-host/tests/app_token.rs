@@ -6,6 +6,9 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
+// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
+// helpers are unused.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -54,6 +57,7 @@ fn kill(pid: u32) {
     assert_eq!(unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) }, 0);
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn every_start_gets_its_office_token_and_restarts_reuse_it() {
     let home = TestHome::registered();
@@ -86,6 +90,7 @@ fn every_start_gets_its_office_token_and_restarts_reuse_it() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_host_restart_makes_new_tokens() {
     let home = TestHome::registered();
@@ -104,6 +109,7 @@ fn a_host_restart_makes_new_tokens() {
     home.assert_no_secret_in_home();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_created_office_keeps_its_token_when_it_restarts() {
     let home = TestHome::registered();
@@ -148,6 +154,7 @@ fn a_created_office_keeps_its_token_when_it_restarts() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
     let create = line(&HostMessage::Create(CreateOffice {
@@ -191,6 +198,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     let home = TestHome::registered();
@@ -209,6 +217,7 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     host.shutdown();
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_create_whose_first_line_is_a_start_line_fails() {
     let start = line(&HostMessage::Start(StartOffice {
