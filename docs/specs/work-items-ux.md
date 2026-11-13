@@ -612,6 +612,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - ~~A12~~ · *Resolved in rev 3:* no permissions in phase 1. Anyone may triage or verify, the UI suggests the area lead and the reporter, and the activity records who acted.
 - ~~A13~~ · *Resolved (ada, W7):* General can't be deleted. Can General be deleted? I've made it renamable and movable to another of the project's teams, but not deletable, so "a bug never lacks an area" always holds.
 
+- A110 · *(rev 10)* A fix task reopened while its bug is Fixed counts as the bug reopened (§7.2, FIX-2, `away-digest-and-timezones-v1`): Reopened badge, `reopen_count + 1`, and the activity line "Reopened: fix task T-n was reopened". `docs/design/tasks-projects-docs.md` l.180 makes `fixed → in_progress` automatic with no count change, and `org-proto` `work.rs` l.838 documents `Reopened` only for `bug.reopen` to Triaged. Please update the design and the event kind (or a new one) for this reopen.
 **For the user**
 - ~~U7~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, Critical bugs always reach you in Needs you, whoever triages them.
 - ~~U8~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, the Work badge counts only what needs you (bugs to triage or verify, your blocked tasks).

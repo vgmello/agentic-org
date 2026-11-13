@@ -38,6 +38,8 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 ## 1. Flow 1 · The Status page (the project's **Overview** tab)
 
+*(rev 5)* **Who sees cost:** the Investment tile and the cost trend show amounts only to the owner and the project's manager (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the tile as the budget state only, for example "1 budget reached", with no dollar figure.
+
 *The mock-ups in this spec and in `costs-and-insights-ux.md` are set in December 2026. The project started on 7 Nov.*
 
 The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status page. Its earlier tiles (needs triage, open bugs, tasks, brief) are part of it, so there's no separate Status tab.
@@ -73,11 +75,13 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 4. **Saved:** `docs/reports/2026-12-07-status.md` (Markdown with front matter: `kind: report`, `type: status`, `period`, `health`, `facts` (the snapshot), `run` (its cost)), committed through the docs flow (`decisions-and-tech-debt-ux.md` §0.2).
 5. **Delivered:** Home shows "Status report for Agentic Org: **At risk**" with **Read**. A change of health (On track → At risk) also goes to Needs you.
 
-**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off run 31) · ≈ $0.12") · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
+**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off run 31) · ≈ $0.12"; the run's cost shows only to the owner and the project's manager *(rev 5)*) · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
 
 **All reports** (Docs › Reports) lists the reports with their health, so the project's history reads as a line of badges: ● ● ● ◐ ●.
 
 ## 3. Flow 3 · All projects at a glance (Home › Projects status)
+
+*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
 
 ```
  Projects                        Health       Features         This month    Waiting on you
@@ -104,7 +108,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 - STATUS-6 · A period with no activity produces a one-line report without a run.
 - STATUS-7 · Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's cost) and listed in Docs › Reports with its health.
 - STATUS-8 · A new report appears on Home, and a change of health also appears in Needs you.
-- STATUS-9 · Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health.
+- STATUS-9 · *(rev 5)* Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health. The cost column shows amounts only to the owner and each project's manager (`costs-and-budgets-v1` §5.5); other members see no cost column.
 - STATUS-10 · Health rules and the schedule are editable per project. Reports export to Markdown and PDF.
 - STATUS-11 · Charts have a table view and never rely on color alone. Missing data is shown as not available, never as zero.
 
