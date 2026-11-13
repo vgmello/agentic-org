@@ -304,6 +304,48 @@ fn a_start_gets_its_keys_then_exactly_one_transfer_end_and_waits_for_the_receipt
     ));
 }
 
+/// The read timeouts used while authenticating never outlive it: a discard's reader waits as
+/// long as its worker takes (a contended office lock is 10 s).
+#[test]
+fn an_authenticated_discard_leaves_no_read_timeout() {
+    let dir = runtime();
+    let (host, mut child) = connected(dir.path());
+    let writer = after_check(&mut child, READY);
+    authenticate(&host, &admitted(me()), later()).unwrap();
+    writer.join().unwrap();
+    let handoff = Handoff::Discard {
+        db_key: None,
+        fds: Vec::new(),
+    };
+    let handed = hand_off(host, handoff, later()).unwrap();
+    assert_eq!(handed.events.get_ref().read_timeout().unwrap(), None);
+}
+
+/// Rule 14: the receipt wait is one 5 s deadline, however slowly a worker trickles bytes.
+#[test]
+fn a_trickled_receipt_still_ends_at_the_deadline() {
+    let dir = runtime();
+    let (host, mut child) = connected(dir.path());
+    let started = Instant::now();
+    let sending = thread::spawn(move || hand_off(host, start_handoff(), later()));
+    let _ = receive(&child, 1);
+    let trickle = thread::spawn(move || {
+        for _ in 0..40 {
+            if child.write_all(b" ").is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    });
+    assert!(sending.join().unwrap().is_err());
+    let took = started.elapsed();
+    assert!(
+        took >= ACK_TIMEOUT && took < ACK_TIMEOUT + Duration::from_secs(2),
+        "{took:?}"
+    );
+    trickle.join().unwrap();
+}
+
 #[test]
 fn a_discard_gets_its_key_and_no_descriptor_or_marker() {
     let dir = runtime();

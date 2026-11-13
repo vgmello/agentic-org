@@ -49,6 +49,9 @@ pub(crate) const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 /// The longest `ready_for_secrets` line read (it is 37 bytes).
 const READY_MAX_BYTES: usize = 64;
 
+/// The longest handoff receipt read (`{"v":3,"event":"fds_received","of":"handoff"}`, 46).
+const RECEIPT_MAX_BYTES: usize = 128;
+
 /// The longest single wait for a connection, so a child's exit is seen promptly.
 const ACCEPT_POLL: Duration = Duration::from_millis(5);
 
@@ -176,24 +179,8 @@ pub(crate) fn authenticate(
     // predate the checked image (this socket was made after the admission, and an exec since
     // changes the task token), and both tokens are checked again after the line.
     admitted.check(stream)?;
-    let mut line = Vec::with_capacity(READY_MAX_BYTES);
-    let mut byte = [0u8; 1];
-    while line.len() < READY_MAX_BYTES {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err("no ready_for_secrets in time".into());
-        }
-        stream
-            .set_read_timeout(Some(left))
-            .map_err(|e| format!("its rendezvous connection: {e}"))?;
-        match (&*stream).read(&mut byte) {
-            Ok(0) => return Err("its rendezvous closed before ready_for_secrets".into()),
-            Ok(_) if byte[0] == b'\n' => break,
-            Ok(_) => line.push(byte[0]),
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => return Err("no ready_for_secrets in time".into()),
-        }
-    }
+    let line =
+        read_line(stream, READY_MAX_BYTES, deadline).ok_or("no ready_for_secrets line in time")?;
     if serde_json::from_slice::<ReadyForSecrets>(&line).is_err() {
         return Err("its first rendezvous line isn't ready_for_secrets".into());
     }
@@ -201,6 +188,32 @@ pub(crate) fn authenticate(
         return Err("something followed its ready_for_secrets".into());
     }
     admitted.check(stream)
+}
+
+/// One line (without its `\n`), read a byte at a time so nothing past it is consumed, of at
+/// most `max` bytes, by `deadline` (one deadline, however slowly the bytes come). The socket's
+/// read timeout is cleared afterwards, so it never outlives the call. `None`: no such line.
+fn read_line(stream: &UnixStream, max: usize, deadline: Instant) -> Option<Vec<u8>> {
+    let mut line = Vec::with_capacity(max);
+    let mut byte = [0u8; 1];
+    let read = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || line.len() >= max || stream.set_read_timeout(Some(left)).is_err() {
+            break None;
+        }
+        match (&*stream).read(&mut byte) {
+            Ok(1) if byte[0] == b'\n' => break Some(line),
+            Ok(1) => line.push(byte[0]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            _ => break None,
+        }
+    };
+    // macOS refuses (EINVAL) a timeout change on a connection its peer already closed: its
+    // reader then just reads to the EOF.
+    match stream.set_read_timeout(None) {
+        Err(e) if e.raw_os_error() != Some(libc::EINVAL) => None,
+        _ => read,
+    }
 }
 
 /// What a completed handoff leaves: the reader of the worker's events and, unless a discard,
@@ -227,34 +240,34 @@ pub(crate) fn hand_off(
     let written = stream
         .set_write_timeout(Some(left.max(Duration::from_millis(1))))
         .and_then(|()| (&stream).write_all(&header));
-    header.fill(0);
+    crate::secrets::zero(&mut header);
     drop(header);
     written.map_err(|e| format!("couldn't send its handoff: {e}"))?;
-    let mut events = BufReader::new(stream);
     let Some((host_end, worker_end)) = pair else {
         return Ok(HandedOff {
-            events,
+            events: BufReader::new(stream),
             transfer: None,
         });
     };
-    let socket = events.get_ref().as_fd();
-    org_socket::rights::send(socket, &[FD_MARKER], &[worker_end.as_fd()], deadline)
-        .map_err(|e| format!("couldn't pass its transfer socket: {e}"))?;
-    let stream = events.get_ref();
-    stream
-        .set_read_timeout(Some(ACK_TIMEOUT))
-        .map_err(|e| format!("its rendezvous connection: {e}"))?;
-    match v3::read_server_event(&mut events) {
+    org_socket::rights::send(
+        stream.as_fd(),
+        &[FD_MARKER],
+        &[worker_end.as_fd()],
+        deadline,
+    )
+    .map_err(|e| format!("couldn't pass its transfer socket: {e}"))?;
+    // The first event, within 5 s of the send.
+    let mut receipt = read_line(&stream, RECEIPT_MAX_BYTES, Instant::now() + ACK_TIMEOUT)
+        .ok_or("no fds_received for its handoff in time")?;
+    receipt.push(b'\n');
+    match v3::read_server_event(&mut &receipt[..]) {
         Ok(Some(RendezvousEvent::FdsReceived { of })) if of == "handoff" => {}
-        _ => return Err("no fds_received for its handoff in time".into()),
+        _ => return Err("its first event isn't fds_received for its handoff".into()),
     }
     // Retained until acknowledged (X-02 §5.2), released only now.
     drop(worker_end);
-    // macOS refuses (EINVAL) a timeout change on a connection its peer already closed (a
-    // worker that failed right after its receipt): its reader then just reads to the EOF.
-    let _ = events.get_ref().set_read_timeout(None);
     Ok(HandedOff {
-        events,
+        events: BufReader::new(stream),
         transfer: Some(host_end),
     })
 }
