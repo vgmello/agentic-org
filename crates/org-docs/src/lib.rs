@@ -26,7 +26,8 @@ pub const MAX_EVENTS: usize = 10_000;
 pub struct Doc<'a> {
     /// The front matter's top-level mapping.
     pub front_matter: Option<Map<String, Value>>,
-    /// Everything after the closing fence (the whole text when there is no front matter).
+    /// Everything after the closing fence. With no front matter it is the whole text, except that
+    /// a leading byte-order mark is stripped first (as it is before the fence is looked for).
     pub body: &'a str,
 }
 
