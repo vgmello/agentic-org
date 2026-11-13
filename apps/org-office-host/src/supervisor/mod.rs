@@ -734,6 +734,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_create_reported_after_shutdown_began_is_stopped_not_adopted() {
         let dir = tempfile::tempdir().unwrap();
@@ -873,6 +874,7 @@ mod tests {
     /// and gets no line: no key. With no
     /// team id, nothing is even spawned. A start ends as `storage_error`, retried; a discard
     /// fails and keeps the key.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_server_that_isnt_the_signed_one_gets_nothing() {
         const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
@@ -945,6 +947,7 @@ mod tests {
     /// L2: the check runs while the child is still suspended: at the admission, the child is
     /// stopped (`ps` state `T`, the kernel's `SSTOP`), so not one instruction of its image has
     /// run, and once refused it never does.
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_check_runs_while_the_child_is_still_suspended() {
         let dir = tempfile::tempdir().unwrap();
@@ -976,6 +979,7 @@ mod tests {
 
     /// L3a: a child whose token changed between the admission and its first line (an exec) is
     /// refused at the re-check: it gets no line.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_child_whose_token_changed_before_its_line_gets_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -995,6 +999,7 @@ mod tests {
         assert!(keys.has(OFFICE));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_create_stores_its_key_before_its_server_starts() {
         let dir = tempfile::tempdir().unwrap();
@@ -1097,6 +1102,7 @@ mod tests {
         )
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_discard_deletes_the_key_only_after_discarded() {
         let dir = tempfile::tempdir().unwrap();

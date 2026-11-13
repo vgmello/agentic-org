@@ -762,6 +762,7 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_stored_folder_is_never_handed_to_discard() {
         let dir = tempfile::tempdir().unwrap();
