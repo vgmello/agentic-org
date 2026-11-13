@@ -162,27 +162,47 @@ pub enum Repo<'a> {
     Project(&'a ProjectKey),
 }
 
-/// The place of the file at `path` (relative, `/`-separated) in `repo`, if it is a process file:
-/// a `*.md` (not hidden) directly in one of §2.2's folders, never nested.
-pub fn location(repo: Repo<'_>, path: &str) -> Option<Place> {
+/// Where a process file is: its place, and whether its file name is one a process may not have.
+/// Read it with [`Location::read`], which turns a refused name into a problem.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    /// The level and scope the folder gives.
+    pub place: Place,
+    /// The name is refused (`plain_name`): the file is listed with a "file name" problem and left
+    /// out of every set (processes.md §2.2, §3.2 rule 1; PROC-16).
+    pub name_refused: bool,
+}
+
+/// Where the file at `path` (relative, `/`-separated) in `repo` is, if it is a process file: a
+/// `*.md` (not hidden) directly in one of §2.2's folders, never nested. In a project repository
+/// a file whose name is refused still is one, so it can't vanish from the view; in the handbook,
+/// which only the tool writes, it isn't.
+pub fn location(repo: Repo<'_>, path: &str) -> Option<Location> {
     let parts: Vec<&str> = path.split('/').collect();
     let (file, folders) = parts.split_last()?;
     let markdown = file
         .strip_suffix(".md")
         .is_some_and(|stem| !stem.is_empty())
-        && !file.starts_with('.')
-        && plain_name(file);
+        && !file.starts_with('.');
     // The folders must match exactly and ids have strict shapes, so `..`, `.` and empty
     // segments can never select a place.
     if !markdown {
         return None;
     }
-    match (repo, folders) {
+    let place = match (repo, folders) {
         (Repo::Handbook, ["processes"]) => Some(Place::Organization),
         (Repo::Handbook, ["teams", id, "processes"]) => TeamId::new(id).map(Place::Team),
         (Repo::Handbook, ["agents", id, "processes"]) => MemberId::new(id).map(Place::Agent),
         (Repo::Project(key), ["docs", "processes"]) => Some(Place::Project(key.clone())),
         _ => None,
+    }?;
+    let name_refused = !plain_name(file);
+    match repo {
+        Repo::Handbook if name_refused => None,
+        _ => Some(Location {
+            place,
+            name_refused,
+        }),
     }
 }
 

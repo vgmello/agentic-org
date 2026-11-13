@@ -1,14 +1,16 @@
 //! Processes (`docs/design/processes.md`): how agents work, written down and inherited. Pure:
-//! no SQL, git, network or clock, and no ports. This slice reads a process file and its place;
-//! resolving which processes apply comes next.
+//! no SQL, git, network or clock, and no ports. It reads a process file and its place, and
+//! resolves which processes apply to an agent's work.
 
 #![warn(missing_docs)]
 
 mod file;
 mod place;
+mod resolve;
 
 pub use file::{read, Moments, Problem, ProblemKind, ProcessFile, Status, Step};
-pub use place::{location, Level, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
+pub use place::{location, Level, Location, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
+pub use resolve::{resolve, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome, Winner};
 
 #[cfg(test)]
 mod tests;

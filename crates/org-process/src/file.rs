@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::place::{is_invisible_or_break, Level, Place, ProcessKey};
+use crate::place::{is_invisible_or_break, Level, Location, Place, ProcessKey};
 
 /// A valid process file. Status filtering (draft, retired) is resolution's, not this.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,6 +106,8 @@ pub enum ProblemKind {
     Invalid,
     /// `level` or `scope` doesn't match where the file lives.
     WrongPlace,
+    /// The file's name is one a process may not have (field `file name`, processes.md §2.2).
+    FileName,
 }
 
 /// The front matter's keys; any other is refused.
@@ -125,7 +127,36 @@ fn problem(field: &str, kind: ProblemKind) -> Problem {
     }
 }
 
-/// Reads the process file at `place` from its text.
+impl ProcessFile {
+    /// Whether it seals its key: `overridable: false`, unless it is a draft or retired.
+    pub fn seals(&self) -> bool {
+        !self.overridable && !matches!(self.status, Status::Draft | Status::Retired)
+    }
+}
+
+impl Location {
+    /// Reads the process file here from its text: as [`read`], except that a refused file name
+    /// is a `file name` problem, which still carries the key and seal read from the text.
+    pub fn read(&self, text: &str) -> Result<ProcessFile, Problem> {
+        let read = read(&self.place, text);
+        if !self.name_refused {
+            return read;
+        }
+        let (key, sealed) = match read {
+            Ok(file) => (Some(file.key.clone()), Some(file.seals())),
+            Err(problem) => (problem.key, problem.sealed),
+        };
+        let problem = problem("file name", ProblemKind::FileName);
+        Err(Problem {
+            key,
+            sealed,
+            ..problem
+        })
+    }
+}
+
+/// Reads the process file at `place` from its text. A file found by [`crate::location`] is read
+/// with [`Location::read`], which also checks its name.
 pub fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
     let doc =
         org_docs::parse(text).map_err(|e| problem(&e.field, ProblemKind::FrontMatter(e.reason)))?;
