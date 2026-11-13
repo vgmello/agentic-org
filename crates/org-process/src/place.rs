@@ -170,7 +170,8 @@ pub fn location(repo: Repo<'_>, path: &str) -> Option<Place> {
     let markdown = file
         .strip_suffix(".md")
         .is_some_and(|stem| !stem.is_empty())
-        && !file.starts_with('.');
+        && !file.starts_with('.')
+        && plain_name(file);
     // The folders must match exactly and ids have strict shapes, so `..`, `.` and empty
     // segments can never select a place.
     if !markdown {
@@ -183,4 +184,39 @@ pub fn location(repo: Repo<'_>, path: &str) -> Option<Place> {
         (Repo::Project(key), ["docs", "processes"]) => Some(Place::Project(key.clone())),
         _ => None,
     }
+}
+
+/// The same set as org-office's status lines (organization/status.rs): line breaks, the bidi
+/// and invisible format characters, the fillers that render as nothing, and the tag block and
+/// variation selectors supplement, which can hide text from a reader but not from an agent.
+/// The zero-width (non-)joiners and the direction marks stay: emoji and many scripts need them.
+pub(crate) fn is_invisible_or_break(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2028}'
+            | '\u{2029}'
+            | '\u{200b}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{180e}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{115f}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{ffa0}'
+            | '\u{e0000}'..='\u{e007f}'
+            | '\u{e0100}'..='\u{e01ef}'
+    )
+}
+
+/// A file name that can name a process: none that starts with `-`, and none with whitespace,
+/// control or invisible characters, or a backslash. Narrower than W7's ASCII-only rule for paths
+/// the tool writes (tasks-projects-docs.md §4.9): other letters are allowed here, since the
+/// front-matter key, not the file name, matches a process (processes.md §2.2).
+fn plain_name(name: &str) -> bool {
+    let odd =
+        |c: char| c.is_whitespace() || c.is_control() || c == '\\' || is_invisible_or_break(c);
+    !name.starts_with('-') && !name.contains(odd)
 }

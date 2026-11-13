@@ -458,3 +458,149 @@ fn hidden_text_is_refused_but_joiners_and_direction_marks_are_kept() {
     });
     assert_eq!(read(&team(), &draft).unwrap_err().sealed, Some(false));
 }
+
+#[test]
+fn each_place_has_its_level_and_scope() {
+    let member = MemberId::new(MEMBER).unwrap();
+    let cases = [
+        (Place::Organization, Level::Organization, None),
+        (team(), Level::Team, Some("web")),
+        (Place::Project(project()), Level::Project, Some("atlas")),
+        (Place::Agent(member), Level::Agent, Some(MEMBER)),
+    ];
+    for (place, level, scope) in cases {
+        assert_eq!((place.level(), place.scope()), (level, scope), "{place:?}");
+    }
+}
+
+#[test]
+fn file_names_a_doc_may_not_have_are_never_process_files() {
+    for name in [
+        "a b",
+        "a\nb",
+        "a\tb",
+        "a\u{202e}b",
+        "-x",
+        "a\\b",
+        "a\u{200b}b",
+        "a\u{feff}",
+        "a\u{7}b",
+    ] {
+        let path = format!("processes/{name}.md");
+        assert_eq!(location(Repo::Handbook, &path), None, "{name:?}");
+    }
+    assert_eq!(
+        location(Repo::Handbook, "processes/a-b_c.1.md"),
+        Some(Place::Organization)
+    );
+}
+
+#[test]
+fn project_and_agent_files_read_only_at_their_own_level() {
+    let member = MemberId::new(MEMBER).unwrap();
+    let at = |level: &str, scope: &str| {
+        let (level, scope) = (level.to_owned(), scope.to_owned());
+        file(move |l| {
+            set("level", &level)(l);
+            set("scope", &scope)(l);
+        })
+    };
+    let project_place = Place::Project(project());
+    let agent_place = Place::Agent(member);
+    assert_eq!(
+        read(&project_place, &at("project", "atlas")).unwrap().place,
+        project_place
+    );
+    assert_eq!(
+        read(&agent_place, &at("agent", MEMBER)).unwrap().place,
+        agent_place
+    );
+    for (place, text) in [
+        (&agent_place, at("project", MEMBER)),
+        (&project_place, at("agent", "atlas")),
+    ] {
+        let problem = read(place, &text).unwrap_err();
+        assert_eq!(
+            (problem.field.as_str(), problem.kind),
+            ("level", ProblemKind::WrongPlace)
+        );
+    }
+}
+
+#[test]
+fn empty_text_missing_applies_to_and_multi_line_moments_are_refused() {
+    let cases = [
+        (
+            file(set("summary", "\"\"")),
+            "summary",
+            ProblemKind::Invalid,
+        ),
+        (file(set("name", "\"\"")), "name", ProblemKind::Invalid),
+        (
+            file(set("checklist", "[{text: \"\"}]")),
+            "checklist[0].text",
+            ProblemKind::Invalid,
+        ),
+        (
+            file(drop_key("applies_to")),
+            "applies_to",
+            ProblemKind::Missing,
+        ),
+        (
+            file(set("moments", "{waking_up: \"a\\nb\"}")),
+            "moments.waking_up",
+            ProblemKind::Invalid,
+        ),
+    ];
+    for (text, field, kind) in cases {
+        let problem = read(&team(), &text).unwrap_err();
+        assert_eq!(
+            (problem.field.as_str(), problem.kind),
+            (field, kind),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn every_character_org_office_refuses_in_status_lines_is_refused_here() {
+    // The same cases as org-office's status-line test (organization/status.rs).
+    for bad in [
+        "two\nlines",
+        "tab\there",
+        "bell\u{7}",
+        "nul\0",
+        "esc\u{1b}[0m",
+        "line\u{2028}break",
+        "para\u{2029}graph",
+        "hidden\u{200b}gap",
+        "flip\u{202e}ed",
+        "bom\u{feff}",
+        "joiner\u{2060}",
+        "invisible\u{2064}times",
+        "isolate\u{2066}x",
+        "isolate\u{2069}",
+        "deprecated\u{206a}",
+        "deprecated\u{206f}",
+        "embed\u{202a}",
+        "tag\u{e0041}",
+        "tag\u{e007f}",
+        "selector\u{e0100}",
+        "selector\u{e01ef}",
+        "mongolian\u{180e}",
+        "annotation\u{fff9}",
+        "annotation\u{fffb}",
+        "filler\u{115f}",
+        "filler\u{1160}",
+        "filler\u{3164}",
+        "filler\u{ffa0}",
+    ] {
+        let quoted = serde_json::to_string(bad).unwrap();
+        let problem = read(&team(), &file(set("summary", &quoted))).unwrap_err();
+        assert_eq!(
+            (problem.field.as_str(), problem.kind),
+            ("summary", ProblemKind::Invalid),
+            "{bad:?}"
+        );
+    }
+}

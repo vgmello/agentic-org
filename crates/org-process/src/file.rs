@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::place::{Level, Place, ProcessKey};
+use crate::place::{is_invisible_or_break, Level, Place, ProcessKey};
 
 /// A valid process file. Status filtering (draft, retired) is resolution's, not this.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,8 +24,8 @@ pub struct ProcessFile {
     pub owner: String,
     /// One line.
     pub summary: String,
-    /// Who it is for, as written.
-    pub applies_to: Option<String>,
+    /// Who it is for, as written (required: the Processes view shows it for every process).
+    pub applies_to: String,
     /// `false` seals it.
     pub overridable: bool,
     /// Its state at this level.
@@ -218,7 +218,7 @@ fn decode(place: &Place, map: &Map<String, Value>) -> Result<ProcessFile, Proble
         version,
         owner: line(need("owner")?, "owner", LIMIT_LINE)?,
         summary: line(need("summary")?, "summary", LIMIT_LINE)?,
-        applies_to: optional("applies_to")?,
+        applies_to: line(need("applies_to")?, "applies_to", LIMIT_LINE)?,
         overridable: need("overridable")?
             .as_bool()
             .ok_or_else(|| invalid("overridable"))?,
@@ -315,29 +315,4 @@ fn checklist(value: &Value) -> Result<Vec<Step>, Problem> {
         out.push(Step { text, required });
     }
     Ok(out)
-}
-
-/// The same set as org-office's status lines (organization/status.rs): line breaks, the bidi
-/// and invisible format characters, the fillers that render as nothing, and the tag block and
-/// variation selectors supplement, which can hide text from a reader but not from an agent.
-/// The zero-width (non-)joiners and the direction marks stay: emoji and many scripts need them.
-fn is_invisible_or_break(c: char) -> bool {
-    matches!(
-        c,
-        '\u{2028}'
-            | '\u{2029}'
-            | '\u{200b}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206f}'
-            | '\u{feff}'
-            | '\u{180e}'
-            | '\u{fff9}'..='\u{fffb}'
-            | '\u{115f}'
-            | '\u{1160}'
-            | '\u{3164}'
-            | '\u{ffa0}'
-            | '\u{e0000}'..='\u{e007f}'
-            | '\u{e0100}'..='\u{e01ef}'
-    )
 }
