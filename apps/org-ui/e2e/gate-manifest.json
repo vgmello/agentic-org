@@ -195,7 +195,7 @@
 		{ "from": "e2e/production-unavailable.spec.ts", "to": "src/routes/(shell)/org-chart/+page.svelte", "why": "Asserts the static release ignores fake-enabling query flags on the org chart; the production journeys always run." }
 	],
 	"rules": {
-		"ignore": ["**/*.md", "src/**/*.{test,spec}.{js,ts}", "scripts/ui-gate*.ts", ".gitignore"],
+		"ignore": ["**/*.md", "src/**/*.{test,spec}.{js,ts}", "scripts/ui-gate*.ts", ".gitignore", ".mcp.json"],
 		"noImpact": ["../org-agent/**", "../org-server/**", "../org-office-host/**", "../../docs/**", "../../spikes/**", "../../LICENSE", "../../.github/CODEOWNERS"],
 		"shared": [
 			"src/lib/components/ui/**", "src/app.*", "src/hooks.*", "src/params/**", "src/routes/+*", "src/routes/(shell)/+*", "src/routes/(onboarding)/+*",

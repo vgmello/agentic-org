@@ -13,3 +13,6 @@ playwright-report/
 
 test-results-csp-gateway/
 test-results-csp/
+
+# Claude Code local approvals
+.claude/settings.local.json

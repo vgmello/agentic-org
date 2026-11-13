@@ -60,6 +60,20 @@ test('TEAM-1 TEAM-10 BUG-70 OC-4: View menu preserves list, fit and collapse com
 	await shot(page, 'oc1-view-menu-actions');
 });
 
+test('BUG-159: with the View menu open, one click on another tab closes the menu and switches tabs', async ({ page }) => {
+	await open(page);
+	await page.getByRole('button', { name: 'View', exact: true }).click();
+	await expect(page.getByRole('menu')).toBeVisible();
+	const people = page.getByRole('tab', { name: 'People', exact: true });
+	await expect(people).toHaveAttribute('aria-selected', 'false');
+	// A real pointer click at the tab's centre, not a forced locator click, so a blocked <body> fails here.
+	const box = (await people.boundingBox())!;
+	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+	await expect(page.getByRole('menu')).toHaveCount(0);
+	await expect(people).toHaveAttribute('aria-selected', 'true');
+	await expect(people).toBeFocused();
+});
+
 test('TEAM-14 BUG-70 OC-5: unassigned project copy is a quiet Callout', async ({ page }) => {
 	await open(page);
 	const note = page.getByTestId('unassigned-note');
