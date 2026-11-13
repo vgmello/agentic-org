@@ -249,7 +249,7 @@ fn flags(value: &str) {
         })
         .expect("unsupported non-lint rustflag");
         assert!(
-            !lint.is_empty() && !lint.starts_with('-'),
+            !lint.is_empty() && !lint.starts_with('-') && !lint.starts_with('@'),
             "invalid lint flag argument"
         );
         if ["-A", "-W", "--allow", "--warn", "--force-warn"].contains(&flag) {

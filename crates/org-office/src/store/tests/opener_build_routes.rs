@@ -32,6 +32,8 @@ fn sqlcipher_build_flags_admit_only_complete_lint_options() {
             vec![flag],
             vec![flag, ""],
             vec![flag, "-Clinker=tools/wrap"],
+            vec![flag, "@tools/args"],
+            vec![flag, "@@tools/args"],
         ] {
             let source = format!("build.rustflags={}", serde_json::to_string(&args).unwrap());
             assert!(
@@ -104,6 +106,10 @@ fn sqlcipher_build_flags_refuse_compiler_execution_routes_in_every_scope() {
         vec!["-lhelper"],
         vec!["--link=helper"],
         vec!["@tools/args"],
+        vec!["-D", "@/absolute/args"],
+        vec!["--deny", "@tools/args"],
+        vec!["-D@tools/args"],
+        vec!["--deny=@tools/args"],
         vec!["--cap-lints", "allow"],
         vec!["--cap-lints=allow"],
         vec!["--unknown"],
@@ -168,6 +174,8 @@ fn sqlcipher_build_routes_refuse_tool_config_and_environment_at_inventory_entry(
         "[alias]\ncheck='!tools/check'".to_string(),
         "alias.check=['clippy','--config','tools/config']".to_string(),
         "include=['tools/config']".to_string(),
+        "build.rustflags=['-D','@tools/args']".to_string(),
+        "build.rustflags='--deny @tools/args'".to_string(),
         "[unstable]\nbuild-std=['std']".to_string(),
         "[build]\nrustflags=['-Clinker=tools/wrap']".to_string(),
         "target.x86_64-unknown-linux-gnu.rustflags=['--extern=helper=tools/helper.rlib']"
