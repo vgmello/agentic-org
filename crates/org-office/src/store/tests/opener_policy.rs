@@ -2006,14 +2006,22 @@ pub(super) fn manifest_paths(
             } else if matches!(
                 names.as_slice(),
                 [
-                    "dependencies" | "dev-dependencies" | "build-dependencies",
+                    "dependencies"
+                        | "dev-dependencies"
+                        | "build-dependencies"
+                        | "dev_dependencies"
+                        | "build_dependencies",
                     _,
                     _
                 ] | ["workspace", "dependencies", _, _]
                     | [
                         "target",
                         _,
-                        "dependencies" | "dev-dependencies" | "build-dependencies",
+                        "dependencies"
+                            | "dev-dependencies"
+                            | "build-dependencies"
+                            | "dev_dependencies"
+                            | "build_dependencies",
                         _,
                         _
                     ]
@@ -2022,10 +2030,18 @@ pub(super) fn manifest_paths(
                     Some("path") => {
                         scope.require(&base.join(string(value)).join("Cargo.toml"));
                     }
-                    Some("git") => assert!(
-                        !string(value).to_ascii_lowercase().starts_with("file:"),
-                        "local Git sources unsupported"
-                    ),
+                    Some("git") => {
+                        let url = string(value);
+                        assert!(
+                            !url.bytes()
+                                .any(|byte| byte.is_ascii_control() || byte == b' '),
+                            "unsupported Git URL whitespace"
+                        );
+                        assert!(
+                            !url.to_ascii_lowercase().starts_with("file:"),
+                            "local Git sources unsupported"
+                        );
+                    }
                     _ => {}
                 }
             }

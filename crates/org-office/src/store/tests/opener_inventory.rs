@@ -766,12 +766,15 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
         ("", "printf '{} invalid-json'", true, false),
         ("", "change-lock", true, true),
         ("", "manifest-invalid", false, false),
+        ("", "manifest-invalid-url", false, false),
+        ("", "manifest-invalid-legacy", false, false),
     ] {
         for toolchain in [false, true] {
-            let manifest = if script == "manifest-invalid" {
-                "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[workspace.dependencies]\nunused={path='untracked'}"
-            } else {
-                "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'"
+            let manifest = match script {
+                "manifest-invalid" => "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[workspace.dependencies]\nunused={path='untracked'}",
+                "manifest-invalid-url" => "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nhelper={git=' file:///tmp/repo'}",
+                "manifest-invalid-legacy" => "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[target.'cfg(any())'.build_dependencies]\nhelper={git='file:///tmp/repo'}",
+                _ => "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'",
             };
             let dir = fixture(&[
                 ("Cargo.toml", manifest),
@@ -1169,5 +1172,144 @@ fn sqlcipher_cargo_refuses_a_separate_nested_workspace() {
     assert_eq!(
         std::fs::read(dir.path().join("Cargo.lock")).unwrap(),
         before
+    );
+}
+
+#[test]
+fn sqlcipher_manifest_git_urls_refuse_whitespace_normalization() {
+    let dir = fixture(&[("Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'")]);
+    let scope = tracked(dir.path());
+    super::opener_policy::manifest_paths(
+        &scope,
+        &scope.root.join("Cargo.toml"),
+        "[dependencies]\nremote={git='https://example.test/remote'}",
+    );
+    let mut admitted = Vec::new();
+    for url in [
+        "' file:///tmp/repo'",
+        "'file:///tmp/repo '",
+        "\"\\tfile:///tmp/repo\"",
+        "\"f\\ti\\rl\\ne:///tmp/repo\"",
+        "\"\\u0000file:///tmp/repo\"",
+    ] {
+        let source = format!("[dependencies]\nhelper={{git={url}}}");
+        if std::panic::catch_unwind(|| {
+            super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &source)
+        })
+        .is_ok()
+        {
+            admitted.push(url);
+        }
+    }
+    assert!(admitted.is_empty(), "admitted local Git URLs: {admitted:?}");
+}
+
+#[test]
+fn sqlcipher_manifest_validates_legacy_dependency_tables() {
+    let dir = fixture(&[
+        ("Cargo.toml", "[workspace]\nmembers=['member']"),
+        (
+            "member/Cargo.toml",
+            "[package]\nname='member'\nversion='0.1.0'",
+        ),
+    ]);
+    let scope = tracked(dir.path());
+    let mut admitted = Vec::new();
+    for table in [
+        "dev_dependencies",
+        "build_dependencies",
+        "target.'cfg(any())'.dev_dependencies",
+        "target.'cfg(any())'.build_dependencies",
+    ] {
+        for form in [
+            format!("[{table}]\nhelper={{path='member'}}"),
+            format!("[{table}.helper]\npath='member'"),
+            format!("{table}.helper.path='member'"),
+        ] {
+            super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &form);
+            let invalid = form.replace("'member'", "'untracked'");
+            if std::panic::catch_unwind(|| {
+                super::opener_policy::manifest_paths(
+                    &scope,
+                    &scope.root.join("Cargo.toml"),
+                    &invalid,
+                )
+            })
+            .is_ok()
+            {
+                admitted.push(invalid);
+            }
+        }
+        let remote = format!("[{table}]\nhelper={{git='https://example.test/remote'}}");
+        super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &remote);
+        let local = remote.replace("https://example.test/remote", "file:///tmp/repo");
+        if std::panic::catch_unwind(|| {
+            super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &local)
+        })
+        .is_ok()
+        {
+            admitted.push(local);
+        }
+    }
+    assert!(
+        admitted.is_empty(),
+        "admitted legacy source declarations: {admitted:?}"
+    );
+}
+
+#[test]
+fn sqlcipher_cargo_normalized_local_git_aliases_are_refused() {
+    let mut admitted = Vec::new();
+    for (table, url) in [
+        ("dependencies", "' file:///tmp/repo'"),
+        ("dependencies", "\"f\\ti\\rl\\ne:///tmp/repo\""),
+        ("dev_dependencies", "'file:///tmp/repo'"),
+        ("build_dependencies", "'file:///tmp/repo'"),
+        ("target.'cfg(any())'.dev_dependencies", "'file:///tmp/repo'"),
+        (
+            "target.'cfg(any())'.build_dependencies",
+            "'file:///tmp/repo'",
+        ),
+    ] {
+        let manifest = format!("[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[{table}]\nhelper={{git={url}}}");
+        let dir = fixture(&[
+            ("Cargo.toml", &manifest),
+            (
+                "Cargo.lock",
+                "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
+            ),
+            ("src/lib.rs", "pub struct Allowed;"),
+        ]);
+        let output = bounded_output(
+            Command::new("cargo").current_dir(dir.path()).args([
+                "metadata",
+                "--locked",
+                "--offline",
+                "--no-deps",
+                "--format-version",
+                "1",
+            ]),
+            "real Cargo local Git normalization fixture",
+        );
+        let metadata: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(
+            metadata["packages"][0]["dependencies"][0]["source"]
+                .as_str()
+                .unwrap()
+                .starts_with("git+file:"),
+            "Cargo did not normalize {table}: {url}"
+        );
+        let before = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
+        if std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_ok() {
+            admitted.push(format!("{table}: {url}"));
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join("Cargo.lock")).unwrap(),
+            before
+        );
+    }
+    assert!(
+        admitted.is_empty(),
+        "inventory admitted local Git: {admitted:?}"
     );
 }
