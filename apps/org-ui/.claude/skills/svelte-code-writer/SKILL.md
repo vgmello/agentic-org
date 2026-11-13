@@ -5,7 +5,7 @@ description: CLI tools for Svelte 5 documentation lookup and code analysis. MUST
 
 ## CLI tools
 
-You have access to `@sveltejs/mcp` CLI for Svelte-specific assistance. Use these commands via `npx`:
+You have access to `@sveltejs/mcp` CLI for Svelte-specific assistance. Run these commands from `apps/org-ui` with the pinned local binary `./node_modules/.bin/svelte-mcp` (after `bun install --frozen-lockfile`); never with `npx` or `bunx`, which would download a package at run time:
 
 ### List documentation sections
 
