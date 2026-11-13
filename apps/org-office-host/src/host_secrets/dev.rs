@@ -1,4 +1,6 @@
 //! Debug-only plaintext files. A lifetime lock owns crash-temp cleanup.
+//! A put error can follow publication: the value may be visible but not durable.
+//! Reload the item before deciding how to recover; an error does not imply rollback.
 
 #[cfg(target_os = "linux")]
 use libc::__errno_location as errno;
@@ -140,6 +142,11 @@ impl DevSecrets {
                 return Err(e.into());
             }
         }
+        self.sync_directory()
+    }
+    fn sync_directory(&self) -> Result<(), Error> {
+        #[cfg(test)]
+        super::tests::before_directory_sync()?;
         self.directory.sync_all()?;
         Ok(())
     }
@@ -191,11 +198,11 @@ impl HostSecrets for DevSecrets {
             if add_only {
                 self.remove(&temporary)?;
             }
-            self.directory.sync_all()?;
+            self.sync_directory()?;
             Ok(())
         })();
-        if result.is_err() {
-            let _ = self.remove(&temporary);
+        if result.is_err() && self.remove(&temporary).is_err() {
+            crate::host_log::log("could not clean up a temporary host secret");
         }
         result
     }

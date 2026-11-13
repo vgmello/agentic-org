@@ -93,6 +93,8 @@ impl fmt::Debug for Value {
 #[cfg_attr(not(test), expect(dead_code, reason = "activated by 2b.2b hostdb"))]
 pub(crate) trait HostSecrets: Send + Sync {
     /// TLS items are add-only; a duplicate preserves the first stored value.
+    /// In development custody, an error may follow publication without durability;
+    /// reload before deciding recovery, since an error does not imply rollback.
     fn put(&self, name: &Name, value: &Value) -> Result<(), Error>;
     fn load(&self, name: &Name) -> Result<Option<Value>, Error>;
     fn delete(&self, name: &Name) -> Result<(), Error>;
