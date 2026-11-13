@@ -22,6 +22,7 @@
 		requestId,
 		start,
 		snapshot,
+		me,
 		items,
 		send,
 		onchanged
@@ -32,6 +33,8 @@
 		/** A step to begin as soon as the page is there. */
 		start?: Step;
 		snapshot: OrgSnapshot;
+		/** The owner's id: "Raised by you". */
+		me: string;
 		/** Every work item (the tasks an approval made, and the other open requests, are looked up here). */
 		items: WorkItemSummary[];
 		send: (draft: WorkDraft) => Promise<unknown>;
@@ -112,7 +115,6 @@
 
 	const s = $derived(item?.summary);
 	const v = $derived(s?.version ?? 0);
-	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
 	const open_ = $derived(!!s && OPEN_STATUSES.includes(s.status));
 	const projects = $derived((snapshot.projects ?? []).filter((p) => !p.archived));
 	const projectName = $derived(s?.project_id ? ((snapshot.projects ?? []).find((p) => p.id === s.project_id)?.name ?? 'Unknown project') : 'No project yet');
