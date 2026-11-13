@@ -37,6 +37,20 @@ pub(super) struct Control {
     fence: Arc<Mutex<()>>,
     #[cfg(test)]
     before_marker: Option<Box<dyn FnOnce() + Send>>,
+    /// Runs on the worker's own stream just before that handshake write (tests fail it there).
+    #[cfg(test)]
+    before_write: Option<(HandshakeWrite, WriteHook)>,
+}
+
+#[cfg(test)]
+type WriteHook = Box<dyn FnOnce(&UnixStream) + Send>;
+
+/// The handshake's two writes, for `before_write`.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum HandshakeWrite {
+    ReadyForSecrets,
+    FdsReceived,
 }
 
 impl Control {
@@ -49,6 +63,8 @@ impl Control {
             fence,
             #[cfg(test)]
             before_marker: None,
+            #[cfg(test)]
+            before_write: None,
         }
     }
 
@@ -94,6 +110,13 @@ impl Control {
                     .lock()
                     .map_err(|_| LaunchError::Invalid("rendezvous writer poisoned"))?;
                 let stream = &mut *writer;
+                #[cfg(test)]
+                if let Some((_, hook)) = self
+                    .before_write
+                    .take_if(|(at, _)| *at == HandshakeWrite::ReadyForSecrets)
+                {
+                    hook(stream);
+                }
                 let ready = frame::write_message(stream, &v3::ReadyForSecrets);
                 end_on_io(stream, ready.map_err(LaunchError::Frame))?;
                 let receiver = self
@@ -117,6 +140,13 @@ impl Control {
                         receiver.receive_marker(handoff.fds().len(), v3::FD_MARKER, &self.fence)
                     })?;
                     self.transfer = fds.pop();
+                    #[cfg(test)]
+                    if let Some((_, hook)) = self
+                        .before_write
+                        .take_if(|(at, _)| *at == HandshakeWrite::FdsReceived)
+                    {
+                        hook(stream);
+                    }
                     let received = v3::write_rendezvous_event(
                         stream,
                         &RendezvousEvent::FdsReceived {

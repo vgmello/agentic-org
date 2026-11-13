@@ -1253,17 +1253,28 @@ fn only_an_unexpected_shutdown_failure_is_logged() {
     assert!(worth_logging(&io::Error::from_raw_os_error(libc::EBADF)));
 }
 
-#[test]
-fn a_failed_handshake_ack_ends_the_rendezvous() {
+/// Fails one handshake write on the worker's OWN side (its write half shut just before it), so
+/// the failure is the same on every OS: a write after the peer's `shutdown(Read)` fails on Linux
+/// but succeeds on macOS. Then the worker must have ended its read side too (`end_on_io`): its
+/// read gives EOF at once although the host stays connected; with only the write half shut,
+/// the read would wait.
+fn a_failed_handshake_write_ends_the_rendezvous(at: HandshakeWrite) {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (_dir, listener, path) = listener();
     let (mut control, _output) = launch(&first(&path, FirstLine::Start));
+    control.before_write = Some((
+        at,
+        Box::new(|stream: &UnixStream| stream.shutdown(std::net::Shutdown::Write).unwrap()),
+    ));
     let (transfer, _host_end) = UnixDatagram::pair().unwrap();
     let (done, hold) = std::sync::mpsc::channel::<()>();
     let host = std::thread::spawn(move || {
+        if at == HandshakeWrite::ReadyForSecrets {
+            let _connected = listener.accept().unwrap();
+            let _ = hold.recv_timeout(WAIT);
+            return;
+        }
         let (stream, _reader) = accept(listener);
-        // The host stops reading (so the ACK fails) but stays connected and can still write.
-        stream.shutdown(std::net::Shutdown::Read).unwrap();
         (&stream)
             .write_all(&v3::encode_handoff(&handoff(FirstLine::Start)).unwrap())
             .unwrap();
@@ -1271,14 +1282,26 @@ fn a_failed_handshake_ack_ends_the_rendezvous() {
         let _ = hold.recv_timeout(WAIT);
     });
     let failed = control.read(FirstLine::Start);
-    assert!(matches!(failed, Err(LaunchError::Frame(FrameError::Io(_)))));
-    // The worker ended its own side too: it reads EOF at once though the host is connected.
+    assert!(
+        matches!(failed, Err(LaunchError::Frame(FrameError::Io(_)))),
+        "{at:?}"
+    );
     let writer = control.rendezvous.as_ref().unwrap().lock().unwrap();
     let mut ours = writer.try_clone().unwrap();
     drop(writer);
     ours.set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
-    assert_eq!(ours.read(&mut [0; 1]).unwrap(), 0);
+    assert_eq!(ours.read(&mut [0; 1]).unwrap(), 0, "{at:?}");
     done.send(()).unwrap();
     host.join().unwrap();
+}
+
+#[test]
+fn a_failed_ready_for_secrets_ends_the_rendezvous() {
+    a_failed_handshake_write_ends_the_rendezvous(HandshakeWrite::ReadyForSecrets);
+}
+
+#[test]
+fn a_failed_handshake_ack_ends_the_rendezvous() {
+    a_failed_handshake_write_ends_the_rendezvous(HandshakeWrite::FdsReceived);
 }
