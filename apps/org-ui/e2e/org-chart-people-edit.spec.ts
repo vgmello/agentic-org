@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import type { OrgApi } from '../src/lib/org/api';
 
 async function openChart(page: Page) {
 	await visit(page, '/create');
@@ -30,6 +31,52 @@ test('PEOPLE-3: Add person takes a name, contact, teams and a manager; they appe
 	await expect(card(page, 'web').getByRole('button', { name: /^Sam Ortiz/ })).toBeVisible();
 	await expect(page.getByTestId('selected-member')).toContainText('Sam Ortiz');
 });
+
+for (const outcome of ['complete', 'partial'] as const) {
+	test(`BUG-183 PEOPLE-3: ${outcome} completion keeps the submitted name when the snapshot arrives before the command response`, { tag: '@webkit' }, async ({ page }) => {
+		await openChart(page);
+		await page.evaluate(async (partial) => {
+			const path = '/e2e/fakes/org-api.ts';
+			const { orgApi }: { orgApi: OrgApi } = await import(path);
+			if (partial) (window as Window & { __mockOrgFailNext(method: string): void }).__mockOrgFailNext('team.add_member');
+			const command = orgApi.command.bind(orgApi);
+			const released = new Promise<void>((resolve) => window.addEventListener('bug183-release-created', () => resolve(), { once: true }));
+			orgApi.command = async (organization, input) => {
+				const answer = await command(organization, input);
+				if (input.method === 'member.add_person') {
+					orgApi.command = command;
+					// The real mock commits and notifies its feed; only its response is held.
+					await released;
+				}
+				return answer;
+			};
+		}, outcome === 'partial');
+		await page.getByRole('button', { name: 'Add person' }).first().click();
+		const sheet = page.getByRole('dialog', { name: 'Add person' });
+		await sheet.getByLabel('Name').fill('  Sam Ortiz  ');
+		await sheet.getByLabel('Contact').fill('sam@example.com');
+		await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
+		await sheet.getByLabel('Reports to').selectOption({ label: 'Avery Stone' });
+		await sheet.getByRole('button', { name: 'Add person' }).click();
+		// This proves the derived name check has observed the new snapshot before submit resumes.
+		await expect(sheet.getByRole('alert')).toHaveText('Sam Ortiz is already in Acme. Use a different name, such as Sam Ortiz (2).');
+		await expect(sheet.getByLabel('Name')).toBeDisabled();
+		await expect(sheet.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+		await shot(page, 'bug183-snapshot-before-completion');
+		await page.evaluate(() => window.dispatchEvent(new Event('bug183-release-created')));
+		await expect(sheet).toHaveCount(0);
+		if (outcome === 'partial') {
+			await expect(page.getByText('Added Sam Ortiz, but not everything went through.')).toBeVisible();
+			await expect(page.getByText("Couldn't add Sam Ortiz to Web: The office went away.", { exact: true })).toBeVisible();
+			await expect(card(page, 'web').getByRole('button', { name: /^Sam Ortiz/ })).toHaveCount(0);
+		} else {
+			await expect(page.getByText('Added Sam Ortiz. Agents can now reach Sam Ortiz.')).toBeVisible();
+			await expect(card(page, 'web').getByRole('button', { name: /^Sam Ortiz/ })).toBeVisible();
+		}
+		await expect(page.getByTestId('selected-member')).toContainText('Sam Ortiz');
+		await shot(page, 'bug183-completed-with-submitted-name');
+	});
+}
 
 test('PEOPLE-4: a name that is already a handle is refused inline with a suggestion, and Add stays disabled', async ({ page }) => {
 	await openChart(page);
