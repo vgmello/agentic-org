@@ -106,7 +106,8 @@ test('TEAM-1 BUG-70 OC-9: a chart frame is named, focusable and visibly outlined
 	const frame = page.getByRole('region', { name: 'Teams chart', exact: true });
 	await expect(frame).toHaveAttribute('tabindex', '0');
 	await expect(frame).toHaveCSS('overflow-x', 'auto');
-	await frame.focus();
+	// A key press first, so the focus is keyboard focus in Firefox too (BUG-191); a plain focus() is mouse-like there.
+	await page.keyboard.press('Tab'); await frame.focus();
 	await expect(frame).toHaveCSS('outline-width', '2px');
 	await shot(page, 'oc1-focusable-chart-frame', { context: frame });
 });

@@ -4,6 +4,10 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
+// Firefox (Playwright 1.65, build 1572) segfaults in libxul when a getByRole('tabpanel', { name }) locator, named by
+// aria-labelledby, is measured (shot's boundingBox) and then evaluateAll'd (BUG-191), so these panels are found by id.
+const tabPanel = (page: Page, id: 'teams' | 'people' | 'reporting') => page.locator(`#panel-${id}[role=tabpanel]`);
+
 async function openChart(page: Page, width: number, scale = 1, query = '') {
 	await page.setViewportSize({ width, height: 640 });
 	await visit(page, '/create');
@@ -20,13 +24,17 @@ async function openChart(page: Page, width: number, scale = 1, query = '') {
 
 async function expectControlsFit(page: Page, group: Locator) {
 	const width = page.viewportSize()!.width;
-	const scope = (await group.boundingBox())!;
-	const boxes = await group.locator('button, input, select').evaluateAll((elements) => elements.map((element) => {
-		const box = element.getBoundingClientRect(), range = document.createRange();
-		range.selectNodeContents(element);
-		return { label: element.textContent?.trim() ?? '', left: box.left, right: box.right,
-			paintFits: [...range.getClientRects()].every((r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) };
-	}));
+	// One in-page read of the group and its controls: Firefox segfaults on boundingBox() followed by evaluateAll() under
+	// a role locator with a name (BUG-191).
+	const { scope, boxes } = await group.evaluate((root) => {
+		const g = root.getBoundingClientRect();
+		return { scope: { x: g.x, width: g.width }, boxes: [...root.querySelectorAll('button, input, select')].map((element) => {
+			const box = element.getBoundingClientRect(), range = document.createRange();
+			range.selectNodeContents(element);
+			return { label: element.textContent?.trim() ?? '', left: box.left, right: box.right,
+				paintFits: [...range.getClientRects()].every((r) => r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) };
+		}) };
+	});
 	expect(boxes.length).toBeGreaterThan(0);
 	for (const box of boxes) {
 		expect.soft(box.left, `${box.label} starts inside the viewport`).toBeGreaterThanOrEqual(0);
@@ -47,7 +55,7 @@ async function expectControlsFit(page: Page, group: Locator) {
 for (const width of [320, 960, 1280]) {
 	test(`BUG-2: every Teams action stays inside the viewport at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, width);
-		const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
+		const panel = tabPanel(page, 'teams');
 		const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
 		await expect(actions.getByRole('button')).toHaveText(['New team', 'Add person', 'Add agent', 'View']);
 		await shot(page, `bug2-teams-toolbar-${width}`, { context: actions });
@@ -102,7 +110,7 @@ for (const width of [320, 640, 720, 960, 1280]) {
 		test(`BUG-2: all chart views fit at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			await openChart(page, width, scale);
 			const tabs = page.getByRole('tablist', { name: 'Org chart views' });
-			const teams = page.getByRole('tabpanel', { name: 'Teams', exact: true });
+			const teams = tabPanel(page, 'teams');
 			const actions = teams.getByRole('button', { name: 'New team', exact: true }).locator('..');
 			await shot(page, `bug2-teams-${width}-${scale * 100}`, { context: actions });
 			await expectControlsFit(page, actions);
@@ -126,13 +134,13 @@ for (const width of [320, 640, 720, 960, 1280]) {
 			await viewAction(page, 'Chart');
 			await expect(page.getByTestId('teams-chart')).toBeVisible();
 			await tabs.getByRole('tab', { name: 'People', exact: true }).click();
-			const people = page.getByRole('tabpanel', { name: 'People', exact: true });
+			const people = tabPanel(page, 'people');
 			const peopleControls = people.getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-people-${width}-${scale * 100}`, { context: peopleControls });
 			await expectControlsFit(page, peopleControls);
 			await expectControlsFit(page, people.getByRole('button', { name: 'Add person', exact: true }).locator('..'));
 			await tabs.getByRole('tab', { name: 'Reporting lines', exact: true }).click();
-			const reportingControls = page.getByRole('tabpanel', { name: 'Reporting lines', exact: true }).getByRole('button', { name: 'View', exact: true }).locator('..');
+			const reportingControls = tabPanel(page, 'reporting').getByRole('button', { name: 'View', exact: true }).locator('..');
 			await shot(page, `bug2-reporting-${width}-${scale * 100}`, { context: reportingControls });
 			await expectControlsFit(page, reportingControls);
 		});
@@ -144,7 +152,7 @@ for (const width of [320, 960]) {
 		test(`BUG-2: wrapping keeps DOM and keyboard focus order at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page, browserName }) => {
 			await openChart(page, width, scale);
 			const search = page.getByRole('searchbox', { name: 'Search members', exact: true });
-			const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
+			const panel = tabPanel(page, 'teams');
 			const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
 			await shot(page, `bug2-order-${width}-${scale * 100}`, { context: actions });
 			const positions = await actions.getByRole('button').evaluateAll((elements) => elements.map((element) => {
@@ -177,13 +185,13 @@ test('BUG-2: the empty fixture keeps toolbar controls at 320px and 200% text', {
 	await openChart(page, 320, 2, '?org=empty');
 	await expect(page.getByText('No teams yet', { exact: true })).toBeVisible();
 	await expect(page.getByTestId('teams-chart')).toHaveCount(0);
-	const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
+	const panel = tabPanel(page, 'teams');
 	const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
 	await shot(page, 'bug2-empty-teams-320-200', { context: actions });
 	await expectControlsFit(page, actions);
 	await page.getByRole('tab', { name: 'People', exact: true }).click();
 	await expect(page.getByText('No teams yet', { exact: true })).toBeVisible();
-	const add = page.getByRole('tabpanel', { name: 'People', exact: true }).getByRole('button', { name: 'Add person', exact: true });
+	const add = tabPanel(page, 'people').getByRole('button', { name: 'Add person', exact: true });
 	await shot(page, 'bug2-empty-people-320-200', { context: add.locator('..') });
 	await expectControlsFit(page, add.locator('..'));
 });

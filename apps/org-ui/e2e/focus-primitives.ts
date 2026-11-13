@@ -48,6 +48,8 @@ export async function outlineContrast(control: Locator, inset: boolean) {
 	}, inset);
 }
 export async function keyboardFocus(page: Page, control: Locator) {
+	// Blur first so focus really moves: Firefox re-evaluates :focus-visible only when focus moves (BUG-191).
+	await control.evaluate((element) => (element as HTMLElement).blur());
 	await page.keyboard.press('Tab'); await control.focus(); // Real keyboard modality, including native WebKit.
 }
 export async function readable(control: Locator) {
