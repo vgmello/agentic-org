@@ -4,8 +4,8 @@
 //! and events, as `docs/design/tasks-projects-docs.md` (W7) describes them. A **pure domain
 //! library**: it has no SQL, no git, no network and no clock of its own. It speaks the wire
 //! contract's types ([`org_proto::work`]) and defines the ports the office implements
-//! (`store.rs`, server-dev): [`OrgView`], [`WorkStore`] / [`WorkTxn`], [`WorkReads`] and
-//! [`Clock`].
+//! (`store.rs`, server-dev): [`OrgView`], [`WorkStore`] / [`WorkTxn`], [`WorkReads`],
+//! [`WorkActivityReads`] and [`Clock`].
 //!
 //! ## One write, one transaction
 //! [`WorkService::call`] hands [`execute`] to [`WorkStore::transact`] as a re-runnable closure.
@@ -93,7 +93,11 @@ pub use model::{
     work_item, BugFields, ItemReadParts, OpenWait, StoredComment, StoredItem, StoredLink,
     StoredResult, StoredStep, TaskFields,
 };
-pub use ports::{Clock, NumberScope, OrgView, StoreError, TxnFn, WorkReads, WorkStore, WorkTxn};
+pub use ports::{
+    Clock, LatestActivity, NumberScope, OrgView, StoreError, TxnFn, WorkActivityEntry,
+    WorkActivityError, WorkActivityPage, WorkActivityPosition, WorkActivityQuery,
+    WorkActivityReads, WorkReads, WorkStore, WorkTxn,
+};
 pub use refs::{resolve_item, ItemRef};
 pub use service::{read_item, WorkService};
 pub use states::{is_task_status, is_terminal, starts_cycle, task_move_allowed};

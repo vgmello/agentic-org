@@ -1,7 +1,8 @@
 //! The ports `org-work` defines and the office implements (`store.rs`, server-dev): the
 //! organization as the office has applied it ([`OrgView`]), the work storage's write request
-//! ([`WorkStore::transact`] and [`WorkTxn`]), its reads ([`WorkReads`]) and the clock
-//! ([`Clock`]). All SQL lives behind them (ADR-0002 decision 5).
+//! ([`WorkStore::transact`] and [`WorkTxn`]), its reads ([`WorkReads`]), the owner's activity
+//! feed ([`WorkActivityReads`]) and the clock ([`Clock`]). All SQL lives behind them (ADR-0002
+//! decision 5).
 
 use std::error::Error;
 use std::fmt;
@@ -196,6 +197,178 @@ pub trait WorkReads {
     /// The items that have a live link of `kind` to the item `target_id`, deleted ones
     /// included (a bug's fix tasks, for its summary's `fixed_by`).
     fn linked_to(&self, target_id: &str, kind: LinkKind) -> Result<Vec<StoredItem>, StoreError>;
+}
+
+/// A work event's place in commit order: its call's feed row, then its target, then its
+/// version. The owner's activity feed lists events with all three descending, which is this
+/// type's `Ord` reversed.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WorkActivityPosition {
+    pub feed_seq: u64,
+    pub target_id: String,
+    pub version: u64,
+}
+
+/// One page of the owner's work activity (IA-12 decision 7). Filters combine with AND; each is
+/// internally OR over the actor and the event's member fields ([`Self::involves`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkActivityQuery {
+    /// The incarnation page 1 saw (`None`: the office had none yet).
+    pub incarnation: Option<String>,
+    /// The newest feed row the cursor may show, fixed by page 1.
+    pub ceiling: u64,
+    /// Exclusive: the page starts just after (older than) this position.
+    pub before: Option<WorkActivityPosition>,
+    /// The merge key of the last entry the cursor emitted; `u64::MAX` on page 1.
+    pub prev_key: u64,
+    pub member: Option<String>,
+    /// A team's direct members, resolved on page 1.
+    pub team_members: Option<Vec<String>>,
+    /// Items currently in this project.
+    pub project: Option<String>,
+    /// At most this many entries (0 counts as 1).
+    pub limit: u32,
+    /// At most this many feed rows started, matching or not (0 counts as 1). The rest of the row `before`
+    /// points into doesn't count again, so every page that scans moves on.
+    pub scan: u32,
+}
+
+impl WorkActivityQuery {
+    /// Whether the event passes the `member` and `team_members` filters: the actor or any
+    /// member field (assignees, scopers, the member waited on or watching, a question's
+    /// addressee) is the member, and one of them is in the team.
+    pub fn involves(&self, event: &WorkEvent) -> bool {
+        let people = event_members(event);
+        self.member
+            .as_ref()
+            .is_none_or(|m| people.contains(&m.as_str()))
+            && self
+                .team_members
+                .as_ref()
+                .is_none_or(|team| people.iter().any(|p| team.iter().any(|t| t == p)))
+    }
+}
+
+fn event_members(event: &WorkEvent) -> Vec<&str> {
+    use org_proto::work::WorkEventKind as K;
+    let fields: [Option<&String>; 2] = match &event.change {
+        K::Assigned { from, to } => [from.as_ref(), to.as_ref()],
+        K::Triaged { assignee_id, .. } => [assignee_id.as_ref(), None],
+        K::Routed {
+            scoper_from,
+            scoper_to,
+            ..
+        } => [scoper_from.as_ref(), scoper_to.as_ref()],
+        K::WaitingStarted { on_member_id, .. } | K::WaitingEnded { on_member_id, .. } => {
+            [Some(on_member_id), None]
+        }
+        K::Watched { member_id, .. } => [Some(member_id), None],
+        K::Comment { asks, .. } => [asks.as_ref(), None],
+        _ => [None, None],
+    };
+    event
+        .actor_id
+        .iter()
+        .chain(fields.into_iter().flatten())
+        .map(String::as_str)
+        .collect()
+}
+
+/// One work event in the activity feed, with its merge key: the running minimum of the
+/// events' times in commit order, seeded by the query's `prev_key`, so it never rises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkActivityEntry {
+    pub position: WorkActivityPosition,
+    pub event: WorkEvent,
+    /// `None`: the event's `at` doesn't parse. Its key is then the previous key, and the
+    /// caller marks the source degraded.
+    pub at_ms: Option<u64>,
+    pub key: u64,
+}
+
+/// What one activity read returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkActivityPage {
+    /// Newest first, at most `limit`.
+    pub entries: Vec<WorkActivityEntry>,
+    /// Where the next page resumes (its `before`): the last scanned event, or the last
+    /// returned one when matches were left over. `None`: nothing was scanned.
+    pub scanned_to: Option<WorkActivityPosition>,
+    /// The merge key at `scanned_to` (`prev_key` when nothing was scanned).
+    pub frontier: u64,
+    /// The walk reached the start of the feed with every match returned.
+    pub exhausted: bool,
+}
+
+/// Why an activity read failed.
+#[derive(Debug)]
+pub enum WorkActivityError {
+    /// The office's incarnation is not the cursor's: start again from page 1.
+    SnapshotRequired,
+    /// `before` names no stored event of this office (above the ceiling, a missing feed row,
+    /// a target not in that row, or a version not committed in it): a bad cursor, not a
+    /// storage failure.
+    InvalidPosition,
+    Store(StoreError),
+}
+
+impl fmt::Display for WorkActivityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SnapshotRequired => f.write_str("the work history was replaced; start again"),
+            Self::InvalidPosition => f.write_str("the activity position is not a stored one"),
+            Self::Store(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl Error for WorkActivityError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SnapshotRequired | Self::InvalidPosition => None,
+            Self::Store(error) => Some(error),
+        }
+    }
+}
+
+impl From<StoreError> for WorkActivityError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
+/// The owner's work activity, read from the read pool. Each call is one read transaction
+/// and never writes.
+pub trait WorkActivityReads {
+    /// Page 1's fixed point: the stored incarnation (read, never made) and the newest feed row
+    /// (0: none), which becomes the cursor's ceiling.
+    fn head(&self) -> Result<(Option<String>, u64), WorkActivityError>;
+    /// One page, newest first. [`WorkActivityError::SnapshotRequired`] when the stored
+    /// incarnation differs from the query's, except that none → one is compatible while the
+    /// ceiling is 0; [`WorkActivityError::InvalidPosition`] when `before` isn't a position
+    /// this office stored at or below the ceiling (`(feed_seq, "", 0)`: the start of a row).
+    fn activity_page(
+        &self,
+        query: &WorkActivityQuery,
+    ) -> Result<WorkActivityPage, WorkActivityError>;
+    /// For each project, the newest event in commit order, at or below `ceiling`, of the
+    /// items currently in it.
+    fn latest_by_project(
+        &self,
+        ceiling: u64,
+        project_ids: &[String],
+    ) -> Result<Vec<(String, LatestActivity)>, WorkActivityError>;
+}
+
+/// A project's latest work activity ([`WorkActivityReads::latest_by_project`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatestActivity {
+    /// No event of an item currently in the project.
+    None,
+    /// The newest event's time, in Unix milliseconds.
+    At(u64),
+    /// The newest event's `at` doesn't parse: the caller marks the source degraded.
+    Unknown,
 }
 
 /// The owning office's clock, in Unix milliseconds. The office keeps it monotonic (offices
