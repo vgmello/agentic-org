@@ -689,6 +689,119 @@ fn conflicts() {
     ]);
 }
 
+/// The P3 review corner (processes.md §3.2 rules 2, 3 and 5; ruled 2026-11-13: ada): an
+/// outermost team's file whose key can't be read, above a real seal lower in the same chain. The
+/// current behaviour fails closed: the unreadable file might seal the key, so it is the chain's
+/// seal and the lower seal is refused ("can't tell") before it can count. The conflict with a
+/// sibling chain names both: the can't-tell file (not its team), and the team whose own file
+/// seals the key, the outermost one below it (Tomas's LOW). A71 has one seal, the can't tell, with no version of its own, so
+/// the organization's version applies, or nothing.
+#[test]
+fn p3_corner_an_unreadable_outermost_file_above_a_real_seal_fails_closed() {
+    let files = |org_version: bool| {
+        let mut files = vec![
+            at(team("platform"), "broken", 1, "garbage"),
+            at(team("web"), "review", 2, "sealed"),
+            at(team("mobile"), "review", 3, ""),
+        ];
+        if org_version {
+            files.push(at(org(), "review", 1, ""));
+        }
+        files
+    };
+    check(vec![
+        (
+            "the can't tell is the chain's seal; the organization's version applies",
+            work(&[&["platform", "web"], &["mobile"]]),
+            files(true),
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [web] can't tell: platform/broken.md can't be read -> org",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "with no organization version, nothing applies (never the refused seal's)",
+            work(&[&["platform", "web"], &["mobile"]]),
+            files(false),
+            vec![
+                "review: none",
+                "review conflict mobile,platform sealed [web] can't tell: platform/broken.md can't be read -> none",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "two real seals below the can't tell: only the outermost one is named",
+            work(&[&["platform", "web", "ios"], &["mobile"]]),
+            {
+                let mut files = files(true);
+                files.push(at(team("ios"), "review", 4, "sealed"));
+                files
+            },
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [web] can't tell: platform/broken.md can't be read -> org",
+                "ios/review.md: can't tell: platform/broken.md can't be read",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "TP-1 seals: an overridable web review above a sealed ios one: ios is named",
+            work(&[&["platform", "web", "ios"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, ""),
+                at(team("ios"), "review", 4, "sealed"),
+                at(team("mobile"), "review", 3, ""),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [ios] can't tell: platform/broken.md can't be read -> org",
+                "ios/review.md: can't tell: platform/broken.md can't be read",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "TP-1 key: a sealed web file of another key names no one for review",
+            work(&[&["platform", "web"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "deploy", 2, "sealed"),
+                at(team("mobile"), "review", 3, ""),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "deploy: none",
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [] can't tell: platform/broken.md can't be read -> org",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/deploy.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "TP-1 place: a sealed review only in the sibling chain: web is not named",
+            work(&[&["platform", "web"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, ""),
+                at(team("mobile"), "review", 3, "sealed"),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [mobile] can't tell: platform/broken.md can't be read -> org",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+    ]);
+}
+
 #[test]
 fn r2b_an_unreadable_key_with_overridable_true_does_not_seal() {
     check(vec![(
