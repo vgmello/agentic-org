@@ -120,6 +120,7 @@ pub(super) fn metadata(
             )));
         }
     }
+    // Nonempty members and ids.contains below imply this; keep the precise error.
     assert!(!ids.is_empty(), "Cargo inventory has no packages");
     let members = value["workspace_members"]
         .as_array()
