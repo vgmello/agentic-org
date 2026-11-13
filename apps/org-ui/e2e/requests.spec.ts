@@ -8,6 +8,20 @@ async function open(page: Page) {
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
 }
+/** 200% text: the root is 32px on every page, whatever the app sets on it (checked, so a test never runs at 100% by accident). */
+async function largeText(page: Page) {
+	await page.addInitScript(() => {
+		// The document does not exist yet when this runs: the style goes in as soon as it does.
+		const put = () => {
+			const style = document.createElement('style');
+			style.textContent = 'html { font-size: 32px !important; }';
+			(document.head ?? document.documentElement).appendChild(style);
+		};
+		if (document.head) put();
+		else document.addEventListener('DOMContentLoaded', put, { once: true });
+	});
+}
+const expectLargeText = async (page: Page) => expect(await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)).toBe('32px');
 const queue = async (page: Page) => {
 	await visit(page, '/work');
 	await page.getByRole('tab', { name: /^Requests/ }).click();
@@ -882,9 +896,7 @@ test('RQS-4: taking an unresolved handle out of the words keeps the person the o
 
 for (const [width, height] of [[390, 844], [320, 640]] as const) {
 	test(`F1/F7: at ${width}px with 200% text the capture panel and the Work page do not overflow sideways`, async ({ page }) => {
-		await page.addInitScript(() => {
-			document.documentElement.style.fontSize = '200%';
-		});
+		await largeText(page);
 		await page.setViewportSize({ width, height });
 		await open(page);
 		await queue(page);
@@ -905,9 +917,136 @@ for (const [width, height] of [[390, 844], [320, 640]] as const) {
 			expect(b.x).toBeGreaterThanOrEqual(box.x);
 			expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
 		}
+		// The panel scrolls as a whole: the heading is on screen at the top, the words field still shows 3 lines, and nothing is wider than the panel.
+		await dialog.evaluate((el) => (el.scrollTop = 0));
+		const heading = (await dialog.getByRole('heading', { name: 'New request' }).boundingBox())!;
+		expect(heading.y).toBeGreaterThanOrEqual(0);
+		await expectLargeText(page);
+		// The scrolling body around the words field shows at least 3 lines of them (its own height is not what the person sees if the body is a sliver).
+		const lines = await dialog.getByLabel('What do you need?').evaluate((el) => {
+			let body: HTMLElement | null = el.parentElement;
+			while (body && getComputedStyle(body).overflowY !== 'auto') body = body.parentElement;
+			return Math.min(el.getBoundingClientRect().height, body!.clientHeight) / parseFloat(getComputedStyle(el).lineHeight);
+		});
+		expect(lines).toBeGreaterThanOrEqual(3);
+		const wide = await dialog.evaluate((el) => {
+			const right = el.getBoundingClientRect().right + 1;
+			return [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className);
+		});
+		expect(wide).toEqual([]);
+		// At the end of the scroll the last button is inside the panel.
+		await dialog.evaluate((el) => (el.scrollTop = el.scrollHeight));
+		const panel = (await dialog.boundingBox())!;
+		for (const name of [/^Cancel$/, /^Send to /]) {
+			const b = (await dialog.getByRole('button', { name }).boundingBox())!;
+			expect(b.y + b.height).toBeLessThanOrEqual(panel.y + panel.height + 1);
+		}
 		await expect(dialog.getByRole('button', { name: /^Send to / })).toBeInViewport();
+		// The words of the heading stay clear of the close button.
+		await dialog.evaluate((el) => (el.scrollTop = 0));
+		const clash = await dialog.evaluate((el) => {
+			const x = el.querySelector('[data-slot=dialog-close]')!.getBoundingClientRect();
+			const range = document.createRange();
+			range.selectNodeContents(el.querySelector('[data-slot=dialog-title]')!);
+			return [...range.getClientRects()].some((r) => r.width > 0 && r.left < x.right && r.right > x.left && r.top < x.bottom && r.bottom > x.top);
+		});
+		expect(clash).toBe(false);
 	});
 }
+
+for (const [width, height] of [[390, 844], [320, 640]] as const) {
+	test(`N3: at ${width}px with 200% text a scoped request's page does not scroll sideways`, async ({ page }) => {
+		await largeText(page);
+		await page.setViewportSize({ width, height });
+		await open(page);
+		await queue(page);
+		await capture(page, 'Costs per project', { kind: 'Feature' });
+		await agentScopes(page, 'Costs per project');
+		await visit(page, '/work');
+		await page.getByRole('tab', { name: /^Requests/ }).click();
+		await page.locator('[data-group=needs_you]').getByRole('button', { name: /^Review REQ-/ }).click();
+		const sheet = page.getByRole('dialog');
+		await expect(sheet.getByTestId('request-state')).toBeVisible();
+		await expectLargeText(page);
+		const wide = await sheet.evaluate((el) => {
+			const right = el.getBoundingClientRect().right + 1;
+			return { scrolls: el.scrollWidth > el.clientWidth + 1, past: [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className) };
+		});
+		expect(wide).toEqual({ scrolls: false, past: [] });
+	});
+}
+
+test('F1: with room (1280 wide, 100% text) the capture panel body shows everything and does not scroll inside', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await expect(dialog.getByLabel('What do you need?')).toBeVisible();
+	const body = await dialog.getByLabel('What do you need?').evaluate((el) => {
+		let b: HTMLElement | null = el.parentElement;
+		while (b && getComputedStyle(b).overflowY !== 'auto') b = b.parentElement;
+		return { client: b!.clientHeight, scroll: b!.scrollHeight };
+	});
+	expect(body.scroll).toBeLessThanOrEqual(body.client + 1);
+});
+
+test('N3: at 320px with 200% text the steps of a request (approve, route, decline) do not scroll sideways', async ({ page }) => {
+	await largeText(page);
+	await page.setViewportSize({ width: 320, height: 640 });
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project', { kind: 'Feature' });
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.locator('[data-group=needs_you]').getByRole('button', { name: /^Review REQ-/ }).click();
+	const sheet = page.getByRole('dialog');
+	await expectLargeText(page);
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await expect(sheet.getByLabel('Which project?')).toBeVisible();
+	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
+	const sideways = () => sheet.evaluate((el) => {
+		const right = el.getBoundingClientRect().right + 1;
+		return { scrolls: el.scrollWidth > el.clientWidth + 1, past: [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className.toString().slice(0, 40)) };
+	});
+	expect(await sideways()).toEqual({ scrolls: false, past: [] });
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+	await sheet.getByRole('button', { name: 'Ask for changes…' }).click();
+	expect(await sideways()).toEqual({ scrolls: false, past: [] });
+});
+
+test('F5/F7: focus rings use the specified style and offsets, and the empty-state link is 44px below sm', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	const ring = (locator: ReturnType<Page['locator']>) => locator.evaluate((el) => { const c = getComputedStyle(el); return { style: c.outlineStyle, width: c.outlineWidth, offset: c.outlineOffset }; });
+	await page.getByRole('searchbox', { name: 'Search requests' }).focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect(await ring(page.getByRole('searchbox', { name: 'Search requests' }))).toEqual({ style: 'solid', width: '2px', offset: '-2px' });
+	await page.locator('summary').first().focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect((await ring(page.locator('summary').first())).offset).toBe('-2px');
+	await page.getByRole('searchbox', { name: 'Search requests' }).fill('zzzz no such thing');
+	const clear = page.getByTestId('no-request-match').getByRole('button', { name: 'Clear filters' });
+	expect((await clear.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	await clear.click();
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').focus();
+	expect((await ring(dialog.getByLabel('What do you need?'))).offset).toBe('-2px');
+	await dialog.getByLabel('Kind').focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect((await ring(dialog.getByLabel('Kind'))).offset).toBe('-2px');
+	// Moving between the radios with the arrow keys keeps a ring on the one that is checked.
+	await dialog.getByRole('radio').first().focus();
+	await page.keyboard.press('ArrowDown');
+	expect((await ring(dialog.getByRole('radio').nth(1))).style).toBe('solid');
+});
 
 test('RQS-4: "@sam Okafor rest" saves just "rest"', async ({ page }) => {
 	await open(page);

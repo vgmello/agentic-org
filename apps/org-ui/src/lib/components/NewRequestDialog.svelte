@@ -281,14 +281,15 @@
 </script>
 
 <Dialog bind:open={() => open, setOpen}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-xl">
-		<DialogHeader class="pr-10">
+	<DialogContent class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-y-auto sm:max-w-xl">
+		<!-- The close button sits in the corner: the title's first line leaves room for it (a float), the lines below use the full width. -->
+		<DialogHeader class="[&_[data-slot=dialog-title]]:before:float-right [&_[data-slot=dialog-title]]:before:h-6 [&_[data-slot=dialog-title]]:before:w-8 [&_[data-slot=dialog-title]]:before:content-['']">
 			<DialogTitle text={'New request'} />
 			<DialogDescription>A request isn't a task yet. Whoever scopes it turns it into a feature you can approve.</DialogDescription>
 		</DialogHeader>
-		<form class="flex min-h-0 flex-col gap-4" onsubmit={(e) => (e.preventDefault(), void submit(true))} novalidate>
-			<!-- The body scrolls when the window or the text is too small for it; the buttons below it stay in view. -->
-			<div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-0.5 py-0.5">
+		<form class="flex min-h-0 min-w-0 flex-col gap-4" onsubmit={(e) => (e.preventDefault(), void submit(true))} novalidate>
+			<!-- The body scrolls when the window or the text is too small for it and the buttons below it stay in view; it never gets less than 3 lines of words (in rem, so it grows with the text), and past that the whole panel scrolls. -->
+			<div class="min-h-[9.5rem] min-w-0 flex-1 space-y-4 overflow-y-auto px-0.5 py-0.5">
 			<div class="space-y-2">
 				<Label for="new-request-text">What do you need?</Label>
 				<textarea
@@ -311,7 +312,7 @@
 					aria-haspopup="listbox"
 					aria-controls={completions.length > 0 ? 'at-list' : undefined}
 					aria-activedescendant={completions.length > 0 ? `at-opt-${Math.min(activeAt, completions.length - 1)}` : undefined}
-					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
 				></textarea>
 				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
 				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
@@ -336,40 +337,40 @@
 				</div>
 			</div>
 
-			<div class="grid gap-4 sm:grid-cols-2">
+			<div class="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="new-request-kind">Kind</Label>
-					<select id="new-request-kind" bind:value={kind} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<select id="new-request-kind" bind:value={kind} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
 						{#each KINDS as k (k)}<option value={k}>{KIND_WORD[k]}</option>{/each}
 					</select>
 				</div>
 				<div class="space-y-2">
-					<Label for="new-request-project">Project <span class="font-normal text-gray-400">(optional)</span></Label>
-					<select id="new-request-project" bind:value={projectId} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<Label for="new-request-project" class="flex-wrap">Project <span class="font-normal text-gray-400">(optional)</span></Label>
+					<select id="new-request-project" bind:value={projectId} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
 						<option value="">No project yet</option>
 						{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 					</select>
 				</div>
 			</div>
 
-			<fieldset class="space-y-2" disabled={busy}>
-				<legend class="flex items-center gap-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
+			<fieldset class="min-w-0 space-y-2" disabled={busy}>
+				<legend class="flex max-w-full flex-wrap items-center gap-x-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap [overflow-wrap:anywhere]" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
 				{#if atMember && !suggestions.some((x) => x.member.id === atMember.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
+						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
 						<span><span class="font-semibold text-white">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
 					</label>
 				{/if}
 				{#each suggestions as s (s.member.id)}
 					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
+						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
 						<span><span class="font-semibold text-white">{s.member.name}</span>, {s.why}</span>
 					</label>
 				{/each}
 				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" />
-					<span class="flex flex-wrap items-center gap-2">Someone else…
-						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="max-w-full min-w-0 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
+					<span class="flex min-w-0 flex-wrap items-center gap-2">Someone else…
+						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="max-w-full min-w-0 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
 							<option value="">Choose…</option>
 							{#each agents as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 						</select>
@@ -381,17 +382,17 @@
 			{#if warning}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert" data-testid="route-warning">{warning}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
-			<DialogFooter class="min-w-0 shrink-0">
+			<DialogFooter class="min-w-0 shrink-0 flex-row flex-wrap justify-end">
 				{#if asking}
 					<p class="mr-auto self-center text-sm/6 text-gray-200" role="alert" data-testid="keep-draft">Keep as a draft?</p>
 					<Button type="button" variant="outline" onclick={back}>Back</Button>
 					<Button type="button" variant="outline" onclick={() => ((asking = false), (text = ''), (open = false))}>Discard</Button>
 					<Button type="button" disabled={busy} onclick={() => void submit(false)}>Keep</Button>
 				{:else}
-					<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
-					{#if message}<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
-					<Button type="button" variant="outline" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
-					<Button type="submit" class="h-auto min-h-9 whitespace-normal text-wrap break-words" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
+					<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => wantClose() && (open = false)}>Cancel</Button>
+					{#if message}<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy || !scoperId || cannotSend} aria-describedby={scoperId ? undefined : 'message-hint'} onclick={() => void sendAsMessage()}>Message instead</Button>{/if}
+					<Button type="button" variant="outline" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy} onclick={() => void submit(false)}>Just save</Button>
+					<Button type="submit" class="h-auto min-h-9 max-w-full min-w-0 whitespace-normal text-wrap break-words" disabled={busy || cannotSend} aria-describedby={cannotSend ? 'handle-problem' : undefined}>{sendLabel}</Button>
 				{/if}
 			</DialogFooter>
 		</form>

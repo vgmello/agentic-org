@@ -132,7 +132,7 @@
 	</div>
 
 	{#if loadError}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{tab === 'requests' ? "Can't load requests." : loadError} <button class="underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button></p>
+		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{tab === 'requests' ? "Can't load requests." : loadError} <button class="underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button></p>
 	{:else if items === undefined}
 		{#if tab === 'requests'}
 			<ul class="divide-y divide-white/5 rounded-xl bg-white/5" aria-busy="true" aria-label="Loading requests" data-testid="requests-loading">
