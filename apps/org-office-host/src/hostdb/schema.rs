@@ -1,5 +1,22 @@
 pub(super) const DDL: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID;
+CREATE TABLE accounts (
+ account_id TEXT PRIMARY KEY CHECK (length(account_id) = 26),
+ login_key TEXT NOT NULL UNIQUE, login TEXT NOT NULL,
+ password_phc TEXT NOT NULL, admin INTEGER NOT NULL CHECK (admin IN (0, 1)),
+ created_at_ms INTEGER NOT NULL, password_changed_at_ms INTEGER NOT NULL,
+ revoked_at_ms INTEGER
+) STRICT, WITHOUT ROWID;
+CREATE TABLE account_links (
+ account_id TEXT NOT NULL REFERENCES accounts(account_id),
+ org_id TEXT NOT NULL, member_id TEXT NOT NULL, PRIMARY KEY (account_id, org_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX account_links_org ON account_links(org_id);
+CREATE TABLE login_lockout (
+ socket TEXT NOT NULL CHECK (socket IN ('control', 'local')),
+ login_key TEXT NOT NULL, failures INTEGER NOT NULL, locked_until_ms INTEGER NOT NULL,
+ last_failure_ms INTEGER NOT NULL, PRIMARY KEY (socket, login_key)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE op_journal (
  operation_id TEXT PRIMARY KEY CHECK (length(operation_id) = 26),
  kind TEXT NOT NULL,
