@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use org_proto::org::Position;
+use org_proto::org::{OrgChange, Position};
 use rusqlite::Connection;
 
 use crate::error::OfficeError;
@@ -31,6 +31,8 @@ struct Log {
     /// Each entity's upserts as `(row, index)`, newest first.
     upserts: HashMap<(&'static str, String), Vec<(usize, usize)>>,
     end: bool,
+    /// Whether every row read must also decode as the contract's `OrgChange`s (the page read).
+    validate: bool,
 }
 
 /// Where a log is read from: the connection, the epoch, the top row's `seq`, and the text a
@@ -66,9 +68,13 @@ impl Log {
                 .and_then(Iterator::collect::<rusqlite::Result<Vec<_>>>)
                 .map_err(OfficeError::storage)?;
             self.end = read.len() < block;
+            let unreadable = |_| OfficeError::Invalid("a logged entry is not readable");
             for (seq, command_id, at, body, actor) in read {
-                let changes: Vec<rules::Change> = serde_json::from_str(&body)
-                    .map_err(|_| OfficeError::Invalid("a logged entry is not readable"))?;
+                if self.validate {
+                    serde_json::from_str::<Vec<OrgChange>>(&body).map_err(unreadable)?;
+                }
+                let changes: Vec<rules::Change> =
+                    serde_json::from_str(&body).map_err(unreadable)?;
                 for (index, change) in changes.iter().enumerate().rev() {
                     if let Some(((kind, id), true)) = rules::entity(change) {
                         let upserts = self.upserts.entry((kind, id.to_owned())).or_default();
@@ -155,7 +161,11 @@ pub(crate) fn page(
         }
         top = top.min(before.seq as i64 - i64::from(before.index == 0));
     }
-    let (source, mut log) = ((&*tx, head.epoch, top, None), Log::default());
+    let log = Log {
+        validate: true,
+        ..Log::default()
+    };
+    let (source, mut log) = ((&*tx, head.epoch, top, None), log);
     let at = |seq, index| ActivityPosition {
         epoch: head.epoch,
         seq,
@@ -208,7 +218,10 @@ pub(crate) fn page(
 }
 
 /// Per project, the `at_ms` of the first entry `page` returns with `project = id`: one pass
-/// down from `ceiling`, until every project has its entry or the oldest row is read.
+/// down from `ceiling`, until every project has its entry or the oldest row is read. It reads
+/// ids and flags only, through a lighter view than the contract `page` checks, and doesn't
+/// validate rows it doesn't need: a body without the text `PROJECT_MARK` reads as empty, and no
+/// block is loaded once every project resolves. Rows of loaded blocks are still decoded.
 pub(crate) fn latest_by_project(
     db: &Connection,
     ceiling: Position,

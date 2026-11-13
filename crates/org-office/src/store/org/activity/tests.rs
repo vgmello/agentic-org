@@ -1056,13 +1056,14 @@ fn recency_as_pages_see_it(store: &Store, ids: &[&str]) -> ProjectActivity {
 }
 
 /// Appends one raw row at `seq`, as a damaged or foreign log could hold it.
-fn raw(store: &Store, seq: i64, body: &'static str) {
+fn raw(store: &Store, seq: i64, body: &str) {
+    let body = body.to_owned();
     store
         .write(move |db| {
             db.execute(
                 "INSERT INTO events (epoch, seq, kind, command_id, at, body)
                  VALUES (1, ?1, 'org.changed', 'RAW', '2026-11-08T13:00:00.000Z', ?2)",
-                (seq, body),
+                (seq, &body),
             )
             .map_err(OfficeError::storage)?;
             Ok(((), None))
@@ -1154,6 +1155,126 @@ fn a_stored_change_missing_a_required_field_fails_the_read() {
     raw(&store, 2, body);
     let page = read(&store, &query(2)).unwrap();
     assert_eq!(page.entries[0].verb, "org.project.changed");
+}
+
+/// The error a logged row that fails to decode gives.
+const UNREADABLE_ENTRY: &str = "a logged entry is not readable";
+
+/// `valid` as stored JSON, with the field at `path` set to `value`, or removed for `None`.
+fn broken(valid: OrgChange, path: &str, value: Option<Value>) -> String {
+    let mut body = serde_json::to_value(vec![valid]).unwrap();
+    let (parent, field) = path.rsplit_once('/').unwrap();
+    let object = body[0]
+        .pointer_mut(parent)
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    match value {
+        Some(value) => object.insert(field.into(), value),
+        None => object.remove(field),
+    };
+    body.to_string()
+}
+
+#[test]
+fn the_page_read_is_as_strict_as_the_contract() {
+    let p = || project("P1", 1, false);
+    let cases = [
+        (team("T1", 1), "/team/name", Some(json!(5))),
+        (member("M1", 1), "/member/kind", Some(json!(5))),
+        (p(), "/project/repo", Some(json!({}))),
+        (team("T1", 1), "/team/owner_team_id", Some(json!(7))),
+        (p(), "/project/key", Some(json!(3))),
+        (team("T1", 1), "/team/name", None),
+        (member("M1", 1), "/member/kind", None),
+        (p(), "/project/name", None),
+        (area("A1", "P1", 1, false), "/area/version", None),
+        (membership("S1", "T1", "M1", 1), "/membership/team_id", None),
+    ];
+    for (valid, path, value) in cases {
+        let body = broken(valid.clone(), path, value);
+        assert!(
+            serde_json::from_str::<Vec<OrgChange>>(&body).is_err(),
+            "{body}"
+        );
+        // Intact, the row reads; broken, it fails the page as a scanned row, and as a row read
+        // only by a lookback (more than a block below a removal that finds no upsert).
+        let valid = serde_json::to_string(&[valid]).unwrap();
+        for row in [&valid, &body] {
+            let (_dir, scanned) = self::store();
+            raw(&scanned, 2, row);
+            let (_dir, lookback) = self::store();
+            raw(&lookback, 2, row);
+            append(&lookback, filler(40));
+            append(
+                &lookback,
+                vec![(at(T0), vec![removed("project_team", "Q")])],
+            );
+            let mut q = query(head_seq(&lookback));
+            (q.scan, q.limit) = (1, 1);
+            for read in [read(&scanned, &query(2)), read(&lookback, &q)] {
+                if *row == valid {
+                    assert!(read.is_ok(), "{row}");
+                } else {
+                    assert!(
+                        matches!(
+                            read,
+                            Err(ActivityError::Store(OfficeError::Invalid(UNREADABLE_ENTRY)))
+                        ),
+                        "{row}"
+                    );
+                }
+            }
+            // Control: from one row lower, with no lookback, the page doesn't reach the row.
+            q.ceiling -= 1;
+            assert!(read(&lookback, &q).is_ok(), "{row}");
+        }
+    }
+}
+
+#[test]
+fn recency_stops_reading_once_every_project_is_resolved() {
+    let (_dir, store) = store();
+    // An unreadable row that mentions a project, below more rows than the first block.
+    raw(&store, 2, r#"[{"type":"project_upserted","project":"#);
+    append(&store, filler(40));
+    append(
+        &store,
+        vec![(at(T0 + 9_000), vec![project("P1", 1, false)])],
+    );
+    assert_eq!(latest(&store, &["P1"])["P1"], Some(T0 + 9_000));
+    // A read that reaches the row fails: recency for a project it can't resolve, and the page.
+    let ceiling = store.read(super::super::head).unwrap();
+    let ids = ["P1".to_string(), "PX".to_string()];
+    let deep = store
+        .read(|db| Ok(latest_by_project(db, ceiling, &ids)))
+        .unwrap();
+    assert!(
+        matches!(
+            deep,
+            Err(ActivityError::Store(OfficeError::Invalid(UNREADABLE_ENTRY)))
+        ),
+        "{deep:?}"
+    );
+    assert!(matches!(
+        read(&store, &query(ceiling.seq)),
+        Err(ActivityError::Store(OfficeError::Invalid(UNREADABLE_ENTRY)))
+    ));
+}
+
+#[test]
+fn recency_reads_a_row_without_a_project_as_empty() {
+    let (_dir, store) = store();
+    append(
+        &store,
+        vec![(at(T0 + 1_000), vec![project("P1", 1, false)])],
+    );
+    raw(&store, 3, r#"[{"type":"team_upserted"}]"#);
+    assert_eq!(latest(&store, &["P1"])["P1"], Some(T0 + 1_000));
+    assert!(matches!(
+        read(&store, &query(3)),
+        Err(ActivityError::Store(OfficeError::Invalid(UNREADABLE_ENTRY)))
+    ));
 }
 
 // ---- no writes -------------------------------------------------------------------------------
