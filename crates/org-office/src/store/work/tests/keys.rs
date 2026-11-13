@@ -459,3 +459,71 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
         before
     );
 }
+
+#[test]
+fn b111_duplicate_admission_preserves_logical_state_in_wal_and_delete_journals() {
+    for journal in ["WAL", "DELETE"] {
+        let (root, old) = fixture_for_schema(&STALE_V6);
+        old.write(|db| {
+            for seed in [870, 871] {
+                let (mut item, _) = key_item(seed, false);
+                item.kind = org_proto::work::ItemKind::Request;
+                item.project_id = Some(format!("project-{seed}"));
+                insert(db, &item).map_err(OfficeError::storage)?;
+            }
+            Ok(((), None))
+        })
+        .unwrap();
+        let before = old
+            .read(|db| {
+                Ok((
+                    super::metadata::schema_rows(db),
+                    super::metadata::old_rows(db),
+                ))
+            })
+            .unwrap();
+        drop(old);
+        let path = root.path().join("office.db");
+        let key = Key::from_bytes([42; 32]);
+        // Reuse the store's initialized, keyed SQLCipher opener to construct the legacy
+        // journal fixture after its writer closes. No transaction may change journal mode.
+        let db = crate::store::connect(&path, &key, false, true).unwrap();
+        let actual: String = db
+            .pragma_update_and_check(None, "journal_mode", journal, |r| r.get(0))
+            .unwrap();
+        assert_eq!(actual.to_ascii_uppercase(), journal);
+        drop(db);
+        let original_bytes = std::fs::read(&path).unwrap();
+        let error = Store::open(&path, &key, Opening::Existing, &OFFICE_SCHEMA)
+            .err()
+            .expect("duplicate numbers refuse admission in either journal mode");
+        assert!(format!("{error:?}").contains("UNIQUE constraint failed"));
+        let db = crate::store::connect(&path, &key, false, true).unwrap();
+        assert_eq!(
+            (
+                super::metadata::schema_rows(&db),
+                super::metadata::old_rows(&db)
+            ),
+            before
+        );
+        assert_eq!(
+            db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                .unwrap(),
+            6
+        );
+        assert!(
+            index_names(&db).is_empty(),
+            "first index must roll back when the second fails"
+        );
+        let actual: String = db
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(actual, "wal");
+        drop(db);
+        if journal == "DELETE" {
+            // Rowan01M7A79: the pre-existing WAL header switch is expected; transactional
+            // atomicity means the schema, rows and user_version above, not byte identity.
+            assert_ne!(std::fs::read(&path).unwrap(), original_bytes);
+        }
+    }
+}

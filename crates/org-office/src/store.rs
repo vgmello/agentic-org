@@ -73,13 +73,16 @@ pub(crate) struct WriteJob {
 /// One go at a request, inside its savepoint.
 type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Send;
 
+/// Check an unreleased schema before its opening transaction commits.
+type Admission = fn(&rusqlite::Transaction<'_>) -> Result<(), OfficeError>;
+
 /// What a database holds. `create` makes the tables of a new database, inside the transaction
 /// that sets `user_version` to `version`; an older file is upgraded and a newer one refused.
 /// Optional admission also checks files already at the current version.
 pub(crate) struct Schema {
     /// Optional idempotent admission for an unreleased schema, in the open transaction after
     /// creation/upgrade and before commit, including files already at the current version.
-    pub(crate) admit: Option<fn(&rusqlite::Transaction<'_>) -> Result<(), OfficeError>>,
+    pub(crate) admit: Option<Admission>,
     pub(crate) version: i64,
     pub(crate) create: fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>,
     /// Brings a database made at an older version (the argument) up to `version`, in the same
