@@ -25,7 +25,14 @@ impl OfficeWorkActivity {
         work: impl FnOnce(&Connection) -> Result<R, OfficeError>,
     ) -> Result<R, StoreError> {
         self.0
-            .read(|db| work(&*sql(db.unchecked_transaction())?))
+            .read(|db| {
+                // Roll back explicitly: a failed ROLLBACK must not return a reader to the pool
+                // still inside this snapshot.
+                let tx = sql(db.unchecked_transaction())?;
+                let out = work(&tx);
+                sql(tx.rollback())?;
+                out
+            })
             .map_err(StoreError::new)
     }
 }
@@ -79,26 +86,22 @@ fn stored_position(
     ) else {
         return Ok(false);
     };
-    let targets: Option<String> = sql(db
-        .query_row("SELECT targets FROM work_feed WHERE seq = ?1", [seq], |r| {
-            r.get(0)
-        })
-        .optional())?;
-    let Some(targets) = targets.filter(|_| before.feed_seq <= ceiling) else {
+    if before.feed_seq > ceiling {
         return Ok(false);
-    };
-    if before.target_id.is_empty() {
-        return Ok(version == 0);
     }
-    let targets: Vec<String> = serde_json::from_str(&targets).map_err(OfficeError::storage)?;
-    let feed: Option<i64> = sql(db
-        .query_row(
-            "SELECT feed_seq FROM work_events WHERE target_id = ?1 AND version = ?2",
-            params![before.target_id, version],
-            |r| r.get(0),
-        )
-        .optional())?;
-    Ok(targets.contains(&before.target_id) && feed == Some(seq))
+    // An event's feed_seq references its work_feed row (whose targets list every put), so a
+    // stored (target, version) at `seq` is in that row.
+    let found: Option<i64> = if before.target_id.is_empty() {
+        let row = "SELECT seq FROM work_feed WHERE seq = ?1 AND ?2 = 0";
+        sql(db
+            .query_row(row, params![seq, version], |r| r.get(0))
+            .optional())?
+    } else {
+        let event = "SELECT feed_seq FROM work_events WHERE target_id = ?1 AND version = ?2";
+        let at = params![before.target_id, version];
+        sql(db.query_row(event, at, |r| r.get(0)).optional())?
+    };
+    Ok(found == Some(seq))
 }
 
 fn page(db: &Connection, q: &WorkActivityQuery) -> Result<WorkActivityPage, OfficeError> {

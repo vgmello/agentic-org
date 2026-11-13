@@ -510,6 +510,46 @@ fn activity_truncates_to_the_last_returned_entry_when_matches_are_left_over() {
 }
 
 #[test]
+fn activity_truncation_keeps_the_frontier_at_the_last_returned_key() {
+    // Newest first the keys run 50 then 20: the held-back match must not lower the frontier.
+    let fx = setup(true);
+    fx.commit(vec![vec![ev("A", T0 + 20), ev("A", T0 + 50)]]);
+    let mut q = query(1);
+    q.limit = 1;
+    let page = fx.reads.activity_page(&q).unwrap();
+    assert_eq!(positions(&page), [pos(1, "A", 2)]);
+    assert!(!page.exhausted);
+    assert_eq!(page.frontier, T0 + 50);
+    (q.before, q.prev_key) = (page.scanned_to, page.frontier);
+    let next = fx.reads.activity_page(&q).unwrap();
+    assert_eq!(positions(&next), [pos(1, "A", 1)]);
+    assert_eq!(next.entries[0].key, T0 + 20);
+}
+
+#[test]
+fn activity_project_filter_keeps_a_deleted_item_in_its_project() {
+    let fx = setup(true);
+    fx.commit(vec![vec![ev("A", T0)]]);
+    fx.place("A", "p-x");
+    fx.store
+        .write(|db| {
+            db.execute(
+                "UPDATE work_items SET data = json_set(data, '$.deleted', json('true')) WHERE id = 'A'",
+                [],
+            )
+            .map_err(OfficeError::storage)?;
+            Ok(((), None))
+        })
+        .unwrap();
+    let mut q = query(1);
+    q.project = Some("p-x".into());
+    assert_eq!(
+        positions(&fx.reads.activity_page(&q).unwrap()),
+        [pos(1, "A", 1)]
+    );
+}
+
+#[test]
 fn activity_incarnation_mismatch_requires_a_snapshot() {
     let fx = setup(true);
     fx.commit(vec![vec![ev("A", T0)]]);
