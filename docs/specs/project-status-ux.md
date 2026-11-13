@@ -81,7 +81,7 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 
 ## 3. Flow 3 · All projects at a glance (Home › Projects status)
 
-*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (a manager of some projects sees "—" in other projects' rows) (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
+*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (a manager of some projects sees those rows' cost cell empty, with "Not your project" on hover and to screen readers) (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
 
 ```
  Projects                        Health       Features         This month    Waiting on you
