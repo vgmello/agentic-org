@@ -23,7 +23,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 
 ## Changelog
 
-**Revision 10 (2026-11-13): a reopened fix task reopens its bug.** When a fix task is reopened while its bug is Fixed, the bug goes back to In progress and reads as reopened: the same **Reopened** badge as a bug reopened directly, and a line linking the fix task. It counts once, on the bug. This keeps the bug page in agreement with the away digest (`away-digest-and-timezones-v1.md`, "Fix task reopened") (§7.2). The project tab list (decision 1, the §2 mock-up, PRJ-1) defers to `information-architecture-v2.md` and `project-insights-v1` D40. **Criteria rewritten (same ID):** FIX-2, PRJ-1 *(rev 10)*.
+**Revision 10 (2026-11-13): a reopened fix task reopens its bug.** When a fix task is reopened while its bug is Fixed, the bug goes back to In progress and reads as reopened: the same **Reopened** badge as a bug reopened directly, and a line linking the fix task. It counts once, on the bug. This keeps the bug page in agreement with the away digest (`away-digest-and-timezones-v1.md`, "Fix task reopened") (§7.2). **Criteria rewritten (same ID):** FIX-2 *(rev 10)*.
 
 **Revision 9 (2026-11-09): from a request.** A task created from a request shows **From** "REQ-12 · <title>" in its side column (`feature-requests-ux.md` §3, RQS-16). No criteria changed here.
 
@@ -72,7 +72,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 
 ## 0. Decisions in this spec
 
-1. **The project page is where work lives.** Tabs: **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings** *(rev 5; was Overview, Tasks, Bugs, Docs, Settings)*. *(rev 10: this tab list, the mock-up in §2 and PRJ-1 are superseded by `information-architecture-v2.md`: Overview · Work · Team · Activity · Conversations, with Insights last, after Conversations, `project-insights-v1` D40.)* Bugs sit next to tasks and docs, never in a separate tool.
+1. **The project page is where work lives.** Tabs: **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings** *(rev 5; was Overview, Tasks, Bugs, Docs, Settings)*. Bugs sit next to tasks and docs, never in a separate tool.
 2. **One cross-project view, Work,** with pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)* (the Org chart pattern). It replaces the v1 Tasks nav item. Nav: Home · Chat (`chat-ux.md`) · Org chart · Projects · **Work** · Knowledge · … · Offices · Settings.
 3. **Tasks and bugs are numbered separately in each project, and the prefix says which** *(rev 6, ada's W7 model; was one shared sequence)*: tasks `T-12`, bugs `B-7`. Outside the project (Work, messages, Activity, other projects, commits and branches) the project key comes first: `chk-T-12`, `chk-B-7`. Requests are `REQ-14` across the organization, features `FEAT-0007` (`chk-FEAT-0007` outside the project) and debt `DEBT-0012`. The type icon and the word still show with the number ("Bug B-7"). An item that has no number yet shows **Pending** and a 6-character local short id: "Pending · 3k9f2x" (§12). (C1, resolved.)
 4. **Severity is the bug's impact,** in four plain words: **Critical · Major · Minor · Trivial**. The reporter sets it, helped by a one-line meaning for each level, and triage confirms it.
@@ -483,7 +483,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 ## 14. UX acceptance criteria
 
 **Project page (PRJ)**
-- PRJ-1 · *(rev 10)* The project page has the tabs of `information-architecture-v2.md` (Overview · Work · Team · Activity · Conversations), with Insights last, after Conversations, once it ships (`project-insights-v1` D40). *(rev 5 listed Overview, Features, Tasks, Bugs, Debt, Docs, Insights, Settings.)* The header shows name, key, teams (with Shared when more than one), leads, **New task** and **Report bug**.
+- PRJ-1 · *(rev 5)* The project page has tabs Overview, Features, Tasks, Bugs, Debt, Docs, Insights, Settings. The header shows name, key, teams (with Shared when more than one), leads, **New task** and **Report bug**.
 - PRJ-2 · The Bugs tab label shows the number of open bugs, plus an amber dot with the text "n need triage" for screen readers while any bug is New.
 - PRJ-3 · *(rev 2)* Overview shows Needs triage, Open bugs by severity in words (Critical, Major, Minor, Trivial), Tasks by status, and the Brief's last update, each linking to its tab.
 - PRJ-4 · When the office isn't running, every write action in the project is disabled, with the reason in its tooltip, and the data stays readable.
