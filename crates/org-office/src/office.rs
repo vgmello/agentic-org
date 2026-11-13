@@ -9,6 +9,7 @@ use crate::error::OfficeError;
 use crate::key::Key;
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
+use crate::organization::activity::{ActivityError, ActivityPage, OrgActivityQuery};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
@@ -655,6 +656,13 @@ impl Office {
         self.stores
             .org
             .read(|db| org_db::changes_after(db, after, limit))
+    }
+
+    /// One page of org activity, newest first, from one read transaction (IA-12).
+    pub fn org_activity(&self, query: &OrgActivityQuery) -> Result<ActivityPage, ActivityError> {
+        self.stores
+            .org
+            .read(|db| Ok(org_db::activity::page(db, query)))?
     }
 
     /// A number that changes whenever a command has been committed or a live event has been

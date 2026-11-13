@@ -33,6 +33,7 @@ use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
+pub(crate) mod activity;
 mod operation;
 mod replication;
 #[cfg_attr(

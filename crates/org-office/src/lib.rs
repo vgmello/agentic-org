@@ -13,7 +13,7 @@
 
 mod employees;
 mod organization;
-pub use organization::directory;
+pub use organization::{activity, directory};
 mod error;
 mod key;
 mod messaging;
