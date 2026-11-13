@@ -26,6 +26,12 @@ How every agent makes decisions. The goal: work keeps moving, people are asked o
 - Start a fresh peer (a subagent or another agent) and give it the question and the facts, not your conclusion.
 - Bounce the options until you agree on what's best. Then act on it, and record the decision, the options you weighed and the consult's view.
 
+## 2a. When a spec is ambiguous and the reading changes an answer
+- Give the staff engineer the options with a recommendation. Fail closed by default (the reading that refuses, keeps the seal or leaves the higher level in force).
+- The ruling is written into the spec next to the rule (`ruled <date>: <who>`) and pinned by a test named after it, so the code and the spec say the same thing.
+- Meanwhile keep moving on everything that doesn't depend on the ruling.
+- First examples: org-process R1 (a sub-team override in a diamond is a conflict) and R2 (an unreadable-key file seals every key below its place, with its own "can't tell" outcome), ruled 2026-11-13: ada.
+
 ## 3. Escalate only when it's needed
 Go to your lead (or, at the top, the owner) only when:
 - **there's no consensus** after the consult; or

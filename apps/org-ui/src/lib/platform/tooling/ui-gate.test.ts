@@ -66,13 +66,19 @@ const webkitSelection = (tests: ListedTest[]) => {
 // A one-line string literal, scanned in order so a closing quote never opens the next match.
 const STRING_LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
 const WEBKIT_TAG = /(?:^|\s)@webkit(?![\w-])/;
-// A test's title (its first argument) and a `tag:` option (a string or a one-line array of strings).
+// A test's title (its first argument).
 const TEST_TITLE = /\btest(?:\.(?:only|skip|fixme|fail|slow))?\(\s*(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g;
-const TAG_OPTION = /\btag\s*:\s*(\[[^\]\n]*\]|(['"`])(?:\\.|(?!\2)[^\\\n])*\2)/g;
-/** Whether a source declares a test carrying @webkit, in its title or its tag option (not any string that mentions it). */
+// A test or describe call of the file's own (not `x.test(`, such as a regex test).
+const TEST_CALL = /(?<![\w$.])test(?:\.(?:only|skip|fixme|fail|slow)|\.describe(?:\.(?:only|skip|fixme|serial|parallel))*)?\s*\(/;
+// A `tag:` literal: a string or a one-line array of strings. The array form stops at a `[` too, so a line of unclosed `tag:[` is scanned once, not once per `tag:`.
+const TAG_OPTION = /\btag\s*:\s*(\[[^\][\n]*\]|(['"`])(?:\\.|(?!\2)[^\\\n])*\2)/g;
+/**
+ * Whether a source declares a test carrying @webkit: in a test's title, or in a `tag:` literal in a file that calls test
+ * or describe (so a test using a tag object defined beside it counts, and a helper that only holds the object does not).
+ */
 const hasWebkitTag = (source: string) =>
 	[...source.matchAll(TEST_TITLE)].some(([, , title]) => WEBKIT_TAG.test(title)) ||
-	[...source.matchAll(TAG_OPTION)].some(([, option]) => [...option.matchAll(STRING_LITERAL)].some(([, , body]) => WEBKIT_TAG.test(body)));
+	(TEST_CALL.test(source) && [...source.matchAll(TAG_OPTION)].some(([, option]) => [...option.matchAll(STRING_LITERAL)].some(([, , body]) => WEBKIT_TAG.test(body))));
 /** Pure: e2e sources that declare a @webkit test (tag option or title) although no project loads them and no listed test is declared in them. */
 const orphanWebkitTags = ({ files, declaredFiles, sources }: { files: string[]; declaredFiles: string[]; sources: Record<string, string> }) =>
 	Object.keys(sources).filter((file) => !files.includes(file) && !declaredFiles.includes(file) && hasWebkitTag(sources[file])).sort();
@@ -105,7 +111,7 @@ const usesKeyboardOrFocus = (file: string, sources: Record<string, string>, seen
 	if (seen.has(file) || !(file in sources)) return false;
 	seen.add(file);
 	if (KEYBOARD_OR_FOCUS.test(sources[file])) return true;
-	return [...sources[file].matchAll(/\b(?:from|import)\s*(?:\(\s*)?['"`](\.{1,2}\/[^'"`]+)['"`]/g)].some(([, spec]) => {
+	return [...sources[file].matchAll(/\b(?:from|import|require)\s*(?:\(\s*)?['"`](\.{1,2}\/[^'"`]+)['"`]/g)].some(([, spec]) => {
 		const base = posix.normalize(posix.join(posix.dirname(file), spec));
 		return [base, `${base}.ts`, `${base}.js`, `${base}.mjs`, `${base}/index.ts`, `${base}/index.js`, base.replace(/\.([mc]?)js$/, '.$1ts')].some((candidate) => usesKeyboardOrFocus(candidate, sources, seen));
 	});
@@ -314,13 +320,27 @@ describe('gate manifest guard', () => {
 			'consts.ts': "export const WEBKIT = '@webkit';",
 			'comment-flow.ts': "// don't tag it @webkit, it's slow\ntest('x', () => {});",
 			'hyphen-flow.ts': "test('x', { tag: '@webkit-only' }, () => {});",
-			'array-flow.ts': "test.fixme('x', { tag: ['@journey', \"@webkit\"] }, () => {});" };
+			'array-flow.ts': "test.fixme('x', { tag: ['@journey', \"@webkit\"] }, () => {});",
+			// A tag literal counts in a file that calls test or describe: a helper that only holds a shared tag object is no
+			// orphan (a regex `.test(` is no test call), while a test using an object defined beside it is.
+			'tags.ts': "export const WEBKIT = { tag: '@webkit' } as const;\nexport const both = { tag: ['@journey', '@webkit'] };",
+			'regex-tags.ts': "export const WEBKIT = { tag: '@webkit' };\nexport const isTag = (s) => /^@/.test(s);",
+			'uses-const.spec.ts': "import { WEBKIT } from './tags';\ntest('x', WEBKIT, () => {});",
+			'const-flow.ts': "const ONLY = { tag: '@webkit' };\ntest('x', ONLY, () => {});",
+			'describe-flow.ts': "test.describe('d', { tag: '@webkit' }, () => {});",
+			'serial-flow.ts': "test.describe.serial.only('d', { tag: '@webkit' }, () => {});",
+			'nested-flow.ts': "test(`k`, {\n\tannotation: { type: 'issue' },\n\ttag: '@webkit'\n}, async () => {});",
+			'loop-flow.ts': "for (const name of names) test(name, { tag: '@webkit' }, () => {});" };
 		// runner.spec.ts is loaded, but its only test is declared in a helper: it passes the tag, so it is no orphan.
-		expect(orphanWebkitTags({ files: ['a.spec.ts', 'runner.spec.ts'], declaredFiles: ['a.spec.ts', 'hdecl.ts'], sources: orphanSources })).toEqual(['array-flow.ts', 'later.ts', 'orphan-flow.ts', 'title-flow.ts']);
+		expect(orphanWebkitTags({ files: ['a.spec.ts', 'runner.spec.ts', 'uses-const.spec.ts'], declaredFiles: ['a.spec.ts', 'hdecl.ts'], sources: orphanSources })).toEqual(['array-flow.ts', 'const-flow.ts', 'describe-flow.ts', 'later.ts', 'loop-flow.ts', 'nested-flow.ts', 'orphan-flow.ts', 'serial-flow.ts', 'title-flow.ts']);
 		// The quadratic-backtracking guard: a long whitespace run after `import` stays fast.
 		const started = performance.now();
 		expect(webkitCoverage({ files: ['ws.spec.ts'], sources: { 'ws.spec.ts': `import${' '.repeat(200_000)}x` }, onWebkit: new Set(), exempt: [] }).missing).toEqual([]);
 		expect(performance.now() - started).toBeLessThan(2_000);
+		// And a line of unclosed `tag:[` in an orphan test's options is scanned once, not once per `tag:`.
+		const unclosed = performance.now();
+		expect(orphanWebkitTags({ files: [], declaredFiles: [], sources: { 'open.ts': `test('x', { ${'tag:['.repeat(40_000)}` } })).toEqual([]);
+		expect(performance.now() - unclosed).toBeLessThan(2_000);
 		expect(webkitSelection([helper('focus.spec.ts', 'webkit')]).declaredFiles).toEqual(['hdecl.ts']);
 		// The testIgnore is read from the named project only.
 		const config = { projects: [{ name: 'chromium', testIgnore: ['production-unavailable.spec.ts'] }, { name: 'webkit', testIgnore: [] }, { name: 'firefox' }] };
@@ -358,6 +378,7 @@ describe('gate manifest guard', () => {
 			'dynamic.spec.ts': "const { go } = await import('./helpers/go');",
 			'reexport.spec.ts': "export { go } from './helpers/go';",
 			'template.spec.ts': "const { go } = await import(`./helpers/go`);",
+			'require.spec.ts': "const { go } = require('./helpers/go');",
 			'mjs.spec.ts': "import { go } from './helpers/mgo.mjs';",
 			'jsx.spec.ts': "import { go } from './helpers/jgo';",
 			'jsdir.spec.ts': "import { go } from './jsdir';",
@@ -368,8 +389,8 @@ describe('gate manifest guard', () => {
 			'helpers/go.ts': "export const go = (page) => page.keyboard.type('x');",
 			'helpers/none.ts': "export const go = (page) => page.click('a');"
 		};
-		const files = ['js.spec.ts', 'dynamic.spec.ts', 'plain.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts'];
-		expect(webkitCoverage({ files, sources, onWebkit: new Set(), exempt: [] }).missing).toEqual(['js.spec.ts', 'dynamic.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts']);
+		const files = ['js.spec.ts', 'dynamic.spec.ts', 'plain.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts', 'require.spec.ts'];
+		expect(webkitCoverage({ files, sources, onWebkit: new Set(), exempt: [] }).missing).toEqual(['js.spec.ts', 'dynamic.spec.ts', 'reexport.spec.ts', 'template.spec.ts', 'mjs.spec.ts', 'jsx.spec.ts', 'jsdir.spec.ts', 'require.spec.ts']);
 	});
 
 	it('keeps every alsoRuns entry real: a known category, a reason, and globs that match a current file', () => {

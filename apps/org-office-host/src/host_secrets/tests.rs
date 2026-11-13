@@ -805,6 +805,216 @@ mod development {
         }
     }
 
+    // Each subprocess has its own stderr and test-only fault state.
+    fn cleanup_output(mode: &str) {
+        for name in ["registry".to_owned(), format!("tls.{}", "a".repeat(64))] {
+            let result = output(
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "host_secrets::tests::development::cleanup_fault_child",
+                        "--nocapture",
+                    ])
+                    .env("HOST_SECRET_CLEANUP_MODE", mode)
+                    .env("HOST_SECRET_CLEANUP_NAME", &name),
+            );
+            assert!(result.status.success(), "{mode}/{name}: {result:?}");
+            let stderr = String::from_utf8(result.stderr).unwrap();
+            let warns = matches!(mode, "permission" | "missing-sync" | "post-double");
+            assert_eq!(
+                stderr,
+                if warns {
+                    "org-office-host: could not clean up a temporary host secret\n"
+                } else {
+                    ""
+                },
+                "{mode}/{name}",
+            );
+            let stdout = String::from_utf8(result.stdout).unwrap();
+            let paths: Vec<_> = stdout
+                .lines()
+                .filter_map(|s| s.strip_prefix("CUSTODY_PATH="))
+                .collect();
+            assert_eq!(paths.len(), 2, "child must report both actual paths");
+            for path in paths {
+                assert!(!path.is_empty());
+                assert!(!stderr.contains(path), "path leaked into stderr");
+            }
+            for secret in ["cleanup-new-secret", "cleanup-old-secret", &name, A] {
+                assert!(
+                    !stderr.contains(secret),
+                    "secret or identity leaked into stderr"
+                );
+            }
+        }
+    }
+    #[test]
+    fn successful_put_cleanup_is_quiet() {
+        cleanup_output("success");
+    }
+    #[test]
+    fn failed_put_with_successful_cleanup_is_quiet() {
+        for mode in ["missing", "directory", "post-sync"] {
+            cleanup_output(mode);
+        }
+    }
+    #[test]
+    fn failed_put_cleanup_failure_logs_only_fixed_warning() {
+        for mode in ["permission", "missing-sync", "post-double"] {
+            cleanup_output(mode);
+        }
+    }
+    #[test]
+    fn cleanup_fault_child() {
+        use std::io::ErrorKind;
+        let Ok(mode) = std::env::var("HOST_SECRET_CLEANUP_MODE") else {
+            return;
+        };
+        let name = Name::parse(&std::env::var("HOST_SECRET_CLEANUP_NAME").unwrap()).unwrap();
+        let f = Fixture::new();
+        let store = f.open(A).unwrap();
+        let old = b"cleanup-old-secret";
+        let new = b"cleanup-new-secret";
+        if !name.is_add_only() && mode != "directory" {
+            store
+                .put(&name, &Value::new(old.to_vec()).unwrap())
+                .unwrap();
+        }
+        let temporary = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let observed = temporary.clone();
+        let fault = mode.clone();
+        let real_permission = crate::home::euid() != 0;
+        let add_only = name.is_add_only();
+        let target_name = name.as_str().to_owned();
+        super::PUBLISH_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |dir| {
+                let temps: Vec<_> = fs::read_dir(dir)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .filter(|p| {
+                        p.file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .starts_with(".put.")
+                    })
+                    .collect();
+                assert_eq!(temps.len(), 1);
+                let path = temps.into_iter().next().unwrap();
+                *observed.borrow_mut() = Some(path.clone());
+                match fault.as_str() {
+                    "permission" => {
+                        if real_permission {
+                            fs::set_permissions(dir, fs::Permissions::from_mode(0o500)).unwrap();
+                        } else {
+                            // Root bypasses mode bits: exercise cleanup via the sync seam instead.
+                            fs::remove_file(&path).unwrap();
+                        }
+                    }
+                    "directory" => fs::create_dir(dir.join(&target_name)).unwrap(),
+                    "missing" | "missing-sync" => fs::remove_file(&path).unwrap(),
+                    "success" | "post-sync" | "post-double" => {}
+                    _ => panic!("unknown cleanup fault"),
+                }
+                super::DIRECTORY_SYNC_FAULTS.with(|faults| {
+                    *faults.borrow_mut() = match fault.as_str() {
+                        "permission" if !real_permission => [Some(ErrorKind::Interrupted)].into(),
+                        "missing-sync" => [Some(ErrorKind::Interrupted)].into(),
+                        "post-sync" => [Some(ErrorKind::WriteZero)].into(),
+                        "post-double" => {
+                            [Some(ErrorKind::WriteZero), Some(ErrorKind::Interrupted)].into()
+                        }
+                        "success" => {
+                            let mut calls = std::collections::VecDeque::from([None]);
+                            if add_only {
+                                calls.push_back(None);
+                            }
+                            calls.push_back(Some(ErrorKind::Interrupted));
+                            calls
+                        }
+                        _ => Default::default(),
+                    };
+                });
+            }));
+        });
+        let result = store.put(&name, &Value::new(new.to_vec()).unwrap());
+        // Restore access before inspecting state or unwinding a failed assertion.
+        fs::set_permissions(f.dir(A), fs::Permissions::from_mode(0o700)).unwrap();
+        if mode == "directory" {
+            fs::remove_dir(f.dir(A).join(name.as_str())).unwrap();
+        }
+        let expected_error = match mode.as_str() {
+            "directory" if name.is_add_only() => {
+                assert_eq!(result, Err(Error::Unsafe));
+                None
+            }
+            "directory" => Some(ErrorKind::IsADirectory),
+            "success" => None,
+            "permission" if real_permission => Some(ErrorKind::PermissionDenied),
+            "permission" => Some(ErrorKind::NotFound),
+            "missing" | "missing-sync" => Some(ErrorKind::NotFound),
+            "post-sync" | "post-double" => Some(ErrorKind::WriteZero),
+            _ => unreachable!(),
+        };
+        if mode != "directory" || !name.is_add_only() {
+            assert_eq!(
+                result,
+                expected_error.map_or(Ok(()), |kind| Err(Error::Io(kind)))
+            );
+        }
+        super::DIRECTORY_SYNC_FAULTS.with(|faults| {
+            let mut faults = faults.borrow_mut();
+            if mode == "success" {
+                assert_eq!(
+                    *faults,
+                    [Some(ErrorKind::Interrupted)],
+                    "success must not attempt error cleanup"
+                );
+                faults.clear();
+            } else {
+                assert!(faults.is_empty(), "all injected faults must run");
+            }
+        });
+        println!(
+            "CUSTODY_FAULT={mode}:{}",
+            if real_permission {
+                "nonroot"
+            } else {
+                "root-sync-seam"
+            }
+        );
+        let path = temporary.borrow_mut().take().unwrap();
+        println!("CUSTODY_PATH={}", path.display());
+        println!("CUSTODY_PATH={}", f.dir(A).join(name.as_str()).display());
+        assert_eq!(path.exists(), mode == "permission" && real_permission);
+        if mode == "permission" && real_permission {
+            assert_eq!(fs::read(&path).unwrap(), new);
+            assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777, 0o600);
+        }
+        let published = matches!(mode.as_str(), "success" | "post-sync" | "post-double");
+        let expected = if published {
+            Some(new.as_slice())
+        } else if name.is_add_only() || mode == "directory" {
+            None
+        } else {
+            Some(old.as_slice())
+        };
+        assert_eq!(
+            store.load(&name).unwrap().as_ref().map(Value::expose),
+            expected
+        );
+        drop(store);
+        let reopened = f.open(A).unwrap();
+        assert!(
+            !path.exists(),
+            "reopen must remove any retained plaintext temporary"
+        );
+        assert_eq!(
+            reopened.load(&name).unwrap().as_ref().map(Value::expose),
+            expected
+        );
+    }
+
     #[test]
     fn tls_replacement_preserves_first_bytes_and_reopens() {
         let f = Fixture::new();
@@ -1062,4 +1272,19 @@ pub(super) fn before_publish(path: &std::path::Path) {
     if let Some(hook) = hook {
         hook(path);
     }
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    static DIRECTORY_SYNC_FAULTS: std::cell::RefCell<std::collections::VecDeque<Option<std::io::ErrorKind>>> = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+#[cfg(debug_assertions)]
+pub(super) fn before_directory_sync() -> Result<(), Error> {
+    DIRECTORY_SYNC_FAULTS.with(|faults| {
+        faults
+            .borrow_mut()
+            .pop_front()
+            .flatten()
+            .map_or(Ok(()), |kind| Err(Error::Io(kind)))
+    })
 }
