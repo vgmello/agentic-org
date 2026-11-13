@@ -19,7 +19,7 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
-**Revision 12 (2026-11-13): office label without a number; a PM's run amounts.** Before runs carry a number, a one-off run with more than one office reads "Reviewer (one-off run · Studio Mac)". A project manager sees no amount on runs outside their projects (`costs-and-insights-ux.md` COST-7). **Criteria rewritten (same ID):** RUN-12 *(rev 12)*.
+**Revision 12 (2026-11-13): office label without a number; a PM's run amounts.** Before runs carry a number, a one-off run with more than one office reads "Reviewer (one-off run · Studio Mac)". A project manager sees only the part of a run's cost attributed to their projects, in single runs and in How it runs' totals (`costs-and-insights-ux.md` COST-7). **Criteria rewritten (same ID):** RUN-12 *(rev 12)*.
 
 **Revision 11 (2026-11-13): A108 resolved (Rowan).** {n} is the run's per-office number, and with more than one office the label adds the office ("Reviewer (one-off run 12 · Studio Mac)"). **Criteria rewritten (same ID):** RUN-12 *(rev 11)*.
 
@@ -64,7 +64,7 @@ RUN-14/15 clarify how internal work follows lifecycle and accounting.
 
 ## 1. Where it shows
 
-*(rev 10)* **Cost amounts** on runs (Activity rows, the Runs tab, How it runs and RUN-5, RUN-13) show only to the owner and the project manager for their projects (`costs-and-insights-ux.md` "Who sees amounts", `costs-and-budgets-v1` §5.5, AC-CB10-1). Others see the same rows without the amount. *(rev 12)* A project manager sees no amount on a run outside their projects, including a run in another project or in the agent's home (COST-7).
+*(rev 10)* **Cost amounts** on runs (Activity rows, the Runs tab, How it runs and RUN-5, RUN-13) show only to the owner and the project manager for their projects (`costs-and-insights-ux.md` "Who sees amounts", `costs-and-budgets-v1` §5.5, AC-CB10-1). Others see the same rows without the amount. *(rev 12)* For a project manager, a run's amount is the part of its usage records attributed to their projects (`costs-and-insights-ux.md` decision 4), labelled "in your projects" when the run also has other records; a run with none shows no amount, wherever it ran. How it runs' totals ("Last 7 days as on call") add up the same way, with the same label (COST-7).
 
 - **Org chart card and lists:** the status word gets the mode's detail: "Asleep · on call", "Asleep · next run 14:30", "Working · woken by ada's message". A small mode icon (`zap` Always on, `bell` On call, `clock` Scheduled) sits beside the status, always with the word in the tooltip and for screen readers ("HR lead, agent, on call, asleep").
 - **Quick view and profile header:** **How it runs:** On call · "Last run 12:04 (4 min) · next: when called". Actions: **Run now** (primary for asleep agents, with an optional note: "What should HR lead do?"), **Message**, ⋯ › Change how it runs…. **Stop** (⋯) pauses the agent: it's the same as Pause (`our-org-in-the-app.md` DEAL-3), so there's one way to stop an agent, not two.
