@@ -61,6 +61,12 @@ fn b111_fresh_storage_enforces_both_number_scopes_and_tombstones() {
             assert!(insert(tx, &duplicate).is_err(), "same project bug number");
             tx.execute(
                 "UPDATE work_items SET data=json_set(data,'$.deleted',json('true')) WHERE id=?1",
+                [&bug.id],
+            )
+            .unwrap();
+            assert!(insert(tx, &duplicate).is_err(), "deleted bug keeps number");
+            tx.execute(
+                "UPDATE work_items SET data=json_set(data,'$.deleted',json('true')) WHERE id=?1",
                 [&first.id],
             )
             .unwrap();
@@ -77,6 +83,15 @@ fn b111_fresh_storage_enforces_both_number_scopes_and_tombstones() {
             assert!(
                 insert(tx, &duplicate_request).is_err(),
                 "request numbers span projects"
+            );
+            tx.execute(
+                "UPDATE work_items SET data=json_set(data,'$.deleted',json('true')) WHERE id=?1",
+                [&request.id],
+            )
+            .unwrap();
+            assert!(
+                insert(tx, &duplicate_request).is_err(),
+                "deleted request keeps global number"
             );
             duplicate_request.project_id = None;
             assert!(
@@ -264,6 +279,12 @@ fn b111_upgrade_admits_valid_shapes_without_changing_rows() {
                 (834, org_proto::work::ItemKind::Bug, None, None),
                 (835, org_proto::work::ItemKind::Request, Some(1), None),
                 (836, org_proto::work::ItemKind::Unknown, Some(1), None),
+                (
+                    837,
+                    org_proto::work::ItemKind::Request,
+                    Some(2),
+                    Some("one"),
+                ),
             ] {
                 let (mut item, _) = key_item(seed, false);
                 item.kind = kind;
@@ -358,4 +379,83 @@ fn b111_expression_indexes_refuse_malformed_json_without_writes() {
         .unwrap_err();
     assert!(format!("{error:?}").contains("malformed JSON"));
     assert_eq!(super::snapshot(&store), before);
+}
+
+#[test]
+fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() {
+    use crate::store::work::assembly::OfficeWorkStore;
+    use org_proto::work::{ItemStatus, TaskSetStatusParams};
+    use std::error::Error;
+    let (_root, db) = fixture();
+    initialize_origin(&db);
+    let db = Arc::new(db);
+    let (parent, events) = key_item(860, false);
+    write(&db, parent.clone(), events).unwrap();
+    let (mut child, events) = key_item(861, false);
+    child.number = Some(2);
+    child.links.push(StoredLink {
+        id: org_work::ulid_from_parts(T0, 999_860),
+        kind: LinkKind::PartOf,
+        to: LinkTarget::Item {
+            item_id: parent.id.clone(),
+        },
+        created_by: "owner1".into(),
+        created_at_ms: T0,
+        removed: false,
+    });
+    write(&db, child.clone(), events).unwrap();
+    // MemOrg implements the shared native-test OrgSource port; reuse that adapter.
+    let native = OfficeWorkStore::new(
+        db.clone(),
+        Arc::new(MemOrg::new("owner1").with_project("project1", "one", &[])),
+        Arc::new(|| T0),
+    )
+    .unwrap();
+    let clock = native.clock();
+    let service = WorkService::new(native, clock, "OFFICE1");
+    let call = |seed| {
+        WorkCall::TaskSetStatus(TaskSetStatusParams {
+            change_id: org_work::ulid_from_parts(T0, seed),
+            item_id: parent.id.clone(),
+            expected_version: parent.version,
+            status: ItemStatus::Done,
+            resolution: None,
+            blocked_reason: None,
+            anyway_reason: Some("Must not bypass subtasks".into()),
+            shortcut: None,
+        })
+    };
+    let refusal = service.call(Caller::app("owner1"), call(999_861)).unwrap();
+    assert!(
+        matches!(refusal,TxnOutput::Refused(error) if error.code==org_proto::ErrorCode::InvalidRequest)
+    );
+    let child_id = child.id;
+    db.write(move |db| {
+        // Keep a live link and valid indexed JSON, but make the selected child's decode fail.
+        db.execute(
+            "UPDATE work_items SET data=json_remove(data,'$.title') WHERE id=?1",
+            [child_id],
+        )
+        .map_err(OfficeError::storage)?;
+        Ok(((), None))
+    })
+    .unwrap();
+    let before = db.read(|db| Ok(super::metadata::old_rows(db))).unwrap();
+    let error = service
+        .call(Caller::app("owner1"), call(999_862))
+        .unwrap_err();
+    let mut cause = error.source();
+    let mut json_error = false;
+    while let Some(current) = cause {
+        json_error |= current.downcast_ref::<serde_json::Error>().is_some();
+        cause = current.source();
+    }
+    assert!(
+        json_error,
+        "preserve the child's typed JSON failure: {error:?}"
+    );
+    assert_eq!(
+        db.read(|db| Ok(super::metadata::old_rows(db))).unwrap(),
+        before
+    );
 }
