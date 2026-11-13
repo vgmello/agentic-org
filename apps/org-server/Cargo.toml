@@ -23,6 +23,7 @@ org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 hmac.workspace = true
 sha2.workspace = true
 
@@ -32,4 +33,5 @@ org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
 org-client = { path = "../../crates/org-client" }
 tempfile.workspace = true
-serde_json.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"
