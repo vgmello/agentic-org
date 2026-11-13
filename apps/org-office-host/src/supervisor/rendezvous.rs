@@ -19,7 +19,7 @@
 //! Every error is a fixed reason, never a secret: the caller kills and reaps the child.
 
 #![cfg_attr(
-    not(test),
+    any(not(test), not(target_os = "macos")),
     expect(
         dead_code,
         reason = "wired into the spawn by river/host-launch-v3-life"
@@ -240,6 +240,8 @@ pub(crate) fn hand_off(
     };
     let mut header = v3::encode_handoff(&handoff).map_err(|_| "couldn't encode its handoff")?;
     drop(handoff);
+    // At least X-02 §5.2's 5 s to send, however late the worker connected.
+    let deadline = deadline.max(Instant::now() + ACK_TIMEOUT);
     let left = deadline.saturating_duration_since(Instant::now());
     let written = stream
         .set_write_timeout(Some(left.max(Duration::from_millis(1))))
