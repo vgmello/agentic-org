@@ -304,6 +304,9 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
+        // The create result's copy, made before anything is stored.
+        let recovery_code = RecoveryCode::new(create.recovery_code.expose().to_owned())
+            .map_err(|e| CreateStartError::NotStarted(e.to_owned()))?;
         // Before the spawn: no server ever holds a key the host hasn't stored.
         if let Err(e) = self
             .config
@@ -314,8 +317,6 @@ impl Supervisor {
                 "couldn't store the new office's key: {e}"
             )));
         }
-        let recovery_code = RecoveryCode::new(create.recovery_code.expose().to_owned())
-            .map_err(|e| CreateStartError::NotStarted(e.to_owned()))?;
         let log = self.log_for(&create.line.office.office_id);
         let child = self
             .spawner

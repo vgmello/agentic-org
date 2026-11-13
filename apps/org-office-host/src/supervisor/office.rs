@@ -360,7 +360,7 @@ impl OfficeRunner {
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => {
                     host_log::log(&format!(
-                        "the server of office {} exited, though its control pipe is still open",
+                        "the server of office {} exited, though its rendezvous is still open",
                         self.office_id
                     ));
                     return Some(failure);

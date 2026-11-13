@@ -260,7 +260,12 @@ impl Spawner {
                     .spawn(move || read_events(events, generation, &signals))?;
             }
             Ok(None) => drop(signals.send(Signal::Closed { generation })),
-            Err(_) if running.has_exited() => drop(signals.send(Signal::Closed { generation })),
+            Err(why) if running.has_exited() => {
+                host_log::log(&format!(
+                    "office server {pid} exited during its handoff: {why}"
+                ));
+                drop(signals.send(Signal::Closed { generation }));
+            }
             Err(why) => {
                 host_log::log(&format!(
                     "refused office server {pid}: {why}; it was killed"

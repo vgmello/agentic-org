@@ -226,7 +226,7 @@ fn a_second_host_on_the_same_home_fails_fast() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
+fn shutdown_ends_rendezvous_so_servers_exit_cleanly_and_releases_the_home() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
