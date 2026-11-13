@@ -1,5 +1,7 @@
 //! Org activity (IA-12): its values and pure rules (verbs, subjects, filters, merge keys).
 
+use std::collections::BTreeMap;
+
 use org_proto::org::OrgChange;
 
 /// How many rows below its own row a change looks for its entity's last upsert.
@@ -69,6 +71,13 @@ pub struct ActivityPage {
     pub exhausted: bool,
     /// The retained log lacks the genesis.
     pub history_truncated: bool,
+}
+
+/// Per project, its newest entry's `at_ms` (absent: none, or unparseable and `degraded`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectActivity {
+    pub latest_ms: BTreeMap<String, u64>,
+    pub degraded: bool,
 }
 
 #[derive(Debug)]

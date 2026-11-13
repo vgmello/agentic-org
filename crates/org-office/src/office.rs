@@ -9,7 +9,9 @@ use crate::error::OfficeError;
 use crate::key::Key;
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
-use crate::organization::activity::{ActivityError, ActivityPage, OrgActivityQuery};
+use crate::organization::activity::{
+    ActivityError, ActivityPage, OrgActivityQuery, ProjectActivity,
+};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
@@ -668,6 +670,19 @@ impl Office {
         (self.stores.org).read(|db| match org_db::activity::page(db, query) {
             Err(ActivityError::Store(error)) => Err(error),
             page => Ok(page),
+        })?
+    }
+
+    /// Per project, the time of its newest org activity at or below `ceiling` (D35).
+    pub fn org_latest_by_project(
+        &self,
+        ceiling: Position,
+        project_ids: &[String],
+    ) -> Result<ProjectActivity, ActivityError> {
+        let latest = |db: &_| org_db::activity::latest_by_project(db, ceiling, project_ids);
+        (self.stores.org).read(|db| match latest(db) {
+            Err(ActivityError::Store(error)) => Err(error),
+            latest => Ok(latest),
         })?
     }
 

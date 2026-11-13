@@ -130,6 +130,15 @@ fn read(store: &Store, query: &OrgActivityQuery) -> Result<ActivityPage, Activit
     store.read(|db| Ok(page(db, query))).unwrap()
 }
 
+fn latest(store: &Store, ids: &[&str]) -> ProjectActivity {
+    let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+    let ceiling = store.read(super::super::head).unwrap();
+    store
+        .read(|db| Ok(latest_by_project(db, ceiling, &ids)))
+        .unwrap()
+        .unwrap()
+}
+
 /// Every entry, paging until exhausted and feeding each page's position and key back.
 fn all(store: &Store, query: OrgActivityQuery) -> Vec<ActivityEntry> {
     paged(store, query, usize::MAX)
@@ -440,6 +449,11 @@ fn another_epoch_a_rollback_or_an_unretained_position_needs_a_snapshot() {
     append(&store, filler(5));
     let snapshot =
         |q: &OrgActivityQuery| matches!(read(&store, q), Err(ActivityError::SnapshotRequired));
+    let latest_at = |ceiling: Position| {
+        store
+            .read(|db| Ok(latest_by_project(db, ceiling, &["P".into()])))
+            .unwrap()
+    };
     let mut q = query(6);
     assert!(!snapshot(&q) && !read(&store, &q).unwrap().history_truncated);
     q.epoch = 2;
@@ -451,9 +465,18 @@ fn another_epoch_a_rollback_or_an_unretained_position_needs_a_snapshot() {
         index: 0,
     });
     assert!(snapshot(&q));
+    assert!(matches!(
+        latest_at(Position { epoch: 2, seq: 6 }),
+        Err(ActivityError::SnapshotRequired)
+    ));
     // A rollback below the ceiling.
     store.run_sql_for_test("DELETE FROM events WHERE seq > 4");
     assert!(snapshot(&query(6)) && !snapshot(&query(4)));
+    assert!(matches!(
+        latest_at(Position { epoch: 1, seq: 6 }),
+        Err(ActivityError::SnapshotRequired)
+    ));
+    assert!(latest_at(Position { epoch: 1, seq: 4 }).is_ok());
     // A position below the oldest retained row; the genesis is gone too.
     store.run_sql_for_test("DELETE FROM events WHERE seq < 3");
     q = query(4);
@@ -559,6 +582,8 @@ fn an_installed_snapshot_truncates_the_history() {
         satellite.org_activity(&q),
         Err(ActivityError::SnapshotRequired)
     ));
+    let recency = satellite.org_latest_by_project(satellite.org_head().unwrap(), &["P".into()]);
+    assert_eq!(recency.unwrap(), ProjectActivity::default());
 }
 
 #[test]
@@ -914,7 +939,7 @@ fn an_upsert_read_for_the_page_but_outside_its_window_does_not_resolve() {
     store
         .read(|db| {
             // Row 0 is seq 2,201; its lookback reads in blocks past row 2,000 to seq 200.
-            let (source, mut log) = ((db, 1, 2_201), Log::default());
+            let (source, mut log) = ((db, 1, 2_201, None), Log::default());
             assert!(log.has(source, 0)?);
             let (verb, subject) = log.describe(source, 0, 0)?;
             assert!(
@@ -926,7 +951,7 @@ fn an_upsert_read_for_the_page_but_outside_its_window_does_not_resolve() {
                 (verb.as_str(), subject),
                 ("org.membership.removed", Default::default())
             );
-            let (source, mut log) = ((db, 1, 2_100), Log::default());
+            let (source, mut log) = ((db, 1, 2_100, None), Log::default());
             assert!(log.has(source, 0)?);
             let (_, subject) = log.describe(source, 0, 0)?;
             assert_eq!(subject.member.as_deref(), Some("M1"));
@@ -946,7 +971,7 @@ fn a_lookback_without_an_upsert_in_its_window_reads_no_further() {
     store
         .read(|db| {
             for k in [500, 1_500] {
-                let (source, mut log) = ((db, 1, 4_500), Log::default());
+                let (source, mut log) = ((db, 1, 4_500, None), Log::default());
                 assert!(log.has(source, k)?);
                 assert_eq!(log.rows[k].seq, 4_500 - k as u64);
                 let (verb, subject) = log.describe(source, k, 0)?;
@@ -966,6 +991,63 @@ fn a_lookback_without_an_upsert_in_its_window_reads_no_further() {
         .unwrap();
 }
 
+// ---- latest by project -----------------------------------------------------------------------
+
+#[test]
+fn latest_by_project_is_the_first_entry_activity_returns_for_it() {
+    let (_dir, store) = store();
+    let ms = |s: u64| T0 + s * 1_000;
+    append(
+        &store,
+        vec![
+            (
+                at(ms(10)),
+                vec![project_team("Q9", "PR", "T1", 1), project("PA", 1, false)],
+            ),
+            (
+                at(ms(50)),
+                vec![project("PC", 1, false), project("PU", 1, false)],
+            ),
+            (at(ms(20)), vec![project("PC", 2, false)]),
+            (
+                at(ms(30)),
+                vec![
+                    project("PA", 2, true),
+                    project("PT1", 1, false),
+                    project("PT2", 1, false),
+                ],
+            ),
+            ("garbage".into(), vec![area("AU", "PU", 2, false)]),
+            (at(ms(40)), vec![removed("project_team", "Q9")]),
+        ],
+    );
+    append(&store, filler(30));
+    let ids = ["PN", "PT1", "PT2", "PC", "PR", "PA", "PU"];
+    let found = latest(&store, &ids);
+    let expected = [
+        ("PT1", ms(30)),
+        ("PT2", ms(30)),
+        ("PC", ms(20)),
+        ("PR", ms(40)),
+        ("PA", ms(30)),
+    ];
+    assert_eq!(
+        found.latest_ms,
+        expected.map(|(id, at)| (id.to_string(), at)).into()
+    );
+    assert!(found.degraded);
+    for id in ids {
+        let mut q = query(head_seq(&store));
+        (q.project, q.limit) = (Some(id.into()), 1);
+        let first = read(&store, &q)
+            .unwrap()
+            .entries
+            .first()
+            .and_then(|e| e.at_ms);
+        assert_eq!(found.latest_ms.get(id).copied(), first, "{id}");
+    }
+}
+
 // ---- no writes -------------------------------------------------------------------------------
 
 #[test]
@@ -980,6 +1062,12 @@ fn reads_write_nothing() {
             store.read(|db| {
                 let changes = db.total_changes();
                 page(db, &query(51)).unwrap();
+                latest_by_project(
+                    db,
+                    Position { epoch: 1, seq: 51 },
+                    &["P1".into(), "X".into()],
+                )
+                .unwrap();
                 assert_eq!(db.total_changes(), changes);
                 Ok(())
             })?;
@@ -1058,7 +1146,17 @@ fn budget_org_activity_on_a_20000_row_log() {
         let page = read(&store, &q).unwrap();
         assert!(page.entries.is_empty() && !page.exhausted);
     });
+    // Reported, not asserted: absent projects make the pass read all 20,000 rows.
+    time("latest_by_project (7 projects, 3 absent)", &|| {
+        let found = latest(&store, &["P1", "P2", "P3", "P499", "X1", "X2", "X3"]);
+        assert_eq!(found.latest_ms.len(), 4);
+    });
+    let recency = time("latest_by_project (7 projects, all present)", &|| {
+        let found = latest(&store, &["P1", "P2", "P3", "P499", "P0", "P250", "P7"]);
+        assert_eq!(found.latest_ms.len(), 7);
+    });
     if !cfg!(debug_assertions) {
         assert!(plain.as_millis() <= 20 && selective.as_millis() <= 20);
+        assert!(recency.as_millis() <= 30);
     }
 }

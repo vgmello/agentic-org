@@ -1,6 +1,6 @@
 //! IA-12 org activity reads of the log, newest first: each one read transaction, no writes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use org_proto::org::{OrgChange, Position};
 use rusqlite::Connection;
@@ -8,9 +8,13 @@ use rusqlite::Connection;
 use crate::error::OfficeError;
 use crate::organization::activity::{
     self as rules, ActivityEntry, ActivityError, ActivityPage, ActivityPosition, OrgActivityQuery,
-    LOOKBACK_ROWS,
+    ProjectActivity, LOOKBACK_ROWS,
 };
 use crate::time;
+
+/// Text in the stored JSON of every change that has, or resolves, a project subject (its type
+/// tag or a `project_id`), so `latest_by_project` reads other rows as empty.
+const PROJECT_MARK: &str = "project";
 
 struct Row {
     seq: u64,
@@ -29,24 +33,28 @@ struct Log {
     end: bool,
 }
 
-/// Where a log is read from: the connection, the epoch and the top row's `seq`.
-type Source<'c> = (&'c Connection, u64, i64);
+/// Where a log is read from: the connection, the epoch, the top row's `seq`, and the text a
+/// body needs for its changes and actor to be read.
+type Source<'c> = (&'c Connection, u64, i64, Option<&'static str>);
 
 impl Log {
     /// Whether row `k` exists, reading down to it.
-    fn has(&mut self, (db, epoch, top): Source<'_>, k: usize) -> Result<bool, OfficeError> {
+    fn has(&mut self, (db, epoch, top, only): Source<'_>, k: usize) -> Result<bool, OfficeError> {
         while k >= self.rows.len() && !self.end {
             let block = (self.rows.len() + 32).min(512);
             let top = self.rows.last().map_or(top, |row| row.seq as i64 - 1);
             let mut statement = db
                 .prepare_cached(
-                    "SELECT e.seq, e.command_id, e.at, e.body, c.principal_member FROM events e
-                     LEFT JOIN commands c USING (command_id) WHERE e.kind = 'org.changed'
-                     AND e.epoch = ?1 AND e.seq <= ?2 ORDER BY e.seq DESC LIMIT ?3",
+                    "SELECT seq, command_id, at,
+                        CASE WHEN ?4 IS NULL OR instr(body, ?4) THEN body ELSE '[]' END,
+                        CASE WHEN ?4 IS NULL THEN (SELECT principal_member FROM commands c
+                            WHERE c.command_id = events.command_id) END
+                     FROM events WHERE kind = 'org.changed' AND epoch = ?1 AND seq <= ?2
+                     ORDER BY seq DESC LIMIT ?3",
                 )
                 .map_err(OfficeError::storage)?;
             let read = statement
-                .query_map((epoch as i64, top, block as i64), |r| {
+                .query_map((epoch as i64, top, block as i64, only), |r| {
                     Ok((
                         r.get::<_, i64>(0)? as u64,
                         r.get(1)?,
@@ -147,7 +155,7 @@ pub(crate) fn page(
         }
         top = top.min(before.seq as i64 - i64::from(before.index == 0));
     }
-    let (source, mut log) = ((&*tx, head.epoch, top), Log::default());
+    let (source, mut log) = ((&*tx, head.epoch, top, None), Log::default());
     let at = |seq, index| ActivityPosition {
         epoch: head.epoch,
         seq,
@@ -197,6 +205,35 @@ pub(crate) fn page(
     }
     page.exhausted = true;
     Ok(page)
+}
+
+/// Per project, the `at_ms` of the first entry `page` returns with `project = id`: one pass
+/// down from `ceiling`, until every project has its entry or the oldest row is read.
+pub(crate) fn latest_by_project(
+    db: &Connection,
+    ceiling: Position,
+    project_ids: &[String],
+) -> Result<ProjectActivity, ActivityError> {
+    let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+    let (head, _) = open(&tx, ceiling.epoch, ceiling.seq)?;
+    let mut wanted: HashSet<&str> = project_ids.iter().map(String::as_str).collect();
+    let (mut out, mut log) = (ProjectActivity::default(), Log::default());
+    let source = (&*tx, head.epoch, ceiling.seq as i64, Some(PROJECT_MARK));
+    let mut k = 0;
+    while !wanted.is_empty() && log.has(source, k)? {
+        let at_ms = time::parse_rfc3339_ms(&log.rows[k].at);
+        for index in (0..log.rows[k].changes.len()).rev() {
+            let (_, subject) = log.describe(source, k, index)?;
+            if let Some(id) = subject.project.filter(|id| wanted.remove(id.as_str())) {
+                match at_ms {
+                    Some(at) => _ = out.latest_ms.insert(id, at),
+                    None => out.degraded = true,
+                }
+            }
+        }
+        k += 1;
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
