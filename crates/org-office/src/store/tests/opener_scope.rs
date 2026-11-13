@@ -1,13 +1,37 @@
 //! Plain, private input shared by inventory construction and the policy visitor.
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SourceKind {
+    Rust,
+    Config,
+}
 
 pub(super) struct SourceScope {
     pub root: PathBuf,
-    pub files: BTreeSet<PathBuf>,
+    pub files: BTreeMap<PathBuf, SourceKind>,
 }
 
 impl SourceScope {
+    pub fn require_rust(&self, path: &Path) -> PathBuf {
+        // APFS canonicalization restores .rs; retain the caller's spelling for kind validation.
+        let requested_rust = path.extension().is_some_and(|extension| extension == "rs");
+        let path = self.require(path);
+        let kind = if requested_rust {
+            self.files[&path]
+        } else {
+            SourceKind::Config
+        };
+        assert_eq!(
+            kind,
+            SourceKind::Rust,
+            "not a Rust source: {}",
+            path.display()
+        );
+        path
+    }
+
     pub fn require(&self, path: &Path) -> PathBuf {
         let relative = path
             .strip_prefix(&self.root)
@@ -26,7 +50,7 @@ impl SourceScope {
         }
         let path = path.canonicalize().expect("missing policy input");
         assert!(
-            self.files.contains(&path) && path.is_file(),
+            self.files.contains_key(&path) && path.is_file(),
             "policy input is outside tracked inventory: {}",
             path.display()
         );
