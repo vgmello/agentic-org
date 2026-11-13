@@ -150,12 +150,16 @@ impl Status {
 }
 
 impl Location {
-    /// Reads the process file here from its text: as [`read`], except that a refused file name
-    /// is a `file name` problem, which still carries the key, seal and status read from the
-    /// text.
+    /// Reads the process file here from its text, checking its front matter against this place;
+    /// a refused file name is a `file name` problem, which still carries the key, seal and status
+    /// read from the text. Outside this crate it is the only reader, so none skips the name check.
+    ///
+    /// ```compile_fail,E0425
+    /// let read = org_process::read(&org_process::Place::Organization, "");
+    /// ```
     pub fn read(&self, text: &str) -> Result<ProcessFile, Problem> {
-        let read = read(&self.place, text);
-        if !self.name_refused {
+        let read = read(self.place(), text);
+        if !self.name_refused() {
             return read;
         }
         let (key, sealed, status) = match read {
@@ -176,9 +180,10 @@ impl Location {
     }
 }
 
-/// Reads the process file at `place` from its text. A file found by [`crate::location`] is read
-/// with [`Location::read`], which also checks its name.
-pub fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
+/// Reads the process file at `place` from its text, without its file name: crate-private, since
+/// every file is found by [`crate::location`] and read with [`Location::read`], which also checks
+/// its name.
+pub(crate) fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
     let doc =
         org_docs::parse(text).map_err(|e| problem(&e.field, ProblemKind::FrontMatter(e.reason)))?;
     let map = doc

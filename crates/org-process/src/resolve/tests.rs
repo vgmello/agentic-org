@@ -1,7 +1,8 @@
 //! §3.2's rules, table-driven (processes.md Appendix C): each case fails without its rule.
 
 use super::*;
-use crate::{read, Location};
+use crate::file::read;
+use crate::{location, Repo};
 
 const MEMBER: &str = "01JD8Z3F0000000000000000CD";
 const OTHER: &str = "01JD8Z3F0000000000000000EF";
@@ -32,9 +33,10 @@ fn label(place: &Place) -> String {
 
 /// A file with `key` at `place`, read from its text. `flags`: `sealed`, `maybe` (an unreadable
 /// `overridable`), `off`, `draft`, `retired`, `bad` (version 0), `garbage` (no front matter),
-/// `badname` (a refused file name), `over<N>` (`overrides: <key>@<N>`), `id:<a|b>`, `as:<name>`
-/// (the file name) and `at:<team|atlas>` (written for and read at that team's or the project's
-/// place).
+/// `nokey` (an invalid `process`, so its key can't be read), `badname` (a refused file name;
+/// only a project file can have one), `over<N>` (`overrides: <key>@<N>`), `id:<a|b>`,
+/// `as:<name>` (the file name) and `at:<team|atlas>` (written for and read at that team's or the
+/// project's place).
 fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
     let mut lines: Vec<(&str, String)> = vec![
         ("process", key.into()),
@@ -67,6 +69,7 @@ fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
             }
             "draft" | "retired" => set("status", flag.into()),
             "bad" => set("version", "0".into()),
+            "nokey" => set("process", "Not a key".into()),
             "garbage" => garbage = true,
             "badname" => refused = true,
             _ if flag.starts_with("over") => set("overrides", format!("{key}@{}", &flag[4..])),
@@ -90,13 +93,13 @@ fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
         true => "no front matter".to_owned(),
         false => format!("---\n{}\n---\n# {key}\n", front.join("\n")),
     };
-    let read = match refused {
-        true => Location {
-            place: read_at.clone(),
-            name_refused: true,
+    let read = match (refused, &read_at) {
+        (true, Place::Project(key)) => {
+            let found = location(Repo::Project(key), &format!("docs/processes/-{path}.md"));
+            found.expect("a refused project file name").read(&text)
         }
-        .read(&text),
-        false => read(&read_at, &text),
+        (true, _) => panic!("only a project file can have a refused name"),
+        (false, _) => read(&read_at, &text),
     };
     Input {
         path: format!("{}/{path}.md", label(&place)),
@@ -105,12 +108,13 @@ fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
     }
 }
 
-fn work(chains: &[&[&str]]) -> Option<Work> {
+fn chains(chains: &[&[&str]]) -> Vec<Vec<TeamId>> {
     let chain = |c: &&[&str]| c.iter().map(|id| TeamId::new(id).unwrap()).collect();
-    Some(Work {
-        project: ProjectKey::new("atlas").unwrap(),
-        chains: chains.iter().map(chain).collect(),
-    })
+    chains.iter().map(chain).collect()
+}
+
+fn work(teams: &[&[&str]]) -> Option<Work> {
+    Some(Work::new(ProjectKey::new("atlas").unwrap(), chains(teams)).unwrap())
 }
 
 fn resolved(work: Option<Work>, files: Vec<Input>) -> EffectiveSet {
@@ -144,11 +148,16 @@ fn summary(set: &EffectiveSet) -> Vec<String> {
         let teams: Vec<String> = c.teams.iter().map(label).collect();
         let sealed: Vec<String> = c.sealed_by.iter().map(label).collect();
         let applies = c.applies.as_ref().map_or("none".into(), label);
+        let unknown = c
+            .unknown
+            .iter()
+            .map(|path| format!(" can't tell: {path} can't be read"));
         out.push(format!(
-            "{} conflict {} sealed [{}] -> {applies}",
+            "{} conflict {} sealed [{}]{} -> {applies}",
             c.key.as_str(),
             teams.join(","),
-            sealed.join(",")
+            sealed.join(","),
+            unknown.collect::<String>()
         ));
     }
     let mut problems: Vec<String> = set
@@ -423,11 +432,14 @@ fn seals() {
             vec![
                 at(org(), "broken", 1, "garbage"),
                 at(team("web"), "review", 2, "over1"),
+                at(atlas(), "plan", 1, ""),
                 at(me(), "mine", 1, ""),
             ],
             vec![
                 "mine: none",
+                "plan: none",
                 "review: none",
+                "atlas/plan.md: can't tell: org/broken.md can't be read",
                 "me/mine.md: can't tell: org/broken.md can't be read",
                 "org/broken.md: invalid NoFrontMatter",
                 "web/review.md: can't tell: org/broken.md can't be read",
@@ -445,6 +457,20 @@ fn seals() {
                 "review: org v1 Inherited",
                 "org/broken.md: invalid NoFrontMatter",
                 "web/review.md: sealed by org",
+            ],
+        ),
+        (
+            "a draft team file whose key can't be read seals nothing below it (rule 2)",
+            work(&[&["platform", "web"]]),
+            vec![
+                at(team("platform"), "broken", 1, "draft nokey"),
+                at(team("web"), "review", 2, ""),
+                at(atlas(), "plan", 1, ""),
+            ],
+            vec![
+                "plan: atlas v1 Addition",
+                "review: web v2 Addition",
+                "platform/broken.md: invalid process",
             ],
         ),
         (
@@ -616,7 +642,113 @@ fn conflicts() {
                 "web/review.md: invalid version",
             ],
         ),
+        (
+            "a sibling's file that can't be read is a can't tell, never sealed by its team",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "broken", 1, "garbage"),
+                at(team("mobile"), "review", 2, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,web sealed [] can't tell: web/broken.md can't be read -> org",
+                "web/broken.md: invalid NoFrontMatter",
+            ],
+        ),
+        (
+            "a can't tell counts as a seal for A71: the team's own version applies meanwhile",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, ""),
+                at(team("mobile"), "review", 3, ""),
+            ],
+            vec![
+                "review: web v2 Override",
+                "review conflict mobile,web sealed [] can't tell: web/broken.md can't be read -> web",
+                "web/broken.md: invalid NoFrontMatter",
+            ],
+        ),
+        (
+            "a seal and a can't tell are two seals for A71: the organization's version",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("web"), "review", 2, "sealed"),
+                at(team("mobile"), "broken", 1, "garbage"),
+                at(team("mobile"), "review", 3, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,web sealed [web] can't tell: mobile/broken.md can't be read -> org",
+                "mobile/broken.md: invalid NoFrontMatter",
+            ],
+        ),
     ]);
+}
+
+#[test]
+fn r2b_an_unreadable_key_with_overridable_true_does_not_seal() {
+    check(vec![(
+        "rule 2 can tell: a file whose key can't be read, but whose overridable: true can",
+        work(&[&["web"]]),
+        vec![
+            at(org(), "broken", 1, "nokey"),
+            at(org(), "review", 1, ""),
+            at(team("web"), "review", 2, ""),
+            at(atlas(), "plan", 1, ""),
+        ],
+        vec![
+            "plan: atlas v1 Addition",
+            "review: web v2 Override",
+            "org/broken.md: invalid process",
+        ],
+    )]);
+}
+
+#[test]
+fn work_takes_only_chains_that_are_parent_paths() {
+    let new = |teams: &[&[&str]]| Work::new(ProjectKey::new("atlas").unwrap(), chains(teams));
+    let id = |id: &str| TeamId::new(id).unwrap();
+    let refused = [
+        (&[&["web"][..], &[]][..], ChainError::Empty),
+        (&[&["web", "web"]], ChainError::Repeated(id("web"))),
+        (
+            &[&["platform", "web", "platform"]],
+            ChainError::Repeated(id("platform")),
+        ),
+        (
+            &[&["web"], &["platform", "web"]],
+            ChainError::Ancestors(id("web")),
+        ),
+        (
+            &[&["platform", "web"], &["mobile", "web"]],
+            ChainError::Ancestors(id("web")),
+        ),
+        (
+            &[&["platform", "web"], &["web", "mobile"]],
+            ChainError::Ancestors(id("web")),
+        ),
+    ];
+    for (teams, error) in refused {
+        assert_eq!(new(teams), Err(error), "{teams:?}");
+    }
+    let accepted: [&[&[&str]]; 5] = [
+        &[],
+        &[&["web"]],
+        &[&["platform"], &["platform", "web"]],
+        &[&["platform", "web"], &["platform", "mobile"]],
+        &[&["platform", "web"], &["platform", "web"], &["design"]],
+    ];
+    for teams in accepted {
+        let work = new(teams).unwrap_or_else(|e| panic!("{teams:?}: {e:?}"));
+        assert_eq!(
+            (work.project().as_str(), work.chains()),
+            ("atlas", &chains(teams)[..])
+        );
+    }
 }
 
 #[test]
@@ -763,16 +895,16 @@ fn turned_off_private_and_validity() {
             vec![
                 at(team("web"), "review", 2, ""),
                 at(team("web"), "review", 3, "bad draft as:review-2"),
-                at(team("web"), "checks", 2, ""),
-                at(team("web"), "checks", 3, "badname retired as:checks-2"),
+                at(atlas(), "checks", 2, ""),
+                at(atlas(), "checks", 3, "badname retired as:checks-2"),
                 at(team("web"), "plan", 2, ""),
                 at(team("web"), "plan", 3, "draft at:mobile as:plan-2"),
             ],
             vec![
-                "checks: web v2 Addition",
+                "checks: atlas v2 Addition",
                 "plan: web v2 Addition",
                 "review: web v2 Addition",
-                "web/checks-2.md: invalid file name",
+                "atlas/checks-2.md: invalid file name",
                 "web/plan-2.md: invalid scope",
                 "web/review-2.md: invalid version",
             ],

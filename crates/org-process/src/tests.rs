@@ -1,4 +1,5 @@
 use super::*;
+use crate::file::read;
 
 const ULID: &str = "01jd8z3f0000000000000000ab";
 const MEMBER: &str = "01JD8Z3F0000000000000000CD";
@@ -108,8 +109,12 @@ fn paths_map_to_their_place_and_nothing_else_does() {
     ];
     for (repo, path, expected) in cases {
         let found = location(repo, path);
-        assert_eq!(found.clone().map(|at| at.place), expected, "{path}");
-        assert!(found.is_none_or(|at| !at.name_refused), "{path}");
+        assert_eq!(
+            found.clone().map(|at| at.place().clone()),
+            expected,
+            "{path}"
+        );
+        assert!(found.is_none_or(|at| !at.name_refused()), "{path}");
     }
 }
 
@@ -156,7 +161,9 @@ fn a_valid_file_reads_with_every_field() {
     assert_eq!(read.id, Some(format!("doc-{ULID}")));
     // A doc written with git has no id until its first save through the tool.
     assert_eq!(
-        super::read(&team(), &file(drop_key("id"))).unwrap().id,
+        crate::file::read(&team(), &file(drop_key("id")))
+            .unwrap()
+            .id,
         None
     );
     assert_eq!(read.key.as_str(), "review-and-merge");
@@ -191,13 +198,13 @@ fn a_valid_file_reads_with_every_field() {
             set("level", "organization")(l);
         });
         assert_eq!(
-            super::read(&Place::Organization, &org).unwrap().place,
+            crate::file::read(&Place::Organization, &org).unwrap().place,
             Place::Organization
         );
     }
     for (status, expected) in [("draft", Status::Draft), ("retired", Status::Retired)] {
         assert_eq!(
-            super::read(&team(), &file(set("status", status)))
+            crate::file::read(&team(), &file(set("status", status)))
                 .unwrap()
                 .status,
             expected
@@ -495,13 +502,10 @@ fn file_names_a_doc_may_not_have_are_never_handbook_process_files() {
             assert_eq!(location(Repo::Handbook, &path), None, "{name:?}");
         }
     }
-    let plain = Location {
-        place: Place::Organization,
-        name_refused: false,
-    };
+    let plain = location(Repo::Handbook, "processes/a-b_c.1.md").unwrap();
     assert_eq!(
-        location(Repo::Handbook, "processes/a-b_c.1.md"),
-        Some(plain)
+        (plain.place(), plain.name_refused()),
+        (&Place::Organization, false)
     );
 }
 
@@ -521,7 +525,7 @@ fn a_project_file_with_a_refused_name_is_listed_with_a_file_name_problem() {
         let found = location(Repo::Project(&key), &format!("docs/processes/{name}.md"));
         let found = found.unwrap_or_else(|| panic!("{name:?} vanished"));
         assert_eq!(
-            (&found.place, found.name_refused),
+            (found.place(), found.name_refused()),
             (&place, true),
             "{name:?}"
         );
@@ -546,7 +550,7 @@ fn a_project_file_with_a_refused_name_is_listed_with_a_file_name_problem() {
     }
     // A plain name reads as `read` does.
     let found = location(Repo::Project(&key), "docs/processes/review.md").unwrap();
-    assert!(!found.name_refused);
+    assert!(!found.name_refused());
     assert_eq!(
         found.read(&at("project", "atlas")),
         read(&place, &at("project", "atlas"))

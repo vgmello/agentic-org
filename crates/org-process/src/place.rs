@@ -163,14 +163,33 @@ pub enum Repo<'a> {
 }
 
 /// Where a process file is: its place, and whether its file name is one a process may not have.
+/// Built only by [`location`], from the file's path, so only a project file's name can be
+/// refused:
+///
+/// ```compile_fail,E0451
+/// use org_process::{Location, Place};
+/// let made = Location { place: Place::Organization, name_refused: true };
+/// ```
+///
 /// Read it with [`Location::read`], which turns a refused name into a problem.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Location {
+    place: Place,
+    name_refused: bool,
+}
+
+impl Location {
     /// The level and scope the folder gives.
-    pub place: Place,
+    pub fn place(&self) -> &Place {
+        &self.place
+    }
+
     /// The name is refused (`plain_name`): the file is listed with a "file name" problem and left
-    /// out of every set (processes.md §2.2, §3.2 rule 1; PROC-16).
-    pub name_refused: bool,
+    /// out of every set (processes.md §2.2, §3.2 rule 1; PROC-16). Only a project repository's
+    /// file can be one.
+    pub fn name_refused(&self) -> bool {
+        self.name_refused
+    }
 }
 
 /// Where the file at `path` (relative, `/`-separated) in `repo` is, if it is a process file: a

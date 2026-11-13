@@ -8,7 +8,8 @@ use crate::place::{Level, Place, ProcessKey};
 impl Resolver<'_> {
     /// Rule 6, with rule 3's project check, which runs after rule 5: the project's version wins
     /// and settles any conflict, unless the organization sealed the key, or a team seal binds
-    /// it and there is no team-level conflict to settle.
+    /// it and there is no team-level conflict to settle. A seal here includes one that can't be
+    /// shown not to be (rule 2: a file whose key can't be read), which refuses with "can't tell".
     pub(super) fn project(
         &mut self,
         key: &ProcessKey,
@@ -20,7 +21,7 @@ impl Resolver<'_> {
             .inputs
             .work
             .as_ref()
-            .map(|work| Place::Project(work.project.clone()));
+            .map(|work| Place::Project(work.project().clone()));
         let Some(j) = place.and_then(|place| self.live(&place, key)) else {
             return (winner, conflict);
         };

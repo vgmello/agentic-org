@@ -20,15 +20,69 @@ pub struct Input {
     pub read: Result<ProcessFile, Problem>,
 }
 
-/// The agent's current work: a project and its teams (§3.1).
+/// The agent's current work: a project and its teams (§3.1). Built only by [`Work::new`], which
+/// checks the chains:
+///
+/// ```compile_fail,E0451
+/// use org_process::{ProjectKey, Work};
+/// let made = Work { project: ProjectKey::new("atlas").unwrap(), chains: vec![] };
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Work {
+    project: ProjectKey,
+    chains: Vec<Vec<TeamId>>,
+}
+
+/// Why [`Work::new`] refused the chains.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChainError {
+    /// A chain names no team.
+    Empty,
+    /// A chain names this team twice.
+    Repeated(TeamId),
+    /// This team has different ancestors in two chains: a chain is its last team's parent path,
+    /// so a team always has the same ones.
+    Ancestors(TeamId),
+}
+
+impl Work {
+    /// The project's work, with, for each team linked to the project, its chain from the
+    /// outermost parent down to it. Refused: an empty chain, a team twice in one chain, and a
+    /// team whose ancestors differ between chains. A chain that is a prefix of another (a linked
+    /// ancestor of another linked team) or a copy of one is accepted, and dropped when resolving.
+    pub fn new(project: ProjectKey, chains: Vec<Vec<TeamId>>) -> Result<Work, ChainError> {
+        for chain in &chains {
+            if chain.is_empty() {
+                return Err(ChainError::Empty);
+            }
+            if let Some(i) = (1..chain.len()).find(|&i| chain[..i].contains(&chain[i])) {
+                return Err(ChainError::Repeated(chain[i].clone()));
+            }
+        }
+        // No chain repeats a team now, so `position` finds its only place in a chain.
+        for chain in &chains {
+            for (i, team) in chain.iter().enumerate() {
+                let differ = |other: &Vec<TeamId>| {
+                    let at = other.iter().position(|t| t == team);
+                    at.is_some_and(|at| other[..at] != chain[..i])
+                };
+                if chains.iter().any(differ) {
+                    return Err(ChainError::Ancestors(team.clone()));
+                }
+            }
+        }
+        Ok(Work { project, chains })
+    }
+
     /// The project.
-    pub project: ProjectKey,
-    /// For each team linked to the project, its chain from the outermost parent down to it. A
-    /// chain that is a prefix of another (a linked ancestor of another linked team) or a copy of
-    /// one is dropped.
-    pub chains: Vec<Vec<TeamId>>,
+    pub fn project(&self) -> &ProjectKey {
+        &self.project
+    }
+
+    /// The chains, as given.
+    pub fn chains(&self) -> &[Vec<TeamId>] {
+        &self.chains
+    }
 }
 
 /// What agent A's set is computed from.
@@ -197,11 +251,17 @@ impl TurnedOff {
 pub struct Conflict {
     /// The key.
     pub key: ProcessKey,
-    /// The disagreeing versions' places (a team that sealed what it inherited stands for it).
+    /// The disagreeing versions' places (a team that sealed what it inherited, or can't be shown
+    /// not to have, stands for it).
     pub teams: Vec<Place>,
     /// The teams that sealed the key.
     pub sealed_by: Vec<Place>,
-    /// What applies until the project decides: the organization's, a sealed team's, or nothing.
+    /// "Can't tell: <path> can't be read": in a disagreeing chain, a file whose key can't be read
+    /// might seal the key, so it counts as that chain's seal (rule 2, failing closed), but no
+    /// team is named as sealing it. Each such file's path.
+    pub unknown: Vec<String>,
+    /// What applies until the project decides: the organization's, a sealed team's (one counted
+    /// in [`Conflict::unknown`] included), or nothing.
     pub applies: Option<Place>,
 }
 
@@ -243,13 +303,13 @@ pub fn resolve(inputs: &Inputs) -> EffectiveSet {
     let mut places = vec![Place::Organization];
     let mut chains = Vec::new();
     if let Some(work) = &inputs.work {
-        chains = chains::kept(&work.chains);
+        chains = chains::kept(work.chains());
         for place in chains.iter().flatten() {
             if !places.contains(place) {
                 places.push(place.clone());
             }
         }
-        places.push(Place::Project(work.project.clone()));
+        places.push(Place::Project(work.project().clone()));
     }
     places.push(Place::Agent(inputs.agent.clone()));
     let mut r = Resolver {
