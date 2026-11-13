@@ -190,7 +190,7 @@ pub fn execute(
 }
 
 fn decide(ctx: &mut Ctx, call: &WorkCall) -> Result<Plan, Fail> {
-    match call {
+    let plan = match call {
         WorkCall::TaskCreate(p) => tasks::create(ctx, p),
         WorkCall::TaskUpdate(p) => tasks::update(ctx, p),
         WorkCall::TaskAssign(p) => tasks::assign(ctx, p),
@@ -216,7 +216,19 @@ fn decide(ctx: &mut Ctx, call: &WorkCall) -> Result<Plan, Fail> {
         WorkCall::BugVerify(p) => bugs::verify(ctx, p),
         WorkCall::BugClose(p) => bugs::close(ctx, p),
         WorkCall::BugReopen(p) => bugs::reopen(ctx, p),
+    }?;
+    // Validate the decided state before any number allocation or write, including automatic
+    // drafts. NumberScope owns which item kinds require a project for their key.
+    for draft in &plan.drafts {
+        let item = &draft.item;
+        if matches!(item.kind, ItemKind::Task | ItemKind::Bug)
+            && item.number.is_some()
+            && NumberScope::of(item.kind, item.project_id.as_deref()).is_none()
+        {
+            return Err(invalid("a numbered task or bug must have a project"));
+        }
     }
+    Ok(plan)
 }
 
 /// The items as the wire shows them. A bug's summary lists its fix tasks (the live tasks with a

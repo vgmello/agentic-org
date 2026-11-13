@@ -473,9 +473,9 @@ fn making_a_ticked_step_into_a_task_unticks_it_until_the_task_is_completed() {
     let s = w.step(&parent, &step);
     assert!(!s.done);
     assert_eq!((s.checked_by, s.checked_at_ms), (None, None));
-    // The parent's required step guards Done again while the made task is open.
+    // The open subtask blocks Done before the overridable required-step guard.
     let e = w.err(&agent(), WorkCall::TaskSetStatus(w.status(&parent, Done)));
-    assert_eq!(e.code, ErrorCode::ChecklistIncomplete);
+    assert_eq!(e.code, ErrorCode::InvalidRequest);
     let mut p = w.status(&task, Done);
     p.resolution = Some(Resolution::Cancelled);
     w.ok(&agent(), WorkCall::TaskSetStatus(p));
@@ -507,4 +507,228 @@ fn undoing_a_tick_is_stale_once_the_step_stopped_following_its_task() {
         }),
     );
     assert_eq!(w.code(&app(), undo(&w, &parent, v)), ErrorCode::Conflict);
+}
+
+#[test]
+fn b111_depth_one_refuses_promoting_a_subtasks_step_without_writes() {
+    let w = World::new();
+    let (_, step) = w.task_with_step(false);
+    let (child, call) = w.make_task(&step);
+    w.ok(&agent(), call);
+    let grand_step = w.id();
+    w.ok(
+        &agent(),
+        WorkCall::ChecklistAdd(ChecklistAddParams {
+            change_id: w.id(),
+            item_id: child.clone(),
+            steps: vec![NewStep {
+                step_id: grand_step.clone(),
+                text: "Nested work".into(),
+                required: false,
+            }],
+            after_step_id: None,
+        }),
+    );
+    let before = w.store.snapshot();
+    let (_, call) = w.make_task(&grand_step);
+    assert_eq!(w.err(&agent(), call).code, ErrorCode::InvalidRequest);
+    let after = w.store.snapshot();
+    assert_eq!(after.items, before.items);
+    assert_eq!(after.events, before.events);
+    assert_eq!(after.numbers, before.numbers);
+    assert_eq!(after.feed, before.feed);
+    // Ending the parent link turns it back into a top-level task.
+    w.ok(
+        &agent(),
+        WorkCall::ChecklistUnlinkTask(ChecklistUnlinkTaskParams {
+            change_id: w.id(),
+            step_id: step,
+        }),
+    );
+    let (_, call) = w.make_task(&grand_step);
+    w.ok(&agent(), call);
+}
+
+#[test]
+fn b111_parent_done_refuses_optional_open_subtasks_even_with_anyway() {
+    let w = World::new();
+    let first = w.id();
+    let second = w.id();
+    let parent = w.task_with(|p| {
+        p.checklist = vec![
+            NewStep {
+                step_id: first.clone(),
+                text: "First optional work".into(),
+                required: false,
+            },
+            NewStep {
+                step_id: second.clone(),
+                text: "Second optional work".into(),
+                required: false,
+            },
+        ]
+    });
+    let (child1, call) = w.make_task(&first);
+    w.ok(&agent(), call);
+    let (child2, call) = w.make_task(&second);
+    w.ok(&agent(), call);
+    for anyway in [None, Some("Required-step override".to_owned())] {
+        let before = w.item(&parent);
+        let events = w.events(&parent);
+        let mut p = w.status(&parent, Done);
+        p.anyway_reason = anyway;
+        let error = w.err(&agent(), WorkCall::TaskSetStatus(p));
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.message,
+            "T-1 has 2 open subtasks: T-2, T-3. Finish or cancel them first."
+        );
+        assert_eq!(w.item(&parent), before);
+        assert_eq!(w.events(&parent), events);
+    }
+    w.set(&child1, Done);
+    let error = w.err(&agent(), WorkCall::TaskSetStatus(w.status(&parent, Done)));
+    assert_eq!(
+        error.message,
+        "T-1 has 1 open subtask: T-3. Finish or cancel them first."
+    );
+    let mut p = w.status(&child2, Done);
+    p.resolution = Some(Resolution::Cancelled);
+    w.ok(&agent(), WorkCall::TaskSetStatus(p));
+    w.set(&parent, Done);
+}
+
+#[test]
+fn b111_numbered_task_or_bug_without_project_is_invalid_without_writes() {
+    for kind in [ItemKind::Task, ItemKind::Bug] {
+        let w = World::new();
+        let id = if kind == ItemKind::Task {
+            w.task()
+        } else {
+            w.bug()
+        };
+        {
+            let mut state = w.store.work.lock().unwrap();
+            let item = state.items.get_mut(&id).unwrap();
+            item.number = Some(7);
+            item.project_id = None;
+        }
+        let before = w.store.snapshot();
+        let error = w.err(
+            &agent(),
+            WorkCall::Comment(w.comment(&id, "Must not persist")),
+        );
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        let after = w.store.snapshot();
+        assert_eq!(after.items, before.items);
+        assert_eq!(after.events, before.events);
+        assert_eq!(after.numbers, before.numbers);
+        assert_eq!(after.feed, before.feed);
+    }
+}
+
+#[test]
+fn b111_parent_done_excludes_each_non_open_child_and_non_task() {
+    for exclusion in ["completed", "cancelled", "deleted", "unlinked", "non-task"] {
+        let w = World::new();
+        let (parent, step) = w.task_with_step(false);
+        let (child, call) = w.make_task(&step);
+        w.ok(&agent(), call);
+        // Retain the PartOf link for tombstones and non-tasks so each filter gets its own
+        // witness. Ordinary delete also unlinks a promoted step, which would mask this guard.
+        {
+            let mut state = w.store.work.lock().unwrap();
+            let item = state.items.get_mut(&child).unwrap();
+            match exclusion {
+                "completed" => {
+                    item.status = Done;
+                    item.resolution = Some(Resolution::Completed);
+                }
+                "cancelled" => {
+                    item.status = Done;
+                    item.resolution = Some(Resolution::Cancelled);
+                }
+                "deleted" => item.deleted = true,
+                "unlinked" => item.links[0].removed = true,
+                "non-task" => item.kind = ItemKind::Bug,
+                _ => unreachable!(),
+            }
+        }
+        w.set(&parent, Done);
+    }
+}
+
+#[test]
+fn b111_parent_done_orders_numbers_numerically_and_uses_short_ids() {
+    let w = World::new();
+    let (parent, step) = w.task_with_step(false);
+    let (first, call) = w.make_task(&step);
+    w.ok(&agent(), call);
+    // Deliberately invert number order versus stable ids: 14 precedes 13 by id.
+    let mut second = w.item(&first);
+    second.id = w.id();
+    second.number = Some(13);
+    second.links[0].id = w.id();
+    let second_id = second.id.clone();
+    {
+        let mut state = w.store.work.lock().unwrap();
+        state.items.get_mut(&parent).unwrap().number = Some(12);
+        state.items.get_mut(&first).unwrap().number = Some(14);
+        state.items.insert(second.id.clone(), second);
+    }
+    let error = w.err(&agent(), WorkCall::TaskSetStatus(w.status(&parent, Done)));
+    assert_eq!(
+        error.message,
+        "T-12 has 2 open subtasks: T-13, T-14. Finish or cancel them first."
+    );
+    {
+        let mut state = w.store.work.lock().unwrap();
+        state.items.get_mut(&parent).unwrap().number = None;
+        state.items.get_mut(&first).unwrap().number = None;
+        state.items.get_mut(&second_id).unwrap().deleted = true;
+    }
+    let error = w.err(&agent(), WorkCall::TaskSetStatus(w.status(&parent, Done)));
+    assert_eq!(
+        error.message,
+        format!(
+            "{} has 1 open subtask: {}. Finish or cancel them first.",
+            crate::short_id(&parent),
+            crate::short_id(&first)
+        )
+    );
+}
+
+#[test]
+fn b111_parent_cancel_and_other_transitions_keep_their_existing_semantics() {
+    let w = World::new();
+    let (parent, step) = w.task_with_step(false);
+    let (_, call) = w.make_task(&step);
+    w.ok(&agent(), call);
+    w.set(&parent, InProgress);
+    let mut p = w.status(&parent, Done);
+    p.resolution = Some(Resolution::Cancelled);
+    w.ok(&app(), WorkCall::TaskSetStatus(p));
+}
+
+#[test]
+fn b111_number_shape_keeps_unnumbered_bugs_and_numbered_requests_valid() {
+    for (kind, number, project) in [
+        (ItemKind::Task, Some(7), Some(PROJECT)),
+        (ItemKind::Task, None, None),
+        (ItemKind::Bug, Some(7), Some(PROJECT)),
+        (ItemKind::Bug, None, None),
+        (ItemKind::Request, Some(7), None),
+        (ItemKind::Unknown, Some(7), None),
+    ] {
+        let w = World::new();
+        let id = w.task();
+        {
+            let mut state = w.store.work.lock().unwrap();
+            let item = state.items.get_mut(&id).unwrap();
+            item.kind = kind;
+            item.number = number;
+            item.project_id = project.map(str::to_owned);
+        }
+        w.ok(&agent(), WorkCall::Comment(w.comment(&id, "Allowed shape")));
+    }
 }

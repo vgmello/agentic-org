@@ -60,6 +60,7 @@ pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest, Sna
 const EPOCH: u64 = 1;
 
 pub(crate) const SCHEMA: Schema = Schema {
+    admit: None,
     version: 3,
     upgrade: |tx, from| {
         if from < 2 {

@@ -5,6 +5,7 @@ use crate::store::{Opening, Schema, Store};
 use crate::Key;
 
 mod call;
+mod keys;
 mod metadata;
 use crate::OfficeError;
 use org_proto::work::{CommentKind, FieldChange, LinkKind, LinkTarget, WorkEventKind};
@@ -89,7 +90,10 @@ fn core_task(seed: u128, with_step: bool) -> (Arc<MemStore>, WorkService<Arc<Mem
 pub(super) fn task_fixture(seed: u128, with_step: bool) -> (StoredItem, Vec<WorkEvent>) {
     let (store, _, id) = core_task(seed, with_step);
     let mut saved = store.snapshot();
-    let item = saved.items.remove(&id).unwrap();
+    let mut item = saved.items.remove(&id).unwrap();
+    // Each source MemStore starts at T-1; native multi-item fixtures need distinct keys.
+    // Reserve 1 and 2 for history(), which creates both tasks in one source store.
+    item.number = Some(u64::try_from(seed).unwrap().checked_mul(10).unwrap());
     let events = saved.events.remove(&id).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].version, 1);
@@ -758,7 +762,9 @@ fn native_work_read_refuses_corrupt_item_and_id_index_without_repairing_it() {
                 let mut data = serde_json::to_value(&copy).unwrap();
                 match case {
                     "json" => {
-                        db.execute("UPDATE work_items SET data='{' WHERE id=?1", [&copy.id])
+                        // Expression indexes now reject malformed JSON on write. A valid JSON
+                        // value with the wrong item shape still exercises the reader's decoder.
+                        db.execute("UPDATE work_items SET data='[]' WHERE id=?1", [&copy.id])
                             .map_err(OfficeError::storage)?;
                     }
                     "key" => {
@@ -1130,6 +1136,7 @@ fn native_work_version_exhaustion_refuses_before_allocating_rows() {
 }
 
 const V3: Schema = Schema {
+    admit: None,
     version: 3,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;

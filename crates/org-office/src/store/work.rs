@@ -13,7 +13,9 @@ use crate::OfficeError;
 pub(crate) mod activity;
 pub(crate) mod assembly;
 mod call;
+mod keys;
 mod metadata;
+pub(crate) use keys::admit as admit_v6;
 pub(crate) use metadata::create_tables as create_v5_tables;
 
 pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
