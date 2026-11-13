@@ -46,15 +46,7 @@ pub(crate) fn create_tables(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<
 /// the file, so a restore brings the old one back: whoever restores must make a new one (that
 /// is the restore tool's job, not this function's). Runs on the writer.
 pub(crate) fn incarnation(db: &Connection) -> Result<String, OfficeError> {
-    let existing: Option<String> = db
-        .query_row(
-            "SELECT value FROM meta WHERE key = ?1",
-            [INCARNATION_KEY],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(OfficeError::storage)?;
-    if let Some(existing) = existing {
+    if let Some(existing) = stored_incarnation(db)? {
         return Ok(existing);
     }
     let made = crate::ulid::generate().map_err(OfficeError::storage)?;
@@ -64,6 +56,17 @@ pub(crate) fn incarnation(db: &Connection) -> Result<String, OfficeError> {
     )
     .map_err(OfficeError::storage)?;
     Ok(made)
+}
+
+/// The incarnation if one was ever made. Never makes one, so it runs on a query-only reader.
+pub(crate) fn stored_incarnation(db: &Connection) -> Result<Option<String>, OfficeError> {
+    db.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        [INCARNATION_KEY],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(OfficeError::storage)
 }
 
 /// Shared by messages and work; a restore tool rotates only the incarnation.
