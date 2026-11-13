@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-13"
@@ -18,6 +18,8 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 ## The request (the user, 2026-11-08)
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
+
+**Revision 7 (2026-11-13): A40 resolved (ada).** The office keeps the full snapshot with amounts for the report page (owner and the project's manager only), and nothing is recomputed. No criteria changed.
 
 **Revision 6 (2026-11-13): A109 resolved (Emery).** Saved report files carry no cost amounts or budget figures: tokens, "Budget reached" and a link to the app instead. The saved snapshot and `run` field carry tokens only; the office keeps the amounts (A40). **Criteria rewritten (same ID):** STATUS-7 *(rev 6)*.
 
@@ -117,7 +119,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 ## 6. Open questions
 
 **For ada**
-- A40 · The facts snapshot: one office query set shared with Insights (W14), with the report's front matter storing the snapshot so old reports stay true even if later data changes? *(rev 6)* Since A109 the file's snapshot has no cost amounts, so the office keeps the full snapshot (amounts included) with the report record, and the report page shows amounts from it under `costs-and-budgets-v1` §5.5. Agree, or recompute instead?
+- ~~A40~~ · **Resolved (ada, 2026-11-13) *(rev 7)*:** the office keeps the full snapshot, amounts included, with the report record, and the report page shows amounts from it to the owner and the project's manager (`costs-and-budgets-v1` §5.5). Nothing is recomputed, so an old report stays true. The saved file keeps tokens only (A109). *Was:* The facts snapshot: one office query set shared with Insights (W14), with the report's front matter storing the snapshot so old reports stay true even if later data changes? *(rev 6)* Since A109 the file's snapshot has no cost amounts, so the office keeps the full snapshot (amounts included) with the report record, and the report page shows amounts from it under `costs-and-budgets-v1` §5.5. Agree, or recompute instead?
 - A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK? *(rev 6)* The facts it gets have no cost amounts (tokens and "Budget reached" only), so the narrative can't carry them into the saved file (A109).
 - ~~A109~~ · *Resolved (Emery, 2026-11-13; rev 6):* report files leave out cost amounts and budget figures. They may say "Budget reached", show tokens, and link to the app, where `costs-and-budgets-v1` §5.5 decides who sees amounts. Repository access isn't a permission model (STATUS-7).
 
