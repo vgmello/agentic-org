@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-13"
@@ -18,6 +18,8 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 ## The request (the user, 2026-11-08)
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
+
+**Revision 6 (2026-11-13): A109 resolved (Emery).** Saved report files carry no cost amounts or budget figures: tokens, "Budget reached" and a link to the app instead. **Criteria rewritten (same ID):** STATUS-7 *(rev 6)*.
 
 **Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task or bug stopped or held by its budget, `costs-and-budgets-v1` §5.4; an agent's budget pause belongs to the agent, not a project, so it doesn't count). The mock-up's Why line names it ("1 task stopped at its budget"). The cost tile opens the usage records behind it, and missing usage reads "Usage incomplete: {reason}" (`costs-and-insights-ux.md` rev 6). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). Cost amounts follow `costs-and-budgets-v1` §5.5 (req 26, AC-CB10-1): the Investment tile, the cost trend and the report's cost section show amounts only to the owner and the project's manager. Everyone else sees the budget state only (for example "1 budget reached"), and no tile, trend or report section shows them a dollar figure. Cost in saved report files is open (A109). **Criteria rewritten (same ID):** STATUS-1, STATUS-3, STATUS-9 *(rev 5)*.
 
@@ -94,7 +96,7 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 
 ## 4. Settings (project › Settings › Status reports)
 
-Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · a Budget reached item open on the project's work → At risk *(rev 5)*) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑.
+Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · a Budget reached item open on the project's work → At risk *(rev 5)*) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑ (in the app, amounts follow §5.5; the saved file keeps tokens and budget states only, A109).
 
 **Waiting on you** *(rev 3)*, in the health rule, the Flow tile and Home › Projects status, counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and tasks Blocked waiting for your decision on a proposed ADR, only while that decision is the task's blocker (ada Q11).
 
@@ -106,7 +108,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 - STATUS-4 · A report's summary, risks and recommendations come from a one-off run, cite the facts, and are marked Drafted until the owner opens the report.
 - STATUS-5 · Reports run on the project's schedule (default weekly, Monday 08:00), after a delivered feature if chosen, and on demand from the Status page and ⌘K.
 - STATUS-6 · A period with no activity produces a one-line report without a run.
-- STATUS-7 · Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's cost) and listed in Docs › Reports with its health.
+- STATUS-7 · *(rev 6)* Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's tokens) and listed in Docs › Reports with its health. The saved file has no cost amounts or budget figures: its cost section shows tokens and "Budget reached" where it applies, with a link to the project in the app for amounts (A109).
 - STATUS-8 · A new report appears on Home, and a change of health also appears in Needs you.
 - STATUS-9 · *(rev 5)* Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health. The cost column shows amounts only to the owner and each project's manager (`costs-and-budgets-v1` §5.5); other members see no cost column.
 - STATUS-10 · Health rules and the schedule are editable per project. Reports export to Markdown and PDF.
@@ -117,7 +119,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 **For ada**
 - A40 · The facts snapshot: one office query set shared with Insights (W14), with the report's front matter storing the snapshot so old reports stay true even if later data changes?
 - A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK?
-- A109 · *(rev 5)* Report files in `docs/reports/` are readable by any member with the repository, but members may not see cost amounts (`costs-and-budgets-v1` §5.5). Should a saved report leave out the cost section and the run's cost (STATUS-7), keep them in an owner-only store, or is the repository owner-only enough? (Also for Emery.)
+- ~~A109~~ · *Resolved (Emery, 2026-11-13; rev 6):* report files leave out cost amounts and budget figures. They may say "Budget reached", show tokens, and link to the app, where `costs-and-budgets-v1` §5.5 decides who sees amounts. Repository access isn't a permission model (STATUS-7).
 
 **For the user**
 - ~~U23~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
