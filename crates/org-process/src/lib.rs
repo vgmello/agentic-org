@@ -1,8 +1,8 @@
 //! Processes (`docs/design/processes.md`): how agents work, written down and inherited. Pure:
 //! no SQL, git, network or clock, and no ports. It reads a process file and its place,
 //! resolves which processes apply to an agent's work, keys the resolved sets for caching,
-//! merges a new task's checklist, renders the "Your processes" section and checks the
-//! one-open-task-branch rule (§4.2).
+//! merges a new task's checklist, renders the "Your processes" section, checks the
+//! one-open-task-branch rule (§4.2) and checks each write (§5).
 
 #![warn(missing_docs)]
 
@@ -13,6 +13,7 @@ mod one_branch;
 mod place;
 mod render;
 mod resolve;
+mod write;
 
 pub use checklist::checklist;
 pub use file::{Moments, Problem, ProblemKind, ProcessFile, Status, Step};
@@ -26,6 +27,9 @@ pub use render::{render, FileText, Moment, RenderInput, Rendered};
 pub use resolve::{
     resolve, ChainError, Conflict, Drift, EffectiveSet, Entry, Input, Inputs, Kind, Layer, Outcome,
     PrivateReason, TurnedOff, Winner, Work,
+};
+pub use write::{
+    check_write, Branch, RefusalCode, RefusalReason, WriteInput, WriteRefusal, Writer,
 };
 
 #[cfg(test)]

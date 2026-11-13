@@ -20,6 +20,18 @@ pub struct Input {
     pub read: Result<ProcessFile, Problem>,
 }
 
+impl Input {
+    /// Whether it seals its key, or can't be shown not to (rule 2): a valid file that
+    /// [`ProcessFile::seals`], or an invalid one whose `overridable` isn't read as `true`, unless
+    /// it is a draft or retired one. Out of place or not, the same.
+    pub(crate) fn seals(&self) -> bool {
+        match &self.read {
+            Ok(file) => file.seals(),
+            Err(problem) => problem.sealed != Some(false),
+        }
+    }
+}
+
 /// The agent's current work: a project and its teams (§3.1). Built only by [`Work::new`], which
 /// checks the chains:
 ///
@@ -376,14 +388,11 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
             }),
             Err(problem) => Err(problem.clone()),
         };
-        let (key, seals, status) = match &read {
-            Ok(file) => (Some(file.key.clone()), file.seals(), Some(file.status)),
-            Err(problem) => (
-                problem.key.clone(),
-                problem.sealed != Some(false),
-                problem.status,
-            ),
+        let (key, status) = match &read {
+            Ok(file) => (Some(file.key.clone()), Some(file.status)),
+            Err(problem) => (problem.key.clone(), problem.status),
         };
+        let seals = input.seals();
         let file = read.as_ref().ok().copied();
         let exempt = matches!(status, Some(Status::Draft | Status::Retired));
         items.push(Item {
