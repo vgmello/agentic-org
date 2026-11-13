@@ -22,6 +22,11 @@ Ruled 2026-11-13 by ada (processes.md §3.3, option a):
 - For a fresh context (a new main session or delegate, or after a compaction, §3.5), pass an
   empty `read`, so every applicable text is offered again. Agent-wide read history doesn't
   prove that a new context holds the text.
+- **Q1 (ruled by ada):** the agent gets the process BODY only. The office strips the front
+  matter when it builds `texts[key]`. render stays agnostic: its headings already carry the
+  key, name and version.
+- **Q2 (for the composer slice, A107/PROC-30):** `CAP` stays fixed in render; that slice adds
+  a public `render_within(cap <= CAP)`.
 
 ## Choices made in render (each one pinned by a test)
 
@@ -40,3 +45,10 @@ Ruled 2026-11-13 by ada (processes.md §3.3, option a):
 - **Wording I chose,** since the spec has no exact text: the conflict lines "T's version
   applies until the project decides." (a can't-tell seal) and "No version applies until the
   project decides."
+- **Outside text is fenced or quoted** (P4b fix, Tomas's LOW): each full text sits in a
+  backtick fence longer than any backtick run in it (at least 3), so a body can't forge a
+  heading; a place name or `Conflict::unknown` path with a control character or one that
+  breaks a line or hides text is quoted with `{:?}`. Plain ones are left as they are. Each
+  On moment's guidance text is fenced the same way; the moment prompts are not, since each is
+  one validated line (no control character, line break or hiding character). Fence bytes count
+  toward the cap.

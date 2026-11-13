@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::file::{Moments, Status};
 use crate::place::{Place, ProcessKey};
-use crate::resolve::{place_name, Conflict, EffectiveSet, Winner};
+use crate::resolve::{place_name, Conflict, EffectiveSet, TurnedOff, Winner};
+use org_docs::is_invisible_or_break;
 
 type Names = BTreeMap<Place, String>;
 
@@ -109,19 +110,21 @@ impl Rendered {
 ///    One long early line that doesn't fit leaves out every later one, though they would fit.
 /// 2. "Changed since you last read": in the same order, each applying winner whose blob in
 ///    `input.texts` isn't among `input.read`'s blobs for its key, or that has no text there.
-///    The longest run of them, from the first, that fits in full (trailing whitespace trimmed)
-///    with all the rest named after it ("Run `org-agent process show <key>`"); one with no
+///    The longest run of them, from the first, that fits in full (trailing whitespace trimmed,
+///    in a backtick fence, fence included in the size) with all the rest named after it ("Run `org-agent process show <key>`"); one with no
 ///    text is always named. If not even every name fits, the longest run of names that fits
 ///    with "and N more changed: run `org-agent process list`" after it.
-/// 3. Each On moment, in [`Moment`] order: its guidance text (trailing whitespace trimmed),
-///    then each applying winner's prompt for it, in the same order. These are reminders, not
+/// 3. Each On moment, in [`Moment`] order: its guidance text (trailing whitespace trimmed, in a
+///    backtick fence, as in part 2), then each applying winner's prompt for it (unfenced: one
+///    validated line), in the same order. These are reminders, not
 ///    rules (processes-ux.md decision 9), so they come last. A moment is whole or left out:
 ///    the longest run that fits with "and N more moments: process context limit reached
 ///    (`org-agent process list`)" after it.
 ///
 /// Only whole entries are emitted, never a cut one; an entry or count line that doesn't fit is
 /// left out, so the cap holds whatever the input (with a cap too small for the kept room, the
-/// kept lines may not fit either). With nothing to show, the text is empty.
+/// kept lines may not fit either). A place name or path that could break a line or hide text
+/// is quoted (`{:?}`). With nothing to show, the text is empty.
 pub fn render(set: &EffectiveSet, input: &RenderInput) -> Rendered {
     render_within(set, input, CAP)
 }
@@ -225,14 +228,39 @@ impl Out {
             let tail = if k < n { more(n - k).len() } else { 0 };
             items[..k].iter().map(String::len).sum::<usize>() + tail
         };
-        let k = (0..=n).rev().find(|&k| size(k) <= self.room()).unwrap_or(0);
+        let k = longest_fit(n, self.room(), size).unwrap_or(0);
         for item in &items[..k] {
-            self.push(item);
+            let pushed = self.push(item);
+            debug_assert!(pushed, "chosen to fit");
         }
         if k < n {
             self.push(&more(n - k));
         }
     }
+}
+
+/// The largest `k` in `0..=n` whose `size` fits in `room`, if any.
+fn longest_fit(n: usize, room: usize, size: impl Fn(usize) -> usize) -> Option<usize> {
+    (0..=n).rev().find(|&k| size(k) <= room)
+}
+
+/// `s` as it is, or quoted (`{:?}`) if it has a control character (a line break included) or
+/// one that breaks a line or hides text, so a name or path from outside can't start a line of
+/// its own or hide text in the section.
+fn quoted(s: &str) -> String {
+    match s.contains(|c: char| c.is_control() || is_invisible_or_break(c)) {
+        true => format!("{s:?}"),
+        false => s.to_owned(),
+    }
+}
+
+/// `text` (trailing whitespace trimmed) in a backtick fence longer than any run of backticks
+/// in it, and at least 3, so no line of it can close the fence or pass for a heading.
+fn fenced(text: &str) -> String {
+    let text = text.trim_end();
+    let run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(run.max(2) + 1);
+    format!("{fence}\n{text}\n{fence}\n")
 }
 
 /// Part 1's lines.
@@ -245,6 +273,10 @@ fn summaries(set: &EffectiveSet, winners: &[&Winner], names: &Names) -> Vec<Stri
     let off = set
         .turned_off
         .iter()
+        .map(|t| TurnedOff {
+            name: quoted(&t.name),
+            ..t.clone()
+        })
         .map(|t| format!("- {}: {}\n", t.key.as_str(), t.message()));
     let conflicts = set
         .conflicts
@@ -258,7 +290,7 @@ fn summaries(set: &EffectiveSet, winners: &[&Winner], names: &Names) -> Vec<Stri
 /// and each "can't tell" (processes.md §3.2 rule 2). The process is named by the version that
 /// applies, else by its key.
 fn conflict(set: &EffectiveSet, c: &Conflict, names: &Names) -> String {
-    let name = |place: &Place| place_name(names, place);
+    let name = |place: &Place| quoted(&place_name(names, place));
     let process = set.why(&c.key).and_then(|e| e.winner.as_ref());
     let process = process.map_or(c.key.as_str(), |w| w.file.name.as_str());
     let teams: Vec<String> = c.teams.iter().map(name).collect();
@@ -281,7 +313,7 @@ fn conflict(set: &EffectiveSet, c: &Conflict, names: &Names) -> String {
         line += &format!(" Sealed by {}.", name(p));
     }
     for path in &c.unknown {
-        line += &format!(" Can't tell: {path} can't be read.");
+        line += &format!(" Can't tell: {} can't be read.", quoted(path));
     }
     line
 }
@@ -293,7 +325,7 @@ fn label(place: &Place, names: &Names) -> String {
     match place {
         Place::Organization => "org".into(),
         Place::Agent(_) => "private".into(),
-        _ => place_name(names, place),
+        _ => quoted(&place_name(names, place)),
     }
 }
 
@@ -324,7 +356,7 @@ fn changes<'a>(winners: &[&'a Winner], input: &'a RenderInput) -> Changes<'a> {
         }
         let place = label(&w.file.place, &input.names);
         let head = format!("\n### {} ({place} v{})\n\n", w.file.name, w.file.version);
-        full.push(text.map(|t| (format!("{head}{}\n", t.text.trim_end()), key, &t.blob)));
+        full.push(text.map(|t| (format!("{head}{}", fenced(&t.text)), key, &t.blob)));
         let show = format!(
             "{head}Run `org-agent process show {}` to read it.\n",
             key.as_str()
@@ -342,23 +374,26 @@ fn changed(out: &mut Out, (full, named): &Changes) {
         _ => &named[i],
     };
     let size = |k: usize| (0..n).map(|i| entry(i, k).len()).sum::<usize>();
-    let Some(k) = (0..=n).rev().find(|&k| size(k) <= out.room()) else {
+    let Some(k) = longest_fit(n, out.room(), size) else {
         out.fill(named, more_changed);
         return;
     };
     // `k` was chosen so that every entry fits: each full text pushed here is in the text.
     for (i, text) in full.iter().enumerate() {
-        out.push(entry(i, k));
+        let pushed = out.push(entry(i, k));
+        debug_assert!(pushed, "chosen to fit");
         if let (true, Some((_, key, blob))) = (i < k, text) {
             out.delivered.push(((*key).clone(), (*blob).clone()));
         }
     }
 }
 
-/// Part 3's blocks, one per On moment.
+/// Part 3's blocks, one per On moment: the guidance text fenced like a full text, since it comes
+/// from outside; the prompts unfenced, since each is one validated line (no control character,
+/// line break or hiding character: `file.rs`'s `line`), shown after "- <name>: ".
 fn moments(winners: &[&Winner], input: &RenderInput) -> Vec<String> {
     let block = |(moment, guidance): (&Moment, &String)| {
-        let mut block = format!("\n## {}\n\n{}\n", moment.title(), guidance.trim_end());
+        let mut block = format!("\n## {}\n\n{}", moment.title(), fenced(guidance));
         let mut prompts = String::new();
         for w in winners {
             if let Some(prompt) = moment.prompt(&w.file.moments) {
