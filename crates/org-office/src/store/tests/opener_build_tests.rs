@@ -282,3 +282,51 @@ fn sqlcipher_build_inventory_cargo_refuses_all_build_dependency_spellings() {
         assert!(message.contains("unreviewed build dependency"), "{declaration}: {message}");
     }
 }
+
+#[test]
+fn sqlcipher_build_inventory_names_external_script_package_and_path() {
+    let dir = host_fixture();
+    let scope = tracked(dir.path());
+    let path = scope.root.parent().unwrap().join("outside-build.rs");
+    let value = inventory(
+        &scope,
+        vec![package(
+            &scope,
+            "external-package",
+            path.to_str().unwrap(),
+            json!(["custom-build"]),
+        )],
+    );
+    let message = error(|| {
+        metadata(&scope, &value);
+    });
+    assert!(
+        message.contains("external-package") && message.contains(path.to_str().unwrap()),
+        "{message}"
+    );
+}
+
+#[test]
+fn sqlcipher_build_script_checks_source_scope_before_reading() {
+    let dir = host_fixture();
+    let scope = tracked(dir.path());
+    let path = scope.root.join(HOST);
+    super::opener_build::script(&scope, "host", &path);
+    let mut untracked = tracked(dir.path());
+    untracked.files.remove(&path);
+    error(|| super::opener_build::script(&untracked, "host", &path));
+    let mut wrong_kind = tracked(dir.path());
+    wrong_kind
+        .files
+        .insert(path.clone(), super::opener_scope::SourceKind::Config);
+    error(|| super::opener_build::script(&wrong_kind, "host", &path));
+    #[cfg(unix)]
+    {
+        // The same bytes behind a symlink must still be refused, before reading them.
+        let target = scope.root.join("src/copied.rs");
+        std::fs::write(&target, HOST_SOURCE).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        error(|| super::opener_build::script(&scope, "host", &path));
+    }
+}

@@ -8,7 +8,7 @@ mod pins;
 pub(super) fn script(scope: &SourceScope, package: &str, path: &Path) {
     let relative = path
         .strip_prefix(&scope.root)
-        .expect("build script outside repository");
+        .unwrap_or_else(|_| panic!("unreviewed build script for {package}: {}", path.display()));
     let (_, expected) = pins::SCRIPTS
         .iter()
         .find(|(name, _)| relative == Path::new(name))
