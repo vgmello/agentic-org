@@ -717,6 +717,23 @@ fn more_matches_than_the_limit_end_the_page_at_its_last_entry() {
     assert!(page.exhausted);
 }
 
+#[test]
+fn a_limit_or_scan_of_0_counts_as_1() {
+    let (_dir, store) = store();
+    append(&store, filler(3));
+    for (limit, scan) in [(0, 2_000), (50, 0)] {
+        let mut q = query(4);
+        (q.limit, q.scan) = (limit, scan);
+        let page = read(&store, &q).unwrap();
+        let found: Vec<_> = page.entries.iter().map(|e| e.position).collect();
+        assert_eq!(found, [position(4, 0)], "limit {limit}, scan {scan}");
+        assert_eq!(
+            (page.scanned_to, page.exhausted),
+            (Some(position(4, 0)), false)
+        );
+    }
+}
+
 // ---- page independence -----------------------------------------------------------------------
 
 /// 4,500 rows with removals, archive flips and clock steps, and lookbacks of exactly 2,000
