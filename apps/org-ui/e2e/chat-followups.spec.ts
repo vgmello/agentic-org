@@ -4,7 +4,7 @@ import { visit } from './ready';
 import { largeTextFlow, optionGeometry, announcementGeometry, creationGeometry, headerGeometry, labelGeometry, attachmentGeometry, focusOutline, inheritsColour, keyboardFocus, kindGeometry, navigation, openChat, sidebarGeometry } from './chat-followups';
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`BUG-94 BUG-70: sidebar icon labels and counts stay together at ${width}/${scale * 100}`, async ({ page }) => {
+	test(`BUG-94 BUG-70: sidebar icon labels and counts stay together at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => {
 		await openChat(page, width, scale);
 		const nav = await navigation(page);
 		await shot(page, `bug94-sidebar-${width}-${scale}`, { context: nav });
@@ -13,14 +13,14 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 }
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-test(`BUG-95 BUG-70: kind icon stays beside its word at ${width}/${scale * 100}`, async ({ page }) => {
+test(`BUG-95 BUG-70: kind icon stays beside its word at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, width, scale, '/chat?c=c-general');
 	const badge = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' }).getByTitle('Announcement', { exact: true });
 	await kindGeometry(badge);
 	await shot(page, `bug95-kind-${width}-${scale}`, { context: badge });
 });
 
-test(`BUG-96 BUG-70: sent attachment clip aligns with first filename line at ${width}/${scale * 100}`, async ({ page }) => {
+test(`BUG-96 BUG-70: sent attachment clip aligns with first filename line at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, width, scale, '/chat?c=c-general');
 	const name = 'a-very-long-attachment-filename-that-wraps-across-multiple-lines.txt';
 	await page.getByLabel('Attach files').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from('test') });
@@ -34,14 +34,14 @@ test(`BUG-96 BUG-70: sent attachment clip aligns with first filename line at ${w
 });
 }
 
-test('BUG-97 BUG-70: current sidebar icons inherit control colour', async ({ page }) => {
+test('BUG-97 BUG-70: current sidebar icons inherit control colour', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page);
 	const nav = await navigation(page), row = nav.getByTestId('needs-you-link');
 	await expect(row).toHaveAttribute('aria-current', 'true');
 	await inheritsColour(row.locator('svg'), row);
 	await shot(page, 'bug97-current-sidebar', { context: row });
 });
-test('BUG-97 BUG-70: badge and pressed reaction icons inherit control colour', async ({ page }) => {
+test('BUG-97 BUG-70: badge and pressed reaction icons inherit control colour', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
 	const badge = row.getByTitle('Announcement', { exact: true });
@@ -52,7 +52,7 @@ test('BUG-97 BUG-70: badge and pressed reaction icons inherit control colour', a
 	await inheritsColour(chip.locator('svg'), chip);
 	await shot(page, 'bug97-pressed-reaction', { context: row });
 });
-test('BUG-97 BUG-70: both reaction states inherit colour', async ({ page }) => {
+test('BUG-97 BUG-70: both reaction states inherit colour', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
 	let chip = row.getByRole('button', { name: 'Seen, 1', exact: true });
@@ -66,13 +66,13 @@ test('BUG-97 BUG-70: both reaction states inherit colour', async ({ page }) => {
 	await shot(page, 'bug97-98-pressed-focus', { context: row });
 });
 
-test('BUG-98 BUG-70: reaction chip has visible keyboard outline', async ({ page }) => {
+test('BUG-98 BUG-70: reaction chip has visible keyboard outline', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const chip = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' }).getByRole('button', { name: 'Seen, 1', exact: true });
 	await keyboardFocus(page, chip); await focusOutline(chip);
 	await shot(page, 'bug98-chip-focus', { context: chip });
 });
-test('BUG-98 BUG-70: every message toolbar action has visible keyboard outline', async ({ page }) => {
+test('BUG-98 BUG-70: every message toolbar action has visible keyboard outline', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
 	for (const name of ['React Seen', 'React Looking', 'Reply in thread', 'More actions']) {
@@ -82,7 +82,7 @@ test('BUG-98 BUG-70: every message toolbar action has visible keyboard outline',
 	}
 });
 
-test('BUG-99 BUG-70: attachment removal focuses next then previous then Attach', async ({ page }) => {
+test('BUG-99 BUG-70: attachment removal focuses next then previous then Attach', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 640, 1, '/chat?c=c-general');
 	await page.getByLabel('Attach files').setInputFiles(['a.txt', 'b.txt', 'c.txt'].map((name) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(name) })));
 	const remove = (name: string) => page.getByRole('button', { name: `Remove ${name}`, exact: true });
@@ -95,7 +95,7 @@ test('BUG-99 BUG-70: attachment removal focuses next then previous then Attach',
 	await expect(page.getByRole('list', { name: 'Attached', exact: true })).toHaveCount(0);
 	await shot(page, 'bug99-return-attach', { context: attach });
 });
-test('BUG-99 BUG-70: Attach and Remove have visible keyboard outlines', async ({ page }) => {
+test('BUG-99 BUG-70: Attach and Remove have visible keyboard outlines', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const attach = page.getByRole('button', { name: 'Attach', exact: true });
 	await keyboardFocus(page, attach); await focusOutline(attach);
@@ -106,7 +106,7 @@ test('BUG-99 BUG-70: Attach and Remove have visible keyboard outlines', async ({
 });
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
- test(`BUG-99 BUG-70: Attach and Remove icons inherit idle and hover colour at ${width}/${scale * 100}`, async ({ page }) => {
+ test(`BUG-99 BUG-70: Attach and Remove icons inherit idle and hover colour at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => {
   await openChat(page, width, scale, '/chat?c=c-general');
   const attach = page.getByRole('button', { name: 'Attach', exact: true });
   await page.mouse.move(0, 0);
@@ -126,7 +126,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
  });
 }
 
-test('BUG-99 BUG-70: pointer removal follows first, last and sole attachment identities', async ({ page }) => {
+test('BUG-99 BUG-70: pointer removal follows first, last and sole attachment identities', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const names = ['undefined', '__proto__', 'quote" bracket].txt'];
 	await page.getByLabel('Attach files').setInputFiles(names.map((name) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(name) })));
@@ -138,7 +138,7 @@ test('BUG-99 BUG-70: pointer removal follows first, last and sole attachment ide
 	await shot(page, 'bug99-pointer-identity');
 });
 
-test('BUG-99 BUG-70: changing conversation during removal keeps destination focus', async ({ page }) => {
+test('BUG-99 BUG-70: changing conversation during removal keeps destination focus', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	await page.getByLabel('Attach files').setInputFiles({ name: 'depart.txt', mimeType: 'text/plain', buffer: Buffer.from('test') });
 	await page.evaluate(() => {
@@ -153,7 +153,7 @@ test('BUG-99 BUG-70: changing conversation during removal keeps destination focu
 });
 
 
-test('BUG-99 BUG-70: focus moves only after the removed attachment leaves the DOM', async ({ page }) => {
+test('BUG-99 BUG-70: focus moves only after the removed attachment leaves the DOM', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	await page.getByLabel('Attach files').setInputFiles(['a.txt', 'b.txt'].map((name) => ({ name, mimeType: 'text/plain', buffer: Buffer.from(name) })));
 	await page.getByRole('button', { name: 'Remove a.txt', exact: true }).focus();
@@ -169,7 +169,7 @@ test('BUG-99 BUG-70: focus moves only after the removed attachment leaves the DO
 });
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
- test(`BUG-94–99 BUG-70: message render paths preserve geometry at ${width}/${scale * 100}`, async ({ page }) => {
+ test(`BUG-94–99 BUG-70: message render paths preserve geometry at ${width}/${scale * 100}`, { tag: '@webkit' }, async ({ page }) => {
   await openChat(page, width, scale, '/chat?c=c-general');
   for (const [state, url] of [
    ['search', '/chat?q=kind:announcement'],
@@ -217,7 +217,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
  });
 }
 
-test('BUG-99 BUG-70: thread attachment focus stays in its own composer', async ({ page }) => {
+test('BUG-99 BUG-70: thread attachment focus stays in its own composer', { tag: '@webkit' }, async ({ page }) => {
  await openChat(page, 1280, 1, '/chat?c=c-general');
  const conversation = page.getByRole('region', { name: 'Conversation', exact: true });
  await conversation.getByLabel('Attach files').setInputFiles({ name:'next.txt', mimeType:'text/plain', buffer:Buffer.from('main') });
@@ -234,7 +234,7 @@ test('BUG-99 BUG-70: thread attachment focus stays in its own composer', async (
 });
 
 
-test('BUG-95 BUG-70: metadata threshold has two sides at 16, 32 and 40px roots', async ({ page }) => {
+test('BUG-95 BUG-70: metadata threshold has two sides at 16, 32 and 40px roots', { tag: '@webkit' }, async ({ page }) => {
  const metadataThresholdRem = 10.765625; // Independent boundary golden; derivation guarded in message-layout.test.ts.
  await openChat(page, 1280, 1, '/chat?c=c-general');
  const badge = page.getByTestId('message').filter({ hasText:'Ready for review: create-org' }).getByTitle('Announcement',{exact:true});
@@ -255,7 +255,7 @@ test('BUG-95 BUG-70: metadata threshold has two sides at 16, 32 and 40px roots',
  }
 });
 
-test('BUG-95 BUG-70: wide 1280/100 positions match the original flex column', async ({ page }) => {
+test('BUG-95 BUG-70: wide 1280/100 positions match the original flex column', { tag: '@webkit' }, async ({ page }) => {
  await openChat(page,1280,1,'/chat?c=c-general');
  const row=page.getByTestId('message').filter({hasText:'Ready for review: create-org'});
  const difference=await row.evaluate(article=>{
@@ -272,7 +272,7 @@ test('BUG-95 BUG-70: wide 1280/100 positions match the original flex column', as
 });
 
 
-for (const width of [320,640,960,1280]) test(`BUG-98/99 BUG-70: outlines remain visible at ${width}/200`, async ({ page }) => {
+for (const width of [320,640,960,1280]) test(`BUG-98/99 BUG-70: outlines remain visible at ${width}/200`, { tag: '@webkit' }, async ({ page }) => {
  await openChat(page,width,2,'/chat?c=c-general');
  const row=page.getByTestId('message').filter({hasText:'Ready for review: create-org'});
  for (const name of ['Seen, 1','React Seen','React Looking','Reply in thread','More actions']) {
@@ -289,7 +289,7 @@ for (const width of [320,640,960,1280]) test(`BUG-98/99 BUG-70: outlines remain 
 });
 
 
-test('BUG-94 BUG-70: geometry oracle rejects an overlapping count inside row bounds', async ({ page }) => {
+test('BUG-94 BUG-70: geometry oracle rejects an overlapping count inside row bounds', { tag: '@webkit' }, async ({ page }) => {
  await openChat(page,1280,2);
  const nav=await navigation(page);
  await sidebarGeometry(nav);
@@ -303,36 +303,36 @@ test('BUG-94 BUG-70: geometry oracle rejects an overlapping count inside row bou
 });
 
 // Native failing-first cases; screenshots are taken before geometry assertions.
-test('BUG-134 BUG-70: header reflows at 320/40px root',async({page})=>{
+test('BUG-134 BUG-70: header reflows at 320/40px root',{ tag: '@webkit' },async({page})=>{
  await openChat(page,320,2.5,'/chat?c=c-general');await shot(page,'bug134-header-320-40');await headerGeometry(page);
 });
-test('BUG-135 BUG-70: Ask option shows its full label at 320/200',async({page})=>{
+test('BUG-135 BUG-70: Ask option shows its full label at 320/200',{ tag: '@webkit' },async({page})=>{
  await openChat(page,320,2,'/chat?c=c-project-atlas');await expect(page.getByTestId('conversation-title')).toHaveText('#atlas');const card=page.getByTestId('ask-card').filter({hasText:'Block bug reports'});
  const option=card.getByRole('button',{name:'No, allow (default)',exact:true});await option.scrollIntoViewIfNeeded();await shot(page,'bug135-ask-320-200',{context:card});
  const geometry=await labelGeometry(option,card);expect(geometry.target).toBe(true);
 });
-test('BUG-135 BUG-70: Announcement link stays in its body at 320/40px root',async({page})=>{
+test('BUG-135 BUG-70: Announcement link stays in its body at 320/40px root',{ tag: '@webkit' },async({page})=>{
  await openChat(page,320,2.5,'/chat?c=c-general');const row=page.getByTestId('message').filter({hasText:'Ready for review: create-org'});await row.getByRole('link',{name:'the branch',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug135-link-320-40',{context:row.getByRole('link',{name:'the branch',exact:true})});await announcementGeometry(page);
 });
-test('BUG-136 BUG-70: creation icons share the first label line at 320/40px root',async({page})=>{
+test('BUG-136 BUG-70: creation icons share the first label line at 320/40px root',{ tag: '@webkit' },async({page})=>{
  await openChat(page,320,2.5);const nav=await navigation(page);await nav.getByRole('button',{name:'New message',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug136-creation-320-40',{context:nav});await creationGeometry(nav);
 });
-test('BUG-134 BUG-135 BUG-136 BUG-70: wide ordinary controls remain readable',async({page})=>{
+test('BUG-134 BUG-135 BUG-136 BUG-70: wide ordinary controls remain readable',{ tag: '@webkit' },async({page})=>{
  await openChat(page,1280,1,'/chat?c=c-general');await headerGeometry(page);await announcementGeometry(page);const nav=await navigation(page);await creationGeometry(nav);await shot(page,'bug134-136-wide-control',{context:nav});
 });
 
 for(const width of [320,640,960,1280]) for(const scale of [1,2]) {
- test(`BUG-134 BUG-135 BUG-136 BUG-70: all layout paths at ${width}/${scale*100}`,async({page})=>{
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: all layout paths at ${width}/${scale*100}`,{ tag: '@webkit' },async({page})=>{
   test.setTimeout(120_000);await largeTextFlow(page,width,scale);
  });
 }
 for(const width of [320,640,1280]) {
- test(`BUG-134 BUG-135 BUG-136 BUG-70: native40px layout paths at ${width}`,async({page})=>{
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: native40px layout paths at ${width}`,{ tag: '@webkit' },async({page})=>{
   test.setTimeout(120_000);await largeTextFlow(page,width,2.5);
  });
 }
 for(const width of [320,640,960,1280]) for(const scale of [1,2]) {
- test(`BUG-134 BUG-135 BUG-136 BUG-70: retained states and actions at ${width}/${scale*100}`,async({page})=>{
+ test(`BUG-134 BUG-135 BUG-136 BUG-70: retained states and actions at ${width}/${scale*100}`,{ tag: '@webkit' },async({page})=>{
   test.setTimeout(120_000);await openChat(page,width,scale,'/chat?c=c-project-atlas');
   const approvalForm=page.getByTestId('ask-card').filter({hasText:'Publish the 0.2'});await optionGeometry(approvalForm);await approvalForm.getByRole('button',{name:'Reject…',exact:true}).click();await approvalForm.getByRole('textbox').fill('Needs a correction before release.');await optionGeometry(approvalForm);await shot(page,`bug135-rejection-form-${width}-${scale}`,{context:approvalForm.getByRole('textbox')});
   const row=page.getByTestId('message').filter({hasText:'Block bug reports'}),id=await row.getAttribute('data-id');expect(id).toBeTruthy();
@@ -369,7 +369,7 @@ for(const width of [320,640,960,1280]) for(const scale of [1,2]) {
  });
 }
 
-test('BUG-134 BUG-136 BUG-70: geometry guards catch zero columns and unusable search width',async({page})=>{
+test('BUG-134 BUG-136 BUG-70: geometry guards catch zero columns and unusable search width',{ tag: '@webkit' },async({page})=>{
  await openChat(page,320,2.5,'/chat?c=c-general');await headerGeometry(page);
  const search=page.getByRole('searchbox',{name:'Search chat',exact:true});await search.evaluate(e=>(e as HTMLElement).style.setProperty('width','0px','important'));
  await expect(headerGeometry(page)).rejects.toThrow(/GreaterThanOrEqual/);await search.evaluate(e=>(e as HTMLElement).style.removeProperty('width'));await headerGeometry(page);
@@ -383,13 +383,13 @@ test('BUG-134 BUG-136 BUG-70: geometry guards catch zero columns and unusable se
  }
 });
 
-test('BUG-136 BUG-70: creation columns remain readable in the BUG119 240px Chat pane',async({page})=>{
+test('BUG-136 BUG-70: creation columns remain readable in the BUG119 240px Chat pane',{ tag: '@webkit' },async({page})=>{
  await openChat(page,960,2.5);const nav=await navigation(page);await creationGeometry(nav);
  await nav.getByRole('button',{name:'New message',exact:true}).scrollIntoViewIfNeeded();await shot(page,'bug136-240px-pane-root40',{context:nav});
 });
 
 
-test('BUG-134 BUG-70: long conversation titles wrap at 320/root40 while fixed labels keep whole words', async ({ page }) => {
+test('BUG-134 BUG-70: long conversation titles wrap at 320/root40 while fixed labels keep whole words', { tag: '@webkit' }, async ({ page }) => {
  await openChat(page);
  // The form accepts 60 characters; the existing channel slug contract keeps the first 40.
  const name = 'a'.repeat(60), expectedTitle = `#${'a'.repeat(40)}`, title = page.getByTestId('conversation-title');

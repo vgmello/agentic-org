@@ -28,7 +28,7 @@ async function inViewport(locator: Locator) {
 }
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`PROJ-3 BUG-70: flat readable Project profile at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+	test(`PROJ-3 BUG-70: flat readable Project profile at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await create(page);
 		await open(page, '/projects/beacon', scale);
@@ -80,7 +80,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 	});
 }
 
-test('PROJ-3 BUG-70: gutter breakpoints hold below, at and above each boundary', async ({ page }) => {
+test('PROJ-3 BUG-70: gutter breakpoints hold below, at and above each boundary', { tag: '@webkit' }, async ({ page }) => {
 	await create(page);
 	await open(page, '/projects/beacon');
 	for (const width of [639, 640, 641, 1023, 1024, 1025]) {
@@ -98,7 +98,7 @@ test('PROJ-3 BUG-70: gutter breakpoints hold below, at and above each boundary',
 });
 
 for (const [width, scale] of [[320, 2], [1280, 1]] as const) {
-	test(`PROJ-3 BUG-70: long Project name without a sample badge at ${width}px`, async ({ page }) => {
+	test(`PROJ-3 BUG-70: long Project name without a sample badge at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await create(page);
 		const name = 'Beacon' + 'W'.repeat(64);
@@ -124,7 +124,7 @@ for (const [width, scale] of [[320, 2], [1280, 1]] as const) {
 	});
 }
 
-test('PROJ-2/3 BUG-70: Project membership refresh and keyboard tabs keep actions and focus', async ({ page }) => {
+test('PROJ-2/3 BUG-70: Project membership refresh and keyboard tabs keep actions and focus', { tag: '@webkit' }, async ({ page }) => {
 	await create(page);
 	await open(page, '/projects/scratch');
 	await expect(page.getByTestId('no-team')).toHaveText('No team');

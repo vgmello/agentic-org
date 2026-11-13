@@ -68,7 +68,7 @@ test('OFC-13: every status shows its icon and its word (the word is never replac
 	await expect(badge.locator('svg')).toHaveCount(1); // the icon really renders
 });
 
-test('OFC-13 BUG-70: while the agents are being counted the row shows a skeleton, then the count', async ({ page }) => {
+test('OFC-13 BUG-70: while the agents are being counted the row shows a skeleton, then the count', { tag: '@webkit' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -116,7 +116,7 @@ test('Unplaced agents are a group with a disabled Place… that says why', async
 	await expect(place).toHaveAccessibleDescription('Placing agents is available in a later release.');
 });
 
-test('OFC-13 BUG-70: a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', async ({ page }) => {
+test('OFC-13 BUG-70: a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', { tag: '@webkit' }, async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
@@ -386,7 +386,7 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(instructions).not.toBeVisible();
 });
 
-test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', { tag: '@journey' }, async ({ page, browserName }) => {
+test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', { tag: ['@journey', '@webkit'] }, async ({ page, browserName }) => {
 	await openOffices(page);
 	const row = rows(page).first();
 	await expect(row).toContainText('Online');
@@ -404,7 +404,7 @@ test('OFC-11 / BUG-24: pointer disclosure focuses the repair toggle', { tag: '@j
 	await shot(page, 'office-repair-pointer-focus');
 });
 
-test('BUG-25: the Offices footer text meets 4.5:1 contrast', async ({ page }) => {
+test('BUG-25: the Offices footer text meets 4.5:1 contrast', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	const footer = page.getByText('Shown from HQ. Statuses include last-seen information.', { exact: true });
 	await shot(page, 'offices-footer-contrast');
@@ -431,7 +431,7 @@ test('BUG-25: the Offices footer text meets 4.5:1 contrast', async ({ page }) =>
 	expect(contrast).toBeGreaterThanOrEqual(4.5);
 });
 
-test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push', async ({ page }) => {
+test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push', { tag: '@webkit' }, async ({ page }) => {
 	await page.clock.install();
 	await openOffices(page);
 	const row = rows(page).first();
@@ -487,7 +487,7 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await expect(opener).toHaveAccessibleName(literal(await opener.getByTestId('office-location').innerText()));
 });
 
-test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', async ({ page }) => {
+test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	const opener = rows(page).first().getByRole('button');
 	await opener.press('Enter');
@@ -501,7 +501,7 @@ test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the o
 	await expect(opener).toBeFocused();
 });
 
-test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', { tag: '@journey' }, async ({ page, browserName }) => {
+test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', { tag: ['@journey', '@webkit'] }, async ({ page, browserName }) => {
 	await openOffices(page);
 	const opener = rows(page).first().getByRole('button');
 	await page.getByRole('link', { name: 'Offices', exact: true }).focus();
@@ -516,7 +516,7 @@ test('OFC-13 / BUG-27: pointer activation without focus still returns to the off
 	await shot(page, 'office-details-pointer-return-focus');
 });
 
-test('BUG-25: HQ source copy is accurate in a remote browser', async ({ page }) => {
+test('BUG-25: HQ source copy is accurate in a remote browser', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	const footer = page.getByText('Shown from HQ. Statuses include last-seen information.', { exact: true });
 	await expect(rows(page).first()).toContainText('7 agents');
@@ -529,7 +529,7 @@ test('BUG-25: HQ source copy is accurate in a remote browser', async ({ page }) 
 });
 
 for (const host of ['studio-mac.local', 'This Mac']) {
-	test(`BUG-25: the local endpoint uses the shared machine label with reported host ${host}`, async ({ page }) => {
+	test(`BUG-25: the local endpoint uses the shared machine label with reported host ${host}`, { tag: '@webkit' }, async ({ page }) => {
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
 		await pushOffice(page, { host, endpoint: '/tmp/test-owned-office.sock' });
@@ -545,7 +545,7 @@ for (const host of ['studio-mac.local', 'This Mac']) {
 }
 
 for (const reason of ['crashed', 'in_use'] as const) {
-	test(`BUG-26: step boundaries and shortly are correct for ${reason}`, async ({ page }) => {
+	test(`BUG-26: step boundaries and shortly are correct for ${reason}`, { tag: '@webkit' }, async ({ page }) => {
 		await page.clock.install();
 		await openOffices(page);
 		const row = rows(page).first();
@@ -580,7 +580,7 @@ for (const reason of ['crashed', 'in_use'] as const) {
 }
 
 for (const change of ['reason', 'status'] as const) {
-	test(`BUG-64: a refused restart note clears after its ${change} changes`, async ({ page }) => {
+	test(`BUG-64: a refused restart note clears after its ${change} changes`, { tag: '@webkit' }, async ({ page }) => {
 		await openOffices(page, 'crashed');
 		await visit(page, '/offices?restart=not_ready');
 		await rows(page).first().getByRole('button').press('Enter');
@@ -601,7 +601,7 @@ for (const change of ['reason', 'status'] as const) {
 	});
 }
 
-test('BUG-64: unavailable restart shows the reason row without raw host text', async ({ page }) => {
+test('BUG-64: unavailable restart shows the reason row without raw host text', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page, 'crashed');
 	await page.evaluate(async () => {
 		const path = '/e2e/fakes/office-api.ts';
@@ -620,7 +620,7 @@ test('BUG-64: unavailable restart shows the reason row without raw host text', a
 	await shot(page, 'office-unavailable-restart-reason');
 });
 
-test('BUG-64: a delayed refusal cannot restore a note for an obsolete reason', async ({ page }) => {
+test('BUG-64: a delayed refusal cannot restore a note for an obsolete reason', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page, 'crashed');
 	await page.evaluate(async () => {
 		const path = '/e2e/fakes/office-api.ts';
@@ -672,7 +672,7 @@ async function expectOfficePill(badge: Locator, scale: number) {
 
 for (const width of [320, 640, 960, 1280]) {
 	for (const scale of [1, 2]) {
-		test(`OFC-13 BUG-70 Offices pill: list and details at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		test(`OFC-13 BUG-70 Offices pill: list and details at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
 			await openOffices(page);
 			await expect(rows(page).first()).toContainText('Online');
@@ -709,7 +709,7 @@ for (const width of [320, 640, 960, 1280]) {
 }
 
 for (const scale of [1, 2]) {
-	test(`OFC-13 BUG-70 Offices pill: every status retains its word and icon at ${scale * 100}% text`, async ({ page }) => {
+	test(`OFC-13 BUG-70 Offices pill: every status retains its word and icon at ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 900 });
 		await openOffices(page);
 		await page.addStyleTag({ content: `html { font-size: ${scale * 100}% !important; }` });
@@ -762,7 +762,7 @@ for (const scale of [1, 2]) {
 const literal = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
 for (const status of ['Status unknown', 'Unreachable']) {
-	test(`OFC-13 BUG-70 BUG-91: ${status} truncates inside its real Offices row at 320px and 200% text`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-91: ${status} truncates inside its real Offices row at 320px and 200% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 900 });
 		await openOffices(page);
 		if (status === 'Unreachable') await visit(page, '/offices?mock=unreachable');
@@ -792,7 +792,7 @@ for (const status of ['Status unknown', 'Unreachable']) {
 }
 
 for (const width of [390, 960]) {
-	test(`OFC-13 BUG-70 BUG-92: long status icon and label share one line at ${width}px and 200% text`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-92: long status icon and label share one line at ${width}px and 200% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
@@ -810,7 +810,7 @@ for (const width of [390, 960]) {
 	});
 }
 
-test('OFC-13 BUG-70 BUG-81: the row accessible name contains its visible location', async ({ page }) => {
+test('OFC-13 BUG-70 BUG-81: the row accessible name contains its visible location', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
 	const opener = rows(page).first().locator('button[aria-haspopup]');
@@ -820,7 +820,7 @@ test('OFC-13 BUG-70 BUG-81: the row accessible name contains its visible locatio
 });
 
 for (const seconds of [45, 60]) {
-	test(`OFC-11 OFC-13 BUG-70 BUG-82: the spoken row countdown matches the visible ${seconds === 45 ? 40 : 60} second countdown`, async ({ page }) => {
+	test(`OFC-11 OFC-13 BUG-70 BUG-82: the spoken row countdown matches the visible ${seconds === 45 ? 40 : 60} second countdown`, { tag: '@webkit' }, async ({ page }) => {
 		await page.clock.install();
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
@@ -839,7 +839,7 @@ for (const seconds of [45, 60]) {
 	});
 }
 
-test('OFC-1 OFC-13 BUG-70 OF-2 OF-3 OF-4 OF-5: Offices and Unplaced use flat quiet rows and secondary disabled actions', async ({ page }) => {
+test('OFC-1 OFC-13 BUG-70 OF-2 OF-3 OF-4 OF-5: Offices and Unplaced use flat quiet rows and secondary disabled actions', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
 	const list = page.getByRole('list', { name: 'Offices', exact: true });
@@ -869,7 +869,7 @@ test('OFC-1 OFC-13 BUG-70 OF-2 OF-3 OF-4 OF-5: Offices and Unplaced use flat qui
 	await expect(unplaced.getByRole('button', { name: 'Place… Inês Duarte', exact: true })).toBeDisabled();
 });
 
-test('OFC-1 OFC-13 BUG-70 OF-2 OF-3: office title keeps HQ only for a named HQ and the row has a visible focus ring', async ({ page }) => {
+test('OFC-1 OFC-13 BUG-70 OF-2 OF-3: office title keeps HQ only for a named HQ and the row has a visible focus ring', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
 	await expect(row).toContainText('Online');
@@ -894,7 +894,7 @@ test('OFC-1 OFC-13 BUG-70 OF-2 OF-3: office title keeps HQ only for a named HQ a
 	await shot(page, 'of1-flat-row-keyboard-focus', { context: row });
 });
 
-test('OFC-12 BUG-70 OF-2: the stretched row target does not intercept pointer Retry', async ({ page }) => {
+test('OFC-12 BUG-70 OF-2: the stretched row target does not intercept pointer Retry', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await visit(page, '/offices?mock=unreachable');
 	const row = rows(page).first(), retry = row.getByTestId('retry-office');
@@ -949,7 +949,7 @@ async function expectFullStatusWord(row: Locator, chevronOnNextLine = false) {
 }
 
 for (const width of [320, 640, 960, 1280]) for (const text of [1, 2]) {
-	test(`OFC-1 OFC-13 BUG-70 A-OF1 preflight: rows and details at ${width}px and ${text * 100}% text`, async ({ page }) => {
+	test(`OFC-1 OFC-13 BUG-70 A-OF1 preflight: rows and details at ${width}px and ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
@@ -984,7 +984,7 @@ for (const width of [320, 640, 960, 1280]) for (const text of [1, 2]) {
 
 
 for (const host of ['different-reported-machine.local', 'northwindregionalagentservicesproductionheadquarterscluster.example']) {
- test(`OFC-11 OFC-13 BUG-81 BUG-25: a local endpoint keeps its shared machine label and reported repair host ${host}`, async ({ page }) => {
+ test(`OFC-11 OFC-13 BUG-81 BUG-25: a local endpoint keeps its shared machine label and reported repair host ${host}`, { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 900 });
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
@@ -1019,7 +1019,7 @@ for (const host of ['different-reported-machine.local', 'northwindregionalagents
 }
 
 
-test('OFC-1 OFC-13 BUG-70 A-OF1 preflight: empty office list and empty agent counts remain readable', async ({ page }) => {
+test('OFC-1 OFC-13 BUG-70 A-OF1 preflight: empty office list and empty agent counts remain readable', { tag: '@webkit' }, async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 900 });
 	await openOffices(page);
 	await visit(page, '/offices?org=empty');
@@ -1034,7 +1034,7 @@ test('OFC-1 OFC-13 BUG-70 A-OF1 preflight: empty office list and empty agent cou
 });
 
 
-test('OFC-11 OFC-13 BUG-70 OF-2: repair prose requires both an incompatible reason and a stopped office', async ({ page }) => {
+test('OFC-11 OFC-13 BUG-70 OF-2: repair prose requires both an incompatible reason and a stopped office', { tag: '@webkit' }, async ({ page }) => {
 	await openOffices(page);
 	await expect(rows(page).first()).toContainText('Online');
 	const row = rows(page).first();
@@ -1052,7 +1052,7 @@ test('OFC-11 OFC-13 BUG-70 OF-2: repair prose requires both an incompatible reas
 });
 
 
-test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a narrow 960px content column at 40px root text', async ({ page }) => {
+test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a narrow 960px content column at 40px root text', { tag: '@webkit' }, async ({ page }) => {
  await page.setViewportSize({width:960,height:900});
  await openOffices(page);
  const row=rows(page).first();
@@ -1076,7 +1076,7 @@ test('OFC-13 BUG-70 BUG-91: the full status word and chevron stay visible in a n
 
 // Exercise the old failing pixels, including the viewport lg gutter transition at 304px.
 for (const column of [299, 300, 301, 304]) {
-	test(`OFC-13 BUG-70 BUG-91: readable status and name at the ${column}px content column`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-91: readable status and name at the ${column}px content column`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 720 + column, height: 900 });
 		await openOffices(page);
 		const row = rows(page).first();
@@ -1099,7 +1099,7 @@ for (const column of [299, 300, 301, 304]) {
 }
 
 for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
-	test(`OFC-13 BUG-70 BUG-91: compact row threshold ${offset < 0 ? 'inside' : 'outside'} at ${rootFont}px root`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-91: compact row threshold ${offset < 0 ? 'inside' : 'outside'} at ${rootFont}px root`, { tag: '@webkit' }, async ({ page }) => {
 		const column = 21 * rootFont + offset;
 		// The desktop sidebar is 18rem at these viewport widths; mobile has none.
 		const sidebar = rootFont === 16 ? 0 : 18 * rootFont;
@@ -1139,7 +1139,7 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 // WebKit has no Playwright default-font preference: these are explicit computed roots,
 // paired with the separate real Chromium default-20px run (Ada's approved proof).
 for (const rootFont of [20, 40]) for (const width of [300, 304, 960]) {
-	test(`OFC-13 BUG-70 BUG-91: readable row at ${width}px viewport with computed ${rootFont}px root`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-91: readable row at ${width}px viewport with computed ${rootFont}px root`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 1100 });
 		await openOffices(page);
 		const row = rows(page).first();
@@ -1201,7 +1201,7 @@ async function expectTrailingOfficeChevron(row: Locator, retryExpected: boolean,
 }
 
 for (const width of [390, 1280]) {
-	test(`OFC-12 BUG-70 BUG-127 BUG-128: pill then Retry then chevron end-aligned at ${width}px`, async ({ page }) => {
+	test(`OFC-12 BUG-70 BUG-127 BUG-128: pill then Retry then chevron end-aligned at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 900 });
 		await openOffices(page);
 		const row = rows(page).first();
@@ -1225,7 +1225,7 @@ for (const width of [390, 1280]) {
 }
 
 for (const [width, rootFont] of [[1280, 16], [320, 32]] as const) {
-	test(`OFC-13 BUG-70 BUG-128: meta facts have no orphan separator at ${width}px root${rootFont}`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-128: meta facts have no orphan separator at ${width}px root${rootFont}`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 1100 });
 		await openOffices(page);
 		const row = rows(page).first(), opener = row.locator('button[aria-haspopup]');
@@ -1261,7 +1261,7 @@ for (const [width, rootFont] of [[1280, 16], [320, 32]] as const) {
 }
 
 for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
-	test(`OFC-13 BUG-70 BUG-128: header and row share gutter ${offset < 0 ? 'inside' : 'outside'} compact at root${rootFont}`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-128: header and row share gutter ${offset < 0 ? 'inside' : 'outside'} compact at root${rootFont}`, { tag: '@webkit' }, async ({ page }) => {
 		const column = 21 * rootFont + offset, sidebar = rootFont === 16 ? 0 : 18 * rootFont;
 		await page.setViewportSize({ width: column + sidebar, height: 1100 });
 		await openOffices(page);
@@ -1285,7 +1285,7 @@ for (const rootFont of [16, 32, 40]) for (const offset of [-1, 1]) {
 
 
 for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
-	test(`OFC-13 BUG-70 BUG-127 BUG-128: compact ${status} preserves its full word before the decorative chevron fallback at 320px and 200%`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-127 BUG-128: compact ${status} preserves its full word before the decorative chevron fallback at 320px and 200%`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 1100 });
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
@@ -1312,7 +1312,7 @@ for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 
 
 for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
-	test(`OFC-13 BUG-70 BUG-119: full ${status} at 960px and 40px root awaits the shell fix`, async ({ page }) => {
+	test(`OFC-13 BUG-70 BUG-119: full ${status} at 960px and 40px root awaits the shell fix`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 960, height: 1100 });
 		await openOffices(page);
 		await expect(rows(page).first()).toContainText('Online');
@@ -1340,7 +1340,7 @@ for (const status of ['Unreachable', 'Status unknown', 'Update needed']) {
 }
 
 for (const [width, rootFont] of [[320, 16], [390, 16], [1280, 16], [320, 32], [320, 40], [390, 40], [1100, 40]] as const) {
-	test(`OFC-12 OFC-13 BUG-70 BUG-150: status flow ends every line at ${width}px root${rootFont}`, async ({ page }) => {
+	test(`OFC-12 OFC-13 BUG-70 BUG-150: status flow ends every line at ${width}px root${rootFont}`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width, height: 1100 });
 		await openOffices(page);
 		await visit(page, '/offices?mock=unreachable');

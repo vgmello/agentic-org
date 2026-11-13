@@ -45,7 +45,7 @@ async function expectControlsFit(page: Page, group: Locator) {
 }
 
 for (const width of [320, 960, 1280]) {
-	test(`BUG-2: every Teams action stays inside the viewport at ${width}px`, async ({ page }) => {
+	test(`BUG-2: every Teams action stays inside the viewport at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, width);
 		const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
 		const actions = panel.getByRole('button', { name: 'New team', exact: true }).locator('..');
@@ -56,7 +56,7 @@ for (const width of [320, 960, 1280]) {
 }
 
 for (const width of [320, 600, 639]) {
-	test(`BUG-2: narrow Search members uses the available full content width at ${width}px`, async ({ page }) => {
+	test(`BUG-2: narrow Search members uses the available full content width at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, width);
 		const search = page.getByRole('searchbox', { name: 'Search members', exact: true });
 		const content = page.getByRole('region', { name: 'Owner', exact: true }).locator('..');
@@ -71,7 +71,7 @@ for (const width of [320, 600, 639]) {
 	});
 }
 
-test('BUG-2: existing zoom, collapse, list and keyboard dialog actions remain functional', async ({ page }) => {
+test('BUG-2: existing zoom, collapse, list and keyboard dialog actions remain functional', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 1280);
 	const chart = page.getByTestId('teams-chart');
 	await expect(page.getByTestId('team-card')).toHaveCount(5);
@@ -99,7 +99,7 @@ test('BUG-2: existing zoom, collapse, list and keyboard dialog actions remain fu
 
 for (const width of [320, 640, 720, 960, 1280]) {
 	for (const scale of [1, 2]) {
-		test(`BUG-2: all chart views fit at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+		test(`BUG-2: all chart views fit at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 			await openChart(page, width, scale);
 			const tabs = page.getByRole('tablist', { name: 'Org chart views' });
 			const teams = page.getByRole('tabpanel', { name: 'Teams', exact: true });
@@ -141,7 +141,7 @@ for (const width of [320, 640, 720, 960, 1280]) {
 
 for (const width of [320, 960]) {
 	for (const scale of [1, 2]) {
-		test(`BUG-2: wrapping keeps DOM and keyboard focus order at ${width}px and ${scale * 100}% text`, async ({ page, browserName }) => {
+		test(`BUG-2: wrapping keeps DOM and keyboard focus order at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page, browserName }) => {
 			await openChart(page, width, scale);
 			const search = page.getByRole('searchbox', { name: 'Search members', exact: true });
 			const panel = page.getByRole('tabpanel', { name: 'Teams', exact: true });
@@ -173,7 +173,7 @@ for (const width of [320, 960]) {
 	}
 }
 
-test('BUG-2: the empty fixture keeps toolbar controls at 320px and 200% text', async ({ page }) => {
+test('BUG-2: the empty fixture keeps toolbar controls at 320px and 200% text', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 320, 2, '?org=empty');
 	await expect(page.getByText('No teams yet', { exact: true })).toBeVisible();
 	await expect(page.getByTestId('teams-chart')).toHaveCount(0);
@@ -188,7 +188,7 @@ test('BUG-2: the empty fixture keeps toolbar controls at 320px and 200% text', a
 	await expectControlsFit(page, add.locator('..'));
 });
 
-test('BUG-2: a narrow no-match result clears with Escape and retains search focus', async ({ page }) => {
+test('BUG-2: a narrow no-match result clears with Escape and retains search focus', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 320, 2);
 	const search = page.getByRole('searchbox', { name: 'Search members', exact: true });
 	await search.fill('zzzz');
@@ -202,7 +202,7 @@ test('BUG-2: a narrow no-match result clears with Escape and retains search focu
 });
 
 for (const region of ['sample note', 'unassigned-project row', 'empty call-to-action', 'TeamsList header'] as const) {
-	test(`BUG-2: ${region} stays inside its parent at 320px and 200% text`, async ({ page }) => {
+	test(`BUG-2: ${region} stays inside its parent at 320px and 200% text`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 320, 2, region === 'empty call-to-action' ? '?org=empty' : '');
 		if (region === 'TeamsList header') await viewAction(page, 'List');
 		const targets = region === 'sample note' ? page.getByTestId('sample-data-note')
@@ -232,7 +232,7 @@ for (const view of [
 	{ path: '/agents?q=Noor', current: 'Agents' },
 	{ path: '/org-chart?member=noor', current: 'Org chart' }
 ]) {
-	test(`AGENT-3 TEAM-11 BUG-70 S2: ${view.current} has a separate plain-link Agents views navigation`, async ({ page }) => {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: ${view.current} has a separate plain-link Agents views navigation`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 1280);
 		await visit(page, view.path);
 		const nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
@@ -250,7 +250,7 @@ for (const view of [
 }
 
 
-test('AGENT-3 TEAM-11 BUG-70 S2: keyboard links change routes, clear query state and preserve browser history', async ({ page, browserName }) => {
+test('AGENT-3 TEAM-11 BUG-70 S2: keyboard links change routes, clear query state and preserve browser history', { tag: '@webkit' }, async ({ page, browserName }) => {
 	await openChart(page, 1280);
 	await visit(page, '/agents?q=Noor#saved');
 	let nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
@@ -288,7 +288,7 @@ test('AGENT-3 TEAM-11 BUG-70 S2: keyboard links change routes, clear query state
 	await shot(page, 'agents-views-native-tab-order');
 });
 
-test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar keep their behavior', async ({ page }) => {
+test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar keep their behavior', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 1280, 1, '?member=noor');
 	const nav = page.getByRole('navigation', { name: 'Agents views', exact: true });
 	const tabs = page.getByRole('tablist', { name: 'Org chart views', exact: true });
@@ -311,7 +311,7 @@ test('TEAM-11 BUG-70 S2: inner chart views, selected member and BUG-2 toolbar ke
 });
 
 for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
-	test(`AGENT-3 TEAM-11 BUG-70 S2: nav is readable on both loaded and empty pages at ${width}px and ${scale * 100}% text`, async ({ page }) => {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: nav is readable on both loaded and empty pages at ${width}px and ${scale * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, width, scale);
 		for (const view of [
 			{ path: '/agents', current: 'Agents', empty: false },
@@ -367,7 +367,7 @@ for (const width of [320, 640, 960, 1280]) for (const scale of [1, 2]) {
 }
 
 for (const path of ['/agents', '/org-chart']) {
-	test(`AGENT-3 TEAM-11 BUG-70 S2: ${path} keeps its loading/error boundary and recovers the nav`, async ({ page }) => {
+	test(`AGENT-3 TEAM-11 BUG-70 S2: ${path} keeps its loading/error boundary and recovers the nav`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 1280);
 		const response = await page.request.get('/e2e/fakes/org-api.ts');
 		expect(response.ok()).toBe(true);
@@ -398,7 +398,7 @@ for (const path of ['/agents', '/org-chart']) {
 }
 
 for (const text of [1, 2]) {
-	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps name and role lines readable at 320px and ${text * 100}% text`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps name and role lines readable at 320px and ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 320, text);
 		await page.getByRole('tab', { name: 'People', exact: true }).click();
 		const chart = page.getByTestId('people-chart');
@@ -424,7 +424,7 @@ for (const text of [1, 2]) {
 }
 
 for (const text of [1, 2]) {
-	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps collapse-control text readable without leads at ${text * 100}% text`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-90: People Fit keeps collapse-control text readable without leads at ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 320, text);
 		const response = await page.request.get('/e2e/fakes/org-api.ts');
 		expect(response.ok()).toBe(true);
@@ -461,7 +461,7 @@ for (const text of [1, 2]) {
 }
 
 for (const text of [1, 2]) {
-	test(`PEOPLE-1 BUG-70 BUG-90: membership refresh remeasures Fit when chart dimensions stay unchanged at ${text * 100}% text`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-90: membership refresh remeasures Fit when chart dimensions stay unchanged at ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 640 });
 		await visit(page, '/create');
 		await page.getByLabel('Organization name').fill('Acme');
@@ -508,7 +508,7 @@ for (const text of [1, 2]) {
 }
 
 for (const text of [1, 2]) {
-	test(`PEOPLE-1 BUG-70 BUG-90: collapse and expand remeasure content at unchanged dimensions with ${text * 100}% text`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-90: collapse and expand remeasure content at unchanged dimensions with ${text * 100}% text`, { tag: '@webkit' }, async ({ page }) => {
 		await page.setViewportSize({ width: 320, height: 640 });
 		await visit(page, '/create');
 		await page.getByLabel('Organization name').fill('Acme');
@@ -589,7 +589,7 @@ async function holdPeopleMeasurement(page: Page) {
 }
 
 for (const focused of ['Fit', 'Expand all'] as const) {
-	test(`PEOPLE-1 BUG-70 BUG-90 BUG-123: late Fit refusal while ${focused} has keyboard focus`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-90 BUG-123: late Fit refusal while ${focused} has keyboard focus`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 320);
 		await holdPeopleMeasurement(page);
 		await page.getByRole('tab', { name: 'People', exact: true }).click();
@@ -633,7 +633,7 @@ for (const focused of ['Fit', 'Expand all'] as const) {
 	});
 }
 
-test('PEOPLE-1 BUG-70 BUG-90 BUG-123: removing a focused Fit refusal dismisses its explanation and preserves selection', async ({ page }) => {
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: removing a focused Fit refusal dismisses its explanation and preserves selection', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 320);
 	await page.getByRole('tab', { name: 'People', exact: true }).click();
 	const trigger = page.getByRole('button', { name: 'View', exact: true });
@@ -662,7 +662,7 @@ test('PEOPLE-1 BUG-70 BUG-90 BUG-123: removing a focused Fit refusal dismisses i
 	await expect(trigger).toBeFocused();
 });
 
-test('PEOPLE-1 BUG-70 BUG-90 BUG-123: pointer Fit refusal explains without activating and dismisses outside', async ({ page }) => {
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: pointer Fit refusal explains without activating and dismisses outside', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 320);
 	await page.getByRole('tab', { name: 'People', exact: true }).click();
 	const heading = await page.getByRole('heading', { name: 'Org chart', exact: true }).boundingBox();
@@ -690,7 +690,7 @@ test('PEOPLE-1 BUG-70 BUG-90 BUG-123: pointer Fit refusal explains without activ
 	await shot(page, 'bug123-pointer-dismissed');
 });
 
-test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explanation before the parent', async ({ page }) => {
+test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explanation before the parent', { tag: '@webkit' }, async ({ page }) => {
 	// Start in the default mobile List; opening Teams View first primes a different layer lifetime.
 	await page.setViewportSize({ width: 320, height: 640 });
 	await visit(page, '/create');
@@ -729,7 +729,7 @@ test('PEOPLE-1 BUG-70 BUG-90 BUG-123: reopened blocked menu dismisses the explan
 });
 
 for (const width of [320, 390, 960, 1440]) for (const root of [20, 40]) {
-	test(`PEOPLE-1 BUG-70 BUG-129: closing View rejects stale item focus at ${width}px root${root}`, async ({ page }) => {
+	test(`PEOPLE-1 BUG-70 BUG-129: closing View rejects stale item focus at ${width}px root${root}`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, width);
 		await page.addStyleTag({ content: `html { font-size: ${root}px !important; }` });
 		await expect(page.locator('html')).toHaveCSS('font-size', `${root}px`);
@@ -783,7 +783,7 @@ for (const width of [320, 390, 960, 1440]) for (const root of [20, 40]) {
 }
 
 for (const view of ['Teams', 'People', 'Reporting lines']) {
-	test(`PEOPLE-1 TEAM-1 REPORT-2 BUG-70 BUG-129: ${view} keeps first-arrow, selection and Tab focus`, async ({ page }) => {
+	test(`PEOPLE-1 TEAM-1 REPORT-2 BUG-70 BUG-129: ${view} keeps first-arrow, selection and Tab focus`, { tag: '@webkit' }, async ({ page }) => {
 		await openChart(page, 1280);
 		await page.getByRole('tab', { name: view, exact: true }).click();
 		const trigger = page.getByRole('button', { name: 'View', exact: true });
@@ -805,7 +805,7 @@ for (const view of ['Teams', 'People', 'Reporting lines']) {
 	});
 }
 
-test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the open menu', async ({ page }) => {
+test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the open menu', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 320);
 	await page.getByRole('tab', { name: 'People', exact: true }).click();
 	const trigger = page.getByRole('button', { name: 'View', exact: true });
@@ -826,7 +826,7 @@ test('PEOPLE-1 BUG-70 BUG-129: blocked Fit keeps the first Escape inside the ope
 	await shot(page, 'bug129-second-escape-returns-view');
 });
 
-test('PEOPLE-1 BUG-70 BUG-129: live team removal remounts View closed with a fresh focus guard', async ({ page }) => {
+test('PEOPLE-1 BUG-70 BUG-129: live team removal remounts View closed with a fresh focus guard', { tag: '@webkit' }, async ({ page }) => {
 	await openChart(page, 1280);
 	await page.getByRole('tab', { name: 'People', exact: true }).click();
 	const trigger = page.getByRole('button', { name: 'View', exact: true });
@@ -985,7 +985,7 @@ async function geometryFocus(page: import('@playwright/test').Page, button: impo
 
 // BUG-114/115/117: exercise the displayed targets and native focus after the keyed DOM refresh.
 for (const width of [320, 640, 960, 1280]) for (const root of [16, 32, 40]) {
-	test(`TEAM-8 BUG-70 BUG-114 BUG-117: Fit removal target and ring at ${width}px root${root}`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-114 BUG-117: Fit removal target and ring at ${width}px root${root}`, { tag: '@webkit' }, async ({ page }) => {
 		const errors: string[] = [];
 		page.on('pageerror', (error) => errors.push(error.message));
 		await createChipOrg(page, width, root / 16);
@@ -1024,7 +1024,7 @@ for (const width of [320, 640, 960, 1280]) for (const root of [16, 32, 40]) {
 }
 
 for (const direction of ['next', 'previous'] as const) {
-	test(`TEAM-8 BUG-70 BUG-115: chart confirmed-last unlink uses the same keyed ${direction} resolver`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-115: chart confirmed-last unlink uses the same keyed ${direction} resolver`, { tag: '@webkit' }, async ({ page }) => {
 		await createChipOrg(page, 1280);
 		await chipFixture(page);
 		await page.evaluate(async (direction) => {
@@ -1051,7 +1051,7 @@ for (const direction of ['next', 'previous'] as const) {
 	});
 }
 
-test('TEAM-8 BUG-70 BUG-115: chart falls back to its region if the source card disappears during success', async ({ page }) => {
+test('TEAM-8 BUG-70 BUG-115: chart falls back to its region if the source card disappears during success', { tag: '@webkit' }, async ({ page }) => {
 	await createChipOrg(page, 1280);
 	await visit(page, '/org-chart');
 	await page.evaluate(async () => {
@@ -1075,7 +1075,7 @@ test('TEAM-8 BUG-70 BUG-115: chart falls back to its region if the source card d
 });
 
 for (const root of [16, 32, 40]) {
-	test(`TEAM-8 BUG-70 BUG-114: Actual size keeps the unfocused control at root${root}`, async ({ page }) => {
+	test(`TEAM-8 BUG-70 BUG-114: Actual size keeps the unfocused control at root${root}`, { tag: '@webkit' }, async ({ page }) => {
 		await createChipOrg(page, 1280, root / 16);
 		await visit(page, '/org-chart');
 		await page.getByRole('button', { name: 'View', exact: true }).focus();
@@ -1092,7 +1092,7 @@ for (const root of [16, 32, 40]) {
 	});
 }
 
-test('TEAM-8 BUG-70 BUG-115: chart confirmation retains its own focus plan across a later cancelled removal', async ({ page }) => {
+test('TEAM-8 BUG-70 BUG-115: chart confirmation retains its own focus plan across a later cancelled removal', { tag: '@webkit' }, async ({ page }) => {
 	await createChipOrg(page, 1280);
 	await visit(page, '/org-chart');
 	const first = page.getByRole('button', { name: 'Remove Beacon from Web', exact: true });

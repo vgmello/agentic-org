@@ -32,7 +32,7 @@ async function restored(field: Locator, text: string) {
 	await expect.poll(() => field.evaluate((element: HTMLTextAreaElement) => [element.selectionStart, element.selectionEnd])).toEqual([text.length, text.length]);
 }
 
-test('CHAT-32 CHAT-33 BUG-62: each history entry names its own Chat place', async ({ page, browserName }) => {
+test('CHAT-32 CHAT-33 BUG-62: each history entry names its own Chat place', { tag: '@webkit' }, async ({ page, browserName }) => {
 	await open(page);
 	await expect(page).toHaveTitle(fullTitle('Needs you'));
 	await side(page).getByTestId('mentions-link').click();
@@ -227,7 +227,7 @@ test('CHAT-34 BUG-63: disabled management leaves the Conversations overlay open'
 	await shot(page, 'chat-stopped-conversation-sheet');
 });
 
-test('CHAT-32 CHAT-33 BUG-62: Search has one history entry and results restore through Back', async ({ page, browserName }) => {
+test('CHAT-32 CHAT-33 BUG-62: Search has one history entry and results restore through Back', { tag: '@webkit' }, async ({ page, browserName }) => {
 	await open(page);
 	await channel(page, 'c-general', '#general');
 	await expect(page).toHaveURL(/\?c=c-general$/);
@@ -269,7 +269,7 @@ test('CHAT-32 CHAT-33 BUG-62: Search has one history entry and results restore t
 	await shot(page, 'chat-history-search-results-restored');
 });
 
-test('CHAT-32 CHAT-33 BUG-62: clearing Search returns to its place without another history entry', async ({ page }) => {
+test('CHAT-32 CHAT-33 BUG-62: clearing Search returns to its place without another history entry', { tag: '@webkit' }, async ({ page }) => {
 	await open(page);
 	await channel(page, 'c-general', '#general');
 	await expect(page).toHaveURL(/\?c=c-general$/);
@@ -289,7 +289,7 @@ test('CHAT-32 CHAT-33 BUG-62: clearing Search returns to its place without anoth
 	await shot(page, 'chat-history-search-cleared');
 });
 
-test('CHAT-32 CHAT-33 BUG-62: Back and reload resolve the same empty-organization place', async ({ page }) => {
+test('CHAT-32 CHAT-33 BUG-62: Back and reload resolve the same empty-organization place', { tag: '@webkit' }, async ({ page }) => {
 	await open(page, '?org=empty');
 	await expect(page).toHaveTitle(fullTitle('#general'));
 	await side(page).getByTestId('mentions-link').click();

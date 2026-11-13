@@ -4,7 +4,8 @@
 		"Single source of truth for the tiered UI gate (see e2e/README-gate.md). Paths are relative to apps/org-ui unless a glob starts with ../ (repo root).",
 		"Journeys are the tests tagged @journey in the specs. Each entry names one test declaration (spec + a unique substring of its test( line) and how many Playwright tests it expands to.",
 		"A change that matches a category's sources runs that whole category in addition to the journeys. A path that matches nothing and is not ignored runs the full suite (fail closed).",
-		"webkit: true marks journeys that are also in the WebKit subset; they must be in playwright.config.ts's webkit testMatch and grep."
+		"webkit: true marks journeys that are also in the WebKit subset; the flag must equal whether the journey's test( line carries the @webkit tag that the webkit project in playwright.config.ts selects.",
+		"webkitExempt lists the files Playwright runs that exercise keyboard or focus (directly or through a local e2e helper) but that the webkit project does not select (a statically skipped test does not count), each with a reason; ui-gate.test.ts (reading Playwright's own --list) fails on such a file that is not listed, and on a stale entry. A @webkit tag counts only where the webkit project selects it. Known limits (README-gate.md): coverage is per file, so one @webkit test covers the whole file (BUG-169c), and a skip decided at run time is not visible to --list."
 	],
 	"budget": {
 		"maxJourneyTests": 60,
@@ -13,7 +14,31 @@
 	},
 	"projectFiles": { "non-chat-icons-default-font.ts": "chromium-default-font", "chat-followups-default-font.ts": "chromium-chat-default-font", "focus-primitives-default-font.ts": "chromium-focus-default-font", "dialog-title-words-default-font.ts": "chromium-title-default-font" },
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
-	"webkitSpecs": ["chat-followups.spec.ts", "non-chat-icons.spec.ts", "chat-no-emoji.spec.ts", "offices.spec.ts", "shell-responsive.spec.ts", "chat-lows.spec.ts", "chat-thread-focus.spec.ts", "chat-live-delivery.spec.ts", "chat-layout.spec.ts", "look-primitives.spec.ts", "focus-primitives.spec.ts", "shell-topbar.spec.ts", "desktop-navigation-focus.spec.ts", "project-profile.spec.ts", "shell-switch-footer.spec.ts", "org-chart-responsive.spec.ts", "dialog-title-words.spec.ts", "dialog-block-title.spec.ts"],
+	"webkitExempt": [
+		{ "spec": "agents-roster.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "bugs.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat-accessibility.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat-bugs.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat-default-font.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat-narrow.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "chat-validation.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "copilot.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "org-chart.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "org-chart-agents.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "org-chart-teams-edit.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "org-chart-toolbar.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "org-chart-views.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "processes-bugs.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "requests.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "tasks.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "work.spec.ts", "why": "not yet run on WebKit (BUG-169b)" },
+		{ "spec": "production-unavailable.spec.ts", "why": "runs only in the production project, against the static release; the webkit project ignores it" },
+		{ "spec": "non-chat-icons-default-font.ts", "why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one" },
+		{ "spec": "chat-followups-default-font.ts", "why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one" },
+		{ "spec": "focus-primitives-default-font.ts", "why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one" },
+		{ "spec": "dialog-title-words-default-font.ts", "why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one" }
+	],
 	"journeys": [
 		{ "name": "create-organization", "why": "First launch: welcome, create, land in the shell; invalid names are refused.", "tests": [
 			{ "spec": "create-organization.spec.ts", "match": "first launch: welcome", "count": 1 },
