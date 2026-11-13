@@ -61,6 +61,17 @@ describe('returnFocus', () => {
 		expect(opener.focused).toBeUndefined();
 	});
 
+	it('waits a tick, so a focus that something else moves in that tick wins', async () => {
+		const opener = new FakeEl();
+		const elsewhere = new FakeEl();
+		queueMicrotask(() => {
+			doc.activeElement = elsewhere;
+		});
+		await returnFocus(opener as unknown as HTMLElement);
+		expect(opener.focused).toBeUndefined();
+		expect(doc.activeElement).toBe(elsewhere);
+	});
+
 	it('uses the fallback when the opener is gone, disabled, inert or cannot take focus', async () => {
 		for (const make of [(o: FakeEl) => (o.connected = false), (o: FakeEl) => (o.disabled = true), (o: FakeEl) => (o.inert = true), (o: FakeEl) => (o.focusable = false)]) {
 			doc.activeElement = doc.body;
