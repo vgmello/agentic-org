@@ -24,9 +24,9 @@ fn host_fixture() -> tempfile::TempDir {
         ("Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'"),
         ("src/lib.rs", "pub struct Allowed;"),
         (HOST, HOST_SOURCE),
-        ("build.rs", "fn main() {}"),
-        ("other.rs", "fn main() {}"),
-        ("scripts/helper.rs", "fn main() {}"),
+        ("build.rs", HOST_SOURCE),
+        ("other.rs", HOST_SOURCE),
+        ("scripts/helper.rs", HOST_SOURCE),
         (
             PIN,
             "// Protected pin fixture. The compiled policy supplies the reviewed tokens.",
@@ -103,9 +103,12 @@ fn sqlcipher_build_inventory_pins_whole_script_tokens_and_protected_input() {
         format!("{HOST_SOURCE}\nextern crate helper;"),
         "fn main( {".to_string(),
     ] {
-        std::fs::write(scope.root.join(HOST), source).unwrap();
+        std::fs::write(scope.root.join(HOST), &source).unwrap();
         let message = error(|| { metadata(&scope, &value); });
         assert!(message.contains("host") && message.contains(HOST), "{message}");
+        if source == "fn main( {" {
+            assert!(message.contains("invalid build tokens"), "{message}");
+        }
     }
     std::fs::write(scope.root.join(HOST), HOST_SOURCE).unwrap();
     let mut untracked = tracked(dir.path());
