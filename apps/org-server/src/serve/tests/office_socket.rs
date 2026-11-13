@@ -241,6 +241,34 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
 }
 
 #[test]
+fn test_client_setup_accepts_a_live_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    let client = Client::from_stream(stream);
+    assert_eq!(
+        client.stream.read_timeout().unwrap(),
+        Some(Duration::from_secs(10))
+    );
+}
+
+#[test]
+#[should_panic(expected = "expected peer EOF")]
+fn test_client_setup_rejects_invalid_timeout_on_a_live_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    Client::with_timeout_result(stream, Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+}
+
+#[test]
+#[should_panic(expected = "expected peer EOF")]
+fn test_client_setup_rejects_invalid_timeout_with_buffered_data() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, mut peer) = UnixStream::pair().unwrap();
+    std::io::Write::write_all(&mut peer, b"x").unwrap();
+    Client::with_timeout_result(stream, Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+}
+
+#[test]
 fn test_client_setup_accepts_an_already_closed_peer() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (stream, peer) = UnixStream::pair().unwrap();
