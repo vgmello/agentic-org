@@ -250,10 +250,9 @@ pub(crate) fn hand_off(
     }
     // Retained until acknowledged (X-02 §5.2), released only now.
     drop(worker_end);
-    events
-        .get_ref()
-        .set_read_timeout(None)
-        .map_err(|e| format!("its rendezvous connection: {e}"))?;
+    // macOS refuses (EINVAL) a timeout change on a connection its peer already closed (a
+    // worker that failed right after its receipt): its reader then just reads to the EOF.
+    let _ = events.get_ref().set_read_timeout(None);
     Ok(HandedOff {
         events,
         transfer: Some(host_end),
