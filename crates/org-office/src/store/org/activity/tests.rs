@@ -935,6 +935,49 @@ fn an_upsert_read_for_the_page_but_outside_its_window_does_not_resolve() {
         .unwrap();
 }
 
+/// A log of `top - 1` rows (seq 2..=`top`) of filler member upserts, with `removed` at `row_k` rows
+/// below the top and an upsert of the same membership `row_j` rows below the top.
+fn lookback_log(top: u64, row_k: u64, row_j: u64) -> Rows {
+    (2..=top)
+        .map(|seq| {
+            let changes = if seq == top - row_k {
+                vec![removed("membership", "SX")]
+            } else if seq == top - row_j {
+                vec![membership("SX", "T1", "M1", 1)]
+            } else {
+                vec![member("F", 2)]
+            };
+            (at(T0 + seq * 1_000), changes)
+        })
+        .collect()
+}
+
+#[test]
+fn a_lookback_reaches_its_last_row_when_a_block_ends_exactly_there() {
+    // The log is read in growing blocks (32, 96, 224, 480, 992, 1,504, 2,016 ... rows). For row
+    // 16 the window ends at row 16 + LOOKBACK_ROWS = 2,016, exactly where a block ends: the next
+    // block must still be read to find an upsert at that last row, and one row further is out.
+    for (row_j, resolves) in [(2_016, true), (2_017, false)] {
+        let (_dir, store) = store();
+        append(&store, lookback_log(2_300, 16, row_j));
+        store
+            .read(|db| {
+                let (source, mut log) = ((db, 1, 2_300), Log::default());
+                assert!(log.has(source, 16)?);
+                assert_eq!(log.rows[16].seq, 2_300 - 16);
+                let (verb, subject) = log.describe(source, 16, 0)?;
+                assert_eq!(verb, "org.membership.removed");
+                assert_eq!(
+                    subject.member.as_deref(),
+                    resolves.then_some("M1"),
+                    "upsert {row_j} rows down"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+}
+
 #[test]
 fn a_lookback_without_an_upsert_in_its_window_reads_no_further() {
     let (_dir, store) = store();
