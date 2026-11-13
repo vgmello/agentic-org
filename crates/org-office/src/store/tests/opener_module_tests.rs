@@ -185,6 +185,18 @@ fn sqlcipher_modules_restore_parent_and_sibling_inline_directories() {
     ]);
     let scope = tracked(dir.path());
     opener_modules::check(&scope, [scope.root.join("src/lib.rs")]);
+    super::bounded_output(
+        std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["rm", "--cached", "src/first/own.rs"]),
+        "untrack non-first inline child",
+    );
+    let scope = tracked(dir.path());
+    assert!(std::panic::catch_unwind(|| opener_modules::check(
+        &scope,
+        [scope.root.join("src/lib.rs")]
+    ))
+    .is_err());
 }
 
 #[test]
