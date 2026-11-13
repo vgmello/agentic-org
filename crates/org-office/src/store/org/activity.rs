@@ -141,8 +141,9 @@ pub(crate) fn page(
     let (head, oldest) = open(&tx, query.epoch, query.ceiling)?;
     let mut top = query.ceiling as i64;
     if let Some(before) = query.before {
-        // An epoch with no rows retains nothing below its head.
-        if before.epoch != head.epoch || before.seq < oldest.unwrap_or(head.seq + 1) {
+        // An epoch with no rows retains nothing below its head; nothing is above the ceiling.
+        let retained = oldest.unwrap_or(head.seq + 1)..=query.ceiling;
+        if before.epoch != head.epoch || !retained.contains(&before.seq) {
             return Err(ActivityError::SnapshotRequired);
         }
         top = top.min(before.seq as i64 - i64::from(before.index == 0));

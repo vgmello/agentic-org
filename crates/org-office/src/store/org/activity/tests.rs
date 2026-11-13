@@ -400,6 +400,8 @@ fn another_epoch_a_rollback_or_an_unretained_position_needs_a_snapshot() {
     q = query(4);
     q.before = Some(position(2, 1));
     assert!(snapshot(&q));
+    q.before = Some(position(5, 1));
+    assert!(snapshot(&q), "a position above the ceiling");
     q.before = Some(position(3, 1));
     let page = read(&store, &q).unwrap();
     assert_eq!(
@@ -407,6 +409,15 @@ fn another_epoch_a_rollback_or_an_unretained_position_needs_a_snapshot() {
         [position(3, 0)]
     );
     assert!(page.exhausted && page.history_truncated);
+    // The ceiling row itself is a valid resume position, inside it or below it.
+    let resumed = |before| {
+        let mut q = query(4);
+        q.before = Some(before);
+        let page = read(&store, &q).unwrap();
+        page.entries.iter().map(|e| e.position).collect::<Vec<_>>()
+    };
+    assert_eq!(resumed(position(4, 1)), [position(4, 0), position(3, 0)]);
+    assert_eq!(resumed(position(4, 0)), [position(3, 0)]);
 }
 
 #[test]
