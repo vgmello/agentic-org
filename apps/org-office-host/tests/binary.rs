@@ -5,11 +5,14 @@
 //! (`ORG_OFFICE_DEV_KEY_DIR`), which only a debug build reads (a release host uses the Keychain,
 //! which tests never touch), so every test that starts one runs in debug builds only.
 
-// Only the argument checks run in release builds.
-#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
+// Only the argument checks run in release builds, and only macOS can spawn the office servers
+// the other tests here start (BUG-187): in a release build or off macOS their helpers are unused.
+// One attribute, because two identical `allow`s on the file are a clippy error (`duplicated_attributes`)
+// in a release build off macOS, where both conditions hold.
+#![cfg_attr(
+    any(not(debug_assertions), not(target_os = "macos")),
+    allow(unused_imports, dead_code)
+)]
 
 mod support;
 
