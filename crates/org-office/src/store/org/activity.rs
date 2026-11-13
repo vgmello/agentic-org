@@ -160,7 +160,6 @@ pub(crate) fn page(
         frontier: query.prev_key,
         exhausted: false,
         history_truncated: !(head.epoch == super::EPOCH && oldest == Some(1)),
-        degraded: false,
     };
     let mut k = 0;
     while log.has(source, k)? {
@@ -168,7 +167,6 @@ pub(crate) fn page(
             return Ok(page);
         }
         let (seq, at_ms) = (log.rows[k].seq, time::parse_rfc3339_ms(&log.rows[k].at));
-        page.degraded |= at_ms.is_none();
         let key = rules::merge_key(page.frontier, at_ms);
         let below = query
             .before

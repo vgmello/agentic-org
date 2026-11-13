@@ -25,6 +25,7 @@ pub struct ActivitySubject {
 pub struct ActivityEntry {
     pub position: ActivityPosition,
     pub verb: String,
+    /// The recorded `at`; absent when unparseable (the entry's source is degraded).
     pub at_ms: Option<u64>,
     /// The running minimum of `at_ms` in commit order.
     pub key: u64,
@@ -68,8 +69,6 @@ pub struct ActivityPage {
     pub exhausted: bool,
     /// The retained log lacks the genesis.
     pub history_truncated: bool,
-    /// A scanned row's `at` is unparseable.
-    pub degraded: bool,
 }
 
 #[derive(Debug)]
@@ -149,9 +148,12 @@ pub(crate) fn entity(change: &OrgChange) -> Option<((&'static str, &str), bool)>
     facts(change).map(|(kind, id, upsert)| ((kind, id.as_str()), upsert.is_some()))
 }
 
-/// Whether `describe` reads the previous upsert: removals, and projects that aren't added.
+/// Whether `describe` reads the previous upsert (membership/project-team removals, project edits).
 pub(crate) fn needs_previous(change: &OrgChange) -> bool {
-    facts(change).is_some_and(|(kind, _, up)| up.is_none_or(|(v, ..)| kind == "project" && v != 1))
+    facts(change).is_some_and(|(kind, _, upsert)| match upsert {
+        None => !matches!(kind, "team" | "member"),
+        Some((version, ..)) => kind == "project" && version != 1,
+    })
 }
 
 /// The verb and subject of `change`, given its entity's last upsert within the lookback.
@@ -159,11 +161,13 @@ pub(crate) fn describe(
     change: &OrgChange,
     previous: Option<&OrgChange>,
 ) -> (String, ActivitySubject) {
-    let Some((kind, _, upsert)) = facts(change) else {
+    let Some((kind, id, upsert)) = facts(change) else {
         return ("org.changed".into(), ActivitySubject::default());
     };
     let previous = previous.and_then(facts).and_then(|(.., up)| up);
     let (verb, [member, team, project]) = match (upsert, previous) {
+        (None, _) if kind == "team" => ("removed", [None, Some(id), None]),
+        (None, _) if kind == "member" => ("removed", [Some(id), None, None]),
         (None, previous) => ("removed", previous.map_or([None; 3], |(_, ids, _)| ids)),
         (Some((_, ids, true)), _) if kind == "area" => ("removed", ids),
         (Some((1, ids, _)), _) => ("added", ids),

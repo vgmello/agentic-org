@@ -263,6 +263,26 @@ fn verbs_and_subjects_follow_the_change_and_its_entitys_previous_upsert() {
 }
 
 #[test]
+fn a_team_or_member_removal_is_about_its_own_id() {
+    let (_dir, store) = store();
+    let mut rows = vec![(at(T0 + 1), vec![team("TFAR", 1), member("MFAR", 1)])];
+    rows.extend(filler(2_001));
+    rows.push((
+        at(T0 + 5_000_000),
+        vec![removed("team", "TFAR"), removed("member", "MFAR")],
+    ));
+    append(&store, rows);
+    let page = read(&store, &query(head_seq(&store))).unwrap();
+    assert_eq!(
+        subjects(&page.entries[..2]),
+        [
+            ("org.member.removed", [Some("MFAR"), None, None]),
+            ("org.team.removed", [None, Some("TFAR"), None]),
+        ]
+    );
+}
+
+#[test]
 fn no_entry_carries_free_text() {
     let (_dir, store) = store();
     append(&store, mixed(300));
@@ -332,7 +352,7 @@ fn times_are_the_recorded_at_and_keys_never_rise_across_a_clock_step() {
             .collect(),
     );
     let page = read(&store, &query(6)).unwrap();
-    assert!(page.degraded && page.exhausted);
+    assert!(page.exhausted);
     let times: Vec<_> = page.entries.iter().map(|e| (e.at_ms, e.key)).collect();
     let ms = |s: u64| T0 + s * 1_000;
     assert_eq!(
@@ -346,13 +366,38 @@ fn times_are_the_recorded_at_and_keys_never_rise_across_a_clock_step() {
             (Some(T0), T0),
         ]
     );
-    // Below the bad row, a page is not degraded and continues from the given key.
+    // A page continues from the given key.
     let mut q = query(6);
     (q.before, q.prev_key) = (Some(position(5, 0)), ms(1));
     let page = read(&store, &q).unwrap();
-    assert!(!page.degraded);
     assert_eq!(page.entries[0].key, ms(1));
     assert_eq!(page.entries.last().unwrap().key, T0);
+}
+
+#[test]
+fn a_filtered_out_row_with_a_bad_time_leaves_the_returned_entries_alone() {
+    let (_dir, store) = store();
+    append(
+        &store,
+        vec![
+            (at(T0 + 10_000), vec![project("P7", 2, false)]),
+            ("not a time".into(), vec![team("T5", 2)]),
+            (at(T0 + 20_000), vec![project("P7", 3, false)]),
+        ],
+    );
+    let everything = read(&store, &query(4)).unwrap().entries;
+    assert_eq!(everything[1].at_ms, None, "the bad row's own entry");
+    let mut q = query(4);
+    q.project = Some("P7".into());
+    let filtered = read(&store, &q).unwrap().entries;
+    let expected: Vec<_> = everything
+        .into_iter()
+        .filter(|e| e.subject.project.as_deref() == Some("P7"))
+        .collect();
+    assert_eq!(filtered, expected);
+    let times: Vec<_> = filtered.iter().map(|e| (e.at_ms, e.key)).collect();
+    let ms = |s: u64| T0 + s * 1_000;
+    assert_eq!(times, [(Some(ms(20)), ms(20)), (Some(ms(10)), ms(10))]);
 }
 
 // ---- snapshot --------------------------------------------------------------------------------
