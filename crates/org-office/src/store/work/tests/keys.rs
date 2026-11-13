@@ -434,7 +434,7 @@ fn b111_native_parent_guard_preserves_link_read_storage_errors_without_writes() 
         // Keep a live link and valid indexed JSON, but make the selected child's decode fail.
         db.execute(
             "UPDATE work_items SET data=json_remove(data,'$.title') WHERE id=?1",
-            [child_id],
+            [&child_id],
         )
         .map_err(OfficeError::storage)?;
         Ok(((), None))
