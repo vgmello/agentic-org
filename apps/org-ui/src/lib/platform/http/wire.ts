@@ -3,7 +3,7 @@
  * A decoding failure after dispatch says nothing about whether the operation committed.
  */
 export const API_VERSION = 1;
-export const CONTRACT_REVISION = 1;
+export const CONTRACT_REVISION = 2;
 export const SESSION_PROOF_HEADER = 'X-Org-Session-Proof';
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export interface JsonObject { [key: string]: JsonValue }
@@ -308,6 +308,7 @@ const sessionFields = {
 export const readSignIn = checked(object({ login: text, password: nonempty }));
 export const readSession = checked(object(sessionFields));
 const proof: Reader<string> = (value) => /^[a-f0-9]{64}$/.test(text(value)) ? value as string : invalid();
+export const readSessionProof = checked(proof);
 export const readEstablishedSession = checked(object({ ...sessionFields, proof }));
 
 // Reused org-proto domain records. Read defaults/unknown variants match the native DTOs;

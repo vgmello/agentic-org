@@ -19,6 +19,9 @@ async function scan(path: string) {
 			if (/report-uri|report-sample|\/__csp-(?:report|status|clear)|org-test-csp-policy|e2e-csp\/vite-policy/i.test(text)) {
 				problems.push(`${relative(directory, file)}: test CSP tooling`);
 			}
+			if (/\/__p6-auth\/|sessionTestMiddleware|p6_auth_case|session-browser-harness/.test(text)) {
+				problems.push(`${relative(directory, file)}: test auth fixture`);
+			}
 			const hasData = stylesheet
 				? /url\(\s*['"]?\s*data:/i.test(text)
 				: javascript && /['"`]data:[\w.+-]*\/?[\w.+-]*[;,]/i.test(text);
@@ -30,7 +33,7 @@ async function scan(path: string) {
 try {
 	await scan(directory);
 	if (problems.length) throw new Error(problems.join('\n'));
-	console.log(`Build assets checked: ${css} CSS and ${js} JS; no data URIs or test CSP tooling.`);
+	console.log(`Build assets checked: ${css} CSS and ${js} JS; no data URIs, test CSP tooling or auth fixtures.`);
 } catch (error) {
 	console.error(error);
 	process.exitCode = 1;

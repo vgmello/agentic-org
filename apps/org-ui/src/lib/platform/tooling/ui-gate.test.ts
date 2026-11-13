@@ -158,6 +158,14 @@ const repoWebkitCoverage = (): WebkitCoverage => {
 };
 
 describe('gate manifest guard', () => {
+	it.each([
+		'src/lib/platform/auth/session-controller.ts', 'src/lib/platform/auth/session-gateway.ts',
+		'src/lib/platform/auth/session-record.ts', 'src/lib/platform/auth/session-store.ts',
+		'e2e/session-browser-harness.ts', 'e2e/session-foundation.spec.ts'
+	])('preserves the FULL gate for auth foundation %s', path => {
+		expect(plan([ui(path)], manifest)).toMatchObject({ all: true, cspFull: true, gateway: true });
+	});
+
 	it('assigns every e2e spec file to exactly one category', () => {
 		for (const spec of specs) {
 			const owners = Object.entries(manifest.categories).filter(([, category]) => category.specs.some((glob) => matches(glob, spec))).map(([name]) => name);

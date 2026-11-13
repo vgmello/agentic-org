@@ -147,7 +147,7 @@
 			"sources": ["src/lib/modules/copilot/**", "src/routes/(shell)/work/**", "src/lib/components/{BugSheet,NewRequestDialog,RequestSheet,RequestsPanel,ReportBugDialog,SeverityIcon,TaskSheet}.svelte"]
 		},
 		"org-lifecycle": {
-			"specs": ["create-organization.spec.ts", "open-organization.spec.ts", "retired-import.spec.ts"],
+			"specs": ["create-organization.spec.ts", "open-organization.spec.ts", "retired-import.spec.ts", "session-foundation.spec.ts"],
 			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
 		},
 		"production": {
@@ -200,10 +200,10 @@
 			"src/lib/components/ui/**", "src/app.*", "src/hooks.*", "src/params/**", "src/routes/+*", "src/routes/(shell)/+*", "src/routes/(onboarding)/+*",
 			"src/lib/utils.ts", "src/lib/name.ts", "src/lib/office/**", "src/lib/work/**", "src/lib/org/agents*", "src/lib/org/reporting*", "src/lib/modules/messaging/drafts/**", "src/lib/nav.ts", "src/lib/format.ts", "src/lib/proto*.ts",
 			"src/lib/org/{actions,api,commands,live,live-state.svelte,load,model,reducer,sample,session}.ts",
-			"src/lib/platform/{feature-factory,unavailable-api}.ts", "src/lib/platform/http/**", "src/lib/platform/tooling/**", "src/lib/platform/shell/**",
+			"src/lib/platform/{feature-factory,unavailable-api}.ts", "src/lib/platform/http/**", "src/lib/platform/auth/**", "src/lib/platform/tooling/**", "src/lib/platform/shell/**",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*", "static/**",
 			"vite.config.ts", "svelte.config.js", "tsconfig.json", "package.json", "bun.lock", "components.json", "playwright.config.ts",
-			"e2e/gate-manifest.json", "e2e/fakes/**", "../../.github/workflows/**", "e2e/ready.ts", "e2e/shot.ts", "e2e/vite-composition.ts"
+			"e2e/gate-manifest.json", "e2e/fakes/**", "../../.github/workflows/**", "e2e/ready.ts", "e2e/shot.ts", "e2e/vite-composition.ts", "e2e/session-browser-harness.ts", "e2e/session-foundation.spec.ts"
 		],
 		"cspFull": ["e2e-csp/{collector,teardown,vite-policy}.ts", "e2e-csp/*.spec.ts", "playwright*.config.ts", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock", "src/app.html", "src/hooks.*", "e2e/vite-composition.ts", "scripts/check-build-assets.ts", "../../config/csp/**"],
 		"gateway": ["../org-gateway/**", "../../crates/**", "../../Cargo.toml", "../../Cargo.lock", "../../rust-toolchain.toml", "../../config/csp/**", "e2e-csp-gateway/{control.ts,csp-gateway.spec.ts}", "playwright.csp-gateway.config.ts", "scripts/csp-gateway.ts", "scripts/check-build-assets.ts", "src/app.html", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock"]

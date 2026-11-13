@@ -249,8 +249,8 @@ it('preserves proof separation and both shared server-offset clock cases', () =>
 	}
 });
 it('negotiates additive revisions and validates exact nonnegative integer times', () => {
-	for (const contract_revision of [1, 99]) expect(wire.versionCompatible(wire.readVersion({ api_version: 1, contract_revision }))).toBe(true);
-	for (const value of [{ api_version: 1, contract_revision: 0 }, { api_version: 2, contract_revision: 1 }]) expect(wire.versionCompatible(wire.readVersion(value))).toBe(false);
+	for (const contract_revision of [2, 99]) expect(wire.versionCompatible(wire.readVersion({ api_version: 1, contract_revision }))).toBe(true);
+	for (const value of [{ api_version: 1, contract_revision: 0 }, { api_version: 1, contract_revision: 1 }, { api_version: 2, contract_revision: 2 }]) expect(wire.versionCompatible(wire.readVersion(value))).toBe(false);
 	for (const value of [1.5, -1, Number.MAX_SAFE_INTEGER + 1, '1', NaN, Infinity]) expect(() => wire.readSafeInteger(value)).toThrow(wire.WireDecodeError);
 	expect(wire.readSafeInteger(1.0)).toBe(1); expect(wire.readSafeInteger(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
 });
