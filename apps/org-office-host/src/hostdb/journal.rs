@@ -23,7 +23,7 @@ impl<'a> Attempt<'a> {
     }
 }
 
-/// Opaque create-time PHC string. Only 2b.3's bounded Argon2 path may inspect it.
+/// Opaque account PHC string. Only 2b.3's bounded Argon2 path may inspect it.
 pub(crate) struct Verifier(String);
 impl Verifier {
     pub(crate) fn new(phc: String) -> Self {

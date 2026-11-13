@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::Mutex;
 
+pub(super) mod accounts;
 mod first_account;
 
 // Only plaintext test fixtures may proceed after a completed initializer reports

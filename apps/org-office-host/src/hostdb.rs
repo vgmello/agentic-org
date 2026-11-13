@@ -1,6 +1,7 @@
 //! Private registry persistence. Callers must hold host.lock and serialize bootstrap.
 //! No production caller creates a registry until 2b.3 accepts bootstrap.
 
+pub(crate) mod accounts;
 pub(crate) mod journal;
 mod schema;
 mod sqlcipher;
