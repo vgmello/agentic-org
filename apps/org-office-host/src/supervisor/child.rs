@@ -299,6 +299,7 @@ impl RunningChild {
     }
 
     #[cfg(test)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn pid(&self) -> u32 {
         self.process.id()
     }

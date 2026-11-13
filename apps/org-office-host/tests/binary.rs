@@ -7,6 +7,9 @@
 
 // Only the argument checks run in release builds.
 #![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
+// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
+// helpers are unused.
+#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -176,6 +179,7 @@ fn signal(child: &Child, signal: i32) {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn sigterm_stops_the_servers_cleanly_and_exits_0() {
     let home = home_with_office();
@@ -194,6 +198,7 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn sigint_also_stops_it() {
     let home = home_with_office();
@@ -204,6 +209,7 @@ fn sigint_also_stops_it() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn a_killed_host_takes_its_servers_with_it() {
     let home = home_with_office();
@@ -220,6 +226,7 @@ fn a_killed_host_takes_its_servers_with_it() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn a_second_host_binary_on_the_same_home_exits_at_once() {
     let home = home_with_office();
@@ -277,6 +284,7 @@ fn a_release_host_refuses_the_arguments_that_change_what_it_trusts() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn the_host_never_logs_a_token() {
     let home = TestHome::registered();
@@ -325,6 +333,7 @@ fn the_host_never_logs_a_token() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn servers_inherit_no_host_fds_while_clients_connect() {
     let home = TestHome::registered();
@@ -387,6 +396,7 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
 }
 
 #[cfg(debug_assertions)]
+#[cfg(target_os = "macos")]
 #[test]
 fn servers_get_only_the_allowed_environment() {
     let home = home_with_office();

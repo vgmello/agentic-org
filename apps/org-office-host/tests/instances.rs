@@ -1,5 +1,7 @@
 //! Private-bootstrap acceptance; every path and key belongs to this disposable fixture.
 #![cfg(debug_assertions)]
+// The one test starts a real server, which only macOS can spawn (BUG-187).
+#![cfg(target_os = "macos")]
 
 mod support;
 
