@@ -2,6 +2,7 @@
 
 mod support;
 
+mod activity;
 mod bugs;
 mod cascades;
 mod checklist;

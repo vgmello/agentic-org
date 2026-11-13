@@ -30,7 +30,7 @@ use crate::store::{messages, origin, status, work};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
-use org_work::{Caller, StoreError, TxnOutput, WorkCall, WorkService};
+use org_work::{Caller, StoreError, TxnOutput, WorkActivityReads, WorkCall, WorkService};
 
 /// How long `create`, `open` and `discard` wait for the folder's lock: a slow-exiting old
 /// server and its replacement never overlap.
@@ -711,6 +711,11 @@ impl Office {
     /// Executes one work write as the bound member, with durable retry semantics.
     pub fn work_call(&self, caller: Caller, call: WorkCall) -> Result<TxnOutput, StoreError> {
         self.stores.work.call(caller, call)
+    }
+
+    /// The owner's work activity (IA-12), read from office.db's read pool; never writes.
+    pub fn work_activity(&self) -> impl WorkActivityReads + Send + Sync + 'static {
+        work::activity::OfficeWorkActivity(Arc::clone(&self.stores.local))
     }
 
     /// What `office.json` records about this office.
