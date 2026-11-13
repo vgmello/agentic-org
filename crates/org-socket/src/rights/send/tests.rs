@@ -229,6 +229,7 @@ fn interrupted_attempts_recheck_the_deadline_before_each_retry() {
         deadline,
         |_| {
             calls += 1;
+            assert!(calls <= 3, "attempt continued after its deadline");
             clock.set(clock.get() + tick);
             Err(io::Error::from_raw_os_error(libc::EINTR))
         },
