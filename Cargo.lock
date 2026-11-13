@@ -600,6 +600,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "org-socket",
+ "org-supervise",
  "org-sync",
  "org-work",
  "proc-macro2",
