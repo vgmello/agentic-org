@@ -55,6 +55,11 @@ fn equal_inputs_give_equal_keys_whatever_the_chain_order() {
             ),
         ),
         (
+            "two chains of one length, swapped",
+            key("h1", None, Some(work("atlas", &[&["a"], &["b"]]))),
+            key("h1", None, Some(work("atlas", &[&["b"], &["a"]]))),
+        ),
+        (
             "no work, the same handbook commit",
             key("h1", None, None),
             key("h1", None, None),

@@ -7,7 +7,9 @@
 use crate::place::{ProjectKey, TeamId};
 use crate::resolve::Work;
 
-/// A set's cache key, as plain data in a canonical form (the caller may hash it). Its parts are
+/// A set's cache key, as plain data in a canonical form, for an in-memory cache. Persisting it
+/// needs a canonical encoding of these fields, never a `std::hash::Hash` digest (which isn't
+/// stable across builds). Its parts are
 /// kept as separate fields, never joined into one text, so two different inputs can't run
 /// together into one key (`"ab"` and `"c"` against `"a"` and `"bc"`). It names no agent: a
 /// cache keyed by it alone holds one agent's sets. Built only by [`fingerprint`] and

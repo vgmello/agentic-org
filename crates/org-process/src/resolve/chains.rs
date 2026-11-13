@@ -17,10 +17,10 @@ pub(super) struct Fold {
     pub(super) unknown: Option<String>,
     /// With that "can't tell", the first team below it in the chain whose own file seals the key:
     /// refused there, but the conflict names it as sealing the key too.
-    pub(super) real: Option<Place>,
+    pub(super) sealed_below: Option<Place>,
 }
 
-impl Resolver<'_> {
+impl<'a> Resolver<'a> {
     /// Rules 3 to 5 for `key`: each chain folded, then combined. The organization's version is
     /// `org`.
     pub(super) fn teams(
@@ -46,7 +46,7 @@ impl Resolver<'_> {
             winner: None,
             seal: None,
             unknown: None,
-            real: None,
+            sealed_below: None,
         };
         for place in chain {
             if let Some(n) = self.live(place, key) {
@@ -65,9 +65,11 @@ impl Resolver<'_> {
             if fold.seal.is_none() && self.sealed(place, key) {
                 fold.seal = Some(place.clone());
                 fold.unknown = self.unread_seal(place, key).map(str::to_owned);
-            } else if fold.unknown.is_some() && fold.real.is_none() && self.seals_itself(place, key)
+            } else if fold.unknown.is_some()
+                && fold.sealed_below.is_none()
+                && self.seals_itself(place, key)
             {
-                fold.real = Some(place.clone());
+                fold.sealed_below = Some(place.clone());
             }
         }
         fold
@@ -114,12 +116,12 @@ impl Resolver<'_> {
             .iter()
             .filter_map(|f| f.winner.map(place).or(f.seal.clone()))
             .collect();
-        let real = claims.iter().filter_map(|fold| fold.real.as_ref());
+        let below = claims.iter().filter_map(|fold| fold.sealed_below.as_ref());
         let sealed_by: BTreeSet<&Place> = seals
             .iter()
             .filter(|seal| seal.2.is_none())
             .map(|seal| seal.0)
-            .chain(real)
+            .chain(below)
             .collect();
         let unknown: BTreeSet<&String> = seals.iter().filter_map(|seal| seal.2).collect();
         let conflict = Conflict {
@@ -141,21 +143,22 @@ impl Resolver<'_> {
         })
     }
 
+    /// The files at `place` that seal their key, or can't be shown not to (rule 2).
+    fn seals_at<'s>(&'s self, place: &'s Place) -> impl Iterator<Item = &'s Item<'a>> + 's {
+        self.items
+            .iter()
+            .filter(move |i| i.input.place == *place && i.seals)
+    }
+
     /// Whether a file at `place` whose key can be read is `key` and seals it.
     fn seals_itself(&self, place: &Place, key: &ProcessKey) -> bool {
-        let sealing =
-            |i: &Item<'_>| i.input.place == *place && i.seals && i.key.as_ref() == Some(key);
-        self.items.iter().any(sealing)
+        self.seals_at(place).any(|i| i.key.as_ref() == Some(key))
     }
 
     /// When the only files at `place` that seal `key` are ones whose key can't be read, the
     /// first one's path: it can't be told whether the key is sealed there.
     fn unread_seal(&self, place: &Place, key: &ProcessKey) -> Option<&str> {
-        let sealing = self
-            .items
-            .iter()
-            .filter(|i| i.input.place == *place && i.seals);
-        let sealing: Vec<_> = sealing.collect();
+        let sealing: Vec<_> = self.seals_at(place).collect();
         match sealing.iter().find(|i| i.key.is_none()) {
             Some(unread) if !sealing.iter().any(|i| i.key.as_ref() == Some(key)) => {
                 Some(&unread.input.path)

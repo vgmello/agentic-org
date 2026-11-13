@@ -283,6 +283,12 @@ fn duplicates_merge_into_the_earlier_step_and_required_wins() {
             &[" Plan !"],
         ),
         (
+            "the later copy is compared trimmed too",
+            &["Plan", " Plan!"],
+            two(&[], &[]),
+            &["Plan!"],
+        ),
+        (
             "letter case and inner spaces count: no merge",
             &["Plan it"],
             two(&["plan it", "Plan  it"], &[]),

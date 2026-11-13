@@ -748,6 +748,57 @@ fn p3_corner_an_unreadable_outermost_file_above_a_real_seal_fails_closed() {
                 "web/review.md: can't tell: platform/broken.md can't be read",
             ],
         ),
+        (
+            "TP-1 seals: an overridable web review above a sealed ios one: ios is named",
+            work(&[&["platform", "web", "ios"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, ""),
+                at(team("ios"), "review", 4, "sealed"),
+                at(team("mobile"), "review", 3, ""),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [ios] can't tell: platform/broken.md can't be read -> org",
+                "ios/review.md: can't tell: platform/broken.md can't be read",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "TP-1 key: a sealed web file of another key names no one for review",
+            work(&[&["platform", "web"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "deploy", 2, "sealed"),
+                at(team("mobile"), "review", 3, ""),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "deploy: none",
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [] can't tell: platform/broken.md can't be read -> org",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/deploy.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "TP-1 place: a sealed review only in the sibling chain: web is not named",
+            work(&[&["platform", "web"], &["mobile"]]),
+            vec![
+                at(team("platform"), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, ""),
+                at(team("mobile"), "review", 3, "sealed"),
+                at(org(), "review", 1, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "review conflict mobile,platform sealed [mobile] can't tell: platform/broken.md can't be read -> org",
+                "platform/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
     ]);
 }
 
