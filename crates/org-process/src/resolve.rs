@@ -254,7 +254,9 @@ pub struct Conflict {
     /// The disagreeing versions' places (a team that sealed what it inherited, or can't be shown
     /// not to have, stands for it).
     pub teams: Vec<Place>,
-    /// The teams that sealed the key.
+    /// The teams that sealed the key; in a chain whose seal is a "can't tell", the outermost team
+    /// below it whose own file seals the key (its file is refused there, but it is named, beside
+    /// [`Conflict::unknown`]).
     pub sealed_by: Vec<Place>,
     /// "Can't tell: <path> can't be read": in a disagreeing chain, a file whose key can't be read
     /// might seal the key, so it counts as that chain's seal (rule 2, failing closed), but no
