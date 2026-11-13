@@ -220,33 +220,43 @@ fn flags(value: &str) {
     } else {
         vec![string(value)]
     };
-    let args = values
-        .iter()
-        .flat_map(|s| s.split_whitespace())
-        .collect::<Vec<_>>();
-    for (i, arg) in args.iter().enumerate() {
-        assert!(
-            !arg.starts_with('@'),
-            "rustc argument files are unsupported"
-        );
-        assert!(
-            *arg != "--cap-lints" && !arg.starts_with("--cap-lints="),
-            "Cargo caps the opener lint"
-        );
-        for prefix in ["-A", "-W", "--allow", "--warn", "--force-warn"] {
-            let lint = if *arg == prefix {
-                Some(*args.get(i + 1).expect("missing lint flag argument"))
-            } else if prefix.len() == 2 {
-                arg.strip_prefix(prefix).map(|s| s.trim_start_matches('='))
+    let mut args = values.iter().flat_map(|s| s.split_whitespace());
+    while let Some(arg) = args.next() {
+        // Compiler, linker, extern and argument-file options cannot enter through
+        // a lint-only grammar, regardless of spelling or Cargo config location.
+        let (flag, lint) = [
+            "-A",
+            "-W",
+            "-D",
+            "-F",
+            "--allow",
+            "--warn",
+            "--deny",
+            "--forbid",
+            "--force-warn",
+        ]
+        .into_iter()
+        .find_map(|flag| {
+            let lint = if arg == flag {
+                Some(args.next().expect("missing lint flag argument"))
+            } else if flag.len() == 2 {
+                arg.strip_prefix(flag)
+                    .map(|rest| rest.strip_prefix('=').unwrap_or(rest))
             } else {
-                arg.strip_prefix(&format!("{prefix}="))
+                arg.strip_prefix(&format!("{flag}="))
             };
-            if let Some(lint) = lint {
-                assert!(
-                    !lint.split(',').any(weakening),
-                    "Cargo weakens the opener lint with {lint}"
-                );
-            }
+            lint.map(|lint| (flag, lint))
+        })
+        .expect("unsupported non-lint rustflag");
+        assert!(
+            !lint.is_empty() && !lint.starts_with('-') && !lint.starts_with('@'),
+            "invalid lint flag argument"
+        );
+        if ["-A", "-W", "--allow", "--warn", "--force-warn"].contains(&flag) {
+            assert!(
+                !lint.split(',').any(weakening),
+                "Cargo weakens the opener lint with {lint}"
+            );
         }
     }
 }
@@ -1706,8 +1716,8 @@ fn sqlcipher_policy_option_guards_pair_present_and_absent_inputs() {
     for value in ["level='deny'", "{ level }", "{}"] {
         assert!(std::panic::catch_unwind(|| table_field(value, "level", &["level"])).is_err());
     }
-    flags("'--cfg=feature'");
-    flags("['--cfg=feature']");
+    flags("'-Ddead_code'");
+    flags("['-Ddead_code']");
     for value in ["['--cfg=feature'", "'-A'"] {
         assert!(std::panic::catch_unwind(|| flags(value)).is_err());
     }

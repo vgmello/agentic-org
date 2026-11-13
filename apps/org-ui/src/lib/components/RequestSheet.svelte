@@ -125,7 +125,7 @@
 	// The tasks an approval made, and how far they are.
 	const made = $derived((item?.backlinks ?? []).filter((l) => l.kind === 'from_request').map((l) => items.find((i) => i.id === l.from_item_id)).filter((t): t is WorkItemSummary => !!t && !t.deleted));
 	const mergedInto = $derived(item?.merged_into ? items.find((i) => i.id === item?.merged_into) : undefined);
-	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400';
+	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400';
 	const kept = $derived(drafts.filter((d) => d.keep && d.title.trim() !== ''));
 	// A draft's team must work on the project chosen here, and its assignee must still be in the organization; otherwise the task is made without it.
 	const projectTeams = $derived(projectId ? teamsOfProject(snapshot, projectId).map((t) => t.id) : []);
@@ -148,8 +148,7 @@
 		if (!s) return;
 		let ok = false;
 		if (step === 'route') {
-			const pick = suggestions.find((x) => x.member.id === target);
-			ok = await act({ method: 'request.route', item_id: s.id, expected_version: v, scoper_id: target || undefined, route_reason: pick?.why, routed_by: target ? 'person' : undefined }, target ? `${requestRef(s)} sent to ${nameOf(snapshot, target)}.` : `${requestRef(s)} taken back.`);
+			ok = await act({ method: 'request.route', item_id: s.id, expected_version: v, scoper_id: target || undefined, routed_by: target ? 'person' : undefined }, target ? `${requestRef(s)} sent to ${nameOf(snapshot, target)}.` : `${requestRef(s)} taken back.`);
 		} else if (step === 'changes') {
 			// The note is written as a comment first; asking for changes then names it.
 			// If the call after it failed, the comment stays and a retry with the same words cites it again rather than writing another.
@@ -187,13 +186,13 @@
 	<SheetContent side="right" class="w-full max-w-xl overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle class="[overflow-wrap:anywhere]">{s ? `${requestRef(s)} · ${s.title}` : 'Request'}</SheetTitle>
-			<SheetDescription>{s ? `Raised ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
+			<SheetDescription>{s ? `Raised ${shortDate(s.created_at)} by ${s.created_by === me ? 'you' : nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
 		</SheetHeader>
 
 		{#if s && item}
-			<div class="flex flex-col gap-y-4 px-4 pb-6" data-testid="request-page">
+			<div class="flex min-w-0 flex-col gap-y-4 px-4 pb-6" data-testid="request-page">
 				<div class="flex flex-wrap items-center gap-2 text-sm/6">
-					<Badge variant="secondary" data-testid="request-state">{stateWords(s, snapshot)}</Badge>
+					<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap [overflow-wrap:anywhere]" data-testid="request-state">{stateWords(s, snapshot)}</Badge>
 					<span class="text-gray-400" data-testid="request-meta">{kindWord(s.request_kind)} · {projectName}</span>
 					{#if item.route_reason && (s.status === 'routed' || s.status === 'scoping')}<span class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]" data-testid="route-reason">Sent because: {item.route_reason}{item.routed_by === 'rule' ? ' (suggested by rule)' : ''}</span>{/if}
 				</div>
@@ -250,15 +249,15 @@
 					<div class="flex flex-wrap gap-2" data-testid="request-actions">
 						{#if s.status === 'scoped'}
 							{#if (outcome?.draft_tasks.length ?? 0) > 0}
-								<Button size="sm" onclick={() => begin('approve')}>Approve and create {outcome?.draft_tasks.length} {outcome?.draft_tasks.length === 1 ? 'task' : 'tasks'}…</Button>
+								<Button size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('approve')}>Approve and create {outcome?.draft_tasks.length} {outcome?.draft_tasks.length === 1 ? 'task' : 'tasks'}…</Button>
 							{:else}
-								<p class="basis-full text-sm/6 text-amber-200" data-testid="no-drafts">No tasks were proposed, so there is nothing to approve. Ask for changes.</p>
+								<p class="basis-full text-sm/6 text-gray-200" data-testid="no-drafts">No tasks were proposed, so there is nothing to approve. Ask for changes.</p>
 							{/if}
-							<Button size="sm" variant="outline" onclick={() => begin('changes')}>Ask for changes…</Button>
+							<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('changes')}>Ask for changes…</Button>
 						{/if}
-						{#if s.status !== 'scoped'}<Button size="sm" variant="outline" onclick={() => begin('route')}>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button>{/if}
-						<Button size="sm" variant="outline" onclick={() => begin('merge')} disabled={others.length === 0} aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}>Merge into…</Button>
-						<Button size="sm" variant="outline" onclick={() => begin('decline')}>Decline…</Button>
+						{#if s.status !== 'scoped'}<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('route')}>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button>{/if}
+						<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('merge')} disabled={others.length === 0} aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}>Merge into…</Button>
+						<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('decline')}>Decline…</Button>
 						{#if others.length === 0}<p id="req-no-merge" class="basis-full text-xs/5 text-gray-400" data-testid="no-merge">No other open requests to merge into.</p>{/if}
 					</div>
 				{:else if step}
@@ -270,7 +269,7 @@
 								{#each suggestions as x (x.member.id)}<option value={x.member.id}>{x.member.name} · {x.why}</option>{/each}
 								{#each agents.filter((a) => !suggestions.some((x) => x.member.id === a.id)) as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 							</select>
-							{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p class="text-sm/6 text-amber-200" role="alert">{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or leave it not routed.</p>{/if}
+							{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert">{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or leave it not routed.</p>{/if}
 						{:else if step === 'merge'}
 							<Label for="req-into">Merge into</Label>
 							<select id="req-into" bind:value={into} class={field}><option value="">Choose a request…</option>{#each others as o (o.id)}<option value={o.id}>{requestRef(o)} · {o.title}</option>{/each}</select>
@@ -278,14 +277,14 @@
 						{:else if step === 'approve'}
 							<Label for="req-project">Which project?</Label>
 							<select id="req-project" bind:value={projectId} class={field}><option value="">Choose a project…</option>{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
-							{#if projects.length === 0}<p class="text-sm/6 text-amber-200" role="alert">There is no project to put the tasks in. Create a project first.</p>{/if}
+							{#if projects.length === 0}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert">There is no project to put the tasks in. Create a project first.</p>{/if}
 							<p class="text-sm/6 text-gray-200">These become tasks in {projectId ? (projects.find((p) => p.id === projectId)?.name ?? 'that project') : 'that project'}. Edit or remove any of them first.</p>
 							{#if dropped > 0}<p class="text-xs/5 text-gray-400" data-testid="drafts-dropped">{dropped} {dropped === 1 ? 'draft names' : 'drafts name'} a team or person that doesn't apply there, so {dropped === 1 ? 'it is' : 'they are'} created without it.</p>{/if}
 							<ul class="space-y-2" aria-label="Tasks to create">
 								{#each drafts as d, i (i)}
-									<li class="flex items-center gap-x-2">
+									<li class="flex flex-wrap items-center gap-x-2">
 										<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
-										<Input bind:value={d.title} disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
+										<Input bind:value={d.title} class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
 										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-team">loses its team</span>{/if}
 										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-person">loses its assignee</span>{/if}
 									</li>
@@ -293,13 +292,13 @@
 							</ul>
 						{:else}
 							<Label for="req-note">{step === 'changes' ? 'What should change' : 'Why'}</Label>
-							<Input id="req-note" bind:value={note} autocomplete="off" />
+							<Input id="req-note" bind:value={note} class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" autocomplete="off" />
 						{/if}
-						<div class="flex gap-x-2">
-							<Button size="sm" disabled={busy || !canSubmit} onclick={submitStep}>
+						<div class="flex flex-wrap gap-2">
+							<Button size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" disabled={busy || !canSubmit} onclick={submitStep}>
 								{step === 'route' ? (target ? 'Send' : 'Take back') : step === 'merge' ? 'Merge' : step === 'approve' ? `Create ${kept.length} ${kept.length === 1 ? 'task' : 'tasks'}` : step === 'changes' ? 'Send back' : 'Decline'}
 							</Button>
-							<Button size="sm" variant="outline" onclick={close}>Cancel</Button>
+							<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={close}>Cancel</Button>
 						</div>
 					</section>
 				{/if}

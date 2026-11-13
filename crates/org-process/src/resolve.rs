@@ -254,7 +254,9 @@ pub struct Conflict {
     /// The disagreeing versions' places (a team that sealed what it inherited, or can't be shown
     /// not to have, stands for it).
     pub teams: Vec<Place>,
-    /// The teams that sealed the key.
+    /// The teams that sealed the key; in a chain whose seal is a "can't tell", the outermost team
+    /// below it whose own file seals the key (its file is refused there, but it is named, beside
+    /// [`Conflict::unknown`]).
     pub sealed_by: Vec<Place>,
     /// "Can't tell: <path> can't be read": in a disagreeing chain, a file whose key can't be read
     /// might seal the key, so it counts as that chain's seal (rule 2, failing closed), but no
@@ -263,6 +265,17 @@ pub struct Conflict {
     /// What applies until the project decides: the organization's, a sealed team's (one counted
     /// in [`Conflict::unknown`] included), or nothing.
     pub applies: Option<Place>,
+}
+
+/// The name the app shows for `place`: its name in `names`, else its team id, project key or
+/// member id, or "the organization".
+pub(crate) fn place_name(names: &BTreeMap<Place, String>, place: &Place) -> String {
+    let scope = || {
+        place
+            .scope()
+            .map_or("the organization".into(), str::to_owned)
+    };
+    names.get(place).cloned().unwrap_or_else(scope)
 }
 
 impl EffectiveSet {

@@ -15,6 +15,7 @@
 	import { workApi, type WorkDraft } from '$lib/work';
 	import { assigneeOptions, assignWarning, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
+	import { requestRef } from '$lib/work/requests-view';
 	import { bugRef } from '$lib/work/bugs';
 	import { shortDate } from '$lib/work/format';
 	import { movesFrom, PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
@@ -43,6 +44,8 @@
 	let item = $state<WorkItem | undefined>();
 	// The bugs this task fixes, with their numbers and titles.
 	let fixed = $state<{ id: string; ref: string; title: string }[]>([]);
+	// The request this task was made from, when an approval made it ("from REQ-12").
+	let fromRequest = $state<{ id: string; ref: string; title: string } | undefined>();
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	let title = $state('');
@@ -61,17 +64,26 @@
 
 	async function load(reset: boolean) {
 		if (!taskId) return;
+		const forTask = taskId;
 		try {
 			const got = await workApi.get(organizationId, taskId);
+			if (forTask !== taskId) return;
 			item = got;
-			fixed = (await Promise.all(got.links.filter((l) => l.kind === 'fixes' && l.to.type === 'item').map((l) => workApi.get(organizationId, (l.to as { item_id: string }).item_id).catch(() => undefined)))).flatMap((b) => (b ? [{ id: b.summary.id, ref: bugRef(b.summary), title: b.summary.title }] : []));
+			const fixedNow = (await Promise.all(got.links.filter((l) => l.kind === 'fixes' && l.to.type === 'item').map((l) => workApi.get(organizationId, (l.to as { item_id: string }).item_id).catch(() => undefined)))).flatMap((b) => (b ? [{ id: b.summary.id, ref: bugRef(b.summary), title: b.summary.title }] : []));
+			const origin = got.links.find((l) => l.kind === 'from_request' && l.to.type === 'item');
+			const originNow = origin ? await workApi.get(organizationId, (origin.to as { item_id: string }).item_id).then((r) => ({ id: r.summary.id, ref: requestRef(r.summary), title: r.summary.title })).catch(() => undefined) : undefined;
+			// Another task may have been opened while these were read: they are not its.
+			if (forTask !== taskId) return;
+			fixed = fixedNow;
+			fromRequest = originNow;
 			if (reset) {
 				title = got.summary.title;
 				description = got.description ?? '';
 				definitionOfDone = got.definition_of_done ?? '';
 			}
 		} catch (e) {
-			error = toAppError(e).message;
+			// An answer for a task that is no longer the one open says nothing about this one.
+			if (forTask === taskId) error = toAppError(e).message;
 		}
 	}
 
@@ -80,6 +92,7 @@
 			untrack(() => {
 				item = undefined;
 				fixed = [];
+				fromRequest = undefined;
 				error = undefined;
 				newStep = blockedReason = anywayReason = '';
 				newRequired = false;
@@ -204,6 +217,7 @@
 					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
 
+				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
 				{#if fixed.length > 0}<p class="text-sm/6 text-gray-300" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
 
 				<div class="grid gap-4 sm:grid-cols-2">

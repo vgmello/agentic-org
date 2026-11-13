@@ -10,19 +10,19 @@ The full browser suite took about 47 minutes when this gate was adopted (measure
 
 ## Run it
 
-All commands run from `apps/org-ui`. On the shared Mac wrap them in `~/.agency/bin/heavy`. The selector runs Playwright with `--workers=2` unless you pass `--workers <n>`; the plain `test:e2e:*` scripts and `playwright` itself still need `--workers=2` added by hand.
+All commands run from `apps/org-ui`. On the shared Mac wrap them in `~/.agency/bin/heavy`. The selector runs Playwright with `--workers=1` unless you pass `--workers <n>` (heavy runs Playwright in its one-slot ui lane; set `HEAVY_LANE=ui` when you call `bun scripts/ui-gate.ts` directly, whose command line has no `test:e2e` for heavy to route on); the plain `test:e2e:*` scripts and `playwright` itself still need `--workers=1` added by hand.
 
 ```sh
 bun run test:e2e:journeys                 # build + journeys on Chromium + production (+ WebKit subset)
 bun run test:e2e:select                   # explain: rule per changed file, then the commands it would run
-bun run test:e2e:affected                 # select from `git diff origin/v1...HEAD` + working tree, build, run in order, 2 workers
+bun run test:e2e:affected                 # select from `git diff origin/v1...HEAD` + working tree, build, run in order, 1 worker
 bun run test:e2e:areas                    # list categories (specs and source globs) and journeys
 bun run test:e2e:verify                   # Playwright --list: journeys == manifest (also per entry), journeys + categories == the whole suite; prints each mismatch
 bun run test:e2e:full                     # unchanged full ordinary suite (same as test:e2e)
 bun run test:e2e:csp                      # unchanged full interactive CSP; test:e2e:csp-gateway unchanged
 ```
 
-Selector options (`--flag value` or `--flag=value`): `--base <ref>` (default `origin/v1`, checked with `git rev-parse --verify`), `--file <path>` (repeatable) or `--files <newline-separated paths>` (instead of git; each must be a repository-relative path such as `apps/org-ui/src/...` of a file that exists now or in HEAD, otherwise it is treated as unknown and runs the full suite), `--workers <n>` (default 2), `--explain`, `--no-webkit` (warns when the plan is the full suite). Unknown flags are an error. Playwright arguments go after `--`; because `bun run` swallows the first `--`, write `bun run test:e2e:affected -- --workers 3 -- --headed` (the first `--` is bun's, the second the selector's), or call `bun scripts/ui-gate.ts run -- --headed`. Steps run one at a time and stop at the first failure. If git cannot list the changes (missing base, shallow clone, not a repository), `select` and `run` use the full suite; so they do when `e2e/gate-manifest.json` cannot be read or parsed (`areas` and `verify` then exit 2). Paths that are absolute, contain `..` or a backslash, or are git-quoted are treated as unknown, so they also run the full suite.
+Selector options (`--flag value` or `--flag=value`): `--base <ref>` (default `origin/v1`, checked with `git rev-parse --verify`), `--file <path>` (repeatable) or `--files <newline-separated paths>` (instead of git; each must be a repository-relative path such as `apps/org-ui/src/...` of a file that exists now or in HEAD, otherwise it is treated as unknown and runs the full suite), `--workers <n>` (default 1), `--explain`, `--no-webkit` (warns when the plan is the full suite). Unknown flags are an error. Playwright arguments go after `--`; because `bun run` swallows the first `--`, write `bun run test:e2e:affected -- --workers 3 -- --headed` (the first `--` is bun's, the second the selector's), or call `bun scripts/ui-gate.ts run -- --headed`. Steps run one at a time and stop at the first failure. If git cannot list the changes (missing base, shallow clone, not a repository), `select` and `run` use the full suite; so they do when `e2e/gate-manifest.json` cannot be read or parsed (`areas` and `verify` then exit 2). Paths that are absolute, contain `..` or a backslash, or are git-quoted are treated as unknown, so they also run the full suite.
 
 ## How selection works (scripts/ui-gate-lib.ts)
 
@@ -45,7 +45,7 @@ Ordinary plan: `--grep @journey`, then `--grep-invert @journey` over the selecte
 - `alsoRuns` (manifest) selects a category to run in addition when given files change, without making it own them: a way to say "this area's tests exercise that page" without the import-graph guard demanding co-ownership of every import of the page. Today the org-chart page (`+page.svelte`, `+page.ts`) and `ChartFitMenuItem.svelte` also run `projects-work`, because `non-chat-icons.spec.ts` opens `/org-chart` and asserts page-owned behaviour (the take-off toast and last-team dialog, the View menu with Actual size, the empty/loading/error states). The guard checks each entry names a known category, a reason, and globs that match a current file.
 - `budget.measured` is a self-report: `verify` and the guard check the test count and the budget, but the recorded seconds are whatever the last person who ran the journeys wrote down.
 - Every spec file belongs to exactly one category, and every journey names a real tagged test. `bun run test` (vitest, `src/lib/platform/tooling/ui-gate.test.ts`) fails otherwise, and also when any current source file is unmapped.
-- The journey budget is 60 tests and 5 minutes on Chromium + production with 2 workers; the 8-test WebKit subset runs on top of that and is not counted in the 60. `budget.measured` records the last measurement; after changing the journeys, run them and update it (the guard compares test counts).
+- The journey budget is 60 tests and 5 minutes on Chromium + production with 2 workers (`budget.measured.workers`; re-measure with `--workers 2`, not the selector's default of 1); the 8-test WebKit subset runs on top of that and is not counted in the 60. `budget.measured` records the last measurement; after changing the journeys, run them and update it (the guard compares test counts).
 - A full run (ordinary plus CSP, plus the 3 gateway CSP tests, which a full plan always includes, and which a tiered plan adds when gateway files changed) happens on v1 head periodically, run by ada, not per slice.
 
 ## Notes on the tags
