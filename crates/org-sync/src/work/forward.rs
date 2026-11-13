@@ -38,6 +38,10 @@ pub struct AckProof {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalStreamOutput {
+    /// Unframed candidates only: the transport must still enforce frame and credit limits.
+    ForwardCandidates {
+        changes: Vec<Change>,
+    },
     Duplicate,
     /// from is the previous floor, exclusive; to is the committed inclusive floor.
     Advanced {
@@ -228,3 +232,6 @@ pub fn acknowledge_local(
 }
 #[cfg(test)]
 mod tests;
+
+mod planning;
+pub use planning::{forward_local, receipt_action, ForwardTrigger, ReceiptAction};
