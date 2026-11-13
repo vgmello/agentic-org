@@ -49,30 +49,36 @@ fn sqlcipher_build_inventory_refuses_unknown_scripts_in_every_position() {
     let scope = tracked(dir.path());
     let good = package(&scope, "good", "src/lib.rs", json!(["lib"]));
     for path in ["build.rs", "other.rs", "scripts/helper.rs"] {
-        let bad = package(&scope, "unreviewed-package", path, json!(["custom-build"]));
-        for packages in [
-            vec![bad.clone(), good.clone()],
-            vec![good.clone(), bad.clone()],
+        for kind in [
+            json!(["custom-build"]),
+            json!(["custom-build", "bin"]),
+            json!(["bin", "custom-build"]),
         ] {
-            let value = inventory(&scope, packages);
-            let message = error(|| {
-                metadata(&scope, &value);
-            });
-            assert!(
-                message.contains("unreviewed-package") && message.contains(path),
-                "{message}"
-            );
-        }
-        let mut value = inventory(&scope, vec![good.clone()]);
-        let target = bad["targets"][0].clone();
-        for targets in [
-            json!([target, good["targets"][0]]),
-            json!([good["targets"][0], target]),
-        ] {
-            value["packages"][0]["targets"] = targets;
-            error(|| {
-                metadata(&scope, &value);
-            });
+            let bad = package(&scope, "unreviewed-package", path, kind);
+            for packages in [
+                vec![bad.clone(), good.clone()],
+                vec![good.clone(), bad.clone()],
+            ] {
+                let value = inventory(&scope, packages);
+                let message = error(|| {
+                    metadata(&scope, &value);
+                });
+                assert!(
+                    message.contains("unreviewed-package") && message.contains(path),
+                    "{message}"
+                );
+            }
+            let mut value = inventory(&scope, vec![good.clone()]);
+            let target = bad["targets"][0].clone();
+            for targets in [
+                json!([target, good["targets"][0]]),
+                json!([good["targets"][0], target]),
+            ] {
+                value["packages"][0]["targets"] = targets;
+                error(|| {
+                    metadata(&scope, &value);
+                });
+            }
         }
     }
 }
@@ -165,6 +171,7 @@ fn sqlcipher_build_inventory_refuses_build_helpers_and_unknown_metadata_kinds() 
         json!("custom-build"),
         json!(["unknown"]),
         json!(["lib", "unknown"]),
+        json!(["unknown", "lib"]),
     ] {
         let value = inventory(&scope, vec![package(&scope, "fixture", "src/lib.rs", kind)]);
         error(|| {
