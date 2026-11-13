@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use org_proto::org::{OrgChange, Position};
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::OfficeError;
 use crate::organization::activity::{
@@ -131,6 +131,26 @@ fn open(
     Ok((head, oldest.map(|seq| seq as u64)))
 }
 
+/// Whether `before` is a cursor the server can have emitted: an `org.changed` row of the log and
+/// an index at most the number of its changes (`index` is an exclusive bound; the row's length
+/// is the whole row, `0` none of it).
+fn names_a_change_row(tx: &Connection, before: ActivityPosition) -> Result<bool, ActivityError> {
+    let body: Option<String> = tx
+        .query_row(
+            "SELECT body FROM events WHERE kind = 'org.changed' AND epoch = ?1 AND seq = ?2",
+            params![before.epoch as i64, before.seq as i64],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(OfficeError::storage)?;
+    let Some(body) = body else {
+        return Ok(false);
+    };
+    let changes: Vec<serde::de::IgnoredAny> = serde_json::from_str(&body)
+        .map_err(|_| OfficeError::Invalid("a logged entry is not readable"))?;
+    Ok(before.index <= changes.len())
+}
+
 /// One page: resolve, then filter, then stop at `limit` entries or `scan` rows.
 pub(crate) fn page(
     db: &Connection,
@@ -142,7 +162,10 @@ pub(crate) fn page(
     if let Some(before) = query.before {
         // An epoch with no rows retains nothing below its head; nothing is above the ceiling.
         let retained = oldest.unwrap_or(head.seq + 1)..=query.ceiling;
-        if before.epoch != head.epoch || !retained.contains(&before.seq) {
+        if before.epoch != head.epoch
+            || !retained.contains(&before.seq)
+            || !names_a_change_row(&tx, before)?
+        {
             return Err(ActivityError::SnapshotRequired);
         }
         top = top.min(before.seq as i64 - i64::from(before.index == 0));

@@ -491,6 +491,35 @@ fn activity_refuses_an_event_whose_data_names_another_target_or_version() {
     }
 }
 
+// BUG-197: a ceiling is a head the client saw. One above this feed's head is a rollback or a
+// restored backup (the org page says so too), not a page: it would change after the next commit.
+#[test]
+fn activity_refuses_a_ceiling_above_the_head_like_the_org_page_does() {
+    let fx = setup(true);
+    fx.commit(vec![vec![ev("A", T0)], vec![ev("A", T0 + 1)]]);
+    let snapshot = |ceiling: u64| {
+        matches!(
+            fx.reads.activity_page(&query(ceiling)),
+            Err(WorkActivityError::SnapshotRequired)
+        )
+    };
+    // The head itself and below are pages; one above and far above are not.
+    assert!(!snapshot(2) && !snapshot(1) && !snapshot(0));
+    for ceiling in [3, 10, i64::MAX as u64, u64::MAX] {
+        assert!(snapshot(ceiling), "ceiling {ceiling} above head 2");
+    }
+    // Once committed, the head moves and the same ceiling is a page: no page changes under it.
+    fx.commit(vec![vec![ev("B", T0 + 2)]]);
+    assert!(!snapshot(3));
+    // An empty feed has head 0: ceiling 0 only.
+    let empty = setup(true);
+    assert!(empty.reads.activity_page(&query(0)).is_ok());
+    assert!(matches!(
+        empty.reads.activity_page(&query(1)),
+        Err(WorkActivityError::SnapshotRequired)
+    ));
+}
+
 /// 102 events, only the oldest matches: a filter applied after the cap would return nothing.
 fn only_last_matches(fx: &Fx, last: Ev, rest: impl Fn(u64) -> Ev) -> WorkActivityPosition {
     let mut rows = vec![vec![last]];

@@ -55,6 +55,13 @@ impl WorkActivityReads for OfficeWorkActivity {
             if stored != query.incarnation && (query.incarnation.is_some() || query.ceiling > 0) {
                 return Ok(Err(WorkActivityError::SnapshotRequired));
             }
+            // A ceiling is a head the client saw: above this feed's head it is a rollback or a
+            // restored backup, and a page under it would change with the next commit.
+            let head: Option<i64> =
+                sql(db.query_row("SELECT max(seq) FROM work_feed", [], |r| r.get(0)))?;
+            if query.ceiling > unsigned(head.unwrap_or(0))? {
+                return Ok(Err(WorkActivityError::SnapshotRequired));
+            }
             if let Some(before) = &query.before {
                 if !stored_position(db, query.ceiling, before)? {
                     return Ok(Err(WorkActivityError::InvalidPosition));

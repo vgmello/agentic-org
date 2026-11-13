@@ -574,6 +574,54 @@ fn another_epochs_first_row_is_not_the_genesis() {
 }
 
 #[test]
+fn a_before_must_name_a_stored_change_row_and_an_index_within_it() {
+    // BUG-198: `before` is a cursor the server emitted: a row of the log and an index at most the
+    // number of its changes (`len` is the whole row, `0` none of it). Anything else is refused.
+    let (_dir, store) = store();
+    append(&store, filler(1)); // seq 2: one change
+    append(
+        &store,
+        vec![(at(T0 + 9_000), vec![team("A", 2), team("B", 2)])], // seq 3: two changes
+    );
+    store.run_sql_for_test(
+        "INSERT INTO events (epoch, seq, kind, command_id, at, body)
+         VALUES (1, 4, 'a.kind.from.the.future', 'X4', 'not a time', 'not json')",
+    );
+    append(&store, filler(1)); // seq 5
+    let outcome = |seq, index| {
+        let mut q = query(5);
+        q.before = Some(position(seq, index));
+        read(&store, &q).map(|page| page.entries.first().map(|entry| entry.position))
+    };
+    let refused = |seq, index| matches!(outcome(seq, index), Err(ActivityError::SnapshotRequired));
+    // Past the row's changes: one row has 1 change, the other 2.
+    assert!(refused(2, 2) && refused(2, 7) && refused(3, 3) && refused(3, usize::MAX));
+    // A seq that is no org.changed row (another kind of event), at any index.
+    assert!(refused(4, 0) && refused(4, 1));
+    // Every cursor the server can emit still works: the row's start (nothing of it), an entry
+    // (what is below it) and the whole row.
+    assert_eq!(outcome(3, 0).unwrap(), Some(position(2, 0)));
+    assert_eq!(outcome(3, 1).unwrap(), Some(position(3, 0)));
+    assert_eq!(outcome(3, 2).unwrap(), Some(position(3, 1)));
+    assert_eq!(outcome(2, 1).unwrap(), Some(position(2, 0)));
+    // A row of an older epoch, stored under the same seq, is still another epoch's cursor.
+    store.run_sql_for_test(
+        "INSERT INTO events (epoch, seq, kind, command_id, at, body)
+         SELECT 0, seq, kind, 'E0-3', at, body FROM events WHERE epoch = 1 AND seq = 3",
+    );
+    let mut q = query(5);
+    q.before = Some(ActivityPosition {
+        epoch: 0,
+        seq: 3,
+        index: 0,
+    });
+    assert!(matches!(
+        read(&store, &q),
+        Err(ActivityError::SnapshotRequired)
+    ));
+}
+
+#[test]
 fn rows_of_another_event_kind_are_not_read() {
     let (_dir, store) = store();
     append(&store, filler(1));
