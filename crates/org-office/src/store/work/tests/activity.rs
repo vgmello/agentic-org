@@ -1,4 +1,4 @@
-//! IA-12b: the work activity port over office.db (freeze rev 4.4 decisions 4-7).
+//! IA-12b: the work activity port over office.db (freeze rev 4.7 decisions 4-7).
 
 use super::super::tests::{fixture, initialize_origin, T0};
 use super::*;
@@ -389,6 +389,32 @@ fn activity_never_shows_rows_above_the_ceiling() {
     assert_eq!(fx.reads.head().unwrap(), (incarnation(), 7));
 }
 
+#[test]
+fn activity_refuses_a_feed_row_whose_unseen_target_has_no_event_there() {
+    let fx = setup(true);
+    let bare = |target: &str| {
+        let targets = serde_json::to_string(&[target]).unwrap();
+        fx.store
+            .write(move |db| {
+                db.execute("INSERT INTO work_feed(targets) VALUES (?1)", [&targets])
+                    .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+    };
+    fx.commit(vec![vec![ev("A", T0)], vec![ev("B", T0 + 1)]]);
+    bare("A"); // row 3: A's events are in rows 1 and 4
+    fx.commit(vec![vec![ev("A", T0 + 3)]]);
+    bare("B"); // row 5: B's newest event is in row 2
+               // Ceiling 3 finds A by searching its history; ceiling 5 reads B's newest event directly.
+    for ceiling in [3, 5] {
+        assert!(matches!(
+            fx.reads.activity_page(&query(ceiling)),
+            Err(WorkActivityError::Store(_))
+        ));
+    }
+}
+
 /// 102 events, only the oldest matches: a filter applied after the cap would return nothing.
 fn only_last_matches(fx: &Fx, last: Ev, rest: impl Fn(u64) -> Ev) -> WorkActivityPosition {
     let mut rows = vec![vec![last]];
@@ -748,7 +774,7 @@ fn activity_before_must_be_a_stored_position_at_or_below_the_ceiling() {
     ));
 }
 
-/// Freeze decision 7's budgets (rev 4.6; release, Mac): run with
+/// Freeze decision 7's budgets (rev 4.7; release, Mac): run with
 /// `cargo test -p org-office --release -- --ignored activity_budget --nocapture`.
 #[test]
 #[ignore = "benchmark: 100,000 events; run in release"]
@@ -806,6 +832,23 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
         let page = fx.reads.activity_page(&elsewhere).unwrap();
         assert!(page.entries.is_empty() && !page.exhausted);
     });
+    // Continuation pages: every target is first seen below its newest event, so each one is
+    // found by searching its history (more B-tree pages than at the head).
+    let mut deep = nothing.clone();
+    deep.before = Some(pos(50_000, "", 0));
+    let deep_page = time("selective page mid-history, no match, scan 2000", &|| {
+        assert!(fx.reads.activity_page(&deep).unwrap().entries.is_empty());
+    });
+    let mut deep_project = elsewhere.clone();
+    deep_project.before = Some(pos(50_000, "", 0));
+    let deep_project_page = time("project page mid-history, no match, scan 2000", &|| {
+        assert!(fx
+            .reads
+            .activity_page(&deep_project)
+            .unwrap()
+            .entries
+            .is_empty());
+    });
     let mut hot = query(100_000);
     hot.before = Some(pos(50_000, "H", 5_000));
     hot.limit = 50;
@@ -832,6 +875,11 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
         );
         // Each item's whole row is read for its project: no item-to-project index without DDL.
         assert!(project_page <= 40.0, "project page budget");
+        assert!(deep_page <= 40.0, "continuation page budget");
+        assert!(
+            deep_project_page <= 60.0,
+            "project continuation page budget"
+        );
         assert!(recency <= 30.0, "recency budget");
     }
 }

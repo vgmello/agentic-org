@@ -80,15 +80,13 @@ fn stored_position(
     ceiling: u64,
     before: &WorkActivityPosition,
 ) -> Result<bool, OfficeError> {
-    let (Ok(seq), Ok(version)) = (
+    let (Ok(seq), Ok(version), true) = (
         i64::try_from(before.feed_seq),
         i64::try_from(before.version),
+        before.feed_seq <= ceiling,
     ) else {
         return Ok(false);
     };
-    if before.feed_seq > ceiling {
-        return Ok(false);
-    }
     // feed_seq references the work_feed row whose targets list every put, so this is enough.
     let found: Option<i64> = if before.target_id.is_empty() {
         let row = "SELECT seq FROM work_feed WHERE seq = ?1 AND ?2 = 0";
@@ -246,17 +244,18 @@ impl<'a> Walk<'a> {
         // changed since, search its history for the row.
         let found = match self.read_down(target, seq, seen.unwrap_or(u64::MAX))? {
             Some(found) => found,
-            None if seen.is_none() => match self.last_at(target, seq)? {
-                Some((version, _)) => self
-                    .read_down(target, seq, version)?
-                    .ok_or_else(inconsistent)?,
-                None => Vec::new(),
-            },
+            None if seen.is_none() => {
+                let (version, _) = self.last_at(target, seq)?.ok_or_else(inconsistent)?;
+                self.read_down(target, seq, version)?
+                    .ok_or_else(inconsistent)?
+            }
             None => return Err(inconsistent()),
         };
-        if let Some((version, _)) = found.last() {
-            self.lowest.insert(target.to_owned(), *version);
-        }
+        match found.last() {
+            Some((version, _)) => self.lowest.insert(target.to_owned(), *version),
+            None if seen.is_none() => return Err(inconsistent()), // every put has an event
+            None => None,
+        };
         Ok(found)
     }
 
