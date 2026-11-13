@@ -409,3 +409,42 @@ fn line_breaks_and_hidden_text_are_flagged_but_joiners_and_marks_are_not() {
         assert!(!is_invisible_or_break(c), "{:04x}", c as u32);
     }
 }
+
+#[test]
+fn the_closing_fence_is_exactly_three_dashes_and_a_line_end() {
+    // BUG-194: like the opening fence; a stray `\r` before the line end does not close it.
+    for text in [
+        "---\na: 1\n---\r\r\nbody",
+        "---\na: 1\n---\r",
+        "---\na: 1\n---\r\r",
+    ] {
+        assert_eq!(
+            parse(text).unwrap_err().reason,
+            Reason::Unclosed,
+            "{text:?}"
+        );
+    }
+    assert!(parse("---\na: 1\n---\r\nbody").is_ok() && parse("---\na: 1\n---").is_ok());
+}
+
+#[test]
+fn field_paths_tell_apart_keys_that_would_look_like_paths() {
+    // BUG-195: a key that is empty or holds `.`, `[`, `]`, `"` or `\` is written as a JSON string
+    // in brackets, so two different places never share one field text.
+    let field = |yaml: &str| refused(yaml).0;
+    assert_eq!(field("\"\": {a: &x 1}\n"), "[\"\"].a");
+    assert_eq!(field("a: {\"\": &x 1}\n"), "a[\"\"]");
+    assert_eq!(field("\"a.b\": {c: &x 1}\n"), "[\"a.b\"].c");
+    assert_eq!(field("a: {b: {c: &x 1}}\n"), "a.b.c");
+    assert_eq!(field("\"x[0]\": {c: &x 1}\n"), "[\"x[0]\"].c");
+    assert_eq!(field("x: [{c: &x 1}]\n"), "x[0].c");
+    assert_eq!(field("\"q\\\"\": &x 1\n"), "[\"q\\\"\"]");
+    assert_eq!(field("a: {\"b\\\\c\": {d: &x 1}}\n"), "a[\"b\\\\c\"].d");
+}
+
+#[test]
+fn very_deep_flow_nesting_is_too_deep_not_a_parser_limit() {
+    // BUG-196: past a few hundred levels the YAML parser gives up first; that is still TooDeep.
+    let yaml = format!("a: {}1{}\n", "[".repeat(300), "]".repeat(300));
+    assert_eq!(refused(&yaml).1, Reason::TooDeep);
+}

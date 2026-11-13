@@ -7,6 +7,10 @@
 //! tags and `<<` merge keys are refused, as are duplicate or non-string keys, a root that isn't
 //! a mapping and a second document. Pure: no I/O.
 //!
+//! Two refusals are deliberately stricter than YAML 1.2, failing closed: a quoted `"<<"` key is
+//! refused like the plain one (belt and braces), and a signed `-.nan` or `+.nan` is a
+//! `BadNumber` like `.nan` (YAML would read the signed forms as strings).
+//!
 //! It also holds the shared check for text that one-line fields must not contain
 //! ([`is_invisible_or_break`]).
 
@@ -35,7 +39,8 @@ pub struct Doc<'a> {
 }
 
 /// Why front matter was refused, and where: `field` is a path like `checklist[2].text`, empty
-/// for the front matter as a whole.
+/// for the front matter as a whole. A key that is empty or holds `.`, `[`, `]`, `"` or `\` is
+/// written as a JSON string in brackets (`a["b.c"].d`), so two places never share one text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrontMatterError {
     /// The field the problem is in.
@@ -136,7 +141,7 @@ pub fn parse(text: &str) -> Result<Doc<'_>, FrontMatterError> {
     let (front, body) = loop {
         let line_end = rest[at..].find('\n').map(|n| at + n + 1);
         let line = &rest[at..line_end.unwrap_or(rest.len())];
-        if line.trim_end_matches(['\r', '\n']) == "---" {
+        if matches!(line, "---" | "---\n" | "---\r\n") {
             break (&rest[..at], &rest[line_end.unwrap_or(rest.len())..]);
         }
         match line_end {
@@ -173,6 +178,10 @@ fn render(path: &[Segment]) -> String {
     let mut out = String::new();
     for segment in path {
         match segment {
+            // A key that could pass for path syntax is a JSON string in brackets.
+            Segment::Key(key) if key.is_empty() || key.contains(['.', '[', ']', '"', '\\']) => {
+                out.push_str(&format!("[{}]", Value::String(key.clone())));
+            }
             Segment::Key(key) if out.is_empty() => out.push_str(key),
             Segment::Key(key) => {
                 out.push('.');
@@ -211,6 +220,10 @@ impl<'a> Walk<'a> {
     }
 
     fn syntax(&self, scan: &ScanError) -> FrontMatterError {
+        // The parser's own nesting limit (a few hundred levels) is this crate's `MAX_DEPTH` seen late.
+        if scan.info().contains("recursion limit") {
+            return error(&self.path, Reason::TooDeep);
+        }
         error(&self.path, Reason::Syntax(scan.info().to_owned()))
     }
 
