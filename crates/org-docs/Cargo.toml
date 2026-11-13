@@ -1,6 +1,6 @@
 [package]
 name = "org-docs"
-description = "Docs as Markdown with YAML front matter: splitting and strict, bounded front-matter parsing"
+description = "Docs as Markdown with YAML front matter: splitting, strict and bounded front-matter parsing, and the one-line text check"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

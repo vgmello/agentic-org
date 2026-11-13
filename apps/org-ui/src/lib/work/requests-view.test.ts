@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, atSpan, filterActive, filterRequests, STATE_FILTERS, handleFor, narrowed, NO_FILTER, withHandle, withoutHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -201,5 +201,139 @@ describe('REQ the conversation', () => {
 			['ada moved this from ada to you', undefined],
 			['ada sent this to Someone who left', undefined]
 		]);
+	});
+});
+
+describe('RQS-4 @name routing', () => {
+	const team = {
+		...snapshot,
+		members: [
+			...snapshot.members,
+			member('ac-product-designer-juno', 'Juno Park', 'Product designer', { messaging_name: 'ac-product-designer-juno' }),
+			member('juno-two', 'Juno Reyes', 'Developer', { messaging_name: 'juno-reyes' })
+		]
+	} as unknown as OrgSnapshot;
+	const at = (text: string) => atName(text, team);
+	const who = (text: string) => {
+		const a = at(text);
+		return a?.kind === 'exact' ? a.member.id : a?.kind === 'partial' ? a.matches.map((m) => m.id) : a?.kind;
+	};
+
+	it('takes a messaging name, a display name as a slug, or a first name only one agent has', () => {
+		expect(who('@ac-product-designer-juno Let me capture requests')).toBe('ac-product-designer-juno');
+		expect(who('@juno-reyes please')).toBe('juno-two');
+		expect(who('@Eden costs per project')).toBe('eden');
+		expect(who('  @ada')).toBe('ada');
+	});
+
+	it('a first name two agents share is not a pick: both are offered', () => {
+		expect(who('@juno do it')).toEqual(['ac-product-designer-juno', 'juno-two']);
+	});
+
+	it('offers the agents a half-typed handle could become, and none for a stranger', () => {
+		expect(who('@ed')).toEqual(['eden']);
+		expect(who('@')).toEqual(['eden', 'ada', 'riley', 'quinn', 'ac-product-designer-juno']);
+		expect(who('@zzz')).toBe('unknown');
+	});
+
+	it('is only for the start of the words: an @ later, an email, or no @ is not a route', () => {
+		expect([at('ask @eden later'), at('write to eden@example.com'), at('plain words')]).toEqual([undefined, undefined, undefined]);
+	});
+
+	it('never offers a former agent, and never a person', () => {
+		expect(who('@old')).toBe('unknown');
+		expect(who('@sam')).toBe('unknown');
+	});
+
+	it('takes the handle up to punctuation and accents, and refuses @@', () => {
+		expect([who('@Eden: costs per project'), who('@eden, please'), who('@eden.'), who('@Éden'), who('@@eden')]).toEqual(['eden', 'eden', 'eden', 'eden', undefined]);
+	});
+
+	it('a handle with $ in it is put in as typed, not as a replacement pattern', () => {
+		const odd = member('x', "A$&B$'C", 'Developer', { messaging_name: undefined as unknown as string });
+		expect(withHandle('@x rest', odd)).toBe("@a$&b$'c rest");
+	});
+
+	it('replaces the handle at the start with the messaging name and leaves the rest as typed', () => {
+		const juno = team.members.find((m) => m.id === 'ac-product-designer-juno')!;
+		expect(withHandle('@jun make it work @ada', juno)).toBe('@ac-product-designer-juno make it work @ada');
+		expect(withHandle('  @jun x', juno)).toBe('  @ac-product-designer-juno x');
+		expect(handleFor(juno)).toBe('ac-product-designer-juno');
+	});
+});
+
+describe('RQS-7 the queue filters', () => {
+	const items = [
+		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1', created_by: 'owner' }),
+		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden', created_by: 'ada' }),
+		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1', created_by: 'owner' }),
+		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada', created_by: 'eden' })
+	];
+	const ids = (f: Partial<typeof NO_FILTER>) => filterRequests(items, { ...NO_FILTER, ...f }).map((i) => i.id);
+
+	it('opens on what is still going, like a to-do list, and All shows what ended too', () => {
+		expect(NO_FILTER.state).toBe('open');
+		expect(ids({})).toEqual(['a', 'b', 'c']);
+		expect(ids({ state: 'all' })).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('filters by who scopes it, nobody, or who raised it, and by project (or none)', () => {
+		const all = { state: 'all' as const };
+		expect(ids({ ...all, who: 'scoped:eden' })).toEqual(['b', 'c']);
+		expect(ids({ ...all, who: 'none' })).toEqual(['a']);
+		expect(ids({ ...all, who: 'raised:owner' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, who: 'raised:eden' })).toEqual(['d']);
+		expect(ids({ ...all, project: 'p1' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, project: 'none' })).toEqual(['b', 'd']);
+	});
+
+	it('can show one group of the queue: Needs you, With agents, Not routed, Approved, Declined and merged', () => {
+		expect(STATE_FILTERS.map((s) => s.id)).toEqual(['open', 'needs_you', 'with_agents', 'not_routed', 'approved', 'closed', 'all']);
+		expect([ids({ state: 'needs_you' }), ids({ state: 'with_agents' }), ids({ state: 'not_routed' }), ids({ state: 'approved' }), ids({ state: 'closed' })]).toEqual([['c'], ['b'], ['a'], ['d'], []]);
+	});
+
+	it('matches a REQ number on the number itself, not as part of a longer one', () => {
+		const many = [req('new', { id: 'x1', number: 1, title: 'One' }), req('new', { id: 'x12', number: 12, title: 'Twelve' }), req('new', { id: 'x13', number: 13, title: 'Thirteen' })];
+		const hit = (query: string) => filterRequests(many, { ...NO_FILTER, query }).map((i) => i.id);
+		expect([hit('REQ-1'), hit('req-12'), hit('req-2'), hit('req-1 one'), hit('req-1 twelve')]).toEqual([['x1'], ['x12'], [], ['x1'], []]);
+	});
+
+	it('searches the title and the reference, every word must match, without case', () => {
+		expect(ids({ query: 'COSTS' })).toEqual(['c']);
+		expect(ids({ query: 'req-2' })).toEqual(['b']);
+		expect(ids({ query: 'digest weekly' })).toEqual(['b']);
+		expect(ids({ query: 'digest costs' })).toEqual([]);
+		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c']);
+	});
+
+	it('is narrowed by who, project or words, not by the state alone', () => {
+		expect([narrowed(NO_FILTER), narrowed({ ...NO_FILTER, state: 'all' }), narrowed({ ...NO_FILTER, who: 'none' }), narrowed({ ...NO_FILTER, project: 'p' }), narrowed({ ...NO_FILTER, query: 'x' })]).toEqual([false, false, true, true, true]);
+	});
+
+	it('knows when a filter is on: anything that differs from how the queue opens', () => {
+		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'all' }), filterActive({ ...NO_FILTER, who: 'scoped:x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
+	});
+});
+
+describe('RQS-4 the words without the handle that routed them', () => {
+	it('drops the @handle at the start and the punctuation after it, and nothing else', () => {
+		expect([withoutHandle('@sam! fix'), withoutHandle('@sam,, x'), withoutHandle('@sam — x'), withoutHandle('@sam - x'), withoutHandle('@sam fix the build time'), withoutHandle('  @sam: fix it'), withoutHandle('@sam, fix it @ada'), withoutHandle('@Éden.  Costs'), withoutHandle('ask @sam later'), withoutHandle('@sam'), withoutHandle('@@sam x')]).toEqual(['fix', 'x', 'x', 'x', 'fix the build time', 'fix it', 'fix it @ada', 'Costs', 'ask @sam later', '', '@@sam x']);
+	});
+});
+
+describe('RQS-4 the rest of a name the handle began', () => {
+	const sam = member('sam', 'Sam Okafor', 'Developer');
+	const juno = member('juno', 'Juno van der Berg', 'Designer');
+	it('drops the rest of the display name that follows the handle, and only that', () => {
+		expect([withoutHandle('@sam Okafor rest', sam), withoutHandle('@Sam Okafor: rest', sam), withoutHandle('@sam okafor', sam), withoutHandle('@sam fix Okafor', sam), withoutHandle('@sam Okaforish rest', sam), withoutHandle('@sam Okafor', undefined)]).toEqual(['rest', 'rest', '', 'fix Okafor', 'Okaforish rest', 'Okafor']);
+		expect(withoutHandle('@juno van der Berg make it', juno)).toBe('make it');
+		// Only the whole rest of the name counts: part of it is just words.
+		expect(withoutHandle('@juno van make it', juno)).toBe('van make it');
+	});
+});
+
+describe('RQS-4 how far the handle reaches', () => {
+	it('is the leading @handle and its spaces before it, so the list can follow the caret', () => {
+		expect([atSpan('@sa fix'), atSpan('  @sam'), atSpan('@'), atSpan('fix @sam'), atSpan('@@sam')]).toEqual([3, 6, 1, undefined, undefined]);
 	});
 });

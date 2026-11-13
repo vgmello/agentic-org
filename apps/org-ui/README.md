@@ -27,7 +27,7 @@ The production build keeps assets external and checks emitted CSS and JavaScript
 
 ```sh
 bunx playwright install chromium webkit firefox
-CSP_GW_PORT=4273 bun run test:e2e:csp-gateway --workers=2
+CSP_GW_PORT=4273 bun run test:e2e:csp-gateway --workers=1
 ```
 
 This command builds the gateway's `csp_harness` example, reads its executable path from Cargo JSON, builds the UI, and runs Chromium, WebKit and Firefox against `http://127.0.0.1:<CSP_GW_PORT>`. Custom `CARGO_TARGET_DIR` values are supported. The harness uses the production HTTP service with an unavailable API backend. Each browser checks fresh routes and reload, exact CSP headers and bootstrap execution; deliberately blocked scripts prove capture works across documents and pages.
@@ -37,7 +37,7 @@ Capture screenshots stay ignored in `test-results-csp-gateway/`. Run this comman
 ## Interactive CSP gate (Part B)
 
 ```sh
-CSP_PW_PORT=4373 bun run test:e2e:csp --workers=2
+CSP_PW_PORT=4373 bun run test:e2e:csp --workers=1
 ```
 
 The separate CSP config runs the existing Chromium UI suite against its own `vite dev --mode e2e` server, plus a route/dialog/sheet/toast smoke in Chromium, native WebKit and Firefox. Each browser's setup project first proves that a blocked inline script does not execute and reaches the report collector. The ordinary `test:e2e` configuration stays unchanged.

@@ -748,11 +748,11 @@ describe('command line', () => {
 		expect(() => parseArgs(['run', '--workers'])).toThrow('needs a value');
 	});
 
-	it('plans from explicit files: --file=, repo-relative existing paths only, two workers unless told otherwise', () => {
+	it('plans from explicit files: --file=, repo-relative existing paths only, one worker unless told otherwise', () => {
 		const real = 'apps/org-ui/src/lib/modules/messaging/engine.ts';
 		const normal = run('select', `--file=${real}`);
 		expect(normal.stdout).toContain('ordinary: chat');
-		expect(normal.stdout).toContain('--workers=2');
+		expect(normal.stdout).toContain('--workers=1');
 		expect(run('select', '--file', real, '--workers', '3').stdout).toContain('--workers=3');
 		expect(run('select', '--file', real, '--workers=0').status).toBe(2);
 		const cwdRelative = run('select', '--file', 'src/lib/modules/messaging/engine.ts');

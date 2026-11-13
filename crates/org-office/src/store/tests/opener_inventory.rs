@@ -431,12 +431,12 @@ fn sqlcipher_cargo_metadata_rejects_invalid_shape_members_and_source_kinds() {
         "version": 1, "workspace_root": root,
         "workspace_members": ["fixture"],
         "packages": [{"id": "fixture", "manifest_path": root.join("Cargo.toml"),
-            "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")}]}]
+            "dependencies": [], "targets": [{"kind":["lib"],"src_path": root.join("src/lib.rs")}]}]
     });
     let (manifests, roots) = super::opener_sources::metadata(&scope, &value);
     let mut local_and_remote = value.clone();
     local_and_remote["packages"][0]["dependencies"] = serde_json::json!([
-        {"path": root, "rename": "self_reference"}, {"name": "remote", "source": "registry"}
+        {"kind":null,"path": root, "rename": "self_reference"}, {"kind":null,"name": "remote", "source": "registry"}
     ]);
     assert_eq!(
         super::opener_sources::metadata(&scope, &local_and_remote),
@@ -468,15 +468,15 @@ fn sqlcipher_cargo_metadata_rejects_invalid_shape_members_and_source_kinds() {
         ("/packages/0/dependencies", serde_json::Value::Null),
         (
             "/packages/0/dependencies",
-            serde_json::json!([{"path": null}]),
+            serde_json::json!([{"kind":null,"path": null}]),
         ),
         (
             "/packages/0/dependencies",
-            serde_json::json!([{"path": root.join("missing")} ]),
+            serde_json::json!([{"kind":null,"path": root.join("missing")} ]),
         ),
         (
             "/packages/0/dependencies",
-            serde_json::json!([{"path": root.parent().unwrap()}]),
+            serde_json::json!([{"kind":null,"path": root.parent().unwrap()}]),
         ),
         ("/packages/0/targets", serde_json::Value::Null),
         ("/packages/0/targets", serde_json::json!([])),
@@ -599,7 +599,6 @@ fn sqlcipher_cargo_closure_covers_real_dependency_spellings_and_unused_paths() {
         ("[dependencies]\nhelper={path='helper',version='0.1.0'}", true),
         ("[dependencies.renamed]\npackage='helper'\npath='helper'", true),
         ("[dev-dependencies]\nhelper={path='helper'}", true),
-        ("[build-dependencies.helper]\npath='helper'", true),
         ("[target.'cfg(any())'.dependencies]\nhelper={path='helper'}", true),
         ("[dependencies]\nhelper={path='helper',optional=true}", true),
         ("[workspace.dependencies]\nhelper={path='helper'}\n[dependencies]\nhelper.workspace=true", true),
@@ -631,10 +630,10 @@ fn sqlcipher_cargo_closure_covers_virtual_workspace_and_every_target_kind() {
     let dir = fixture(&[
         ("Cargo.toml", "[workspace]\nmembers=['member']\ndefault-members=['member']\nresolver='2'"),
         ("Cargo.lock", "version=4\n[[package]]\nname='member'\nversion='0.1.0'\n"),
-        ("member/Cargo.toml", "[package]\nname='member'\nversion='0.1.0'\nedition='2021'\nbuild='scripts/build.rs'\n[features]\nextra=[]\n[lib]\npath='custom.rs'\n[[bin]]\nname='gated'\npath='gated.rs'\nrequired-features=['extra']\n[[test]]\nname='explicit'\npath='explicit-test.rs'\n[[example]]\nname='explicit'\npath='explicit-example.rs'\n[[bench]]\nname='explicit'\npath='explicit-bench.rs'"),
+        ("member/Cargo.toml", "[package]\nname='member'\nversion='0.1.0'\nedition='2021'\n[features]\nextra=[]\n[lib]\npath='custom.rs'\n[[bin]]\nname='gated'\npath='gated.rs'\nrequired-features=['extra']\n[[test]]\nname='explicit'\npath='explicit-test.rs'\n[[example]]\nname='explicit'\npath='explicit-example.rs'\n[[bench]]\nname='explicit'\npath='explicit-bench.rs'"),
         ("member/custom.rs", "pub struct Allowed;"), ("member/gated.rs", "fn main() {}"),
         ("member/explicit-test.rs", ""), ("member/explicit-example.rs", "fn main() {}"),
-        ("member/explicit-bench.rs", "fn main() {}"), ("member/scripts/build.rs", "fn main() {}"),
+        ("member/explicit-bench.rs", "fn main() {}"),
         ("member/src/bin/auto.rs", "fn main() {}"), ("member/tests/auto.rs", ""),
         ("member/examples/auto.rs", "fn main() {}"), ("member/benches/auto.rs", "fn main() {}"),
     ]);
@@ -646,7 +645,6 @@ fn sqlcipher_cargo_closure_covers_virtual_workspace_and_every_target_kind() {
         "explicit-test.rs",
         "explicit-example.rs",
         "explicit-bench.rs",
-        "scripts/build.rs",
         "src/bin/auto.rs",
         "tests/auto.rs",
         "examples/auto.rs",
@@ -796,7 +794,7 @@ fn sqlcipher_cargo_checks_config_first_and_refuses_failed_or_invalid_metadata() 
                 serde_json::to_vec(&serde_json::json!({
                     "version": 1, "workspace_root": root, "workspace_members": ["fixture"],
                     "packages": [{"id": "fixture", "manifest_path": root.join("Cargo.toml"),
-                        "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")}]}]
+                        "dependencies": [], "targets": [{"kind":["lib"],"src_path": root.join("src/lib.rs")}]}]
                 }))
                 .unwrap(),
             )
@@ -923,11 +921,11 @@ fn sqlcipher_cargo_metadata_queries_each_workspace_once_and_refuses_omitted_mani
         ]);
         let root = dir.path().canonicalize().unwrap();
         let mut packages = vec![
-            serde_json::json!({"id": "fixture", "manifest_path": root.join("Cargo.toml"), "dependencies": [], "targets": [{"src_path": root.join("src/lib.rs")} ]}),
+            serde_json::json!({"id": "fixture", "manifest_path": root.join("Cargo.toml"), "dependencies": [], "targets": [{"kind":["lib"],"src_path": root.join("src/lib.rs")} ]}),
         ];
         let mut members = vec!["fixture"];
         if complete {
-            packages.push(serde_json::json!({"id": "helper", "manifest_path": root.join("helper/Cargo.toml"), "dependencies": [], "targets": [{"src_path": root.join("helper/src/lib.rs")} ]}));
+            packages.push(serde_json::json!({"id": "helper", "manifest_path": root.join("helper/Cargo.toml"), "dependencies": [], "targets": [{"kind":["lib"],"src_path": root.join("helper/src/lib.rs")} ]}));
             members.push("helper");
         }
         let fake = tempfile::tempdir().unwrap();
@@ -1083,7 +1081,7 @@ fn sqlcipher_metadata_requires_the_tracked_virtual_workspace_manifest() {
     ]);
     let scope = tracked(dir.path());
     let value = serde_json::json!({"version":1,"workspace_root":scope.root,"workspace_members":["helper"],"packages":[{
-        "id":"helper","manifest_path":scope.root.join("helper/Cargo.toml"),"dependencies":[],"targets":[{"src_path":scope.root.join("helper/src/lib.rs")}]
+        "id":"helper","manifest_path":scope.root.join("helper/Cargo.toml"),"dependencies":[],"targets":[{"kind":["lib"],"src_path":scope.root.join("helper/src/lib.rs")}]
     }]});
     assert!(std::panic::catch_unwind(|| super::opener_sources::metadata(&scope, &value)).is_err());
     std::fs::write(

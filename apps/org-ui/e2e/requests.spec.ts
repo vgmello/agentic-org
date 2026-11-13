@@ -8,6 +8,20 @@ async function open(page: Page) {
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
 }
+/** 200% text: the root is 32px on every page, whatever the app sets on it (checked, so a test never runs at 100% by accident). */
+async function largeText(page: Page) {
+	await page.addInitScript(() => {
+		// The document does not exist yet when this runs: the style goes in as soon as it does.
+		const put = () => {
+			const style = document.createElement('style');
+			style.textContent = 'html { font-size: 32px !important; }';
+			(document.head ?? document.documentElement).appendChild(style);
+		};
+		if (document.head) put();
+		else document.addEventListener('DOMContentLoaded', put, { once: true });
+	});
+}
+const expectLargeText = async (page: Page) => expect(await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)).toBe('32px');
 const queue = async (page: Page) => {
 	await visit(page, '/work');
 	await page.getByRole('tab', { name: /^Requests/ }).click();
@@ -153,8 +167,9 @@ test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, let
 	await shot(page, 'request-approved');
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('needs-you')).toHaveText('Nothing needs you.');
-	// The tasks are in the project.
+	// The tasks are in the project (Work opens on the tab it was left on, Requests).
 	await visit(page, '/work');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await expect(page.getByTestId('work-row')).toHaveCount(2);
 	await expect(page.getByTestId('work-project')).toHaveText(['Atlas', 'Atlas']);
 });
@@ -184,6 +199,9 @@ test('RQS-10: asking for changes sends it back to the agent with the note; decli
 	await expect(sheet.getByTestId('decline-reason')).toHaveText('Declined: Out of scope for now');
 	await expect(sheet.getByTestId('request-actions')).toHaveCount(0);
 	await page.keyboard.press('Escape');
+	// The queue opens on what is still going; All shows what ended.
+	await expect(page.locator('[data-group=closed]')).toHaveCount(0);
+	await page.getByLabel('State').selectOption('all');
 	await page.locator('[data-group=closed]').locator('summary').click();
 	await expect(page.locator('[data-group=closed]')).toContainText('Declined');
 });
@@ -309,9 +327,8 @@ test('the route a person picks on the page is recorded as theirs, not the rule\'
 	await sheet.getByLabel('Who scopes it').selectOption({ index: 1 });
 	await sheet.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(sheet.getByTestId('request-state')).toContainText('not accepted yet');
-	// The reason of the pick is kept, and it is not called the rule's.
-	await expect(sheet.getByTestId('route-reason')).toContainText('Sent because:');
-	await expect(sheet.getByTestId('route-reason')).not.toContainText('suggested by rule');
+	// A person's pick carries no rule reason.
+	await expect(sheet.getByTestId('route-reason')).toHaveCount(0);
 });
 
 test('RQS-5: a route the rule suggested and was left alone is recorded as the rule\'s; one the owner picked is theirs', async ({ page }) => {
@@ -328,8 +345,8 @@ test('RQS-5: a route the rule suggested and was left alone is recorded as the ru
 	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('(suggested by rule)');
 	await page.keyboard.press('Escape');
 	await page.getByRole('button', { name: 'Picked by me' }).click();
-	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('Sent because:');
-	await expect(page.getByRole('dialog').getByTestId('route-reason')).not.toContainText('suggested by rule');
+	// A route the person picked carries no rule reason and is not called the rule's.
+	await expect(page.getByRole('dialog').getByTestId('route-reason')).toHaveCount(0);
 });
 
 test('closing a page with a step half done and opening another request starts that one clean', async ({ page }) => {
@@ -346,4 +363,721 @@ test('closing a page with a step half done and opening another request starts th
 	await expect(sheet.getByTestId('request-words')).toHaveText('Second idea');
 	await expect(sheet.getByTestId('request-step')).toHaveCount(0);
 	await expect(sheet.getByTestId('request-actions')).toBeVisible();
+});
+
+test('RQS-4: words that start with @ and a handle go to that agent: the handle is completed from the names, and the route says so', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@');
+	await expect(dialog.getByTestId('at-matches').getByRole('option')).not.toHaveCount(0);
+	await dialog.getByLabel('What do you need?').fill('@sa');
+	await dialog.getByTestId('at-matches').getByRole('option', { name: /Sam Okafor/ }).click();
+	await expect(dialog.getByLabel('What do you need?')).toHaveValue(/^@\S+$/);
+	await dialog.getByLabel('What do you need?').pressSequentially(' fix the build time');
+	await expect(dialog.getByTestId('by-at')).toContainText('You wrote @');
+	await expect(dialog.getByRole('radio', { name: /Sam Okafor/ })).toBeChecked();
+	await expect(dialog.getByRole('button', { name: 'Send to Sam Okafor' })).toBeVisible();
+	await shot(page, 'request-at-name');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('[data-group=with_agents]').getByTestId('request-words-state')).toHaveText('Sent to Sam Okafor · not accepted yet');
+	// Picking someone else in the list wins over the @name.
+	await page.getByTestId('new-request').click();
+	await dialog.getByLabel('What do you need?').fill('@sam another one');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByTestId('by-at')).toHaveCount(0);
+	await expect(dialog.getByRole('button', { name: /^Send to / })).not.toHaveText('Send to Sam Okafor');
+});
+
+test('RQS-13: while typing, open requests that read alike are offered, and Add to REQ-n puts the words there instead', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('I would like a dark mode when reading the docs');
+	await expect(dialog.getByTestId('similar')).toContainText('Looks like REQ-1: Dark mode for the docs reader');
+	await dialog.getByRole('button', { name: 'Add to REQ-1' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByText('Added to REQ-1.')).toBeVisible();
+	await expect(page.getByTestId('request-row')).toHaveCount(1); // no new request
+	await page.getByRole('button', { name: 'Dark mode for the docs reader' }).click();
+	await expect(page.getByRole('dialog').getByTestId('request-history')).toContainText('I would like a dark mode when reading the docs');
+	// Words that read like nothing offer nothing.
+	await page.keyboard.press('Escape');
+	await page.getByTestId('new-request').click();
+	await dialog.getByLabel('What do you need?').fill('Export the whole organization chart as a PDF file');
+	await page.waitForTimeout(700); // longer than the pause before the office is asked
+	await expect(dialog.getByTestId('similar')).toHaveCount(0);
+});
+
+test('RQS-7: the queue can be filtered by state, who scopes it and project, and searched', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await expect(page.getByTestId('request-filters')).toHaveCount(0); // nothing to filter yet
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/, project: 'Atlas' });
+	await capture(page, 'Weekly digest by email');
+	await capture(page, 'Checklists on tasks', { button: /^Just save$/ });
+	const rows = page.getByTestId('request-row');
+	await expect(rows).toHaveCount(3);
+	await expect(page.getByTestId('request-count')).toHaveText('3 requests');
+	await page.getByLabel('Search requests').fill('digest');
+	await expect(rows).toHaveCount(1);
+	await expect(page.getByTestId('request-count')).toHaveText('1 of 3');
+	await page.getByRole('button', { name: 'Clear', exact: true }).click();
+	await expect(rows).toHaveCount(3);
+	await page.getByLabel('State').selectOption({ label: 'Not routed' });
+	await expect(rows).toHaveCount(2);
+	await page.getByLabel('State').selectOption({ label: 'All' });
+	await page.getByTestId('request-filters').getByLabel('Project').selectOption({ label: 'Atlas' });
+	await expect(rows).toHaveCount(1);
+	await expect(rows.first()).toContainText('Dark mode');
+	await page.getByLabel('Search requests').fill('nothing like this');
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+	await page.getByTestId('no-request-match').getByRole('button', { name: 'Clear filters' }).click();
+	await expect(rows).toHaveCount(3);
+	await page.getByLabel('State').selectOption('all');
+	await expect(rows).toHaveCount(3);
+});
+
+test('RQS-9: a task an approval made says which request it came from', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project', { project: 'Atlas' });
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await expect(sheet.getByTestId('request-state')).toHaveText('Approved');
+	await page.keyboard.press('Escape');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByRole('button', { name: 'Design the flow' }).click();
+	await expect(page.getByRole('dialog').getByTestId('task-from-request')).toHaveText('From REQ-1 · Costs per project');
+});
+
+test('RQS-4: an @name to an agent the rule also suggests is the person\'s route (no rule reason), punctuation after it is fine, and typing it after a pick wins', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('Something for later');
+	// A pick made first does not stand once an @name is typed after it.
+	await dialog.getByRole('radio').nth(1).check();
+	await dialog.getByLabel('What do you need?').fill('@pax: please look at this');
+	await expect(dialog.getByTestId('by-at')).toContainText('You wrote @pax');
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await dialog.getByRole('button', { name: /^Send to Pax Moreau/ }).click();
+	await expect(dialog).toBeHidden();
+	// The saved words drop the @name that routed them.
+	await page.getByRole('button', { name: 'please look at this' }).click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('request-state')).toContainText('Sent to Pax Moreau');
+	await expect(sheet.getByTestId('route-reason')).toHaveCount(0); // not the rule's reason, and not called the rule's
+});
+
+test('RQS-13: words too long to be a note can not be added to a request, and say so', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill(`I want a dark mode for the docs. ${'More detail. '.repeat(800)}`);
+	const add = dialog.getByRole('button', { name: 'Add to REQ-1' });
+	await expect(add).toBeDisabled();
+	await expect(dialog.getByTestId('too-long-note')).toContainText('at most');
+});
+
+test('RQS-7: a search whose only match has ended opens the group it is in', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project');
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await page.keyboard.press('Escape');
+	await capture(page, 'Another one', { button: /^Just save$/ });
+	await expect(page.locator('[data-group=approved]')).toHaveCount(0); // Open hides what ended
+	await page.getByLabel('State').selectOption('all');
+	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', false);
+	await page.getByLabel('Search requests').fill('costs');
+	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', true);
+	await expect(page.locator('[data-group=approved]').getByTestId('request-row')).toBeVisible();
+});
+
+test('RQS-4: the handle list works from the keyboard, and the saved words drop the @handle that routed them', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@');
+	const options = dialog.getByTestId('at-matches').getByRole('option');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	await words.press('ArrowDown');
+	await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+	await words.press('ArrowUp');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	// Esc closes the list, not the panel.
+	await words.press('Escape');
+	await expect(dialog.getByTestId('at-matches')).toHaveCount(0);
+	await expect(dialog).toBeVisible();
+	// Typing again brings it back; Enter picks the highlighted one.
+	await words.fill('@sa');
+	await expect(options).toHaveCount(1);
+	await words.press('Enter');
+	await expect(words).toHaveValue(/^@\S+$/);
+	await expect(dialog.getByTestId('by-at')).toBeVisible();
+	await words.pressSequentially(' fix the build time');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('button', { name: 'fix the build time', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'fix the build time', exact: true }).click();
+	await expect(page.getByRole('dialog').getByTestId('request-words')).toHaveText('fix the build time');
+});
+
+test('RQS-4: words that are only an @handle ask for words, and an @name later in the text is just words', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sam');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog.getByText('Write what you need after @sam.')).toBeVisible();
+	await words.fill('ask @sam later');
+	await expect(dialog.getByTestId('by-at')).toHaveCount(0);
+	await expect(dialog.getByTestId('by-rule')).toBeVisible();
+});
+
+test('RQS-7: the queue can be filtered to what one person raised, and opens on Open', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Mine to keep', { button: /^Just save$/ });
+	await expect(page.getByLabel('State')).toHaveValue('open');
+	await expect(page.getByLabel('People').locator('option', { hasText: 'Raised by me' })).toHaveCount(1);
+	await page.getByLabel('People').selectOption({ label: 'Raised by me' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+});
+
+test('RQS-4: a handle nobody has says so and turns Send off until it is fixed', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@nobody-here do the thing');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveText('No one called @nobody-here. Pick someone from the list or remove it.');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+	// Without a messaging capability composed (none is yet), there is no Message instead button.
+	await expect(dialog.getByRole('button', { name: 'Message instead' })).toHaveCount(0);
+	await words.fill('do the thing');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-15: the filters are remembered for the organization', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await capture(page, 'Weekly digest by email', { button: /^Just save$/ });
+	await page.getByLabel('Search requests').fill('digest');
+	await page.getByLabel('State').selectOption('all');
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await queue(page); // the page is loaded again
+	await expect(page.getByLabel('Search requests')).toHaveValue('digest');
+	await expect(page.getByLabel('State')).toHaveValue('all');
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await page.getByRole('button', { name: 'Clear', exact: true }).click();
+	await queue(page);
+	await expect(page.getByLabel('Search requests')).toHaveValue('');
+	await expect(page.getByLabel('State')).toHaveValue('open');
+});
+
+test('RQS-16: From REQ-n on a task links to the request', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project', { project: 'Atlas' });
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await expect(sheet.getByTestId('request-state')).toHaveText('Approved');
+	await page.keyboard.press('Escape');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByRole('button', { name: 'Design the flow' }).click();
+	await page.getByRole('dialog').getByRole('link', { name: 'REQ-1 · Costs per project' }).click();
+	await expect(page.getByRole('dialog').getByTestId('request-state')).toHaveText('Approved');
+	await expect(page.getByRole('dialog').getByTestId('request-words')).toHaveText('Costs per project');
+});
+
+test('RQS-4: the handle list belongs to the handle: it is gone once the caret leaves it, Esc keeps it closed while typing on, and Tab picks', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	// A half handle with more text after it, the caret at the end: no list, and Enter is a new line.
+	await words.fill('@sa fix the build');
+	await expect(dialog.getByTestId('at-matches')).toHaveCount(0);
+	await words.press('Enter');
+	await expect(words).toHaveValue('@sa fix the build\n');
+	// The caret back in the handle brings the list; Esc closes it and it stays closed while typing on.
+	await words.fill('@sa');
+	await expect(dialog.getByTestId('at-matches')).toBeVisible();
+	await words.press('Escape');
+	await expect(dialog.getByTestId('at-matches')).toHaveCount(0);
+	await words.pressSequentially(' ');
+	await words.pressSequentially('fix');
+	await expect(dialog.getByTestId('at-matches')).toHaveCount(0);
+	await expect(dialog).toBeVisible();
+	// A different handle brings the list back, and Tab picks the highlighted agent.
+	await words.fill('@pa');
+	await expect(dialog.getByTestId('at-matches')).toBeVisible();
+	await words.press('Tab');
+	await expect(words).toHaveValue(/^@\S+$/);
+	await expect(dialog.getByTestId('by-at')).toBeVisible();
+});
+
+test('RQS-4: a half-typed or shared handle with words after it is not a route: it says so and Send is off until one is picked', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sa fix the build');
+	await expect(dialog.getByTestId('no-such-handle')).toContainText('@sa could be Sam Okafor');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+	await expect(dialog.locator('button[type=submit]')).toHaveAttribute('aria-describedby', 'handle-problem');
+	// Fixing the handle (a full one) clears it; so does picking someone in the list.
+	await words.fill('@sam fix the build');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await words.fill('@sa fix the build');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-4: a pick made before an unknown handle is typed does not settle it', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('do the thing');
+	await dialog.getByRole('radio').nth(1).check();
+	await words.fill('@nobody-here do the thing');
+	await expect(dialog.getByTestId('no-such-handle')).toContainText('No one called @nobody-here');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+});
+
+test('RQS-4: choosing someone in the list settles a handle nobody has: the words stay as typed and Send works', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@nobody-here do the thing');
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+	await dialog.locator('button[type=submit]').click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('button', { name: '@nobody-here do the thing' })).toBeVisible();
+});
+
+test('RQS-15: when nothing is open the queue says so and offers All, instead of a Clear that changes nothing', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Not now');
+	await page.getByRole('button', { name: /^Not now$/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: 'Decline…' }).click();
+	await sheet.getByLabel('Why').fill('later');
+	await sheet.getByRole('button', { name: 'Decline', exact: true }).click();
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('nothing-open')).toContainText('Nothing is open.');
+	await page.getByRole('button', { name: 'Show all requests' }).click();
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+});
+
+test('RQS-15: the State filter can show one group, and REQ-1 does not find REQ-12', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await capture(page, 'Weekly digest by email');
+	await page.getByLabel('State').selectOption({ label: 'Not routed' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await page.getByLabel('State').selectOption({ label: 'With agents' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await expect(page.getByTestId('request-row')).toContainText('Weekly digest');
+	await page.getByLabel('State').selectOption({ label: 'Needs you' });
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+	await page.getByLabel('State').selectOption({ label: 'All' });
+	await page.getByLabel('Search requests').fill('req-1');
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await expect(page.getByTestId('request-row')).toContainText('REQ-1');
+});
+
+test('RQS-4: choosing Someone else without choosing who does not settle a handle nobody has', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@nobody-here do the thing');
+	await dialog.getByRole('radio', { name: /^Someone else/ }).check();
+	await expect(dialog.getByTestId('no-such-handle')).toBeVisible();
+	await expect(dialog.locator('button[type=submit]')).toBeDisabled();
+	await dialog.locator('select[aria-label="Someone else"]').selectOption({ index: 1 });
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-4: completing a handle keeps the caret at the handle, and every dash or punctuation after it is dropped from the saved words', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sa fix the build');
+	await words.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(3, 3));
+	await words.dispatchEvent('keyup');
+	await words.press('Enter');
+	const handle = (await words.inputValue()).split(' ')[0];
+	expect(await words.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(handle.length);
+	await words.fill('@sam,, - fix the build');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(page.getByRole('button', { name: 'fix the build', exact: true })).toBeVisible();
+});
+
+test('RQS-15: choosing the Approved state shows its rows, not a collapsed group', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project');
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await page.keyboard.press('Escape');
+	await page.getByLabel('State').selectOption({ label: 'Approved' });
+	await expect(page.getByTestId('request-row')).toBeVisible(); // visible, not only counted
+});
+
+test('RQS-13: what was found stays while the words change', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('I would like a dark mode when reading the docs');
+	await expect(dialog.getByTestId('similar')).toBeVisible();
+	// From here the list must never be gone, not even for a moment while the next answer is awaited.
+	await page.evaluate(() => {
+		const w = window as unknown as { __similarGone: number };
+		w.__similarGone = 0;
+		new MutationObserver(() => {
+			if (!document.querySelector('[data-testid=similar]')) w.__similarGone++;
+		}).observe(document.body, { childList: true, subtree: true });
+	});
+	await words.pressSequentially(' please do it');
+	await page.waitForTimeout(800);
+	await expect(dialog.getByTestId('similar')).toBeVisible();
+	expect(await page.evaluate(() => (window as unknown as { __similarGone: number }).__similarGone)).toBe(0);
+});
+
+test('RQS-4: while a handle is unresolved no one is drawn as chosen, so the first suggestion can be picked from the keyboard', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@nobody-here do the thing');
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+	await dialog.getByRole('radio').first().focus();
+	await page.keyboard.press('Space');
+	await expect(dialog.getByTestId('no-such-handle')).toHaveCount(0);
+	await expect(dialog.locator('button[type=submit]')).toBeEnabled();
+});
+
+test('RQS-15: picking a project that has no requests keeps the choice and says nothing matches', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Not in any project', { button: /^Just save$/ });
+	await page.getByTestId('request-filters').getByLabel('Project').selectOption({ label: 'Atlas' });
+	await expect(page.getByTestId('request-filters').getByLabel('Project')).toHaveValue(/.+/);
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+});
+
+test('RQS-16: /work?request=<id> opens that request when the page is loaded fresh', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Opened by its link', { button: /^Just save$/ });
+	const id = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		const state = JSON.parse(localStorage.getItem(`agentic-org.mock.work.${saved[saved.length - 1].organization.id}`) ?? '{}') as { items: Record<string, { summary: { id: string; title: string } }> };
+		return Object.values(state.items).find((i) => i.summary.title === 'Opened by its link')!.summary.id;
+	});
+	await visit(page, `/work?request=${id}`);
+	await expect(page.getByRole('dialog').getByTestId('request-words')).toHaveText('Opened by its link');
+	await expect(page).toHaveURL(/\/work$/);
+});
+
+test('F1: the capture panel fits a small window: it scrolls inside and Send stays in view', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 520 });
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await expect(dialog.getByLabel('What do you need?')).toBeVisible();
+	const box = await dialog.boundingBox();
+	expect(box!.y).toBeGreaterThanOrEqual(0);
+	expect(box!.y + box!.height).toBeLessThanOrEqual(520);
+	expect(box!.x).toBeGreaterThanOrEqual(0);
+	expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+	await expect(dialog.locator('button[type=submit]')).toBeInViewport();
+});
+
+test('F12: Work reopens on the tab it was left on', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.getByRole('tab', { name: /^Requests/ })).toHaveAttribute('aria-selected', 'true');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.getByRole('tab', { name: 'Tasks' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('RQS-13: Add to REQ-n puts the words there without the routing @handle', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@sam: a dark mode when reading the docs');
+	await dialog.getByRole('button', { name: 'Add to REQ-1' }).click();
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Dark mode for the docs reader' }).click();
+	const history = page.getByRole('dialog').getByTestId('request-history');
+	await expect(history).toContainText('a dark mode when reading the docs');
+	await expect(history).not.toContainText('@sam');
+});
+
+test('RQS-4: taking an unresolved handle out of the words keeps the person the owner picked', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sa fix the build');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await words.fill('fix the build');
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await expect(dialog.getByRole('radio', { name: /Pax Moreau/ })).toBeChecked();
+});
+
+for (const [width, height] of [[390, 844], [320, 640]] as const) {
+	test(`F1/F7: at ${width}px with 200% text the capture panel and the Work page do not overflow sideways`, async ({ page }) => {
+		await largeText(page);
+		await page.setViewportSize({ width, height });
+		await open(page);
+		await queue(page);
+		await capture(page, 'Something to keep around', { button: /^Just save$/ });
+		// The Work page: nothing makes the main area scroll sideways.
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+		await page.getByTestId('new-request').click();
+		const dialog = page.getByRole('dialog', { name: 'New request' });
+		await expect(dialog.getByLabel('What do you need?')).toBeVisible();
+		await dialog.getByLabel('What do you need?').fill('@sam Okafor fix the build time and then some more words to make it long enough to wrap around the panel');
+		const box = (await dialog.boundingBox())!;
+		expect(box.x).toBeGreaterThanOrEqual(0);
+		expect(box.x + box.width).toBeLessThanOrEqual(width);
+		// Nothing inside runs past the panel's width, and the heading clears the close button.
+		expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+		for (const name of [/^Send to /, /^Just save$/, /^Cancel$/]) {
+			const b = (await dialog.getByRole('button', { name }).boundingBox())!;
+			expect(b.x).toBeGreaterThanOrEqual(box.x);
+			expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+		}
+		// The panel scrolls as a whole: the heading is on screen at the top, the words field still shows 3 lines, and nothing is wider than the panel.
+		await dialog.evaluate((el) => (el.scrollTop = 0));
+		const heading = (await dialog.getByRole('heading', { name: 'New request' }).boundingBox())!;
+		expect(heading.y).toBeGreaterThanOrEqual(0);
+		await expectLargeText(page);
+		// The scrolling body around the words field shows at least 3 lines of them (its own height is not what the person sees if the body is a sliver).
+		const lines = await dialog.getByLabel('What do you need?').evaluate((el) => {
+			let body: HTMLElement | null = el.parentElement;
+			while (body && getComputedStyle(body).overflowY !== 'auto') body = body.parentElement;
+			return Math.min(el.getBoundingClientRect().height, body!.clientHeight) / parseFloat(getComputedStyle(el).lineHeight);
+		});
+		expect(lines).toBeGreaterThanOrEqual(3);
+		const wide = await dialog.evaluate((el) => {
+			const right = el.getBoundingClientRect().right + 1;
+			return [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className);
+		});
+		expect(wide).toEqual([]);
+		// At the end of the scroll the last button is inside the panel.
+		await dialog.evaluate((el) => (el.scrollTop = el.scrollHeight));
+		const panel = (await dialog.boundingBox())!;
+		for (const name of [/^Cancel$/, /^Send to /]) {
+			const b = (await dialog.getByRole('button', { name }).boundingBox())!;
+			expect(b.y + b.height).toBeLessThanOrEqual(panel.y + panel.height + 1);
+		}
+		await expect(dialog.getByRole('button', { name: /^Send to / })).toBeInViewport();
+		// The words of the heading stay clear of the close button.
+		await dialog.evaluate((el) => (el.scrollTop = 0));
+		const clash = await dialog.evaluate((el) => {
+			const x = el.querySelector('[data-slot=dialog-close]')!.getBoundingClientRect();
+			const range = document.createRange();
+			range.selectNodeContents(el.querySelector('[data-slot=dialog-title]')!);
+			return [...range.getClientRects()].some((r) => r.width > 0 && r.left < x.right && r.right > x.left && r.top < x.bottom && r.bottom > x.top);
+		});
+		expect(clash).toBe(false);
+	});
+}
+
+for (const [width, height] of [[390, 844], [320, 640]] as const) {
+	test(`N3: at ${width}px with 200% text a scoped request's page does not scroll sideways`, async ({ page }) => {
+		await largeText(page);
+		await page.setViewportSize({ width, height });
+		await open(page);
+		await queue(page);
+		await capture(page, 'Costs per project', { kind: 'Feature' });
+		await agentScopes(page, 'Costs per project');
+		await visit(page, '/work');
+		await page.getByRole('tab', { name: /^Requests/ }).click();
+		await page.locator('[data-group=needs_you]').getByRole('button', { name: /^Review REQ-/ }).click();
+		const sheet = page.getByRole('dialog');
+		await expect(sheet.getByTestId('request-state')).toBeVisible();
+		await expectLargeText(page);
+		const wide = await sheet.evaluate((el) => {
+			const right = el.getBoundingClientRect().right + 1;
+			return { scrolls: el.scrollWidth > el.clientWidth + 1, past: [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className) };
+		});
+		expect(wide).toEqual({ scrolls: false, past: [] });
+	});
+}
+
+test('F1: with room (1280 wide, 100% text) the capture panel body shows everything and does not scroll inside', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await expect(dialog.getByLabel('What do you need?')).toBeVisible();
+	const body = await dialog.getByLabel('What do you need?').evaluate((el) => {
+		let b: HTMLElement | null = el.parentElement;
+		while (b && getComputedStyle(b).overflowY !== 'auto') b = b.parentElement;
+		return { client: b!.clientHeight, scroll: b!.scrollHeight };
+	});
+	expect(body.scroll).toBeLessThanOrEqual(body.client + 1);
+});
+
+test('N3: at 320px with 200% text the steps of a request (approve, ask for changes) do not scroll sideways', async ({ page }) => {
+	await largeText(page);
+	await page.setViewportSize({ width: 320, height: 640 });
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project', { kind: 'Feature' });
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.locator('[data-group=needs_you]').getByRole('button', { name: /^Review REQ-/ }).click();
+	const sheet = page.getByRole('dialog');
+	await expectLargeText(page);
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await expect(sheet.getByLabel('Which project?')).toBeVisible();
+	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
+	const sideways = () => sheet.evaluate((el) => {
+		const right = el.getBoundingClientRect().right + 1;
+		return { scrolls: el.scrollWidth > el.clientWidth + 1, past: [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().width > 0 && n.getBoundingClientRect().right > right && !n.closest('.sr-only')).map((n) => n.tagName + '.' + n.className.toString().slice(0, 40)) };
+	});
+	expect(await sideways()).toEqual({ scrolls: false, past: [] });
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+	await sheet.getByRole('button', { name: 'Ask for changes…' }).click();
+	expect(await sideways()).toEqual({ scrolls: false, past: [] });
+});
+
+test('F5/F7: focus rings use the specified style and offsets, and the empty-state link is 44px below sm', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	const ring = (locator: ReturnType<Page['locator']>) => locator.evaluate((el) => { const c = getComputedStyle(el); return { style: c.outlineStyle, width: c.outlineWidth, offset: c.outlineOffset }; });
+	await page.getByRole('searchbox', { name: 'Search requests' }).focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect(await ring(page.getByRole('searchbox', { name: 'Search requests' }))).toEqual({ style: 'solid', width: '2px', offset: '-2px' });
+	await page.locator('summary').first().focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect((await ring(page.locator('summary').first())).offset).toBe('-2px');
+	await page.getByRole('searchbox', { name: 'Search requests' }).fill('zzzz no such thing');
+	const clear = page.getByTestId('no-request-match').getByRole('button', { name: 'Clear filters' });
+	expect((await clear.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+	await clear.click();
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').focus();
+	expect((await ring(dialog.getByLabel('What do you need?'))).offset).toBe('-2px');
+	await dialog.getByLabel('Kind').focus();
+	await page.keyboard.press('Shift+Tab');
+	await page.keyboard.press('Tab');
+	expect((await ring(dialog.getByLabel('Kind'))).offset).toBe('-2px');
+	// Moving between the radios with the arrow keys keeps a ring on the one that is checked.
+	await dialog.getByRole('radio').first().focus();
+	await page.keyboard.press('ArrowDown');
+	expect((await ring(dialog.getByRole('radio').nth(1))).style).toBe('solid');
+});
+
+test('RQS-4: the handle list and its highlight start fresh when the handle changes, and when it comes back', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	const list = dialog.getByTestId('at-matches'), options = list.getByRole('option');
+	// Closed with Esc, the list stays closed for that handle, and comes back once the words stop being that handle.
+	await words.fill('@');
+	await expect(list).toBeVisible();
+	await words.press('Escape');
+	await expect(list).toHaveCount(0);
+	await words.fill('');
+	await words.fill('@');
+	await expect(list).toBeVisible();
+	// The highlight moves with the arrows and starts at the first option again for another handle.
+	await words.press('ArrowDown');
+	await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+	await words.fill('@s');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	await words.fill('@');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+});
+
+test('RQS-4: "@sam Okafor rest" saves just "rest"', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@sam Okafor: rest of the words');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(page.getByRole('button', { name: 'rest of the words', exact: true })).toBeVisible();
 });

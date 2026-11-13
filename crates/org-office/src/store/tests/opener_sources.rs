@@ -84,10 +84,8 @@ pub(super) fn metadata(
         .as_array()
         .expect("missing Cargo packages")
     {
-        assert!(
-            ids.insert(package["id"].as_str().expect("missing Cargo package id")),
-            "duplicate Cargo package"
-        );
+        let package_id = package["id"].as_str().expect("missing Cargo package id");
+        assert!(ids.insert(package_id), "duplicate Cargo package");
         let manifest = Path::new(
             package["manifest_path"]
                 .as_str()
@@ -103,6 +101,7 @@ pub(super) fn metadata(
             .as_array()
             .expect("missing Cargo dependencies")
         {
+            super::opener_build::dependency(package_id, dependency);
             if let Some(path) = dependency.get("path") {
                 scope.require(
                     &Path::new(path.as_str().expect("invalid local dependency path"))
@@ -115,9 +114,9 @@ pub(super) fn metadata(
             .expect("missing Cargo targets");
         assert!(!targets.is_empty(), "Cargo package has no targets");
         for target in targets {
-            roots.insert(scope.require_rust(Path::new(
-                target["src_path"].as_str().expect("missing target source"),
-            )));
+            let path = Path::new(target["src_path"].as_str().expect("missing target source"));
+            super::opener_build::target(scope, package_id, target, path);
+            roots.insert(scope.require_rust(path));
         }
     }
     // Nonempty members and ids.contains below imply this; keep the precise error.

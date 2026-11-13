@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::Mutex;
 
+pub(super) mod accounts;
+mod first_account;
+
 // Only plaintext test fixtures may proceed after a completed initializer reports
 // NoCipher. This module is cfg(test); production connect always propagates it.
 fn fixture_ready(result: Result<(), Error>) -> Result<(), Error> {
@@ -141,8 +144,14 @@ fn init(tls: bool) -> HostDbInit {
             operation_id: "01J00000000000000000000001".into(),
             hq_operation_id: "01J00000000000000000000002".into(),
             fingerprint: "ab".repeat(32),
-            account: "admin".into(),
+            account: "01J00000000000000000000003".into(),
             finished: false,
+        },
+        first_account: FirstAccount {
+            account_id: "01J00000000000000000000003".into(),
+            login_key: "sage".into(),
+            login: "Sage".into(),
+            verifier: journal::Verifier::new(first_account::PHC.into()),
         },
         tls_pair: tls.then(|| TlsPair {
             cert_pem: "test certificate".into(),
@@ -468,7 +477,7 @@ fn unsafe_homes_hardlinks_and_loose_modes() {
 }
 #[test]
 fn failures_at_every_checkpoint_are_recoverable_and_precommit_is_atomic() {
-    for step in 1..=7 {
+    for step in [1, 2, 3, 4, 5, 6, 7, 9, 10] {
         let home = home();
         let secrets = Secrets::default();
         FAIL.with(|f| *f.borrow_mut() = Some(step));
@@ -491,11 +500,12 @@ fn failures_at_every_checkpoint_are_recoverable_and_precommit_is_atomic() {
                 0
             );
         }
-        if home.path().join(DB).exists() {
-            HostDb::open(home.path(), &secrets).unwrap();
+        let recovered = if home.path().join(DB).exists() {
+            HostDb::open(home.path(), &secrets).unwrap()
         } else {
-            HostDb::create(home.path(), &secrets, &init(false)).unwrap();
-        }
+            HostDb::create(home.path(), &secrets, &init(false)).unwrap()
+        };
+        first_account::assert_first_account(&recovered);
     }
 }
 #[test]
@@ -563,7 +573,7 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
         let _ = HostDb::create(Path::new(&home), &store, &init(true));
         panic!("crash point was not reached");
     }
-    for step in 1..=7u8 {
+    for step in [1, 2, 3, 4, 5, 6, 7, 9, 10u8] {
         let home = home();
         let base = tempfile::Builder::new()
             .permissions(fs::Permissions::from_mode(0o700))
@@ -592,7 +602,7 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
             &init(false).instance_id,
         )
         .unwrap();
-        assert_eq!(home.path().join(DB).exists(), step == 5 || step == 6);
+        assert_eq!(home.path().join(DB).exists(), matches!(step, 5 | 6 | 10));
         assert_eq!(
             secrets
                 .load(&Name::parse("registry").unwrap())
@@ -600,11 +610,12 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
                 .is_some(),
             step >= 3
         );
-        if step == 5 || step == 6 {
-            HostDb::open(home.path(), &secrets).unwrap();
+        let recovered = if matches!(step, 5 | 6 | 10) {
+            HostDb::open(home.path(), &secrets).unwrap()
         } else {
-            HostDb::create(home.path(), &secrets, &init(false)).unwrap();
-        }
+            HostDb::create(home.path(), &secrets, &init(false)).unwrap()
+        };
+        first_account::assert_first_account(&recovered);
     }
 }
 

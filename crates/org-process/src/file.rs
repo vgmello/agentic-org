@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::place::{is_invisible_or_break, Level, Place, ProcessKey};
+use crate::place::{Level, Location, Place, ProcessKey};
+use org_docs::is_invisible_or_break;
 
 /// A valid process file. Status filtering (draft, retired) is resolution's, not this.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +79,7 @@ pub struct Step {
 /// Only the first problem is reported: an unknown top-level key first (the smallest), then the
 /// fields in a fixed order (unknown keys inside `moments` and steps when those are read). What
 /// could still be read comes with it, since an invalid file whose key is sealed keeps that key
-/// sealed (processes.md §3.2 rule 2); a draft or retired file never seals.
+/// sealed (processes.md §3.2 rule 2); a draft or retired file never seals or clashes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Problem {
     /// The field.
@@ -89,6 +90,8 @@ pub struct Problem {
     pub key: Option<ProcessKey>,
     /// Whether it is sealed (`overridable: false`), if that could be read.
     pub sealed: Option<bool>,
+    /// Its `status`, if that could be read.
+    pub status: Option<Status>,
 }
 
 /// The kinds of problem.
@@ -106,6 +109,8 @@ pub enum ProblemKind {
     Invalid,
     /// `level` or `scope` doesn't match where the file lives.
     WrongPlace,
+    /// The file's name is one a process may not have (field `file name`, processes.md §2.2).
+    FileName,
 }
 
 /// The front matter's keys; any other is refused.
@@ -122,11 +127,64 @@ fn problem(field: &str, kind: ProblemKind) -> Problem {
         kind,
         key: None,
         sealed: None,
+        status: None,
     }
 }
 
-/// Reads the process file at `place` from its text.
-pub fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
+impl ProcessFile {
+    /// Whether it seals its key: `overridable: false`, unless it is a draft or retired.
+    pub fn seals(&self) -> bool {
+        !self.overridable && !matches!(self.status, Status::Draft | Status::Retired)
+    }
+}
+
+impl Status {
+    fn parse(text: &str) -> Option<Status> {
+        match text {
+            "draft" => Some(Status::Draft),
+            "active" => Some(Status::Active),
+            "off" => Some(Status::Off),
+            "retired" => Some(Status::Retired),
+            _ => None,
+        }
+    }
+}
+
+impl Location {
+    /// Reads the process file here from its text, checking its front matter against this place;
+    /// a refused file name is a `file name` problem, which still carries the key, seal and status
+    /// read from the text. Outside this crate it is the only reader, so none skips the name check.
+    ///
+    /// ```compile_fail,E0425
+    /// let read = org_process::read(&org_process::Place::Organization, "");
+    /// ```
+    pub fn read(&self, text: &str) -> Result<ProcessFile, Problem> {
+        let read = read(self.place(), text);
+        if !self.name_refused() {
+            return read;
+        }
+        let (key, sealed, status) = match read {
+            Ok(file) => (
+                Some(file.key.clone()),
+                Some(file.seals()),
+                Some(file.status),
+            ),
+            Err(problem) => (problem.key, problem.sealed, problem.status),
+        };
+        let problem = problem("file name", ProblemKind::FileName);
+        Err(Problem {
+            key,
+            sealed,
+            status,
+            ..problem
+        })
+    }
+}
+
+/// Reads the process file at `place` from its text, without its file name: crate-private, since
+/// every file is found by [`crate::location`] and read with [`Location::read`], which also checks
+/// its name.
+pub(crate) fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
     let doc =
         org_docs::parse(text).map_err(|e| problem(&e.field, ProblemKind::FrontMatter(e.reason)))?;
     let map = doc
@@ -137,10 +195,10 @@ pub fn read(place: &Place, text: &str) -> Result<ProcessFile, Problem> {
         problem.key = raw("process")
             .and_then(Value::as_str)
             .and_then(ProcessKey::new);
-        let exempt = matches!(
-            raw("status").and_then(Value::as_str),
-            Some("draft" | "retired")
-        );
+        problem.status = raw("status")
+            .and_then(Value::as_str)
+            .and_then(Status::parse);
+        let exempt = matches!(problem.status, Some(Status::Draft | Status::Retired));
         let overridable = raw("overridable").and_then(Value::as_bool);
         problem.sealed = if exempt {
             Some(false)
@@ -181,13 +239,8 @@ fn decode(place: &Place, map: &Map<String, Value>) -> Result<ProcessFile, Proble
     let version = count(need("version")?)
         .filter(|v| *v >= 1)
         .ok_or_else(|| invalid("version"))?;
-    let status = match need("status")?.as_str() {
-        Some("draft") => Status::Draft,
-        Some("active") => Status::Active,
-        Some("off") => Status::Off,
-        Some("retired") => Status::Retired,
-        _ => return Err(invalid("status")),
-    };
+    let status = need("status")?.as_str().and_then(Status::parse);
+    let status = status.ok_or_else(|| invalid("status"))?;
     let optional = |key: &str| get(key).map(|v| line(v, key, LIMIT_LINE)).transpose();
     let reason = optional("reason")?;
     if status == Status::Off && reason.is_none() {

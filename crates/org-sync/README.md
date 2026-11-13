@@ -130,4 +130,25 @@ base64 and envelope space. Debug never prints native event bytes or record IDs.
 Native adapters can run `testkit::work_conformance::local_work_adapter` with two disposable
 offices. It checks failed COMMIT rollback, gap-free retry, frozen bytes after reopen,
 restore fencing, quota refusal and isolation using the adapter's own codec/savepoint.
-HQ ingestion, ACK processing, delivery scopes and recovery are separate slices.
+
+## Local Work forwarding and receipts
+
+`work::forward_local` plans an immutable prefix after stream activation, Gap or an
+advanced receipt. It rechecks verified HQ identity, epoch and current connection generation,
+then protocol/restore fences and the whole retained queue in the same retryable writer
+snapshot. It returns at most 32 contiguous entries after the durable acknowledged floor,
+only after the transaction commits. It never dequeues entries or changes a floor, outcome
+or sent counter. Returning credit alone selects nothing and does not read the queue.
+
+`LocalStreamOutput::ForwardCandidates` contains unframed candidates, not permission to send.
+The transport must enforce the frozen encoded frame size, byte/frame credit and reserved
+control slot before sending. This core policy neither encodes frames nor performs I/O.
+
+After `acknowledge_local` finishes, `work::receipt_action` maps Advanced or Gap to keeping
+the connection and replanning, Duplicate or RestorePending to keeping it, and storage errors
+to dropping the receipt and keeping the connection. Other refusals close it; ConflictingProof
+alone emits the existing `divergence` wire code before closing. Local refusal codes must not
+be sent as receipt acknowledgments. Receipt application keeps immutable proof, outcomes and
+the durable floor in one transaction; retries re-read that state rather than reusing a plan.
+
+HQ ingestion, transport encoding/credit, delivery scopes and recovery are separate slices.
