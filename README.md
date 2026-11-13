@@ -15,3 +15,8 @@ Stack: Tauri 2 · Svelte 5 + SvelteKit 2 (SPA, adapter-static) · Tailwind v4 ·
 
 - `crates/org-proto` is the contract between UI and backend. Changes to it need ada's (`ac-staff-engineer-ada`) review.
 - Work on branches, and commit locally. Don't push anywhere: there's no remote yet.
+
+## Expandable agent studio
+
+The interactive 2D office prototype is in [`spikes/agent-studio`](spikes/agent-studio/README.md). It includes six animated agent roles, dynamic workspaces, an expanding room, and local layout persistence. See that directory for run and test commands.
+

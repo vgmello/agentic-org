@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#20212d"><meta name="description" content="A living, expandable robot office. Meet your autonomous crew, add agents and desks, and watch your studio grow."><title>Agent HQ — A growing little studio</title><link rel="stylesheet" href="style.css"><link rel="preload" as="image" href="assets/roles.png"></head>
+<body>
+<main id="app">
+ <header><div class="brand"><span>⌘</span><h1>AGENT <b>HQ</b></h1><small>A GROWING LITTLE STUDIO</small></div><div class="header-actions"><span id="online"><i></i> STUDIO ONLINE</span><button id="about" class="icon" aria-label="How the studio works">?</button></div></header>
+ <nav id="crew" class="crew" aria-label="Select an agent"></nav>
+ <section id="workspace" aria-label="Interactive isometric office">
+  <canvas id="world" aria-label="Autonomous agents work and walk around their desks. Select an agent from the crew cards to interact. Drag the office to pan; scroll or pinch to zoom."></canvas>
+  <div id="agent-targets" class="agent-targets"></div>
+  <div class="scene-badge"><i></i><span id="scene-mode">AUTONOMOUS OFFICE</span><small id="space-label">6 WORKSPACES</small></div>
+  <div class="view-controls"><button id="zoomout" aria-label="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoomin" aria-label="Zoom in">+</button><button id="fit" title="Fit the whole office" aria-label="Fit the whole office">⤢</button><button id="motion" aria-label="Pause animation" aria-pressed="false" title="Pause animation">Ⅱ</button></div>
+  <div id="speech" class="speech" aria-hidden="true"></div>
+  <div id="toast" class="toast" role="status"></div>
+  <div class="builder"><div class="capacity"><strong id="agent-count">6 agents</strong><span id="desk-count">6 workspaces</span></div><div class="builder-buttons"><button id="add-desk"><span>＋</span> Add desk</button><button id="add-agent" class="accent"><span>＋</span> Add agent</button></div></div>
+  <div class="navigation-hint">Drag to look around <span>·</span> Scroll or pinch to zoom <span>·</span> Click an agent to say hello</div>
+  <div id="loading" class="loading"><div class="spinner"></div><strong>Setting up the studio</strong><span>Your crew will be here in a moment.</span></div>
+  <aside id="inspector" class="inspector" aria-labelledby="agent-title" hidden>
+   <button id="close-inspector" class="close" aria-label="Close agent details">×</button>
+   <div class="eyebrow" id="agent-role">THE ARCHITECT</div><h2 id="agent-title">Nova<span>.</span></h2><p id="agent-description" class="description"></p>
+   <div class="current-task"><i></i><span id="agent-state"></span></div><div class="progress" role="progressbar" aria-label="Current activity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="agent-progress"></i></div>
+   <div class="action-list"><button data-action="hello"><span>✦</span><div>Say hello<small>A little wave, just for you</small></div></button><button data-action="blueprint"><span>▧</span><div><span id="work-label">Review the blueprint</span><small>Watch an idea come to life</small></div></button><button data-action="break"><span>☀</span><div>Take a breather<small>A few steps and a good stretch</small></div></button></div>
+   <p id="feedback" class="feedback" role="status"></p><div class="log-heading">IN THE STUDIO <span id="completed">0 tasks completed</span></div><ol id="activity-log"></ol><button id="remove-agent" class="text-button">Remove agent · keep workspace</button>
+  </aside>
+ </section>
+ <dialog id="add-dialog" class="dialog" aria-labelledby="add-title"><button class="close" data-close aria-label="Close add agent">×</button><div class="eyebrow">MAKE ROOM FOR A NEW IDEA</div><h2 id="add-title">Grow your crew<span>.</span></h2><p id="add-explanation" class="description">Choose a role. We’ll take care of the workspace.</p><div id="role-options" class="role-options"></div><p class="dialog-note">A new agent takes an available workspace. When there isn’t one, a new workspace is added and the office grows automatically.</p></dialog>
+ <dialog id="about-dialog" class="dialog" aria-labelledby="about-title"><button class="close" data-close aria-label="Close help">×</button><div class="eyebrow">A LITTLE WORLD OF BIG IDEAS</div><h2 id="about-title">An office that grows with you.</h2><p class="description">Every robot is an independent character. Click one in the office or its card to say hello, ask it to work, or suggest a breather. The crew also moves and works on its own.</p><p class="description"><b>Add desk</b> creates an available workspace. <b>Add agent</b> fills a free workspace or adds one. New rows extend the room, so existing stations stay in place.</p><p class="description">Drag to pan, scroll or pinch to zoom, and use ⤢ to see the entire office. Your layout is saved in this browser.</p><p class="dialog-note">A local simulation with up to 36 agents and 48 workspaces. No AI services are connected.</p><button id="reset" class="text-button">Reset to the original six agents</button></dialog>
+</main><script type="module" src="app.js"></script></body></html>

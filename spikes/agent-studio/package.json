@@ -1,0 +1,13 @@
+{
+  "name": "agent-hq",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "dev": "node scripts/serve.mjs",
+    "render:qa": "node tests/render-modular.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.1.1"
+  }
+}
