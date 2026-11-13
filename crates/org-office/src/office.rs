@@ -223,7 +223,27 @@ impl Office {
         key: Key,
         instance: &str,
     ) -> Result<Self, OfficeError> {
-        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance))
+        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance), None)
+    }
+
+    /// [`Office::create_for_instance`] whose organization's owner member has the id the host
+    /// chose (X-02 §5.4, `owner_member_id`), so the host knows it before the create and a
+    /// retried create names the same owner. A create never reuses an office: any existing one
+    /// is `OfficeExists`, whatever owner it has.
+    pub fn create_for_instance_owned_by(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        key: Key,
+        instance: &str,
+        owner_member_id: &str,
+    ) -> Result<Self, OfficeError> {
+        if !org_proto::is_valid_member_id(owner_member_id) {
+            return Err(OfficeError::Invalid(
+                "the owner's member id isn't a member id",
+            ));
+        }
+        let owner = Some(owner_member_id);
+        Self::create_with(folder, new, key, LOCK_WAIT, Some(instance), owner)
     }
 
     /// [`Office::create`] with a chosen lock wait.
@@ -233,7 +253,7 @@ impl Office {
         key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
-        Self::create_with(folder, new, key, lock_wait, None)
+        Self::create_with(folder, new, key, lock_wait, None, None)
     }
 
     fn create_with(
@@ -242,6 +262,7 @@ impl Office {
         key: Key,
         lock_wait: Duration,
         instance: Option<&str>,
+        owner: Option<&str>,
     ) -> Result<Self, OfficeError> {
         validate_instance(instance)?;
         let info = OfficeInfo {
@@ -275,7 +296,7 @@ impl Office {
             }
         }
 
-        match build(&folder, &key, &info, instance) {
+        match build(&folder, &key, &info, instance, owner) {
             Ok(stores) => Ok(Self {
                 folder,
                 info,
@@ -766,6 +787,7 @@ fn build(
     key: &Key,
     info: &OfficeInfo,
     instance: Option<&str>,
+    owner: Option<&str>,
 ) -> Result<OfficeStores, OfficeError> {
     let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &org_db::SCHEMA)?;
     let local = Store::open_bound(
@@ -782,7 +804,11 @@ fn build(
     failpoint(folder, "workspace")?;
     let stores = stores(org, local, &info.office_id)?;
     failpoint(folder, "work")?;
-    let owner_id = crate::ulid::generate().map_err(OfficeError::storage)?;
+    // The host's choice (v3), or a fresh id.
+    let owner_id = match owner {
+        Some(owner) => owner.to_owned(),
+        None => crate::ulid::generate().map_err(OfficeError::storage)?,
+    };
     let genesis = org_db::Genesis {
         org_id: info.org_id.clone(),
         org_name: info.org_name.clone(),

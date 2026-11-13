@@ -296,6 +296,26 @@ fn assert_reopens(world: &World) {
     drop(office);
 }
 
+/// X-02 §5.4: the HQ's single owner is the member id the host chose on the create line.
+#[test]
+fn a_v3_create_seeds_the_owner_the_host_chose() {
+    let _process = process_isolation();
+    let world = World::new();
+    ready_create(&world).stop();
+    let office = org_office::Office::open_for_instance(
+        world.folder(OFFICE),
+        org_office::Key::from_db_key(db_key()),
+        INSTANCE,
+    )
+    .unwrap();
+    let snapshot = office.org_snapshot().unwrap();
+    let [owner] = &snapshot.members[..] else {
+        panic!("{:?}", snapshot.members)
+    };
+    assert!(owner.owner);
+    assert_eq!(owner.id, OWNER);
+}
+
 #[test]
 fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
     let _process = process_isolation();

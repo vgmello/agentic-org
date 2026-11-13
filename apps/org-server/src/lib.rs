@@ -156,7 +156,6 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         );
     };
     let _recovery = create._recovery;
-    let _owner_member_id = create.owner_member_id;
     if create.role != OfficeRole::Hq {
         return fail(
             &mut control,
@@ -184,9 +183,22 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         }
     }
     // The host holds the key; both versions use the same Office construction path.
-    let created = match create.instance.as_deref() {
-        Some(instance) => Office::create_for_instance(folder, &create.office, create.key, instance),
-        None => Office::create(folder, &create.office, create.key),
+    // v3 names the instance and the owner the host chose (X-02 §5.4).
+    let created = match (
+        create.instance.as_deref(),
+        create.owner_member_id.as_deref(),
+    ) {
+        (Some(instance), Some(owner)) => Office::create_for_instance_owned_by(
+            folder,
+            &create.office,
+            create.key,
+            instance,
+            owner,
+        ),
+        (Some(instance), None) => {
+            Office::create_for_instance(folder, &create.office, create.key, instance)
+        }
+        (None, _) => Office::create(folder, &create.office, create.key),
     };
     let office = match created {
         Ok(office) => office,

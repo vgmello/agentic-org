@@ -430,3 +430,67 @@ fn v3_preflight_preserves_a_wal_beside_an_empty_missing_or_non_file_database() {
         }
     }
 }
+
+// X-02 §5.4: a v3 create seeds the owner member with the id the host chose.
+const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
+
+fn owners(office: &Office) -> Vec<String> {
+    let snapshot = office.org_snapshot().unwrap();
+    snapshot
+        .members
+        .into_iter()
+        .filter(|member| member.owner)
+        .map(|member| member.id)
+        .collect()
+}
+
+#[test]
+fn a_create_seeds_the_owner_the_host_chose() {
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of(&dir, ID);
+    let office =
+        Office::create_for_instance_owned_by(&folder, &new_office(ID), test_key(), INSTANCE, OWNER)
+            .unwrap();
+    assert_eq!(owners(&office), [OWNER]);
+    assert_eq!(office.org_snapshot().unwrap().members.len(), 1);
+    drop(office);
+    // A create never reuses an office: the same owner (a replay) and another are both
+    // `OfficeExists` (the host's `already_exists`), and the owner stays.
+    for owner in [OWNER, "01ARZ3NDEKTSV4RRFFQ69G5FB1"] {
+        let again = Office::create_for_instance_owned_by(
+            &folder,
+            &new_office(ID),
+            test_key(),
+            INSTANCE,
+            owner,
+        );
+        assert!(matches!(again, Err(OfficeError::OfficeExists)), "{owner}");
+    }
+    let office = Office::open_for_instance(&folder, test_key(), INSTANCE).unwrap();
+    assert_eq!(owners(&office), [OWNER]);
+}
+
+#[test]
+fn an_owner_id_that_isnt_a_member_id_creates_nothing() {
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of(&dir, ID);
+    for owner in ["", "not a member", "01ARZ3NDEKTSV4RRFFQ69G5FB0X"] {
+        let created = Office::create_for_instance_owned_by(
+            &folder,
+            &new_office(ID),
+            test_key(),
+            INSTANCE,
+            owner,
+        );
+        assert!(
+            matches!(
+                created,
+                Err(OfficeError::Invalid(
+                    "the owner's member id isn't a member id"
+                ))
+            ),
+            "{owner:?}"
+        );
+        assert!(!folder.join("office.json").exists(), "{owner:?}");
+    }
+}
