@@ -113,6 +113,10 @@ fn one_undecodable_row_fails_the_whole_pending_read() {
             "inventory",
             r#"{"v":1,"targets":[{"identity":{"pid":2,"started":"s","boot":"b","x":0},"ancestry":[]}]}"#,
         ),
+        (
+            "inventory",
+            r#"{"v":1,"targets":[{"identity":{"pid":2,"started":"s","boot":"b"},"ancestry":[],"x":0}]}"#,
+        ),
         ("tool_sessions", "[-1]"),
         (leader, "-1"),
         (leader, "4294967296"),
