@@ -2,10 +2,10 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 9
+revision: 10
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-13"
 requested_by: ac-staff-engineer-ada
 reviewers: [codex-dev, ac-staff-engineer-ada, owner]
 builds_on: [offices-and-teams-ux]
@@ -22,6 +22,8 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 **Acceptance-criterion IDs** are new prefixes (PRJ, TSK, BUG, TRI, FIX, AREA, DOC, WORK) so they never collide with v1's PROJ and TASKS. They're stable from this revision: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 10 (2026-11-13): a reopened fix task reopens its bug.** When a fix task is reopened while its bug is Fixed, the bug goes back to In progress and reads as reopened: the same **Reopened** badge as a bug reopened directly, and a line linking the fix task. It counts once, on the bug. This keeps the bug page in agreement with the away digest (`away-digest-and-timezones-v1.md`, "Fix task reopened") (§7.2). **Criteria rewritten (same ID):** FIX-2 *(rev 10)*.
 
 **Revision 9 (2026-11-09): from a request.** A task created from a request shows **From** "REQ-12 · <title>" in its side column (`feature-requests-ux.md` §3, RQS-16). No criteria changed here.
 
@@ -75,7 +77,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 3. **Tasks and bugs are numbered separately in each project, and the prefix says which** *(rev 6, ada's W7 model; was one shared sequence)*: tasks `T-12`, bugs `B-7`. Outside the project (Work, messages, Activity, other projects, commits and branches) the project key comes first: `chk-T-12`, `chk-B-7`. Requests are `REQ-14` across the organization, features `FEAT-0007` (`chk-FEAT-0007` outside the project) and debt `DEBT-0012`. The type icon and the word still show with the number ("Bug B-7"). An item that has no number yet shows **Pending** and a 6-character local short id: "Pending · 3k9f2x" (§12). (C1, resolved.)
 4. **Severity is the bug's impact,** in four plain words: **Critical · Major · Minor · Trivial**. The reporter sets it, helped by a one-line meaning for each level, and triage confirms it.
 5. **Priority is the order of work, separate from severity,** and shared by tasks and bugs: **Urgent · High · Normal · Low**. Normal is the default and isn't shown on rows and cards, so only the exceptions stand out. Lists and the To do column sort by priority, then age. *(rev 2: was a manual To do order.)*
-6. **Bug statuses the owner sees:** **New · Triaged · In progress · Fixed · Closed**. Closed always has a resolution: **Verified · Duplicate · Won't fix · Can't reproduce**. "Reopened" isn't a status: a reopened bug goes back to Triaged with a **Reopened** badge and its count.
+6. **Bug statuses the owner sees:** **New · Triaged · In progress · Fixed · Closed**. Closed always has a resolution: **Verified · Duplicate · Won't fix · Can't reproduce**. "Reopened" isn't a status: a reopened bug goes back to Triaged with a **Reopened** badge and its count. A bug reopened through its fix task goes back to In progress instead, with the same badge (§7.2) *(rev 10)*.
 7. **Who triages:** anyone can (no permissions in phase 1). The app **suggests** the area lead (by default the area's team's lead), or the owner when there's neither, routes the request there, and records who triaged. A bug always has an area, General at worst (decision 13). *(rev 3)*
 8. **A bug never turns into a task.** **Create fix task** makes a linked task. A bug can have several fix tasks, and a task can fix several bugs.
 9. **The bug follows its fix tasks, and says so:** it moves to In progress when its first fix task starts and to Fixed when all of them are Done and at least one is **Done · Completed** *(rev 6)*. Cancelled work fixes nothing: when every fix task was cancelled, the bug keeps its status and says "All its fix tasks were cancelled. Create a fix task, or close the bug." A bug with required checklist steps unticked doesn't go Fixed by itself, and the activity says why. Every automatic change is written in the activity ("Fixed when T-13 was done") and can be undone by hand. (C3.)
@@ -318,6 +320,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Create fix task** opens New task (Flow 7) prefilled: title "Fix: Card charged twice on double click", the assignee and priority from the bug, the team from the area, and the description quoting the bug's "What happened" with a link. The task is linked both ways.
 - **Link a task** links an existing task in the same project (C8).
 - The bug's status follows its fix tasks (decision 9): first fix task In progress → bug In progress · all fix tasks Done, at least one Done · Completed → bug **Fixed** *(rev 6)* · a fix task reopened while the bug is Fixed → bug back to In progress. Unlinking the last fix task doesn't change the status.
+  - **A reopened fix task reopens the bug** *(rev 10)*. When a fix task is reopened while its bug is Fixed, the bug moves back to In progress and reads as reopened: it gets the same **Reopened** badge as a bug reopened directly (its count goes up by one), and the activity adds a line linking the fix task: "Reopened: fix task T-13 was reopened". The fix task's reopen isn't also shown as its own Reopened on the bug page, so it counts once, on the bug. This matches the away digest's "Fix task reopened" line (`away-digest-and-timezones-v1.md`).
   - **Every fix task cancelled:** the bug keeps its status, and the Fix tasks section says "All its fix tasks were cancelled. Create a fix task, or close the bug." with **Create fix task** and **Close as…**. *(rev 6)*
   - **Required steps left:** when the last fix task is done but the bug's checklist still has required steps unticked, the bug doesn't go Fixed. The activity says why ("⚙ All fix tasks are done, but 1 required step isn't ticked, so it isn't Fixed yet"), and **Mark as fixed** asks for a reason, as Done does (§9.1). *(rev 6)*
 - A bug can also be marked **Fixed** by hand (⋯ › Mark as fixed) when the fix needed no task. It asks for a sentence ("What fixed it?").
@@ -541,7 +544,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 
 **Fix, verify, close and reopen (FIX)**
 - FIX-1 · Create fix task opens New task prefilled from the bug, and the bug and task are linked both ways.
-- FIX-2 · *(rev 6)* When the first fix task goes In progress, the bug goes In progress. When all fix tasks are Done and at least one is Done · Completed, it goes Fixed, unless required steps are unticked (then it doesn't, and the activity says why). When every fix task was cancelled, the bug shows "All its fix tasks were cancelled. Create a fix task, or close the bug." Each automatic change is an activity entry with Undo.
+- FIX-2 · *(rev 10)* When the first fix task goes In progress, the bug goes In progress. When all fix tasks are Done and at least one is Done · Completed, it goes Fixed, unless required steps are unticked (then it doesn't, and the activity says why). When a fix task is reopened while the bug is Fixed, the bug goes back to In progress with the same Reopened badge (count up by one) as a bug reopened directly, and a line "Reopened: fix task T-n was reopened" linking the fix task; the fix task's reopen isn't also counted as its own Reopened on the bug page. When every fix task was cancelled, the bug shows "All its fix tasks were cancelled. Create a fix task, or close the bug." Each automatic change is an activity entry with Undo; undoing the reopen through a fix task takes the bug back to Fixed and its Reopened count back down by one.
 - FIX-3 · Mark as fixed by hand asks what fixed it.
 - FIX-4 · *(rev 3)* On a Fixed bug, everyone sees the verify banner with **It's fixed** and **Still happens…**. The reporter reads "Is it fixed for you?", and others see who is asked. It reaches the owner's Needs you only when the owner reported the bug.
 - FIX-5 · It's fixed closes the bug as Verified. Still happens needs a note and returns the bug to Triaged with the same assignee and a Reopened badge with its count.
@@ -609,6 +612,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - ~~A12~~ · *Resolved in rev 3:* no permissions in phase 1. Anyone may triage or verify, the UI suggests the area lead and the reporter, and the activity records who acted.
 - ~~A13~~ · *Resolved (ada, W7):* General can't be deleted. Can General be deleted? I've made it renamable and movable to another of the project's teams, but not deletable, so "a bug never lacks an area" always holds.
 
+- A110 · *(rev 10)* A fix task reopened while its bug is Fixed counts as the bug reopened (§7.2, FIX-2, `away-digest-and-timezones-v1`): Reopened badge, `reopen_count + 1`, and the activity line "Reopened: fix task T-n was reopened". `docs/design/tasks-projects-docs.md` l.180 makes `fixed → in_progress` automatic with no count change, and `org-proto` `work.rs` l.839–840 documents `Reopened` only for `bug.reopen` ("to `triaged`, or to `new` when it had been closed as a duplicate"). Please update the design and the event kind (or a new one) for this reopen.
 **For the user**
 - ~~U7~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, Critical bugs always reach you in Needs you, whoever triages them.
 - ~~U8~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, the Work badge counts only what needs you (bugs to triage or verify, your blocked tasks).

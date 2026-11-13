@@ -2,10 +2,10 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-13"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [features-ux, work-items-ux, costs-and-insights-ux, decisions-and-tech-debt-ux, retrospectives-ux, agent-run-modes-ux]
@@ -19,6 +19,8 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
+**Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task or bug stopped or held by its budget, `costs-and-budgets-v1` §5.4; an agent's budget pause belongs to the agent, not a project, so it doesn't count). The mock-up's Why line names it ("1 task stopped at its budget"). The cost tile opens the usage records behind it, and missing usage reads "Usage incomplete: {reason}" (`costs-and-insights-ux.md` rev 6). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). Cost amounts follow `costs-and-budgets-v1` §5.5 (req 26, AC-CB10-1): the Investment tile, the cost trend and the report's cost section show amounts only to the owner and the project's manager. Everyone else sees the budget state only (for example "1 budget reached"), and no tile, trend or report section shows them a dollar figure. Cost in saved report files is open (A109). **Criteria rewritten (same ID):** STATUS-1, STATUS-3, STATUS-9 *(rev 5)*.
+
 **Revision 4 (2026-11-08): review fixes.** Revision 3's note on waiting on you now states the narrow rule for decisions, as §4 does: only a task Blocked waiting for your decision on a proposed ADR, while it's the blocker. No criteria changed.
 
 **Revision 3 (2026-11-08): aligned with ada's W7 model.** "Waiting on you" (the Flow tile, the health rule and Home › Projects status) counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and a task Blocked waiting for your decision on a proposed ADR, only while it's the blocker (§4). No criteria changed.
@@ -29,12 +31,14 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 1. **Two things, one source:** a live **Status** page per project (always current, no run needed) and a periodic **status report**, a dated snapshot with a written summary, saved in the repository (`docs/reports/<date>-status.md`). The report is the page frozen at a moment, plus what changed and what to do next.
 2. **Numbers are facts, words are drafted.** The office computes every number (progress, cycle time, cost, bugs, debt) the same way as Insights. A **one-off run** (role "Reporter", `agent-run-modes-ux.md`) writes only the narrative: the summary, the risks and the recommendations, each citing the facts. The narrative is marked **Drafted** until the owner reads it, and nothing in it can change a number.
-3. **Health in three words:** **On track · At risk · Off track**, from plain rules first (the defaults in §4: Off track when a Critical bug is open for more than a day; At risk when a feature in progress is past twice its typical cycle time, you've been waited on for more than 24 h, or the project is over budget) and the Reporter's reasoning second. The badge always shows **why** ("At risk: you've been waited on for 26 h, and FEAT-0006 is past twice its typical cycle time").
+3. **Health in three words:** **On track · At risk · Off track**, from plain rules first (the defaults in §4: Off track when a Critical bug is open for more than a day; At risk when a feature in progress is past twice its typical cycle time, you've been waited on for more than 24 h, or a Budget reached item is open on the project's work *(rev 5)*) and the Reporter's reasoning second. The badge always shows **why** ("At risk: you've been waited on for 26 h, and FEAT-0006 is past twice its typical cycle time").
 4. **When:** on a schedule per project (default: **weekly, Monday 08:00**, and also daily, after each delivered feature, or off) and **on demand** (**Generate report** on the Status page or ⌘K. Starting a one-off is app-only, so agents ask the owner instead.). A period with no activity produces a one-line report ("No changes since 30 Nov") without a run, so it costs nothing.
 5. **It ends with what needs the owner:** decisions waiting (proposed ADRs and features, scoped requests, retro actions, expiring exceptions) and questions waiting, each a link. A report is useful only if it's actionable.
 6. **The costs spec's monthly report becomes this report** with a month period (`costs-and-insights-ux.md` §3), so there's one report type, not two.
 
 ## 1. Flow 1 · The Status page (the project's **Overview** tab)
+
+*(rev 5)* **Who sees cost:** the Investment tile and the cost trend show amounts only to the owner and the project's manager (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the tile as the budget state only, for example "1 budget reached", with no dollar figure, or "No budgets reached" when none is.
 
 *The mock-ups in this spec and in `costs-and-insights-ux.md` are set in December 2026. The project started on 7 Nov.*
 
@@ -43,10 +47,11 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 ```
  Agentic Org · Status                                   ● At risk             [Generate report]
  Why: you've been waited on for 26 h (3 questions) · FEAT-0006 is past twice its typical cycle time
+      · 1 task stopped at its budget
  ┌ Features ──────────────────────────────┐ ┌ Investment ─────────────┐ ┌ Flow (last 7 d) ───────────┐
  │ FEAT-0007 Quick capture  ▓▓▓▓░░ 4/6     │ │ ≈ $1,240 to date         │ │ 31 tasks done · 9 bugs fixed│
  │ FEAT-0006 Run modes      ▓░░░░░ 1/7     │ │ ≈ $412 this month ▲18%   │ │ cycle time median 3 h 10 m │
- │ FEAT-0008 Retros         ░░░░░░ 0/9     │ │ budget $600 ▓▓▓▓▓░       │ │ waiting on you 26 h ⚠       │
+ │ FEAT-0008 Retros         ░░░░░░ 0/9     │ │ 1 budget reached ⚠       │ │ waiting on you 26 h ⚠       │
  │ 5 delivered · 1 proposed                │ └──────────────────────────┘ └────────────────────────────┘
  └─────────────────────────────────────────┘
  ┌ Quality ───────────────────────────────┐ ┌ Needs you ─────────────────────────────────────────────┐
@@ -58,23 +63,25 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
  Latest report: Mon 7 Dec · On track → today At risk                       [All reports]
 ```
 
-- Every tile opens the list behind it (the features, the bugs, the sessions behind the cost).
+- Every tile opens the list behind it (the features, the bugs, the usage records behind the cost).
 - **Charts:** the trend uses the dataviz rules (labelled values, never color alone, a table toggle for screen readers).
-- **States:** a new project ("Not enough history yet: status appears after the first week of work". The tiles show what exists) · a project with no features (the Features tile becomes "Tasks: 12 open · 31 done") · a source unavailable (for example no usage data: "Cost not available for Antigravity runs", never $0).
+- **States:** a new project ("Not enough history yet: status appears after the first week of work". The tiles show what exists) · a project with no features (the Features tile becomes "Tasks: 12 open · 31 done") · a source unavailable (for example no usage data: "Usage incomplete: Antigravity doesn't report usage", never $0).
 
 ## 2. Flow 2 · A status report
 
 1. **Trigger:** the schedule, a delivered feature, or **Generate report**.
 2. **Facts** (the office, seconds): a snapshot of every number on the Status page for the period, plus **what changed** since the last report (features delivered, items done, new Critical bugs, cost added, decisions made).
-3. **Narrative** (a one-off run of the Reporter role, shown as "Reporter (one-off R-31)", about a minute): a 3–5 sentence summary, the top 3 risks with their evidence, and up to 3 recommendations ("Answer ada's questions: they block FEAT-0006"). Shown while it runs: "Writing the summary… **Stop**" (Stop cancels this run. It isn't the agent Stop, which means Pause.)
+3. **Narrative** (a one-off run of the Reporter role, shown as "Reporter (one-off run 31)", about a minute): a 3–5 sentence summary, the top 3 risks with their evidence, and up to 3 recommendations ("Answer ada's questions: they block FEAT-0006"). Shown while it runs: "Writing the summary… **Stop**" (Stop cancels this run. It isn't the agent Stop, which means Pause.)
 4. **Saved:** `docs/reports/2026-12-07-status.md` (Markdown with front matter: `kind: report`, `type: status`, `period`, `health`, `facts` (the snapshot), `run` (its cost)), committed through the docs flow (`decisions-and-tech-debt-ux.md` §0.2).
 5. **Delivered:** Home shows "Status report for Agentic Org: **At risk**" with **Read**. A change of health (On track → At risk) also goes to Needs you.
 
-**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off R-31) · ≈ $0.12") · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
+**The report page:** header (project, period, health badge with why, "Written by Reporter (one-off run 31) · ≈ $0.12"; the run's cost shows only to the owner and the project's manager *(rev 5)*) · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
 
 **All reports** (Docs › Reports) lists the reports with their health, so the project's history reads as a line of badges: ● ● ● ◐ ●.
 
 ## 3. Flow 3 · All projects at a glance (Home › Projects status)
+
+*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (a manager of some projects sees those rows' cost cell empty, with "Not your project" on hover and to screen readers) (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
 
 ```
  Projects                        Health       Features         This month    Waiting on you
@@ -87,21 +94,21 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 
 ## 4. Settings (project › Settings › Status reports)
 
-Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · over budget → At risk) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑.
+Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · a Budget reached item open on the project's work → At risk *(rev 5)*) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑.
 
 **Waiting on you** *(rev 3)*, in the health rule, the Flow tile and Home › Projects status, counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and tasks Blocked waiting for your decision on a proposed ADR, only while that decision is the task's blocker (ada Q11).
 
 ## 5. UX acceptance criteria (STATUS)
 
-- STATUS-1 · Each project has a Status page with health, features, investment, flow, quality, Needs you and an 8-week trend, computed live by the office.
+- STATUS-1 · *(rev 5)* Each project has a Status page with health, features, investment, flow, quality, Needs you and an 8-week trend, computed live by the office. Investment shows amounts only to the owner and the project's manager; others see the budget state (§1, `costs-and-budgets-v1` §5.5).
 - STATUS-2 · Health is On track, At risk or Off track, and always shows the reasons that produced it.
-- STATUS-3 · Every number on the Status page and in a report comes from office data, and each tile opens the items behind it.
+- STATUS-3 · Every number on the Status page and in a report comes from office data, and each tile opens the items behind it *(rev 5)*: for someone who can't see amounts, the Investment tile opens the tasks and bugs stopped or held by their budget, not the usage records.
 - STATUS-4 · A report's summary, risks and recommendations come from a one-off run, cite the facts, and are marked Drafted until the owner opens the report.
 - STATUS-5 · Reports run on the project's schedule (default weekly, Monday 08:00), after a delivered feature if chosen, and on demand from the Status page and ⌘K.
 - STATUS-6 · A period with no activity produces a one-line report without a run.
 - STATUS-7 · Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's cost) and listed in Docs › Reports with its health.
 - STATUS-8 · A new report appears on Home, and a change of health also appears in Needs you.
-- STATUS-9 · Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health.
+- STATUS-9 · *(rev 5)* Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health. The cost column shows amounts only to the owner and each project's manager (`costs-and-budgets-v1` §5.5); other members see no cost column.
 - STATUS-10 · Health rules and the schedule are editable per project. Reports export to Markdown and PDF.
 - STATUS-11 · Charts have a table view and never rely on color alone. Missing data is shown as not available, never as zero.
 
@@ -110,6 +117,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 **For ada**
 - A40 · The facts snapshot: one office query set shared with Insights (W14), with the report's front matter storing the snapshot so old reports stay true even if later data changes?
 - A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK?
+- A109 · *(rev 5)* Report files in `docs/reports/` are readable by any member with the repository, but members may not see cost amounts (`costs-and-budgets-v1` §5.5). Should a saved report leave out the cost section and the run's cost (STATUS-7), keep them in an owner-only store, or is the repository owner-only enough? (Also for Emery.)
 
 **For the user**
 - ~~U23~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
