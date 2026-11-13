@@ -226,7 +226,8 @@ pub struct WorkActivityQuery {
     pub team_members: Option<Vec<String>>,
     /// Items currently in this project.
     pub project: Option<String>,
-    /// At most this many entries (0 counts as 1).
+    /// At most this many entries (0 counts as 1). The caller bounds it and `scan` (IA-12: the
+    /// page size and the 2,000-row cap); an adapter's work grows with both.
     pub limit: u32,
     /// At most this many feed rows started, matching or not (0 counts as 1). The rest of the row `before`
     /// points into doesn't count again, so every page that scans moves on.
