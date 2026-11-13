@@ -116,11 +116,20 @@ impl Resolver<'_> {
         })
     }
 
-    /// Rule 3: left out, with the sealing level.
+    /// Rule 3: left out, with the sealing level; or, when the only files there that seal its key
+    /// are ones whose key can't be read, with the first one's path (it can't be told whether the
+    /// key is sealed).
     pub(super) fn refuse(&mut self, n: usize, by: Place) {
-        self.items[n]
-            .outcome
-            .get_or_insert(Outcome::Refused { sealed_by: by });
+        let key = &self.items[n].key;
+        let sealing = self.items.iter().filter(|i| i.input.place == by && i.seals);
+        let sealing: Vec<_> = sealing.collect();
+        let outcome = match sealing.iter().find(|i| i.key.is_none()) {
+            Some(unread) if !sealing.iter().any(|i| i.key == *key) => Outcome::RefusedUnknown {
+                path: unread.input.path.clone(),
+            },
+            _ => Outcome::Refused { sealed_by: by },
+        };
+        self.items[n].outcome.get_or_insert(outcome);
     }
 }
 

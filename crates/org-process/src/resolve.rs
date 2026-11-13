@@ -41,7 +41,8 @@ pub struct Inputs {
     /// The files: O, the teams', J (none without a repository) and G. A file of another place
     /// (another agent, project or team) takes no part.
     pub files: Vec<Input>,
-    /// The names the app shows for places, for "Turned off for <name>: <reason>".
+    /// The names the app shows for places, for "Turned off for <name>: <reason>". A place with
+    /// none is named by its team id or project key, or "the organization".
     pub names: BTreeMap<Place, String>,
 }
 
@@ -57,8 +58,8 @@ pub struct EffectiveSet {
     pub turned_off: Vec<TurnedOff>,
     /// Team versions that disagree, which the project hasn't settled (rule 5).
     pub conflicts: Vec<Conflict>,
-    /// Every file left out with something to fix: invalid, clashed, refused (sealed) or a
-    /// private file that doesn't only add.
+    /// Every file left out with something to fix: invalid, clashed, refused (sealed, or maybe
+    /// sealed by a file whose key can't be read) or a private file that doesn't only add.
     pub problems: Vec<Layer>,
 }
 
@@ -109,7 +110,8 @@ pub enum Drift {
         /// The parent's current version.
         version: u32,
     },
-    /// It has no `overrides`, or it settles a conflict with no version applying.
+    /// It has no `overrides`, names a version above the parent's current one, or settles a
+    /// conflict with no version applying.
     Unknown,
 }
 
@@ -148,6 +150,12 @@ pub enum Outcome {
         /// The sealing level.
         sealed_by: Place,
     },
+    /// "Can't tell: <path> can't be read": a file above it whose key can't be read might seal its
+    /// key, or use it (for a private file), so it is left out (rules 2, 3 and 8).
+    RefusedUnknown {
+        /// That file's path.
+        path: String,
+    },
     /// A private file that doesn't only add (rule 8).
     PrivateOnlyAdds(PrivateReason),
 }
@@ -170,7 +178,8 @@ pub struct TurnedOff {
     pub key: ProcessKey,
     /// The place of the `off`.
     pub place: Place,
-    /// That place's name, from [`Inputs::names`].
+    /// That place's name, from [`Inputs::names`], else its team id or project key, or "the
+    /// organization".
     pub name: String,
     /// Its reason.
     pub reason: String,
@@ -213,6 +222,8 @@ struct Item<'a> {
     file: Option<&'a ProcessFile>,
     /// A valid draft or retired file: left out silently.
     quiet: bool,
+    /// A draft or retired file, valid or not: it never seals or clashes (rule 2).
+    exempt: bool,
     /// It seals its key, or can't be shown not to (rule 2).
     seals: bool,
     /// Set when a rule leaves it out.
@@ -276,27 +287,38 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
             continue;
         };
         // Rule 1: valid files only. A file read at another place than its input's is out of
-        // place (failing closed); a draft or retired file is left out silently.
+        // place (failing closed), naming the field that differs; a valid draft or retired file
+        // is left out silently.
         let read: Result<&ProcessFile, Problem> = match &input.read {
             Ok(file) if file.place == input.place => Ok(file),
             Ok(file) => Err(Problem {
-                field: "level".into(),
+                field: match file.place.level() == input.place.level() {
+                    true => "scope".into(),
+                    false => "level".into(),
+                },
                 kind: ProblemKind::WrongPlace,
                 key: Some(file.key.clone()),
                 sealed: Some(file.seals()),
+                status: Some(file.status),
             }),
             Err(problem) => Err(problem.clone()),
         };
-        let (key, seals) = match &read {
-            Ok(file) => (Some(file.key.clone()), file.seals()),
-            Err(problem) => (problem.key.clone(), problem.sealed != Some(false)),
+        let (key, seals, status) = match &read {
+            Ok(file) => (Some(file.key.clone()), file.seals(), Some(file.status)),
+            Err(problem) => (
+                problem.key.clone(),
+                problem.sealed != Some(false),
+                problem.status,
+            ),
         };
         let file = read.as_ref().ok().copied();
+        let exempt = matches!(status, Some(Status::Draft | Status::Retired));
         items.push(Item {
             rank,
             input,
             key,
-            quiet: file.is_some_and(|f| matches!(f.status, Status::Draft | Status::Retired)),
+            quiet: file.is_some() && exempt,
+            exempt,
             file,
             seals,
             outcome: read.err().map(Outcome::Invalid),
@@ -304,12 +326,13 @@ fn read_files<'a>(inputs: &'a Inputs, places: &[Place]) -> Vec<Item<'a>> {
     }
     items.sort_by(|a, b| (a.rank, &a.input.path).cmp(&(b.rank, &b.input.path)));
     // Rule 2: two files with one key at one place are both left out. An invalid file whose key
-    // could be read is one of them (failing closed: PROC-1's "two files use the key").
+    // could be read is one of them (failing closed: PROC-1's "two files use the key"), unless
+    // it is a draft or retired one.
     let clashed: Vec<bool> = items
         .iter()
         .map(|a| {
-            let twin = |b: &&Item| !b.quiet && b.rank == a.rank && b.key == a.key;
-            !a.quiet && a.key.is_some() && items.iter().filter(twin).count() > 1
+            let twin = |b: &&Item| !b.exempt && b.rank == a.rank && b.key == a.key;
+            !a.exempt && a.key.is_some() && items.iter().filter(twin).count() > 1
         })
         .collect();
     for (item, _) in items

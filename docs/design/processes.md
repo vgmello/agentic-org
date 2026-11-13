@@ -83,9 +83,11 @@ With no current work, it's **O ⊕ G** (PROC-2). The home session uses the curre
 ### 3.2 Rules, in order (`org_process::resolve`, pure)
 1. **Valid files only.** Invalid front matter or a level or scope mismatch: left out, with a problem. A `draft` or `retired` file is left out silently: it is a normal state, not a problem (amended 2026-11-09: ada, from the Processes screens' review).
 2. **Key clash.** Two files with one key at one (level, scope): both left out, with the clash problem (PROC-1). Seals fail closed: if a file left out for invalid front matter, a mismatch or a clash is sealed (or can't be read far enough to tell), the key stays sealed below. `draft` and `retired` files never seal.
+   A file whose key can't be read (no front matter, bad YAML or no valid `process`) seals every key below its place unless it is a `draft` or `retired` one; what it refuses, and a private file whose key it might use, show "can't tell: <path> can't be read", not "sealed by" (ruled 2026-11-13: ada, R2).
 3. **Seals inside a chain.** A file that overrides or turns off a key sealed by the organization, or by a team above it in its own chain, is refused, with the sealing level (PROC-3). A project file is refused if the organization sealed the key, or a team seal binds it and rule 5 finds no team-level conflict on the key (that check runs after rule 5). Otherwise this runs first, so a refused file never makes a conflict. The write path refuses these too (§5).
 4. **Fold each team chain**, outermost first, the nearer team winning.
 5. **Combine the chains** (decision 4, PROC-6). Only team-level winners count. One distinct winning team file applies. Two or more are a **conflict**: the organization's version applies, or nothing if it has none, except that a **sealed** team winner applies meanwhile (decision 13; two different seals: the organization's version, else the first by team id that isn't an `off`, A71). A sibling team's override or `off` never silently cancels a seal.
+   In a diamond, a sub-team's override that differs from a sibling chain's version is a conflict; only the same team reached twice is not (ruled 2026-11-13: ada, R1).
 6. **Project.** J's version wins over the result unless the key is sealed (rule 3). It settles any conflict on the key, a sealed one included (decision 13).
 7. **Turned off.** A surviving `off` removes the key and records "Turned off for <team or project name>: <reason>" (PROC-4).
 8. **Private only adds** (PROC-5). A private file isn't applied, and is flagged, if it sets `overrides` or `status: off`, or if its key appears in **any** O, T or J file of this project, whatever that file's state.
@@ -299,7 +301,7 @@ Each test must fail without its rule.
 **`org-process`, table-driven:**
 - Matching by key, never `id`; level order; nearer team wins; no current work gives O ⊕ G.
 - Seals: an org seal refuses lower overrides and `off` without a conflict; a team seal refuses its sub-teams' and projects'; on a shared project, a sibling's override is a conflict with the sealed version applying, and a project version settles it; two team seals give the A71 interim; a clashed sealed key stays sealed.
-- Conflicts: two team overrides give the org version (or none); one team's version applies; a project version settles it; a parent-and-sub-team link or a diamond isn't a conflict.
+- Conflicts: two team overrides give the org version (or none); one team's version applies; a project version settles it; a parent-and-sub-team link or a diamond isn't a conflict (the same team reached twice), but a sub-team's override in a diamond is (R1).
 - Turned off, private only adds, validity, drift, the fingerprint, the render cap and order, the checklist merge.
 - One branch: another task's record blocks, its own and docs branches don't; an exception is used once; only an approved `off` turns the rule off; can't compute counts as on. Own work: a tip at `base_sha` or in the integration branch is none; a commit beyond it, or uncommitted changes, is some.
 

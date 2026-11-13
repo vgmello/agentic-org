@@ -33,7 +33,8 @@ fn label(place: &Place) -> String {
 /// A file with `key` at `place`, read from its text. `flags`: `sealed`, `maybe` (an unreadable
 /// `overridable`), `off`, `draft`, `retired`, `bad` (version 0), `garbage` (no front matter),
 /// `badname` (a refused file name), `over<N>` (`overrides: <key>@<N>`), `id:<a|b>`, `as:<name>`
-/// (the file name) and `at:<team>` (written for and read at that team's place).
+/// (the file name) and `at:<team|atlas>` (written for and read at that team's or the project's
+/// place).
 fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
     let mut lines: Vec<(&str, String)> = vec![
         ("process", key.into()),
@@ -74,9 +75,12 @@ fn at(place: Place, key: &str, version: u32, flags: &str) -> Input {
             }
             _ if flag.starts_with("as:") => path = flag[3..].to_owned(),
             _ if flag.starts_with("at:") => {
-                read_at = team(&flag[3..]);
-                set("level", "team".into());
-                set("scope", flag[3..].into());
+                read_at = match &flag[3..] {
+                    "atlas" => atlas(),
+                    id => team(id),
+                };
+                set("level", read_at.level().as_str().into());
+                set("scope", read_at.scope().unwrap_or_default().into());
             }
             _ => panic!("unknown flag {flag}"),
         }
@@ -158,6 +162,7 @@ fn summary(set: &EffectiveSet) -> Vec<String> {
                 Outcome::Invalid(problem) => format!("invalid {}", problem.field),
                 Outcome::Clashed => "clash".into(),
                 Outcome::Refused { sealed_by } => format!("sealed by {}", label(sealed_by)),
+                Outcome::RefusedUnknown { path } => format!("can't tell: {path} can't be read"),
                 Outcome::PrivateOnlyAdds(reason) => format!("private {reason:?}"),
                 other => panic!("{other:?} isn't a problem"),
             };
@@ -407,9 +412,83 @@ fn seals() {
                 "checks: platform v1 Addition",
                 "plan: none",
                 "review: org v1 Inherited",
-                "atlas/plan.md: sealed by platform",
+                "atlas/plan.md: can't tell: platform/broken.md can't be read",
                 "platform/broken.md: invalid NoFrontMatter",
-                "web/review.md: sealed by platform",
+                "web/review.md: can't tell: platform/broken.md can't be read",
+            ],
+        ),
+        (
+            "an organization file that can't be read: can't tell, never sealed by the organization",
+            work(&[&["web"]]),
+            vec![
+                at(org(), "broken", 1, "garbage"),
+                at(team("web"), "review", 2, "over1"),
+                at(me(), "mine", 1, ""),
+            ],
+            vec![
+                "mine: none",
+                "review: none",
+                "me/mine.md: can't tell: org/broken.md can't be read",
+                "org/broken.md: invalid NoFrontMatter",
+                "web/review.md: can't tell: org/broken.md can't be read",
+            ],
+        ),
+        (
+            "a file that can't be read beside a sealed one: sealed by that place",
+            work(&[&["web"]]),
+            vec![
+                at(org(), "broken", 1, "garbage"),
+                at(org(), "review", 1, "sealed"),
+                at(team("web"), "review", 2, ""),
+            ],
+            vec![
+                "review: org v1 Inherited",
+                "org/broken.md: invalid NoFrontMatter",
+                "web/review.md: sealed by org",
+            ],
+        ),
+        (
+            "a chain's outermost seal is its seal (A71 takes the first seal by team id)",
+            work(&[&["a", "z"], &["m"]]),
+            vec![
+                at(team("a"), "review", 1, "sealed"),
+                at(team("z"), "review", 2, "sealed"),
+                at(team("m"), "review", 3, "sealed"),
+            ],
+            vec![
+                "review: a v1 Addition",
+                "review conflict a,m sealed [a,m] -> a",
+                "z/review.md: sealed by a",
+            ],
+        ),
+        (
+            "a project file is refused by the smallest sealing team, chains in this order",
+            work(&[&["web"], &["mobile"]]),
+            vec![
+                at(team("web"), "review", 1, "sealed bad"),
+                at(team("mobile"), "review", 1, "sealed bad"),
+                at(atlas(), "review", 2, ""),
+            ],
+            vec![
+                "review: none",
+                "atlas/review.md: sealed by mobile",
+                "mobile/review.md: invalid version",
+                "web/review.md: invalid version",
+            ],
+        ),
+        (
+            "a project file is refused by the smallest sealing team, chains in the other order",
+            work(&[&["mobile"], &["web"]]),
+            vec![
+                at(team("web"), "review", 1, "sealed bad"),
+                at(team("mobile"), "review", 1, "sealed bad"),
+                at(atlas(), "review", 2, ""),
+            ],
+            vec![
+                "review: none",
+                "atlas/review.md: sealed by mobile",
+                "mobile/review.md: invalid version",
+                "web/review.md: invalid version",
             ],
         ),
     ]);
@@ -492,6 +571,23 @@ fn conflicts() {
             ],
         ),
         (
+            "a sub-team's override in a diamond is a conflict (R1): the org's version, or none",
+            work(&[&["platform", "web"], &["platform", "mobile"]]),
+            vec![
+                at(org(), "review", 1, ""),
+                at(team("platform"), "review", 2, ""),
+                at(team("web"), "review", 3, ""),
+                at(team("platform"), "checks", 2, ""),
+                at(team("web"), "checks", 3, ""),
+            ],
+            vec![
+                "checks: none",
+                "review: org v1 Inherited",
+                "checks conflict platform,web sealed [] -> none",
+                "review conflict platform,web sealed [] -> org",
+            ],
+        ),
+        (
             "a team that sealed the version it inherits conflicts with a sibling's override",
             work(&[&["web"], &["mobile"]]),
             vec![
@@ -547,6 +643,21 @@ fn turned_off_private_and_validity() {
             ],
         ),
         (
+            "a place with no name is named by its team id, or as the organization",
+            work(&[&["design"]]),
+            vec![
+                at(org(), "review", 1, "off"),
+                at(org(), "checks", 1, ""),
+                at(team("design"), "checks", 2, "off"),
+            ],
+            vec![
+                "checks: none",
+                "review: none",
+                "checks: Turned off for design: we report daily",
+                "review: Turned off for the organization: we report daily",
+            ],
+        ),
+        (
             "private files only add",
             work(&[&["web"]]),
             vec![
@@ -593,7 +704,7 @@ fn turned_off_private_and_validity() {
             vec![
                 "mine: none",
                 "atlas/broken.md: invalid NoFrontMatter",
-                "me/mine.md: private Inherited",
+                "me/mine.md: can't tell: atlas/broken.md can't be read",
             ],
         ),
         (
@@ -609,15 +720,19 @@ fn turned_off_private_and_validity() {
                 at(team("web"), "steps", 2, "at:mobile"),
                 at(org(), "notes", 1, ""),
                 at(atlas(), "notes", 2, "badname"),
+                at(org(), "guide", 1, ""),
+                at(team("web"), "guide", 2, "at:atlas"),
             ],
             vec![
                 "checks: org v1 Inherited",
+                "guide: org v1 Inherited",
                 "notes: org v1 Inherited",
                 "review: org v1 Inherited",
                 "steps: org v1 Inherited",
                 "atlas/notes.md: invalid file name",
+                "web/guide.md: invalid level",
                 "web/review.md: invalid version",
-                "web/steps.md: invalid level",
+                "web/steps.md: invalid scope",
             ],
         ),
         (
@@ -640,6 +755,26 @@ fn turned_off_private_and_validity() {
                 "web/b.md: clash",
                 "web/checks-2.md: invalid version",
                 "web/checks.md: clash",
+            ],
+        ),
+        (
+            "an invalid draft or retired file doesn't clash either",
+            work(&[&["web"]]),
+            vec![
+                at(team("web"), "review", 2, ""),
+                at(team("web"), "review", 3, "bad draft as:review-2"),
+                at(team("web"), "checks", 2, ""),
+                at(team("web"), "checks", 3, "badname retired as:checks-2"),
+                at(team("web"), "plan", 2, ""),
+                at(team("web"), "plan", 3, "draft at:mobile as:plan-2"),
+            ],
+            vec![
+                "checks: web v2 Addition",
+                "plan: web v2 Addition",
+                "review: web v2 Addition",
+                "web/checks-2.md: invalid file name",
+                "web/plan-2.md: invalid scope",
+                "web/review-2.md: invalid version",
             ],
         ),
     ]);
@@ -673,11 +808,14 @@ fn drift_compares_an_override_with_its_parent() {
             at(team("web"), "extra", 1, "over1"),
             at(team("web"), "steps", 4, ""),
             at(atlas(), "steps", 5, "over3"),
+            at(org(), "guide", 2, ""),
+            at(team("web"), "guide", 3, "over5"),
         ],
     );
     let expected = vec![
         ("checks".to_owned(), Some(Drift::Current)),
         ("extra".to_owned(), None),
+        ("guide".to_owned(), Some(Drift::Unknown)),
         ("notes".to_owned(), None),
         ("plan".to_owned(), Some(Drift::Unknown)),
         ("review".to_owned(), changed(org(), 2)),
@@ -704,6 +842,7 @@ fn why_shows_every_layer_and_what_happened_to_it() {
             kind: ProblemKind::Invalid,
             key: ProcessKey::new("review"),
             sealed: Some(false),
+            status: Some(Status::Active),
         })
     };
     let set = resolved(

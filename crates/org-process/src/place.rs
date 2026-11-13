@@ -232,8 +232,8 @@ pub(crate) fn is_invisible_or_break(c: char) -> bool {
 }
 
 /// A file name that can name a process: none that starts with `-`, and none with whitespace,
-/// control or invisible characters, or a backslash. Narrower than W7's ASCII-only rule for paths
-/// the tool writes (tasks-projects-docs.md §4.9): other letters are allowed here, since the
+/// control or invisible characters, or a backslash. Unlike W7's ASCII-only rule for paths the
+/// tool writes (tasks-projects-docs.md §4.9), non-ASCII letters are allowed here, since the
 /// front-matter key, not the file name, matches a process (processes.md §2.2).
 fn plain_name(name: &str) -> bool {
     let odd =

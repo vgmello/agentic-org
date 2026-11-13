@@ -25,7 +25,8 @@ impl Resolver<'_> {
             return (winner, conflict);
         };
         let org_sealed = self.sealed(&Place::Organization, key);
-        let team_seal = folds.iter().find_map(|fold| fold.seal.clone());
+        // The smallest sealing team by team id, whatever the chains' order.
+        let team_seal = folds.iter().filter_map(|fold| fold.seal.clone()).min();
         match org_sealed
             .then_some(Place::Organization)
             .or(team_seal.filter(|_| conflict.is_none()))
@@ -61,7 +62,10 @@ impl Resolver<'_> {
                 .names
                 .get(&file.place)
                 .cloned()
-                .unwrap_or_default(),
+                .unwrap_or_else(|| {
+                    let scope = file.place.scope();
+                    scope.map_or("the organization".into(), str::to_owned)
+                }),
             reason: file.reason.clone().unwrap_or_default(),
         });
         Some(off)
@@ -69,28 +73,36 @@ impl Resolver<'_> {
 
     /// Rule 8: a private file isn't applied, and is flagged, if it sets `overrides` or is an
     /// `off`, or if an organization, team or project file of this work uses its key in any state,
-    /// or might (one whose key couldn't be read, failing closed). Otherwise it applies: nothing
-    /// above it has the key.
+    /// or might (one whose key couldn't be read, failing closed: "can't tell"). Otherwise it
+    /// applies: nothing above it has the key.
     pub(super) fn private(&mut self, key: &ProcessKey) -> Option<usize> {
         let g = self.live(&Place::Agent(self.inputs.agent.clone()), key)?;
         let file = self.file(g);
-        let inherited = self.items.iter().any(|item| {
-            item.input.place.level() != Level::Agent && item.key.as_ref().is_none_or(|k| k == key)
-        });
-        let reason = if file.overrides.is_some() {
-            PrivateReason::Overrides
+        let above = || {
+            self.items
+                .iter()
+                .filter(|i| i.input.place.level() != Level::Agent)
+        };
+        let uses = above().any(|i| i.key.as_ref() == Some(key));
+        let unread = above().find(|i| i.key.is_none());
+        let outcome = if file.overrides.is_some() {
+            Outcome::PrivateOnlyAdds(PrivateReason::Overrides)
         } else if file.status == Status::Off {
-            PrivateReason::TurnsOff
-        } else if inherited {
-            PrivateReason::Inherited
+            Outcome::PrivateOnlyAdds(PrivateReason::TurnsOff)
+        } else if uses {
+            Outcome::PrivateOnlyAdds(PrivateReason::Inherited)
+        } else if let Some(unread) = unread {
+            let path = unread.input.path.clone();
+            Outcome::RefusedUnknown { path }
         } else {
             return Some(g);
         };
-        self.items[g].outcome = Some(Outcome::PrivateOnlyAdds(reason));
+        self.items[g].outcome = Some(outcome);
         None
     }
 
-    /// Rule 9: an override written against a version below its parent's current one.
+    /// Rule 9: an override written against a version below its parent's current one. One
+    /// written against a version above it matches no version of the parent: unknown.
     pub(super) fn drift(&self, file: &ProcessFile, parent: Option<usize>) -> Drift {
         match (&file.overrides, parent.map(|p| self.file(p))) {
             (Some((_, written)), Some(parent)) if *written < parent.version => {
@@ -99,7 +111,7 @@ impl Resolver<'_> {
                     version: parent.version,
                 }
             }
-            (Some(_), Some(_)) => Drift::Current,
+            (Some((_, written)), Some(parent)) if *written == parent.version => Drift::Current,
             _ => Drift::Unknown,
         }
     }
