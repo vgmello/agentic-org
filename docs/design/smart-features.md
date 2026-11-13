@@ -21,7 +21,7 @@ The first set (the phases below are these three features):
 5. **No secrets in prompts.** The office adds only what the feature's registry entry names. It never adds environment variables, tokens, keys, file contents or paths. The input is also checked for obvious secret shapes (private keys, access tokens, the 64-hex app token), and a match refuses the run without echoing it.
 6. **It runs in the office server.** Not in the WebView and not in the app's Rust shell. The app asks `copilot.features` and `copilot.draft` like any other call.
 7. **Hidden when it can't work.** With no runtime set up, `copilot.features` is empty and the app hides every smart button. A screen never shows a smart button that will only fail.
-8. **Honest cost.** Each run reports its usage when the runtime does, so costs can show "Copilot" per project (`costs-and-insights-ux.md`, COST-6).
+8. **Honest cost.** Each run reports its usage when the runtime does, and a copilot run is attributed to a task like any run, with no separate "Copilot" line (`costs-and-insights-ux.md` rev 6, COST-6; `costs-and-budgets-v1`).
 9. **Replaceable.** The runtimes sit behind a port the crate owns. The crate has no process or network code.
 
 ## The pieces
@@ -129,5 +129,5 @@ The template is fixed text. The renderer puts the feature's output schema in the
 
 ## Not decided
 1. Which runtime is "the copilot" when several are set up (probably a setting per organization, default the first set up).
-2. Whether the cost of copilot runs counts against a project budget. `costs-and-insights-ux.md` shows it as "Copilot", but doesn't say.
+2. ~~Whether the cost of copilot runs counts against a project budget.~~ *Decided (`costs-and-insights-ux.md` rev 6, `costs-and-budgets-v1` D42, 2026-11-13): monthly project budgets are gone, and a copilot run is attributed like any run, so it counts toward the task and agent budgets it is attributed to.*
 3. ~~Whether `copilot_busy` is a new code or reuses `unavailable`.~~ *Decided (ada, PR review): keep `copilot_busy`.*

@@ -2,10 +2,10 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 21
+revision: 22
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-10"
+updated: "2026-11-13"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy, codex-dev]
 builds_on: [offices-and-teams-ux, work-items-ux]
@@ -31,6 +31,8 @@ existing roles only) and STAFF-8 is added (a hire never waits); the rest:
 - A hire never waits for running agents: the owning office relaunches its own
   affected sessions between turns (§7), unlike a new organization or office
   (`offices-and-teams-ux.md` rev 15).
+
+**Revision 22 (2026-11-13): agent Cost tab.** The profile gains a **Cost** tab after Sessions, as `costs-and-insights-ux.md` rev 6 and `costs-and-budgets-v1` §6 ask. No criteria changed.
 
 **Revision 21 (2026-11-10): hiring when the HR lead can't run (O-7, the owner via ada).**
 Hire and Add agent record both work without the HR lead. When it can't run (the
@@ -198,7 +200,7 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 - **Card (org chart):** avatar (agent square) · name · title · status dot + word (Working · Waiting · Idle · Needs you · Paused · Offline) · team role (Lead). There's no runtime on cards (decision 3).
 - **Quick view:** name, title, status, **Runs on Codex** · messaging name (mono, copy) · office (its service machine/instance) · teams · reports to · current task · last activity ("Sent ada a status reply · 4 min ago"). Actions: **Message** · **Assign task** · **Move to team…** · ⋯ (Add to team… · Pause · Offboard…).
 - **Profile header** (v1 §3.5, extended): name · messaging name · title · focus · runtime · model · office · status · **View session** · **Assign task** · ⋯.
-- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (authorized server-provided content; no direct browser filesystem access) · Processes (what it follows, `processes-ux.md` §2) · **Role** (its effective role: the role it was hired as, its own override, and what processes supersede, `roles-ux.md` §1) *(rev 17)* · Settings (the record, editable: title, focus, model and runtime; home path is server-managed and read-only, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*, and **Can approve hires** and **Can approve processes** (§7.1, `processes-ux.md` decision 8), and **Change role…** (`roles-ux.md` decision 7) *(rev 17)*).
+- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · **Cost** (spend by period and project, and the agent's daily and monthly budgets: `costs-and-insights-ux.md` §1 "Agent profile › Cost"; amounts only to the owner and the project manager for their projects, `costs-and-budgets-v1` §5.5) *(rev 22)* · Knowledge (authorized server-provided content; no direct browser filesystem access) · Processes (what it follows, `processes-ux.md` §2) · **Role** (its effective role: the role it was hired as, its own override, and what processes supersede, `roles-ux.md` §1) *(rev 17)* · Settings (the record, editable: title, focus, model and runtime; home path is server-managed and read-only, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*, and **Can approve hires** and **Can approve processes** (§7.1, `processes-ux.md` decision 8), and **Change role…** (`roles-ux.md` decision 7) *(rev 17)*).
 - **Missing data** reads plainly, never blank: "Runtime not set · **Set runtime**", "No home folder (this agent runs elsewhere)".
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
