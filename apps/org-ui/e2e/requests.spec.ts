@@ -392,6 +392,7 @@ test('RQS-4: words that start with @ and a handle go to that agent: the handle i
 });
 
 test('RQS-13: while typing, open requests that read alike are offered, and Add to REQ-n puts the words there instead', async ({ page }) => {
+	await page.clock.install(); // the debounce is controlled, not waited out
 	await open(page);
 	await queue(page);
 	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
@@ -409,7 +410,7 @@ test('RQS-13: while typing, open requests that read alike are offered, and Add t
 	await page.keyboard.press('Escape');
 	await page.getByTestId('new-request').click();
 	await dialog.getByLabel('What do you need?').fill('Export the whole organization chart as a PDF file');
-	await page.waitForTimeout(700); // longer than the pause before the office is asked
+	await page.clock.runFor(700); // longer than the pause before the office is asked
 	await expect(dialog.getByTestId('similar')).toHaveCount(0);
 });
 
@@ -780,6 +781,7 @@ test('RQS-15: choosing the Approved state shows its rows, not a collapsed group'
 });
 
 test('RQS-13: what was found stays while the words change', async ({ page }) => {
+	await page.clock.install(); // the debounce is controlled, not waited out
 	await open(page);
 	await queue(page);
 	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
@@ -797,7 +799,7 @@ test('RQS-13: what was found stays while the words change', async ({ page }) => 
 		}).observe(document.body, { childList: true, subtree: true });
 	});
 	await words.pressSequentially(' please do it');
-	await page.waitForTimeout(800);
+	await page.clock.runFor(800);
 	await expect(dialog.getByTestId('similar')).toBeVisible();
 	expect(await page.evaluate(() => (window as unknown as { __similarGone: number }).__similarGone)).toBe(0);
 });
@@ -1070,6 +1072,39 @@ test('RQS-4: the handle list and its highlight start fresh when the handle chang
 	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
 	await words.fill('@');
 	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+});
+
+test('RQS-15: a remembered person that no request has any more is not applied, and nothing hides the queue', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		const id = saved[saved.length - 1].organization.id;
+		localStorage.setItem(`agentic-org.requests.filter.${id}`, JSON.stringify({ state: 'open', who: 'scoped:nobody-has-this', project: 'gone', query: '' }));
+	});
+	await page.reload();
+	await page.locator('html[data-hydrated="true"]').waitFor();
+	await expect(page.getByRole('tab', { name: /^Requests/ })).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
+	await expect(page.getByRole('combobox', { name: 'People' })).toHaveValue('');
+	await expect(page.getByRole('combobox', { name: 'Project' })).toHaveValue('');
+	// Nothing is filtered, so Clear is not offered, and what is kept for next time no longer holds the person or project that are gone.
+	await expect(page.getByRole('button', { name: 'Clear', exact: true })).toHaveCount(0);
+	const kept = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return localStorage.getItem(`agentic-org.requests.filter.${saved[saved.length - 1].organization.id}`);
+	});
+	expect(kept).not.toContain('nobody-has-this');
+	expect(kept).not.toContain('gone');
+});
+
+test('RQS-12: an unknown request link says so and drops only its own parameter', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await visit(page, '/work?request=does-not-exist&tab=requests');
+	await expect(page.getByText('That request is no longer here.')).toBeVisible();
+	await expect(page).toHaveURL(/\/work\?tab=requests$/);
 });
 
 test('RQS-4: "@sam Okafor rest" saves just "rest"', async ({ page }) => {
