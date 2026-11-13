@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::place::{is_invisible_or_break, Level, Location, Place, ProcessKey};
+use crate::place::{Level, Location, Place, ProcessKey};
+use org_docs::is_invisible_or_break;
 
 /// A valid process file. Status filtering (draft, retired) is resolution's, not this.
 #[derive(Clone, Debug, PartialEq, Eq)]

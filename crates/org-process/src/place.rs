@@ -1,5 +1,7 @@
 //! Where a process file lives decides its level and scope (`docs/design/processes.md` §2.2).
 
+use org_docs::is_invisible_or_break;
+
 /// The four levels, in inheritance order: an organization's processes first, an agent's last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Level {
@@ -223,31 +225,6 @@ pub fn location(repo: Repo<'_>, path: &str) -> Option<Location> {
             name_refused,
         }),
     }
-}
-
-/// The same set as org-office's status lines (organization/status.rs): line breaks, the bidi
-/// and invisible format characters, the fillers that render as nothing, and the tag block and
-/// variation selectors supplement, which can hide text from a reader but not from an agent.
-/// The zero-width (non-)joiners and the direction marks stay: emoji and many scripts need them.
-pub(crate) fn is_invisible_or_break(c: char) -> bool {
-    matches!(
-        c,
-        '\u{2028}'
-            | '\u{2029}'
-            | '\u{200b}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206f}'
-            | '\u{feff}'
-            | '\u{180e}'
-            | '\u{fff9}'..='\u{fffb}'
-            | '\u{115f}'
-            | '\u{1160}'
-            | '\u{3164}'
-            | '\u{ffa0}'
-            | '\u{e0000}'..='\u{e007f}'
-            | '\u{e0100}'..='\u{e01ef}'
-    )
 }
 
 /// A file name that can name a process: none that starts with `-`, and none with whitespace,
