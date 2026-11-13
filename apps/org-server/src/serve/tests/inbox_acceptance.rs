@@ -1,6 +1,7 @@
 //! Socket acceptance oracles also run on the frozen a1b baseline. The baseline fixture
 //! omits only the new enable_inbox_hints setup call; test bodies and source inputs are identical.
 use super::*;
+use crate::test_teardown::teardown_failed;
 use org_proto::inbox::InboxChangedData;
 use std::time::Instant;
 
@@ -45,6 +46,30 @@ impl MemberDirectory for Lookup {
     }
 }
 
+struct JoinedClient {
+    client: org_client::Client,
+    joined: Arc<AtomicUsize>,
+}
+impl std::ops::Deref for JoinedClient {
+    type Target = org_client::Client;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+impl Drop for JoinedClient {
+    fn drop(&mut self) {
+        match self
+            .client
+            .close_and_join(Instant::now() + Duration::from_secs(10))
+        {
+            Ok(()) => {
+                self.joined.fetch_add(1, Ordering::SeqCst);
+            }
+            Err(error) => teardown_failed(error),
+        }
+    }
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     path: std::path::PathBuf,
@@ -52,6 +77,7 @@ struct Fixture {
     directory: Arc<Lookup>,
     feed: Arc<FakeFeed>,
     stop: Arc<AtomicBool>,
+    clients_joined: Arc<AtomicUsize>,
     server: Option<std::thread::JoinHandle<()>>,
 }
 impl Fixture {
@@ -99,11 +125,15 @@ impl Fixture {
             directory,
             feed,
             stop,
+            clients_joined: Arc::new(AtomicUsize::new(0)),
             server: Some(server),
         }
     }
-    fn client(&self, id: &str) -> org_client::Client {
-        let client = org_client::Client::connect(&self.path).unwrap();
+    fn client(&self, id: &str) -> JoinedClient {
+        let client = JoinedClient {
+            client: org_client::Client::connect(&self.path).unwrap(),
+            joined: Arc::clone(&self.clients_joined),
+        };
         client
             .call::<MsgBind>(&MsgBindParams {
                 member: Some(id.into()),
@@ -225,4 +255,29 @@ fn acceptance_emitted_positions_are_monotonic_and_keep_the_instance_epoch() {
         assert_eq!(data.as_of.epoch, "acceptance");
         assert_eq!(data.counts.total, n);
     }
+}
+
+#[test]
+fn failed_bind_keeps_client_teardown_inside_the_case_fence() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fixture = Fixture::new();
+    fixture.directory.failed.store(true, Ordering::SeqCst);
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _client = fixture.client(OWNER_ID);
+    }));
+    assert!(failure.is_err(), "the real bind was not refused");
+    assert_eq!(
+        fixture.clients_joined.load(Ordering::SeqCst),
+        1,
+        "bind failure escaped explicit joining before the case fence is released"
+    );
+    fixture.directory.failed.store(false, Ordering::SeqCst);
+    let client = fixture.client(OWNER_ID);
+    assert_eq!(fixture.clients_joined.load(Ordering::SeqCst), 1);
+    drop(client);
+    assert_eq!(
+        fixture.clients_joined.load(Ordering::SeqCst),
+        2,
+        "successful bind did not join exactly once on teardown"
+    );
 }

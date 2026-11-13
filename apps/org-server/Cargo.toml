@@ -36,7 +36,7 @@ sha2.workspace = true
 org-sync = { path = "../../crates/org-sync" }
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
-org-client = { path = "../../crates/org-client" }
+org-client = { path = "../../crates/org-client", features = ["testkit"] }
 tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 proc-macro2 = "=1.0.107"

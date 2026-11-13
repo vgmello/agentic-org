@@ -35,6 +35,8 @@ pub(super) struct Control {
     // Owned before the handoff ACK; moved to the service after Ready.
     transfer: Option<OwnedFd>,
     fence: Arc<Mutex<()>>,
+    // Retained in every build; only explicit test teardown waits for completion.
+    _drain: Option<(std::thread::JoinHandle<()>, std::sync::mpsc::Receiver<()>)>,
     #[cfg(test)]
     before_marker: Option<Box<dyn FnOnce() + Send>>,
     /// Runs on the worker's own stream just before that handshake write (tests fail it there).
@@ -61,6 +63,7 @@ impl Control {
             receiver: None,
             transfer: None,
             fence,
+            _drain: None,
             #[cfg(test)]
             before_marker: None,
             #[cfg(test)]
@@ -97,10 +100,15 @@ impl Control {
                 }
                 // Drain before blocking on the handoff so host stdin writes cannot stall it.
                 let pipe = self.pipe.from_host.try_clone().map_err(io_error)?;
-                std::thread::Builder::new()
+                let (finished, exited) = std::sync::mpsc::channel();
+                let worker = std::thread::Builder::new()
                     .name("org-stdin-drain".into())
-                    .spawn(move || drain(pipe))
+                    .spawn(move || {
+                        drain(pipe);
+                        let _ = finished.send(());
+                    })
                     .map_err(io_error)?;
+                self._drain = Some((worker, exited));
                 let stream = UnixStream::connect(&office.rendezvous).map_err(io_error)?;
                 self.rendezvous = Some(Arc::new(Mutex::new(stream)));
                 let mut writer = self
@@ -159,6 +167,30 @@ impl Control {
             }
             Some(_) => Err(LaunchError::Invalid("unknown launch version")),
         }
+    }
+
+    /// Tests close the pipe writer before joining; socket shutdown cannot unblock a pipe.
+    #[cfg(test)]
+    pub(super) fn close_and_join(&mut self, deadline: std::time::Instant) -> io::Result<()> {
+        if let Some(stream) = &self.rendezvous {
+            shut_down(&stream.lock().unwrap_or_else(|p| p.into_inner()));
+        }
+        let Some((_, exited)) = &self._drain else {
+            return Ok(());
+        };
+        if matches!(
+            exited.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "stdin-drain did not finish before deadline",
+            ));
+        }
+        let (worker, _) = self._drain.take().expect("retained drain");
+        worker
+            .join()
+            .map_err(|_| io::Error::other("stdin-drain panicked"))
     }
 
     /// A fatal receiver closes itself; unreported Mac descriptors require process exit.
