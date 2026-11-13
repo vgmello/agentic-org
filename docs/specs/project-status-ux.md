@@ -81,7 +81,7 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 
 ## 3. Flow 3 · All projects at a glance (Home › Projects status)
 
-*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
+*(rev 5)* **Who sees cost:** the This month column shows only to the owner and to each project's manager for their projects (a manager of some projects sees "—" in other projects' rows) (`costs-and-budgets-v1` §5.5, AC-CB10-1). Everyone else sees the table without it. The same rule covers the Status page's Investment tile and cost trend (§1) and the report's cost section and run cost (§2).
 
 ```
  Projects                        Health       Features         This month    Waiting on you
@@ -102,7 +102,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 
 - STATUS-1 · *(rev 5)* Each project has a Status page with health, features, investment, flow, quality, Needs you and an 8-week trend, computed live by the office. Investment shows amounts only to the owner and the project's manager; others see the budget state (§1, `costs-and-budgets-v1` §5.5).
 - STATUS-2 · Health is On track, At risk or Off track, and always shows the reasons that produced it.
-- STATUS-3 · Every number on the Status page and in a report comes from office data, and each tile opens the items behind it *(rev 5)*: for someone who can't see amounts, the Investment tile opens the budget-reached items, not the usage records.
+- STATUS-3 · Every number on the Status page and in a report comes from office data, and each tile opens the items behind it *(rev 5)*: for someone who can't see amounts, the Investment tile opens the tasks and bugs stopped or held by their budget, not the usage records.
 - STATUS-4 · A report's summary, risks and recommendations come from a one-off run, cite the facts, and are marked Drafted until the owner opens the report.
 - STATUS-5 · Reports run on the project's schedule (default weekly, Monday 08:00), after a delivered feature if chosen, and on demand from the Status page and ⌘K.
 - STATUS-6 · A period with no activity produces a one-line report without a run.
