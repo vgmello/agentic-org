@@ -26,8 +26,7 @@ impl OfficeWorkActivity {
     ) -> Result<R, StoreError> {
         self.0
             .read(|db| {
-                // Roll back explicitly: a failed ROLLBACK must not return a reader to the pool
-                // still inside this snapshot.
+                // Explicit, so a failed ROLLBACK never pools a reader still in this snapshot.
                 let tx = sql(db.unchecked_transaction())?;
                 let out = work(&tx);
                 sql(tx.rollback())?;
@@ -89,8 +88,7 @@ fn stored_position(
     if before.feed_seq > ceiling {
         return Ok(false);
     }
-    // An event's feed_seq references its work_feed row (whose targets list every put), so a
-    // stored (target, version) at `seq` is in that row.
+    // feed_seq references the work_feed row whose targets list every put, so this is enough.
     let found: Option<i64> = if before.target_id.is_empty() {
         let row = "SELECT seq FROM work_feed WHERE seq = ?1 AND ?2 = 0";
         sql(db
