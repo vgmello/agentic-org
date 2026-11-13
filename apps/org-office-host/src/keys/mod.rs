@@ -380,6 +380,7 @@ mod tests {
         assert!(!asked, "the signing information was read without a group");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_release_build_needs_its_access_group_in_its_own_entitlement() {
         for groups in [
