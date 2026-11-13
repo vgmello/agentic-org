@@ -74,7 +74,7 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 1. **Trigger:** the schedule, a delivered feature, or **Generate report**.
 2. **Facts** (the office, seconds): a snapshot of every number on the Status page for the period, plus **what changed** since the last report (features delivered, items done, new Critical bugs, cost added, decisions made).
 3. **Narrative** (a one-off run of the Reporter role, shown as "Reporter (one-off run 31)", about a minute): a 3–5 sentence summary, the top 3 risks with their evidence, and up to 3 recommendations ("Answer ada's questions: they block FEAT-0006"). Shown while it runs: "Writing the summary… **Stop**" (Stop cancels this run. It isn't the agent Stop, which means Pause.)
-4. **Saved:** `docs/reports/2026-12-07-status.md` (Markdown with front matter: `kind: report`, `type: status`, `period`, `health`, `facts` (the snapshot without cost amounts or budget figures: tokens and budget states only), `run` (its tokens)) *(rev 6, A109)*, committed through the docs flow (`decisions-and-tech-debt-ux.md` §0.2).
+4. **Saved:** `docs/reports/2026-12-07-status.md` (Markdown with front matter: `kind: report`, `type: status`, `period`, `health`, `facts` (the snapshot without cost amounts or budget figures: tokens and "Budget reached" only), `run` (its tokens)) *(rev 6, A109)*, committed through the docs flow (`decisions-and-tech-debt-ux.md` §0.2).
 5. **Delivered:** Home shows "Status report for Agentic Org: **At risk**" with **Read**. A change of health (On track → At risk) also goes to Needs you.
 
 **The report page:** header (project, period, health badge with why, "Written by Reporter (one-off run 31) · ≈ $0.12"; the run's cost shows only to the owner and the project's manager *(rev 5)*) · **Summary** (Drafted until read) · **What changed** · the Status tiles as they were at that moment (amounts, for those who may see them, come from the office's own copy of the snapshot, A40) *(rev 6)* · **Risks** · **Recommendations** (each with a one-click action where one exists: Open, Answer, Review) · **Needs you**. **Export ▾:** Markdown · PDF · Copy summary.
@@ -96,7 +96,7 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 
 ## 4. Settings (project › Settings › Status reports)
 
-Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · a Budget reached item open on the project's work → At risk *(rev 5)*) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑ (in the app, amounts follow `costs-and-budgets-v1` §5.5; the saved file keeps tokens and budget states only, A109).
+Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · a Budget reached item open on the project's work → At risk *(rev 5)*) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑ (in the app, amounts follow `costs-and-budgets-v1` §5.5; the saved file keeps tokens and "Budget reached" only, A109).
 
 **Waiting on you** *(rev 3)*, in the health rule, the Flow tile and Home › Projects status, counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and tasks Blocked waiting for your decision on a proposed ADR, only while that decision is the task's blocker (ada Q11).
 
@@ -108,7 +108,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 - STATUS-4 · A report's summary, risks and recommendations come from a one-off run, cite the facts, and are marked Drafted until the owner opens the report.
 - STATUS-5 · Reports run on the project's schedule (default weekly, Monday 08:00), after a delivered feature if chosen, and on demand from the Status page and ⌘K.
 - STATUS-6 · A period with no activity produces a one-line report without a run.
-- STATUS-7 · *(rev 6)* Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's tokens) and listed in Docs › Reports with its health. The saved file has no cost amounts or budget figures: its cost section shows tokens and "Budget reached" where it applies, with a link to the project in the app for amounts (A109).
+- STATUS-7 · *(rev 6)* Each report is saved as `docs/reports/<date>-status.md` with front matter (period, health, the facts snapshot and the run's tokens) and listed in Docs › Reports with its health. The whole saved file (front matter, cost section, narrative and Needs you) has no cost amounts or budget figures: it shows tokens and "Budget reached" where it applies, with a link to the project in the app for amounts (A109).
 - STATUS-8 · A new report appears on Home, and a change of health also appears in Needs you.
 - STATUS-9 · *(rev 5)* Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health. The cost column shows amounts only to the owner and each project's manager (`costs-and-budgets-v1` §5.5); other members see no cost column.
 - STATUS-10 · Health rules and the schedule are editable per project. Reports export to Markdown and PDF.
@@ -118,7 +118,7 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 
 **For ada**
 - A40 · The facts snapshot: one office query set shared with Insights (W14), with the report's front matter storing the snapshot so old reports stay true even if later data changes? *(rev 6)* Since A109 the file's snapshot has no cost amounts, so the office keeps the full snapshot (amounts included) with the report record, and the report page shows amounts from it under `costs-and-budgets-v1` §5.5. Agree, or recompute instead?
-- A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK?
+- A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK? *(rev 6)* The facts it gets have no cost amounts (tokens and "Budget reached" only), so the narrative can't carry them into the saved file (A109).
 - ~~A109~~ · *Resolved (Emery, 2026-11-13; rev 6):* report files leave out cost amounts and budget figures. They may say "Budget reached", show tokens, and link to the app, where `costs-and-budgets-v1` §5.5 decides who sees amounts. Repository access isn't a permission model (STATUS-7).
 
 **For the user**

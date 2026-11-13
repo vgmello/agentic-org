@@ -114,7 +114,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 
 - **Project › Insights** *(rev 6)*: its Cost section, after Progress and Speed, opens with **Investment**: "Agentic Org has cost ≈ $1,240 so far (since 7 Nov) · agent work: — (not tracked yet) · 180 tasks and 64 bugs done", then this month.
 - **Insights › Projects** (org-wide): project · investment to date · this month · last month · change · working time · items done.
-- **Export ▾:** **CSV** (one row per usage record *(rev 6)*, with project, task, how it was attributed, agent, runtime, model, tokens, cost, the cost source and time) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with the breakdowns and the insights in tokens and budget states, never cost amounts, per `project-status-ux.md` STATUS-7 and A109 *(rev 7)*).
+- **Export ▾:** **CSV** (one row per usage record *(rev 6)*, with project, task, how it was attributed, agent, runtime, model, tokens, cost, the cost source and time) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with the breakdowns and the insights in tokens and "Budget reached", never cost amounts, per `project-status-ux.md` STATUS-7 and A109 *(rev 7)*).
 
 ## 4. Flow · Budgets
 
