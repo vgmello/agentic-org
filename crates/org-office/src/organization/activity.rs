@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::de::IgnoredAny;
 use serde::Deserialize;
 
 /// How many rows below its own row a change looks for its entity's last upsert.
@@ -108,58 +109,100 @@ pub(crate) fn merge_key(previous: u64, at_ms: Option<u64>) -> u64 {
     at_ms.map_or(previous, |at| at.min(previous))
 }
 
-/// A logged change as the contract's JSON (`OrgChange`) has it, keeping only ids, versions and
-/// flags: names and every other text are never decoded into it.
+/// A logged change as the contract's JSON (`OrgChange`) has it: the same variants and required
+/// fields, defaulting only what the contract defaults. Ids, versions and flags are decoded; a
+/// required name or kind is only checked to be there.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Change {
     TeamUpserted {
-        team: Entity,
+        team: Team,
     },
     TeamDeleted {
         team_id: String,
     },
     MemberUpserted {
-        member: Entity,
+        member: Member,
     },
     MemberRemoved {
         member_id: String,
     },
     MembershipUpserted {
-        membership: Entity,
+        membership: Membership,
     },
     MembershipRemoved {
         membership_id: String,
     },
     ProjectTeamAdded {
-        project_team: Entity,
+        project_team: ProjectTeam,
     },
     ProjectTeamRemoved {
         project_team_id: String,
     },
     ProjectUpserted {
-        project: Entity,
+        project: Project,
     },
     AreaUpserted {
-        area: Entity,
+        area: Area,
     },
     #[serde(other)]
     Unknown,
 }
 
-/// An upserted entity's ids and flags; each kind has the ones it has.
 #[derive(Debug, Deserialize)]
-pub(crate) struct Entity {
+pub(crate) struct Team {
     id: String,
-    #[serde(default)]
+    #[serde(rename = "name")]
+    _name: IgnoredAny,
     version: u64,
-    member_id: Option<String>,
-    team_id: Option<String>,
-    project_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Member {
+    id: String,
+    #[serde(rename = "kind")]
+    _kind: IgnoredAny,
+    #[serde(rename = "name")]
+    _name: IgnoredAny,
+    version: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Membership {
+    id: String,
+    team_id: String,
+    member_id: String,
+    version: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProjectTeam {
+    id: String,
+    project_id: String,
+    team_id: String,
+    version: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Project {
+    id: String,
+    #[serde(rename = "name")]
+    _name: IgnoredAny,
     #[serde(default)]
     archived: bool,
     #[serde(default)]
+    version: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Area {
+    id: String,
+    project_id: String,
+    #[serde(rename = "name")]
+    _name: IgnoredAny,
+    #[serde(default)]
     deleted: bool,
+    version: u64,
 }
 
 /// An upsert's version, ids (member, team, project) and `archived` (project) or `deleted` (area).
@@ -168,23 +211,33 @@ type Upsert<'a> = (u64, [Option<&'a String>; 3], bool);
 /// A change's entity (verb kind, id) and what it upserts; `None` for `Unknown`.
 fn facts(change: &Change) -> Option<(&'static str, &String, Option<Upsert<'_>>)> {
     use Change as C;
-    let (kind, e, ids, flag) = match change {
-        C::TeamUpserted { team: e } => ("team", e, [None, Some(&e.id), None], false),
-        C::MemberUpserted { member: e } => ("member", e, [Some(&e.id), None, None], false),
-        C::MembershipUpserted { membership: e } => (
-            "membership",
-            e,
-            [e.member_id.as_ref(), e.team_id.as_ref(), None],
-            false,
+    let (kind, id, version, ids, flag) = match change {
+        C::TeamUpserted { team: e } => ("team", &e.id, e.version, [None, Some(&e.id), None], false),
+        C::MemberUpserted { member: e } => {
+            ("member", &e.id, e.version, [Some(&e.id), None, None], false)
+        }
+        C::MembershipUpserted { membership: e } => {
+            let ids = [Some(&e.member_id), Some(&e.team_id), None];
+            ("membership", &e.id, e.version, ids, false)
+        }
+        C::ProjectTeamAdded { project_team: e } => {
+            let ids = [None, Some(&e.team_id), Some(&e.project_id)];
+            ("project_team", &e.id, e.version, ids, false)
+        }
+        C::ProjectUpserted { project: e } => (
+            "project",
+            &e.id,
+            e.version,
+            [None, None, Some(&e.id)],
+            e.archived,
         ),
-        C::ProjectTeamAdded { project_team: e } => (
-            "project_team",
-            e,
-            [None, e.team_id.as_ref(), e.project_id.as_ref()],
-            false,
+        C::AreaUpserted { area: e } => (
+            "area",
+            &e.id,
+            e.version,
+            [None, None, Some(&e.project_id)],
+            e.deleted,
         ),
-        C::ProjectUpserted { project: e } => ("project", e, [None, None, Some(&e.id)], e.archived),
-        C::AreaUpserted { area: e } => ("area", e, [None, None, e.project_id.as_ref()], e.deleted),
         C::TeamDeleted { team_id: id } => return Some(("team", id, None)),
         C::MemberRemoved { member_id: id } => return Some(("member", id, None)),
         C::MembershipRemoved { membership_id: id } => return Some(("membership", id, None)),
@@ -193,7 +246,7 @@ fn facts(change: &Change) -> Option<(&'static str, &String, Option<Upsert<'_>>)>
         } => return Some(("project_team", id, None)),
         C::Unknown => return None,
     };
-    Some((kind, &e.id, Some((e.version, ids, flag))))
+    Some((kind, id, Some((version, ids, flag))))
 }
 
 /// The entity whose last upsert `describe` needs, and whether the change upserts it.

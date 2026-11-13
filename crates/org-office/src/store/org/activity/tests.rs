@@ -1043,6 +1043,119 @@ fn latest_by_project_is_the_first_entry_activity_returns_for_it() {
     }
 }
 
+/// Recency for `ids`, checked against the first entry paging with `project = id` returns.
+fn recency_as_pages_see_it(store: &Store, ids: &[&str]) -> ProjectActivity {
+    let found = latest(store, ids);
+    for id in ids {
+        let mut q = query(head_seq(store));
+        (q.project, q.limit) = (Some(id.to_string()), 1);
+        let first = all(store, q).first().map(|e| e.at_ms);
+        assert_eq!(found.get(*id).copied(), first, "{id}");
+    }
+    found
+}
+
+/// Appends one raw row at `seq`, as a damaged or foreign log could hold it.
+fn raw(store: &Store, seq: i64, body: &'static str) {
+    store
+        .write(move |db| {
+            db.execute(
+                "INSERT INTO events (epoch, seq, kind, command_id, at, body)
+                 VALUES (1, ?1, 'org.changed', 'RAW', '2026-11-08T13:00:00.000Z', ?2)",
+                (seq, body),
+            )
+            .map_err(OfficeError::storage)?;
+            Ok(((), None))
+        })
+        .unwrap();
+}
+
+#[test]
+fn recency_counts_every_row_toward_the_lookback() {
+    // The removal is 2,002 rows above the add, so it has no subject whether the rows between
+    // mention a project or not: PZ's newest entry stays the add.
+    let projects = (0..2_001).map(|i| {
+        (
+            at(T0 + 2_000 + i),
+            vec![project(&format!("PO{i}"), 1, false)],
+        )
+    });
+    for between in [filler(2_001), projects.collect()] {
+        let (_dir, store) = store();
+        let mut rows = vec![(at(T0 + 1_000), vec![project_team("QZ", "PZ", "T1", 1)])];
+        rows.extend(between);
+        rows.push((at(T0 + 9_000_000), vec![removed("project_team", "QZ")]));
+        append(&store, rows);
+        assert_eq!(
+            recency_as_pages_see_it(&store, &["PZ"])["PZ"],
+            Some(T0 + 1_000)
+        );
+    }
+}
+
+#[test]
+fn recency_skips_unknown_changes_and_takes_any_request() {
+    let (_dir, store) = store();
+    append(
+        &store,
+        vec![(at(T0 + 1_000), vec![project("PK", 1, false)])],
+    );
+    raw(
+        &store,
+        3,
+        r#"[{"type":"project_renamed_later","project_id":"PK"}]"#,
+    );
+    let page = read(&store, &query(3)).unwrap();
+    assert_eq!(subjects(&page.entries[..1]), [("org.changed", NONE)]);
+    assert_eq!(
+        recency_as_pages_see_it(&store, &["PK"])["PK"],
+        Some(T0 + 1_000)
+    );
+    // A duplicate id counts once; an empty request is empty but still checks the snapshot.
+    assert_eq!(latest(&store, &["PK", "PK"]), latest(&store, &["PK"]));
+    assert_eq!(latest(&store, &[]), ProjectActivity::default());
+    for ceiling in [Position { epoch: 2, seq: 3 }, Position { epoch: 1, seq: 4 }] {
+        let read = store
+            .read(|db| Ok(latest_by_project(db, ceiling, &[])))
+            .unwrap();
+        assert!(
+            matches!(read, Err(ActivityError::SnapshotRequired)),
+            "{ceiling:?}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_change_missing_a_required_field_fails_the_read() {
+    let missing = [
+        r#"[{"type":"membership_upserted","membership":{"id":"S1","member_id":"M1","version":1}}]"#,
+        r#"[{"type":"team_upserted","team":{"id":"T1","name":"x"}}]"#,
+        r#"[{"type":"member_upserted","member":{"id":"M1","kind":"person","version":1}}]"#,
+        r#"[{"type":"area_upserted","area":{"id":"A1","name":"x","version":1}}]"#,
+        r#"[{"type":"project_team_added","project_team":{"id":"Q1","team_id":"T1","version":1}}]"#,
+        r#"[{"type":"team_deleted"}]"#,
+    ];
+    for body in missing {
+        assert!(
+            serde_json::from_str::<Vec<OrgChange>>(body).is_err(),
+            "{body}"
+        );
+        let (_dir, store) = store();
+        raw(&store, 2, body);
+        assert!(
+            matches!(read(&store, &query(2)), Err(ActivityError::Store(_))),
+            "{body}"
+        );
+    }
+    // What the contract defaults may be missing.
+    let body = r#"[{"type":"project_upserted","project":{"id":"P1","name":"x"}}]"#;
+    assert!(serde_json::from_str::<Vec<OrgChange>>(body).is_ok());
+    let (_dir, store) = store();
+    raw(&store, 2, body);
+    let page = read(&store, &query(2)).unwrap();
+    assert_eq!(page.entries[0].verb, "org.project.changed");
+}
+
 // ---- no writes -------------------------------------------------------------------------------
 
 #[test]
@@ -1141,11 +1254,10 @@ fn budget_org_activity_on_a_20000_row_log() {
         let page = read(&store, &q).unwrap();
         assert!(page.entries.is_empty() && !page.exhausted);
     });
-    // Reported, not asserted (Rowan, option a): a requested project with no retained activity
-    // makes the pass read every row down to the genesis. That happens only with truncated or
-    // legacy history, since a project's creation is logged. Measured on this Mac at about
-    // 34-36 ms; decrypting and reading the 20,000 rows alone is about 11-15 ms.
-    time("latest_by_project (7 projects, 3 absent)", &|| {
+    // The accepted worst case (freeze rev 4.8): the oldest requested project's last activity
+    // deep in the log: idle, legacy or truncated; bounded by the log length. Here: 3 projects
+    // with no retained activity, and `OLD` below, idle since seq 2. Both read the whole log.
+    let absent = time("latest_by_project (7 projects, 3 absent)", &|| {
         let found = latest(&store, &["P1", "P2", "P3", "P499", "X1", "X2", "X3"]);
         assert_eq!(found.len(), 4);
     });
@@ -1153,8 +1265,20 @@ fn budget_org_activity_on_a_20000_row_log() {
         let found = latest(&store, &["P1", "P2", "P3", "P499", "P0", "P250", "P7"]);
         assert_eq!(found.len(), 7);
     });
+    let (_old_dir, old) = self::store();
+    let mut rows = vec![(at(T0), vec![project("OLD", 1, false)])];
+    rows.extend(mixed(20_000));
+    append(&old, rows);
+    let idle = time("latest_by_project (OLD idle since seq 2, P1, P2)", &|| {
+        let found = latest(&old, &["OLD", "P1", "P2"]);
+        assert_eq!((found.len(), found["OLD"]), (3, Some(T0)));
+    });
     if !cfg!(debug_assertions) {
         assert!(plain.as_millis() <= 20 && selective.as_millis() <= 20);
-        assert!(recency.as_millis() <= 30);
+        let recency = [recency, absent, idle];
+        assert!(
+            recency.iter().all(|each| each.as_millis() <= 30),
+            "{recency:?}"
+        );
     }
 }
