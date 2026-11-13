@@ -1,7 +1,9 @@
 //! Rules 6 to 9: the project's version, turned-off keys, private processes and drift.
 
 use super::chains::Fold;
-use super::{Conflict, Drift, EffectiveSet, Outcome, PrivateReason, Resolver, TurnedOff};
+use super::{
+    place_name, Conflict, Drift, EffectiveSet, Outcome, PrivateReason, Resolver, TurnedOff,
+};
 use crate::file::{ProcessFile, Status};
 use crate::place::{Level, Place, ProcessKey};
 
@@ -58,15 +60,7 @@ impl Resolver<'_> {
         set.turned_off.push(TurnedOff {
             key: key.clone(),
             place: file.place.clone(),
-            name: self
-                .inputs
-                .names
-                .get(&file.place)
-                .cloned()
-                .unwrap_or_else(|| {
-                    let scope = file.place.scope();
-                    scope.map_or("the organization".into(), str::to_owned)
-                }),
+            name: place_name(&self.inputs.names, &file.place),
             reason: file.reason.clone().unwrap_or_default(),
         });
         Some(off)

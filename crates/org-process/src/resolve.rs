@@ -267,6 +267,17 @@ pub struct Conflict {
     pub applies: Option<Place>,
 }
 
+/// The name the app shows for `place`: its name in `names`, else its team id, project key or
+/// member id, or "the organization".
+pub(crate) fn place_name(names: &BTreeMap<Place, String>, place: &Place) -> String {
+    let scope = || {
+        place
+            .scope()
+            .map_or("the organization".into(), str::to_owned)
+    };
+    names.get(place).cloned().unwrap_or_else(scope)
+}
+
 impl EffectiveSet {
     /// The entry for `key`, which `process why` prints.
     pub fn why(&self, key: &ProcessKey) -> Option<&Entry> {
