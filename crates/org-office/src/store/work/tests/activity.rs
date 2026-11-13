@@ -415,6 +415,82 @@ fn activity_refuses_a_feed_row_whose_unseen_target_has_no_event_there() {
     }
 }
 
+impl Fx {
+    /// Rewrites stored rows the way a corrupt office.db would hold them.
+    fn corrupt(&self, statements: &'static str) {
+        self.store
+            .write(move |db| {
+                db.execute_batch(&format!(
+                    "PRAGMA ignore_check_constraints=ON; DROP TRIGGER work_events_no_update;
+                     {statements} PRAGMA ignore_check_constraints=OFF;"
+                ))
+                .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+    }
+}
+
+/// The read fails as an inconsistent store (the cause is logged, never shown to a client).
+fn assert_inconsistent<T: std::fmt::Debug>(result: Result<T, WorkActivityError>) {
+    let Err(WorkActivityError::Store(error)) = result else {
+        panic!("expected an inconsistent store, got {result:?}");
+    };
+    let cause = std::error::Error::source(&error).unwrap().to_string();
+    assert!(cause.contains("inconsistent"), "{cause}");
+}
+
+// A target already read on this page whose next older version sits in a feed row newer than
+// the one being read is a corrupt store: the history search must not paper over it.
+#[test]
+fn activity_refuses_a_seen_target_whose_older_version_is_in_a_newer_row() {
+    let fx = setup(true);
+    fx.commit(vec![
+        vec![ev("T", T0)],
+        vec![ev("T", T0 + 1)],
+        vec![ev("U", T0)],
+        vec![ev("U", T0 + 1)],
+        vec![ev("T", T0 + 2)],
+    ]);
+    // Row 3 lists T, whose v2 claims row 4 (T v3 is read in row 5, so T is seen when row 3
+    // is reached); a history search below row 3 would find v1 and hide the damage.
+    fx.corrupt(
+        "UPDATE work_feed SET targets = '[\"T\",\"U\"]' WHERE seq = 3;
+         UPDATE work_events SET feed_seq = 4 WHERE target_id = 'T' AND version = 2;",
+    );
+    assert_inconsistent(fx.reads.activity_page(&query(5)));
+}
+
+// Reading a target's events in one feed row, an older version in a NEWER row than a newer
+// version is a corrupt store: it must fail, not be read as one more event of the row.
+#[test]
+fn activity_refuses_an_older_version_stored_in_a_newer_feed_row_than_a_newer_one() {
+    let fx = setup(true);
+    fx.commit(vec![
+        vec![ev("T", T0)],
+        vec![ev("T", T0 + 1)],
+        vec![ev("U", T0)],
+    ]);
+    // T v2 is in row 2 (the page's row); T v1 now claims row 3, above it.
+    fx.corrupt("UPDATE work_events SET feed_seq = 3 WHERE target_id = 'T' AND version = 1;");
+    assert_inconsistent(fx.reads.activity_page(&query(3)));
+}
+
+// The event JSON must name the very target and version of its row: either one wrong alone
+// is a corrupt store.
+#[test]
+fn activity_refuses_an_event_whose_data_names_another_target_or_version() {
+    for damage in [
+        "UPDATE work_events SET data = json_set(data, '$.target_id', 'X');",
+        "UPDATE work_events SET data = json_set(data, '$.version', 9);",
+    ] {
+        let fx = setup(true);
+        fx.commit(vec![vec![ev("A", T0)]]);
+        fx.corrupt(damage);
+        assert_inconsistent(fx.reads.activity_page(&query(1)));
+    }
+}
+
 /// 102 events, only the oldest matches: a filter applied after the cap would return nothing.
 fn only_last_matches(fx: &Fx, last: Ev, rest: impl Fn(u64) -> Ev) -> WorkActivityPosition {
     let mut rows = vec![vec![last]];

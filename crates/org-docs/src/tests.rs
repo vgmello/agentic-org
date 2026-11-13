@@ -325,3 +325,20 @@ fn a_bare_digit_run_is_not_a_core_float() {
     assert!(is_core_float("12."));
     assert!(is_core_float("12e1"));
 }
+
+#[test]
+fn a_refusal_reads_as_its_field_and_reason() {
+    // `Display` is what a caller shows: the field path (or "front matter" for the whole), a
+    // colon and the reason.
+    let shown = |yaml: &str| front(yaml).unwrap_err().to_string();
+    assert_eq!(shown("a: &x 1\n"), "a: Anchor");
+    assert_eq!(
+        shown("checklist:\n  - {text: a}\n  - {text: &x b}\n"),
+        "checklist[1].text: Anchor"
+    );
+    assert_eq!(shown("- a\n"), "front matter: NotAMapping");
+    assert_eq!(
+        parse("---\na: 1\n").unwrap_err().to_string(),
+        "front matter: Unclosed"
+    );
+}
