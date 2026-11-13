@@ -13,7 +13,7 @@ use std::mem;
 use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
 use std::time::{Duration, Instant};
 
-use super::{control_space, invalid};
+use super::{control_buffer, control_space, invalid};
 
 /// How long an `ENOBUFS` waits before the next attempt.
 const NO_BUFFER_BACKOFF: Duration = Duration::from_millis(2);
@@ -72,12 +72,33 @@ fn send_with(
     mut call: impl FnMut(RawFd, &libc::msghdr) -> io::Result<usize>,
     mut wait: impl FnMut(RawFd, Duration) -> io::Result<()>,
 ) -> Result<(), SendError> {
+    send_using(
+        payload,
+        fds,
+        deadline,
+        |message| call(socket, message),
+        |left| wait(socket, left),
+        std::thread::sleep,
+        Instant::now,
+    )
+}
+
+// The retry policy owns its clock and backoff boundaries, independent of syscall timing.
+fn send_using(
+    payload: &[u8],
+    fds: &[RawFd],
+    deadline: Instant,
+    mut call: impl FnMut(&libc::msghdr) -> io::Result<usize>,
+    mut wait: impl FnMut(Duration) -> io::Result<()>,
+    mut pause: impl FnMut(Duration),
+    mut now: impl FnMut() -> Instant,
+) -> Result<(), SendError> {
     if payload.is_empty() {
         return Err(SendError::Io(invalid("a descriptor message needs a byte")));
     }
     let space = control_space(fds.len())
         .ok_or_else(|| SendError::Io(invalid("descriptor count is too large")))?;
-    let mut control = vec![0usize; space.div_ceil(mem::size_of::<usize>())];
+    let mut control = control_buffer(space).map_err(SendError::Io)?;
     let mut data = libc::iovec {
         iov_base: payload.as_ptr().cast_mut().cast(),
         iov_len: payload.len(),
@@ -101,25 +122,32 @@ fn send_with(
         }
     }
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(SendError::TimedOut);
-        }
-        let error = match call(socket, &message) {
+        time_left(deadline, now())?;
+        let error = match call(&message) {
             Ok(sent) if sent == payload.len() => return Ok(()),
             Ok(_) => return Err(SendError::Short),
             Err(error) => error,
         };
         match error.raw_os_error() {
             Some(libc::EINTR) => {}
-            Some(libc::EAGAIN) => match wait(socket, left) {
+            Some(libc::EAGAIN) => match wait(time_left(deadline, now())?) {
                 Err(e) if e.kind() != io::ErrorKind::Interrupted => return Err(SendError::Io(e)),
                 _ => {}
             },
-            Some(libc::ENOBUFS) => std::thread::sleep(NO_BUFFER_BACKOFF.min(left)),
+            Some(libc::ENOBUFS) => pause(NO_BUFFER_BACKOFF.min(time_left(deadline, now())?)),
             Some(libc::EMSGSIZE) => return Err(SendError::TooLarge),
             _ => return Err(SendError::Io(error)),
         }
+    }
+}
+
+/// Recompute the remaining budget after every operation that can consume deadline time.
+fn time_left(deadline: Instant, now: Instant) -> Result<Duration, SendError> {
+    let left = deadline.saturating_duration_since(now);
+    if left.is_zero() {
+        Err(SendError::TimedOut)
+    } else {
+        Ok(left)
     }
 }
 
@@ -139,14 +167,25 @@ fn system_send(socket: RawFd, message: &libc::msghdr) -> io::Result<usize> {
 
 /// Waits up to `left` for room to send. Readiness isn't reported: the loop simply tries again.
 fn wait_writable(socket: RawFd, left: Duration) -> io::Result<()> {
+    wait_writable_with(socket, left, |slot, millis| {
+        // SAFETY: one initialized pollfd, valid for the call.
+        unsafe { libc::poll(slot, 1, millis) }
+    })
+}
+
+// Keep poll argument/error handling in the same owner for real calls and directed tests.
+fn wait_writable_with(
+    socket: RawFd,
+    left: Duration,
+    poll: impl FnOnce(&mut libc::pollfd, libc::c_int) -> libc::c_int,
+) -> io::Result<()> {
     let mut slot = libc::pollfd {
         fd: socket,
         events: libc::POLLOUT,
         revents: 0,
     };
     let millis = left.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int;
-    // SAFETY: one initialized pollfd, valid for the call.
-    if unsafe { libc::poll(&mut slot, 1, millis) } < 0 {
+    if poll(&mut slot, millis) < 0 {
         return Err(io::Error::last_os_error());
     }
     if slot.revents & libc::POLLNVAL != 0 {
