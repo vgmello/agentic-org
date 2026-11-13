@@ -13,7 +13,7 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
-**Revision 23 (2026-11-13): agent budget bars owner only (Emery).** On the profile's Cost tab, the agent's daily and monthly budgets show to the owner only; a project manager sees the agent's cost for their own projects only (`costs-and-insights-ux.md` rev 8). No criteria changed.
+**Revision 23 (2026-11-13): agent budget bars owner only (Emery).** On the profile's Cost tab, the agent's daily and monthly budgets show to the owner only; a project manager sees the agent's cost for their own projects only, labelled "in your projects" (`costs-and-insights-ux.md` rev 8, COST-7). No criteria changed here.
 
 **Revision 22 (2026-11-13): agent Cost tab.** The profile gains a **Cost** tab after Sessions, as `costs-and-insights-ux.md` rev 6 and `costs-and-budgets-v1` §6 ask. No criteria changed.
 
