@@ -1,4 +1,4 @@
-//! IA-12b: the work activity port over office.db (freeze rev 4.7 decisions 4-7).
+//! IA-12b: the work activity port over office.db (freeze rev 4.8 decisions 4-7).
 
 use super::super::tests::{fixture, initialize_origin, T0};
 use super::*;
@@ -774,8 +774,10 @@ fn activity_before_must_be_a_stored_position_at_or_below_the_ceiling() {
     ));
 }
 
-/// Freeze decision 7's budgets (rev 4.7; release, Mac): run with
-/// `cargo test -p org-office --release -- --ignored activity_budget --nocapture`.
+/// Freeze decision 7's budgets (rev 4.8; release, Mac). Run on a quiet Mac (1-minute load
+/// below 6) or in the heavy lane: under load the timings run up to 1.5x slow (retro rowan-8).
+/// `~/.agency/bin/heavy cargo test -p org-office --release -- --ignored activity_budget --nocapture`
+/// The budget assertions run in release builds only.
 #[test]
 #[ignore = "benchmark: 100,000 events; run in release"]
 fn activity_budget_100k_events_2000_items_one_hot_item() {
