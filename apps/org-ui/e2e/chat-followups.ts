@@ -181,6 +181,20 @@ export async function optionGeometry(card: Locator) {
   const button=card.getByRole('button',{name,exact:true});const geometry=await labelGeometry(button,card);
   expect(geometry.target).toBe(true);await expect(button).toHaveCSS('white-space','normal');
   const size=await button.boundingBox();expect(size!.height).toBeGreaterThanOrEqual((await button.page().viewportSize())!.width<640?44:24);
+  await expect(button).toHaveCSS('text-align','center');
+ }
+ // BUG-160: at the default text size an option matches Reply… (same padding; same height while its
+ // label fits one line). Larger text keeps the option's 8px padding cap so long labels still fit.
+ const reply=card.getByRole('button',{name:'Reply…',exact:true});
+ const root=await card.evaluate(()=>parseFloat(getComputedStyle(document.documentElement).fontSize));
+ if(!approval&&root===16&&await reply.isVisible()) {
+  const style=(e:Element)=>{const s=getComputedStyle(e),r=e.getBoundingClientRect(),line=parseFloat(s.lineHeight);return {height:r.height,padding:s.paddingLeft,lines:Math.round((r.height-parseFloat(s.paddingTop)-parseFloat(s.paddingBottom)-parseFloat(s.borderTopWidth)-parseFloat(s.borderBottomWidth))/line)};};
+  const r=await reply.evaluate(style);
+  for(const name of labels) {
+   const o=await card.getByRole('button',{name,exact:true}).evaluate(style);
+   expect(o.padding,`${name} padding matches Reply…`).toBe(r.padding);
+   if(o.lines<=1&&(await card.page().viewportSize())!.width>=640) expect(Math.abs(o.height-r.height),`${name} height matches Reply…`).toBeLessThanOrEqual(.5);
+  }
  }
 }
 /** Same native flow is reused by the actual Chromium20px default-font project. */

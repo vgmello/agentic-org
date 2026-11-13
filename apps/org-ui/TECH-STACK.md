@@ -56,7 +56,7 @@ bun run dev                 # unserved areas are unavailable
 bun run check
 bun run test
 bun run build
-PW_PORT=4373 bun run test:e2e --workers=2
+PW_PORT=4373 bun run test:e2e --workers=1
 ```
 
 `test:e2e` builds before either server starts. The fake-backed dev server uses

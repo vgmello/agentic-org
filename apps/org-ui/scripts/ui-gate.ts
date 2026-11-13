@@ -80,7 +80,7 @@ if (import.meta.main) {
 			console.error(`ui-gate: ${loaded.error}; running the full suite`);
 		}
 		const value = (name: string) => args.values.get(name) ?? [];
-		const workers = value('--workers')[0] ?? '2';
+		const workers = value('--workers')[0] ?? '1';
 		if (!/^[1-9]\d*$/.test(workers)) throw new Error(`--workers must be a positive integer, got ${workers}`);
 		if (args.command === 'areas') listAreas();
 		else if (args.command === 'verify') process.exitCode = verify();
@@ -100,7 +100,7 @@ if (import.meta.main) {
 			const chosen = plan('error' in loaded ? [UNKNOWN_CHANGES] : files, manifest);
 			const webkit = !args.flags.has('--no-webkit');
 			if (!webkit) console.error(`ui-gate: warning: --no-webkit skips WebKit${chosen.all ? ', so this is not the full gate' : ' (including the WebKit journey subset)'}`);
-			// Two workers by default: the shared Mac is overloaded. Choose more with --workers <n>.
+			// One worker by default: the shared Mac is overloaded and heavy's ui lane has one slot. Choose more with --workers <n>.
 			const list = steps(chosen, manifest, specs, { webkit, extra: [`--workers=${workers}`, ...args.passthrough] });
 			if (args.flags.has('--explain')) {
 				for (const [file, effects] of chosen.effects) console.log(`${file}\n${effects.map((effect) => `  - ${effect.rule}`).join('\n')}`);
