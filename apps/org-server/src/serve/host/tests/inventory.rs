@@ -398,6 +398,68 @@ fn raw_parser_literals_are_probed_without_a_method_grammar() {
     }
 }
 
+fn expected_policy(method: &str, served: bool) -> HostPolicy {
+    match method {
+        "hello" => HostPolicy::Hello,
+        "msg.bind" | "msg.wait" | "status.set" => HostPolicy::InvalidRequest,
+        "subscribe" | "member.set_run_mode" => HostPolicy::Refuse,
+        _ if [
+            "session.",
+            "channel.",
+            "bridge.",
+            "agent.",
+            "run.",
+            "approval.",
+        ]
+        .iter()
+        .any(|prefix| method.starts_with(prefix)) =>
+        {
+            HostPolicy::Refuse
+        }
+        _ if served => HostPolicy::Serve,
+        _ if [
+            "work.",
+            "task.",
+            "bug.",
+            "checklist.",
+            "project.",
+            "area.",
+            "msg.",
+            "chat.",
+            "dm.",
+        ]
+        .iter()
+        .any(|prefix| method.starts_with(prefix)) =>
+        {
+            HostPolicy::Unserved
+        }
+        _ => HostPolicy::Refuse,
+    }
+}
+
+#[test]
+fn served_refused_families_never_expect_an_authorization_grant() {
+    for family in ["session", "channel", "bridge", "agent", "run", "approval"] {
+        let blocked = format!("{family}.open");
+        assert_eq!(
+            expected_policy(&blocked, true),
+            HostPolicy::Refuse,
+            "{blocked}"
+        );
+        assert_eq!(
+            expected_policy(&blocked, false),
+            HostPolicy::Refuse,
+            "{blocked}"
+        );
+        let adjacent = format!("{family}_other.open");
+        assert_eq!(
+            expected_policy(&adjacent, true),
+            HostPolicy::Serve,
+            "{adjacent}"
+        );
+    }
+}
+
 #[test]
 fn operation_table_covers_declared_and_served_methods_in_both_directions() {
     let (declared, served) = inventory();
@@ -407,29 +469,7 @@ fn operation_table_covers_declared_and_served_methods_in_both_directions() {
     let universe: BTreeSet<_> = declared.union(&served).cloned().collect();
     assert_eq!(names, universe, "missing or stale operation policy row");
     for row in rows {
-        let expected = match row.method.as_str() {
-            "hello" => HostPolicy::Hello,
-            "msg.bind" | "msg.wait" | "status.set" => HostPolicy::InvalidRequest,
-            "subscribe" | "member.set_run_mode" => HostPolicy::Refuse,
-            _ if served.contains(&row.method) => HostPolicy::Serve,
-            _ if [
-                "work.",
-                "task.",
-                "bug.",
-                "checklist.",
-                "project.",
-                "area.",
-                "msg.",
-                "chat.",
-                "dm.",
-            ]
-            .iter()
-            .any(|prefix| row.method.starts_with(prefix)) =>
-            {
-                HostPolicy::Unserved
-            }
-            _ => HostPolicy::Refuse,
-        };
+        let expected = expected_policy(&row.method, served.contains(&row.method));
         assert_eq!(row.policy, expected, "incorrect policy for {}", row.method);
     }
 }
