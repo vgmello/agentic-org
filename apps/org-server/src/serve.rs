@@ -2667,10 +2667,30 @@ mod tests {
 
     impl Client {
         fn connect(path: &Path) -> Self {
-            let stream = UnixStream::connect(path).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            Self::from_stream(UnixStream::connect(path).unwrap())
+        }
+
+        fn from_stream(stream: UnixStream) -> Self {
+            let timeout = stream.set_read_timeout(Some(Duration::from_secs(10)));
+            Self::with_timeout_result(stream, timeout)
+        }
+
+        fn with_timeout_result(mut stream: UnixStream, timeout: std::io::Result<()>) -> Self {
+            if let Err(error) = timeout {
+                // Darwin may reject socket options after the server has refused this peer.
+                assert_eq!(
+                    error.raw_os_error(),
+                    Some(libc::EINVAL),
+                    "set test client read timeout: {error}"
+                );
+                stream.set_nonblocking(true).unwrap();
+                let closed = std::io::Read::read(&mut stream, &mut [0]);
+                stream.set_nonblocking(false).unwrap();
+                assert!(
+                    matches!(closed, Ok(0)),
+                    "set test client read timeout: {error}; expected peer EOF, got {closed:?}"
+                );
+            }
             let reader = BufReader::new(stream.try_clone().unwrap());
             Self {
                 stream,

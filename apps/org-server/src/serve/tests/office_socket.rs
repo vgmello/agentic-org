@@ -241,6 +241,73 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
 }
 
 #[test]
+fn test_client_setup_accepts_a_live_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    let client = Client::from_stream(stream);
+    assert_eq!(
+        client.stream.read_timeout().unwrap(),
+        Some(Duration::from_secs(10))
+    );
+}
+
+#[test]
+#[should_panic(expected = "expected peer EOF")]
+fn test_client_setup_rejects_invalid_timeout_on_a_live_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    Client::with_timeout_result(stream, Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+}
+
+#[test]
+#[should_panic(expected = "expected peer EOF")]
+fn test_client_setup_rejects_invalid_timeout_with_buffered_data() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, mut peer) = UnixStream::pair().unwrap();
+    std::io::Write::write_all(&mut peer, b"x").unwrap();
+    Client::with_timeout_result(stream, Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+}
+
+#[test]
+fn test_client_setup_accepts_invalid_timeout_only_after_peer_eof() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    let mut client =
+        Client::with_timeout_result(stream, Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+    assert!(client.connection_ended());
+}
+
+#[test]
+fn test_client_setup_rejects_other_timeout_errors_after_peer_eof() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    for errno in [Some(libc::ECONNRESET), Some(libc::EACCES), None] {
+        let make_error = || match errno {
+            Some(errno) => std::io::Error::from_raw_os_error(errno),
+            None => std::io::Error::from(std::io::ErrorKind::InvalidInput),
+        };
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let expected = format!("set test client read timeout: {}", make_error());
+        let panic =
+            std::panic::catch_unwind(|| Client::with_timeout_result(stream, Err(make_error())))
+                .err()
+                .expect("unexpected timeout error must fail even after EOF");
+        let message = panic.downcast_ref::<String>().unwrap();
+        assert!(message.contains(&expected), "{message}");
+    }
+}
+
+#[test]
+fn test_client_setup_accepts_an_already_closed_peer() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (stream, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    let mut client = Client::from_stream(stream);
+    assert!(client.connection_ended());
+}
+
+#[test]
 fn accepted_office_socket_serves_only_matching_peer_uid_in_both_modes() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let uid = org_socket::effective_uid();
