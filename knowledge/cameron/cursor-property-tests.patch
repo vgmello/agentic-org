@@ -1,0 +1,1186 @@
+diff --git a/crates/org-office/src/store/org/activity/tests.rs b/crates/org-office/src/store/org/activity/tests.rs
+index 6dcbaf07..5300ea80 100644
+--- a/crates/org-office/src/store/org/activity/tests.rs
++++ b/crates/org-office/src/store/org/activity/tests.rs
+@@ -1062,3 +1062,581 @@ fn budget_org_activity_on_a_20000_row_log() {
+         assert!(plain.as_millis() <= 20 && selective.as_millis() <= 20);
+     }
+ }
++
++// ---- QA adversarial / property scratch tests (uncommitted) -----------------------------------
++
++struct Rng(u64);
++impl Rng {
++    fn next(&mut self) -> u64 {
++        let mut x = self.0;
++        x ^= x << 13;
++        x ^= x >> 7;
++        x ^= x << 17;
++        self.0 = x;
++        x
++    }
++    fn below(&mut self, n: u64) -> u64 {
++        self.next() % n
++    }
++    fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
++        xs[self.below(xs.len() as u64) as usize]
++    }
++    fn chance(&mut self, pct: u64) -> bool {
++        self.below(100) < pct
++    }
++}
++
++fn qa_change(rng: &mut Rng, ghosts: bool) -> OrgChange {
++    let n = rng.below(6);
++    let id = |p: &str| format!("{p}{n}");
++    let version = rng.pick(&[1u64, 1, 2, 3, 0]);
++    match rng.below(11) {
++        0 => team(&id("T"), version),
++        1 => member(&id("M"), version),
++        2 => membership(&id("S"), &id("T"), &id("M"), version),
++        3 => project_team(&id("Q"), &id("P"), &id("T"), version),
++        4 | 5 => project(&id("P"), version, rng.chance(40)),
++        6 => area(&id("A"), &id("P"), version, rng.chance(30)),
++        7 => match rng.below(4) {
++            0 => removed("team", &id("T")),
++            1 => removed("member", &id("M")),
++            2 => removed("membership", &id("S")),
++            _ => removed("project_team", &id("Q")),
++        },
++        8 if ghosts => removed("membership", "GHOST"),
++        8 => member(&id("M"), version),
++        9 => change(json!({"type": "a_kind_from_the_future"})),
++        _ => project(&id("P"), version, rng.chance(40)),
++    }
++}
++
++fn qa_rows(rng: &mut Rng, n: usize, ghosts: bool) -> Rows {
++    let mut clock = T0 + 10_000;
++    (0..n)
++        .map(|_| {
++            clock = match rng.below(10) {
++                0 => clock.saturating_sub(rng.below(60_000)).max(T0),
++                1 => clock,
++                _ => clock + rng.below(5_000),
++            };
++            let stamp = match rng.below(25) {
++                0 => "garbage".to_string(),
++                1 => "2026-11-08T12:00:00+01:00".to_string(),
++                2 => "1969-12-31T23:59:59.999Z".to_string(),
++                _ => at(clock),
++            };
++            let count = rng.pick(&[0usize, 1, 1, 1, 2, 3, 5]);
++            let changes = (0..count).map(|_| qa_change(rng, ghosts)).collect();
++            (stamp, changes)
++        })
++        .collect()
++}
++
++struct OrgRow {
++    seq: u64,
++    command_id: String,
++    at: String,
++    actor: Option<String>,
++    changes: Vec<OrgChange>,
++}
++
++/// Newest first, read straight from the table (independent of `Log`).
++fn qa_oracle_rows(store: &Store, epoch: u64) -> Vec<OrgRow> {
++    store
++        .read(|db| {
++            let mut s = db
++                .prepare(
++                    "SELECT e.seq, e.command_id, e.at, e.body, c.principal_member FROM events e
++                     LEFT JOIN commands c USING (command_id) WHERE e.kind = 'org.changed'
++                     AND e.epoch = ?1 ORDER BY e.seq DESC",
++                )
++                .unwrap();
++            let rows = s
++                .query_map([epoch as i64], |r| {
++                    Ok(OrgRow {
++                        seq: r.get::<_, i64>(0)? as u64,
++                        command_id: r.get(1)?,
++                        at: r.get(2)?,
++                        changes: serde_json::from_str(&r.get::<_, String>(3)?).unwrap(),
++                        actor: r.get(4)?,
++                    })
++                })
++                .unwrap()
++                .collect::<rusqlite::Result<Vec<_>>>()
++                .unwrap();
++            Ok(rows)
++        })
++        .unwrap()
++}
++
++fn qa_describe(rows: &[OrgRow], k: usize, i: usize) -> (String, rules::ActivitySubject) {
++    let change = &rows[k].changes[i];
++    let mut previous = None;
++    if let Some(((kind, id), _)) = rules::entity(change).filter(|_| rules::needs_previous(change)) {
++        'find: for j in k..rows.len().min(k + LOOKBACK_ROWS + 1) {
++            let upto = if j == k { i } else { rows[j].changes.len() };
++            for x in (0..upto).rev() {
++                if let Some(((k2, id2), true)) = rules::entity(&rows[j].changes[x]) {
++                    if k2 == kind && id2 == id {
++                        previous = Some(&rows[j].changes[x]);
++                        break 'find;
++                    }
++                }
++            }
++        }
++    }
++    rules::describe(change, previous)
++}
++
++/// The documented semantics, over memory: (entries, scanned_to, frontier, exhausted).
++fn qa_oracle_page(
++    all_rows: &[OrgRow],
++    q: &OrgActivityQuery,
++) -> (Vec<ActivityEntry>, Option<ActivityPosition>, u64, bool) {
++    let mut top = q.ceiling;
++    if let Some(b) = q.before {
++        top = top.min(b.seq - u64::from(b.index == 0));
++    }
++    let start = all_rows.iter().position(|r| r.seq <= top).unwrap_or(all_rows.len());
++    let rows = &all_rows[start..];
++    let (mut entries, mut scanned_to, mut frontier) = (Vec::new(), None, q.prev_key);
++    let (limit, scan) = (q.limit.max(1), q.scan.max(1));
++    for (k, row) in rows.iter().enumerate() {
++        if k == scan {
++            return (entries, scanned_to, frontier, false);
++        }
++        let at_ms = time::parse_rfc3339_ms(&row.at);
++        let key = at_ms.map_or(frontier, |a| a.min(frontier));
++        let below = q
++            .before
++            .filter(|b| b.seq == row.seq)
++            .map_or(usize::MAX, |b| b.index);
++        for index in (0..row.changes.len().min(below)).rev() {
++            let (verb, subject) = qa_describe(rows, k, index);
++            if !q.matches(row.actor.as_deref(), &subject) {
++                continue;
++            }
++            if entries.len() == limit {
++                let last: &ActivityEntry = entries.last().unwrap();
++                return (entries.clone(), Some(last.position), last.key, false);
++            }
++            entries.push(ActivityEntry {
++                position: position(row.seq, index),
++                verb,
++                at_ms,
++                key,
++                actor: row.actor.clone(),
++                subject,
++                group: row.command_id.clone(),
++            });
++        }
++        scanned_to = Some(position(row.seq, 0));
++        frontier = key;
++    }
++    (entries, scanned_to, frontier, true)
++}
++
++fn qa_random_filters(rng: &mut Rng, q: &mut OrgActivityQuery) {
++    if rng.chance(30) {
++        q.member = Some(rng.pick(&["M0", "M1", "M3", "MA0", "MA1", "MX"]).into());
++    }
++    if rng.chance(30) {
++        let members: Vec<String> = match rng.below(3) {
++            0 => vec![],
++            1 => vec!["M2".into()],
++            _ => vec!["M1".into(), "MA1".into(), "MA3".into()],
++        };
++        q.team = Some(TeamFilter {
++            id: rng.pick(&["T0", "T2", "T5", "TX"]).into(),
++            members,
++        });
++    }
++    if rng.chance(30) {
++        q.project = Some(rng.pick(&["P0", "P1", "P4", "PX"]).into());
++    }
++}
++
++const QA_SIZES: [u64; 7] = [0, 1, 2, 5, 40, 300, 1500];
++const QA_LS: [usize; 7] = [0, 1, 2, 3, 7, 100, 2000];
++
++fn qa_build(seed: u64, size: usize, ghosts: bool) -> (TempDir, Store, Rng) {
++    let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
++    let (dir, store) = store();
++    append(&store, qa_rows(&mut rng, size, ghosts));
++    store.run_sql_for_test(
++        "INSERT INTO commands (command_id, epoch, seq, expires_at, principal_member)
++         SELECT command_id, epoch, seq, '2026-12-08T12:00:00.000Z', 'MA' || (seq % 4)
++         FROM events WHERE seq > 1 AND seq % 3 <> 0",
++    );
++    (dir, store, rng)
++}
++
++/// One checked walk: returns the joined entries and the number of pages.
++fn qa_walk(store: &Store, rows: &[OrgRow], start: OrgActivityQuery) -> (Vec<ActivityEntry>, usize) {
++    let (mut q, mut out, mut pages) = (start, Vec::new(), 0usize);
++    loop {
++        pages += 1;
++        assert!(pages <= 200_000, "no progress");
++        let page = read(store, &q).unwrap();
++        assert_eq!(page, read(store, &q).unwrap(), "pure function of the query");
++        assert!(page.entries.len() <= q.limit.max(1));
++        let (o_entries, o_scanned, o_frontier, o_exhausted) = qa_oracle_page(rows, &q);
++        assert_eq!(
++            (&page.entries, page.scanned_to, page.frontier, page.exhausted),
++            (&o_entries, o_scanned, o_frontier, o_exhausted),
++            "oracle mismatch for {q:?}"
++        );
++        // rows scanned never exceed scan
++        if let Some(to) = page.scanned_to {
++            let mut top = q.ceiling;
++            if let Some(b) = q.before {
++                top = top.min(b.seq - u64::from(b.index == 0));
++            }
++            let scanned = rows.iter().filter(|r| r.seq >= to.seq && r.seq <= top).count();
++            assert!(scanned <= q.scan.max(1), "scan cap {scanned} > {}", q.scan);
++        }
++        assert!(page.frontier <= q.prev_key);
++        for w in page.entries.windows(2) {
++            assert!(w[0].position > w[1].position && w[0].key >= w[1].key);
++        }
++        if let (Some(last_out), Some(first)) = (out.last(), page.entries.first()) {
++            let last_out: &ActivityEntry = last_out;
++            assert!(last_out.position > first.position, "duplicate/disorder at join");
++            assert!(last_out.key >= first.key);
++        }
++        out.extend(page.entries.iter().cloned());
++        if page.exhausted {
++            return (out, pages);
++        }
++        let to = page.scanned_to.expect("a non-exhausted page scanned something");
++        assert!(q.before.is_none_or(|b| to < b), "no progress: {to:?} vs {:?}", q.before);
++        (q.before, q.prev_key) = (Some(to), page.frontier);
++    }
++}
++
++#[test]
++fn qa_random_walks_join_to_the_unpaged_read_and_match_the_oracle() {
++    let mut walks = 0;
++    let mut single = 0;
++    for seed in 1..=40u64 {
++        let size = QA_SIZES[(seed % 7) as usize] as usize;
++        let (_dir, store, mut rng) = qa_build(seed, size, size <= 40);
++        let head = head_seq(&store);
++        let rows = qa_oracle_rows(&store, 1);
++        // Unfiltered whole read.
++        let mut base = query(head);
++        (base.limit, base.scan) = (usize::MAX, usize::MAX);
++        let whole = read(&store, &base).unwrap();
++        assert!(whole.exhausted);
++        // keys vs a model: running min of parseable `at` newest first, per row
++        let mut key = u64::MAX;
++        let mut expect_keys = Vec::new();
++        for r in &rows {
++            key = time::parse_rfc3339_ms(&r.at).map_or(key, |a| a.min(key));
++            expect_keys.extend(std::iter::repeat(key).take(r.changes.len()));
++        }
++        assert_eq!(
++            whole.entries.iter().map(|e| e.key).collect::<Vec<_>>(),
++            expect_keys
++        );
++        // Random walks, random filters.
++        let big = size > 300;
++        for _ in 0..4 {
++            let mut q = query(if rng.chance(30) && head > 1 { 1 + rng.below(head) } else { head });
++            q.limit = rng.pick(&QA_LS);
++            q.scan = rng.pick(&QA_LS);
++            if big && (q.limit <= 3 || q.scan <= 1) && rng.chance(70) {
++                q.limit = 100;
++            }
++            qa_random_filters(&mut rng, &mut q);
++            if rng.chance(20) {
++                q.prev_key = rng.pick(&[0u64, T0 + 20_000, u64::MAX - 1]);
++            }
++            let mut whole_q = q.clone();
++            (whole_q.limit, whole_q.scan) = (usize::MAX, usize::MAX);
++            let whole_f = read(&store, &whole_q).unwrap();
++            assert!(whole_f.exhausted);
++            // filter equals the unfiltered read filtered afterwards (keys are filter-independent)
++            let mut unf = whole_q.clone();
++            (unf.member, unf.team, unf.project) = (None, None, None);
++            let unf = read(&store, &unf).unwrap();
++            let expected: Vec<_> = unf
++                .entries
++                .iter()
++                .filter(|e| q.matches(e.actor.as_deref(), &e.subject))
++                .cloned()
++                .collect();
++            assert_eq!(whole_f.entries, expected, "filter after vs before: {whole_q:?}");
++            let (joined, pages) = qa_walk(&store, &rows, q.clone());
++            assert_eq!(joined, whole_f.entries, "join != unpaged: {q:?} ({pages} pages)");
++            walks += 1;
++        }
++        // Random single pages from random cursors.
++        for _ in 0..25 {
++            let mut q = query(head);
++            if rng.chance(50) {
++                q.ceiling = rng.below(head + 1);
++            }
++            q.limit = rng.pick(&QA_LS);
++            q.scan = rng.pick(&QA_LS);
++            qa_random_filters(&mut rng, &mut q);
++            q.prev_key = rng.pick(&[u64::MAX, 0, T0 + 30_000, T0, 1]);
++            if q.ceiling >= 1 && rng.chance(70) {
++                let seq = 1 + rng.below(q.ceiling);
++                let len = rows.iter().find(|r| r.seq == seq).map_or(0, |r| r.changes.len());
++                let small = rng.below(4) as usize;
++                let index = rng.pick(&[0usize, 1, len, len + 1, usize::MAX, small]);
++                q.before = Some(position(seq, index));
++            }
++            let got = read(&store, &q).unwrap();
++            let (e, s, f, x) = qa_oracle_page(&rows, &q);
++            assert_eq!((got.entries, got.scanned_to, got.frontier, got.exhausted), (e, s, f, x), "{q:?}");
++            single += 1;
++        }
++    }
++    eprintln!("QA org: {walks} walks, {single} single pages");
++}
++
++fn qa_kind(r: &Result<ActivityPage, ActivityError>) -> String {
++    match r {
++        Ok(p) => format!(
++            "ok entries={} scanned_to={:?} frontier={} exhausted={}",
++            p.entries.len(),
++            p.scanned_to.map(|t| (t.seq, t.index)),
++            p.frontier,
++            p.exhausted
++        ),
++        Err(ActivityError::SnapshotRequired) => "SnapshotRequired".into(),
++        Err(ActivityError::Store(e)) => format!("Store({e:?})"),
++    }
++}
++
++#[test]
++fn qa_org_edge_table() {
++    let (_dir, store) = store();
++    append(
++        &store,
++        vec![
++            (at(T0 + 10), vec![team("T1", 1), member("M1", 1)]),
++            (at(T0 + 20), vec![project("P1", 1, false)]),
++            (at(T0 + 30), vec![project("P1", 2, true), team("T1", 2), team("T1", 3)]),
++            (at(T0 + 25), vec![removed("membership", "GHOST")]),
++            (at(T0 + 40), vec![member("M2", 1), member("M2", 2), member("M2", 3)]),
++        ],
++    );
++    let head = head_seq(&store);
++    assert_eq!(head, 6);
++    let mut table: Vec<(String, String)> = Vec::new();
++    let mut run = |name: String, q: OrgActivityQuery| {
++        let r = read(&store, &q);
++        table.push((name, qa_kind(&r)));
++    };
++    for limit in [0usize, 1, usize::MAX] {
++        for scan in [0usize, 1, 2, usize::MAX] {
++            let mut q = query(head);
++            (q.limit, q.scan) = (limit, scan);
++            run(format!("limit {limit} scan {scan}"), q);
++        }
++    }
++    for (name, seq, index) in [
++        ("before=ceiling row idx0", 6u64, 0usize),
++        ("before=ceiling row idx1", 6, 1),
++        ("before=ceiling row idx=len", 6, 3),
++        ("before=ceiling row idx=MAX", 6, usize::MAX),
++        ("before above ceiling", 7, 0),
++        ("before first row idx0", 1, 0),
++        ("before first row idx1", 1, 1),
++        ("before seq 0", 0, 0),
++        ("before seq u64::MAX", u64::MAX, 0),
++        ("before seq i64::MAX", i64::MAX as u64, 0),
++        ("before seq i64::MAX+1", i64::MAX as u64 + 1, 0),
++    ] {
++        let mut q = query(head);
++        q.before = Some(position(seq, index));
++        run(name.into(), q);
++    }
++    for (name, ceiling) in [
++        ("ceiling 0", 0u64),
++        ("ceiling head+1", head + 1),
++        ("ceiling 1<<62", 1 << 62),
++        ("ceiling i64::MAX", i64::MAX as u64),
++        ("ceiling i64::MAX+1", i64::MAX as u64 + 1),
++        ("ceiling u64::MAX", u64::MAX),
++    ] {
++        run(name.into(), query(ceiling));
++        let mut q = query(ceiling);
++        q.before = Some(position(3, 0));
++        run(format!("{name} + before 3/0"), q);
++    }
++    for (name, pk) in [("prev_key 0", 0u64), ("prev_key MAX", u64::MAX)] {
++        let mut q = query(head);
++        q.prev_key = pk;
++        run(name.into(), q);
++    }
++    for epoch in [0u64, 2, u64::MAX, i64::MAX as u64 + 1] {
++        let mut q = query(head);
++        q.epoch = epoch;
++        run(format!("epoch {epoch}"), q);
++        let mut q = query(head);
++        q.before = Some(ActivityPosition { epoch, seq: 3, index: 0 });
++        run(format!("before.epoch {epoch}"), q);
++    }
++    // ceiling 0 with the log
++    let mut q = query(0);
++    q.limit = 0;
++    run("ceiling 0 limit 0".into(), q);
++    for (name, t) in table {
++        eprintln!("QAORG {name} -> {t}");
++    }
++    // a seq with no org.changed row (other kind), retained range
++    store.run_sql_for_test(
++        "INSERT INTO events (epoch, seq, kind, command_id, at, body)
++         VALUES (1, 7, 'x.y', 'X7', 'zzz', 'nope')",
++    );
++    let mut q = query(7);
++    q.before = Some(position(7, 0));
++    eprintln!("QAORG before at other-kind row 7/0 -> {}", qa_kind(&read(&store, &q)));
++    q.before = Some(position(7, 5));
++    eprintln!("QAORG before at other-kind row 7/5 -> {}", qa_kind(&read(&store, &q)));
++    // one row log
++    let (_d2, s2) = store_one();
++    eprintln!("QAORG one-row log -> {}", qa_kind(&read(&s2, &query(1))));
++    let mut q = query(1);
++    q.before = Some(position(1, 0));
++    eprintln!("QAORG one-row before 1/0 -> {}", qa_kind(&read(&s2, &q)));
++    q.before = Some(position(1, 1));
++    eprintln!("QAORG one-row before 1/1 -> {}", qa_kind(&read(&s2, &q)));
++    // empty log
++    s2.run_sql_for_test("DELETE FROM events");
++    eprintln!("QAORG empty log ceiling 0 -> {}", qa_kind(&read(&s2, &query(0))));
++    eprintln!("QAORG empty log ceiling 1 -> {}", qa_kind(&read(&s2, &query(1))));
++}
++
++fn store_one() -> (TempDir, Store) {
++    store()
++}
++
++#[test]
++fn qa_org_epoch_change_between_pages_needs_a_snapshot_and_returns_no_rows() {
++    let (_dir, store) = store();
++    append(&store, filler(6));
++    let mut q = query(7);
++    q.limit = 2;
++    let first = read(&store, &q).unwrap();
++    (q.before, q.prev_key) = (first.scanned_to, first.frontier);
++    // rows 5..7 move to a new epoch 2 (as a replaced history would)
++    store.run_sql_for_test("UPDATE events SET epoch = 2 WHERE seq >= 5");
++    let r = read(&store, &q);
++    eprintln!("QAORG epoch moved: {}", qa_kind(&r));
++    assert!(matches!(r, Err(ActivityError::SnapshotRequired)));
++    // epoch-2 query with epoch-1 cursor
++    let mut q2 = query(7);
++    q2.epoch = 2;
++    q2.before = first.scanned_to;
++    assert!(matches!(read(&store, &q2), Err(ActivityError::SnapshotRequired)));
++    // epoch-2 page 1 only sees epoch-2 rows
++    q2.before = None;
++    let p = read(&store, &q2).unwrap();
++    assert!(p.entries.iter().all(|e| e.position.epoch == 2 && e.position.seq >= 5));
++    assert_eq!(p.entries.len(), 3);
++    assert!(p.exhausted && p.history_truncated);
++}
++
++#[test]
++fn qa_org_reads_do_not_write() {
++    let (_dir, store, _rng) = qa_build(7, 300, false);
++    let version = |db: &Connection| db.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0)).unwrap();
++    store
++        .read(|spy| {
++            let v = version(spy);
++            store.read(|db| {
++                let c = db.total_changes();
++                for scan in [1usize, 100, usize::MAX] {
++                    let mut q = query(301);
++                    q.scan = scan;
++                    q.project = Some("P1".into());
++                    page(db, &q).unwrap();
++                }
++                assert_eq!(db.total_changes(), c);
++                Ok(())
++            })?;
++            assert_eq!(version(spy), v);
++            Ok(())
++        })
++        .unwrap();
++}
++
++#[test]
++fn qa_org_large_logs_cross_the_lookback_and_block_edges() {
++    let (mut walks, mut single) = (0, 0);
++    for (seed, size) in [(101u64, 2_600usize), (102, 3_000), (103, 2_049)] {
++        let (_dir, store, mut rng) = qa_build(seed, size, true);
++        let head = head_seq(&store);
++        let rows = qa_oracle_rows(&store, 1);
++        for (limit, scan) in [(100usize, 2_000usize), (2_000, 2_000), (usize::MAX, usize::MAX), (3_000, 7), (50, 513)] {
++            let mut q = query(head);
++            (q.limit, q.scan) = (limit, scan);
++            qa_random_filters(&mut rng, &mut q);
++            let mut w = q.clone();
++            (w.limit, w.scan) = (usize::MAX, usize::MAX);
++            let whole = read(&store, &w).unwrap();
++            let (joined, _) = qa_walk(&store, &rows, q.clone());
++            assert_eq!(joined, whole.entries, "{q:?}");
++            walks += 1;
++        }
++        for _ in 0..30 {
++            let mut q = query(head);
++            if rng.chance(30) {
++                q.ceiling = 1 + rng.below(head);
++            }
++            (q.limit, q.scan) = (rng.pick(&[1usize, 50, 2_000]), rng.pick(&[1usize, 100, 2_000, usize::MAX]));
++            qa_random_filters(&mut rng, &mut q);
++            let seq = 1 + rng.below(q.ceiling);
++            q.before = Some(position(seq, rng.below(3) as usize));
++            let got = read(&store, &q).unwrap();
++            let (e, s, f, x) = qa_oracle_page(&rows, &q);
++            assert_eq!((got.entries, got.scanned_to, got.frontier, got.exhausted), (e, s, f, x), "{q:?}");
++            single += 1;
++        }
++    }
++    eprintln!("QA org large: {walks} walks, {single} single pages");
++}
++
++#[test]
++fn qa_org_time_parser_never_panics_on_arbitrary_text() {
++    let mut rng = Rng(0xDEADBEEF);
++    let alphabet: Vec<&str> = vec![
++        "0", "1", "2", "9", "-", "T", "t", ":", ".", "Z", "z", "+", " ", "\u{e9}", "\u{1F600}", "9999", "0000", "60", "99",
++    ];
++    for _ in 0..200_000 {
++        let n = rng.below(12);
++        let s: String = (0..n).map(|_| rng.pick(&alphabet)).collect();
++        let _ = time::parse_rfc3339_ms(&s);
++        let canon = format!(
++            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}{}",
++            rng.below(10_000),
++            rng.below(14),
++            rng.below(33),
++            rng.below(26),
++            rng.below(62),
++            rng.below(62),
++            rng.below(1000),
++            rng.pick(&["Z", "+23:59", "-23:59", "+24:00", ""])
++        );
++        let _ = time::parse_rfc3339_ms(&canon);
++    }
++}
++
++#[test]
++fn qa_org_before_naming_no_stored_change_is_accepted_as_the_top_of_its_row() {
++    let (_dir, store) = store();
++    append(&store, filler(3)); // seqs 2..=4, one change each
++    let mut q = query(4);
++    q.before = Some(position(3, 7)); // row 3 has a single change (index 0)
++    let r = read(&store, &q);
++    assert!(
++        matches!(r, Err(ActivityError::SnapshotRequired)),
++        "index 7 of a 1-change row resumed as 'below the whole row': {:?}",
++        r.map(|p| p.entries.iter().map(|e| e.position).collect::<Vec<_>>())
++    );
++}
+diff --git a/crates/org-office/src/store/work/tests/activity.rs b/crates/org-office/src/store/work/tests/activity.rs
+index 6290e4c6..cbbafce6 100644
+--- a/crates/org-office/src/store/work/tests/activity.rs
++++ b/crates/org-office/src/store/work/tests/activity.rs
+@@ -5,6 +5,7 @@ use super::*;
+ use org_proto::work::WorkEventKind;
+ use org_proto::Position;
+ use org_work::LatestActivity::{At, Unknown};
++use std::collections::HashMap;
+ use std::time::Instant;
+ 
+ #[derive(Clone)]
+@@ -885,3 +886,587 @@ fn activity_budget_100k_events_2000_items_one_hot_item() {
+         assert!(recency <= 30.0, "recency budget");
+     }
+ }
++
++// ---- QA adversarial / property scratch tests (uncommitted) -----------------------------------
++
++struct Rng(u64);
++impl Rng {
++    fn next(&mut self) -> u64 {
++        let mut x = self.0;
++        x ^= x << 13;
++        x ^= x >> 7;
++        x ^= x << 17;
++        self.0 = x;
++        x
++    }
++    fn below(&mut self, n: u64) -> u64 {
++        self.next() % n
++    }
++    fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
++        xs[self.below(xs.len() as u64) as usize]
++    }
++    fn chance(&mut self, pct: u64) -> bool {
++        self.below(100) < pct
++    }
++}
++
++const QA_TARGETS: [&str; 9] = ["A", "B", "C", "H", "H", "H", "a", "Z9", "I001"];
++const QA_MEMBERS: [&str; 4] = ["m0", "m1", "m2", "m3"];
++
++fn qa_ev(rng: &mut Rng, clock: &mut u64) -> Ev {
++    *clock = match rng.below(10) {
++        0 => clock.saturating_sub(rng.below(60_000)).max(T0),
++        1 => *clock,
++        _ => *clock + rng.below(5_000),
++    };
++    let mut e = ev(rng.pick(&QA_TARGETS), *clock);
++    match rng.below(25) {
++        0 => e.at = "yesterday".into(),
++        1 => e.at = "1969-12-31T23:59:59.999Z".into(),
++        _ => {}
++    }
++    if rng.chance(70) {
++        e = e.by(rng.pick(&QA_MEMBERS));
++    } else {
++        e.actor = None;
++    }
++    if rng.chance(30) {
++        e = e.assigned(rng.pick(&QA_MEMBERS));
++    }
++    e
++}
++
++fn qa_fill(fx: &Fx, rng: &mut Rng, n: usize) {
++    let mut clock = T0 + 10_000;
++    let rows: Vec<Vec<Ev>> = (0..n)
++        .map(|_| {
++            let count = rng.pick(&[0usize, 1, 1, 2, 3, 5]);
++            (0..count).map(|_| qa_ev(rng, &mut clock)).collect()
++        })
++        .collect();
++    fx.commit(rows);
++    for t in QA_TARGETS {
++        if rng.chance(75) {
++            fx.place(t, rng.pick(&["p0", "p1", "p2"]));
++        }
++    }
++    if rng.chance(50) {
++        fx.store
++            .write(|db| {
++                db.execute(
++                    "UPDATE work_items SET data = json_set(data, '$.deleted', json('true')) WHERE id = 'B'",
++                    [],
++                )
++                .map_err(OfficeError::storage)?;
++                Ok(((), None))
++            })
++            .unwrap();
++    }
++}
++
++struct WModel {
++    rows: Vec<u64>,
++    events: Vec<(WorkActivityPosition, WorkEvent)>,
++    project: HashMap<String, Option<String>>,
++}
++
++fn qa_model(fx: &Fx) -> WModel {
++    fx.store
++        .read(|db| {
++            let rows = db
++                .prepare("SELECT seq FROM work_feed ORDER BY seq DESC")
++                .unwrap()
++                .query_map([], |r| Ok(r.get::<_, i64>(0)? as u64))
++                .unwrap()
++                .collect::<rusqlite::Result<Vec<_>>>()
++                .unwrap();
++            let mut events = db
++                .prepare("SELECT feed_seq, target_id, version, data FROM work_events")
++                .unwrap()
++                .query_map([], |r| {
++                    let data: String = r.get(3)?;
++                    Ok((
++                        WorkActivityPosition {
++                            feed_seq: r.get::<_, i64>(0)? as u64,
++                            target_id: r.get(1)?,
++                            version: r.get::<_, i64>(2)? as u64,
++                        },
++                        serde_json::from_str::<WorkEvent>(&data).unwrap(),
++                    ))
++                })
++                .unwrap()
++                .collect::<rusqlite::Result<Vec<_>>>()
++                .unwrap();
++            events.sort_by(|a, b| b.0.cmp(&a.0));
++            let project = db
++                .prepare("SELECT id, json_extract(data, '$.project_id') FROM work_items")
++                .unwrap()
++                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
++                .unwrap()
++                .collect::<rusqlite::Result<HashMap<_, _>>>()
++                .unwrap();
++            Ok(WModel { rows, events, project })
++        })
++        .unwrap()
++}
++
++fn marker(seq: u64) -> WorkActivityPosition {
++    pos(seq, "", 0)
++}
++
++fn qa_valid_before(m: &WModel, q: &WorkActivityQuery) -> bool {
++    let Some(b) = &q.before else { return true };
++    if b.feed_seq > q.ceiling {
++        return false;
++    }
++    if b.target_id.is_empty() {
++        b.version == 0 && m.rows.contains(&b.feed_seq)
++    } else {
++        m.events.iter().any(|(p, _)| p == b)
++    }
++}
++
++type WPage = (Vec<(WorkActivityPosition, Option<u64>, u64)>, Option<WorkActivityPosition>, u64, bool);
++
++fn qa_flat(p: &WorkActivityPage) -> WPage {
++    (
++        p.entries.iter().map(|e| (e.position.clone(), e.at_ms, e.key)).collect(),
++        p.scanned_to.clone(),
++        p.frontier,
++        p.exhausted,
++    )
++}
++
++fn qa_oracle(m: &WModel, q: &WorkActivityQuery) -> WPage {
++    let (scan, limit) = (q.scan.max(1) as usize, q.limit.max(1) as usize);
++    let b = q.before.as_ref();
++    let start = b.map_or(q.ceiling, |b| b.feed_seq);
++    let mut entries: Vec<(WorkActivityPosition, Option<u64>, u64)> = Vec::new();
++    let (mut key, mut scanned_to, mut scanned) = (q.prev_key, None, 0usize);
++    for &seq in m.rows.iter().filter(|s| **s <= start) {
++        let partial = b.filter(|b| b.feed_seq == seq);
++        if partial.is_none() {
++            if scanned == scan {
++                return (entries, scanned_to, key, false);
++            }
++            scanned += 1;
++        }
++        scanned_to = Some(marker(seq));
++        for (p, event) in m.events.iter().filter(|(p, _)| p.feed_seq == seq) {
++            if b.is_some_and(|b| p >= b) {
++                continue;
++            }
++            let at_ms = org_work::parse_ms(&event.at);
++            key = at_ms.map_or(key, |a| a.min(key));
++            let in_project = q.project.as_deref().is_none_or(|want| {
++                m.project.get(&p.target_id).and_then(|x| x.as_deref()) == Some(want)
++            });
++            if q.involves(event) && in_project {
++                if entries.len() == limit {
++                    let last = entries.last().unwrap();
++                    return (entries.clone(), Some(last.0.clone()), last.2, false);
++                }
++                entries.push((p.clone(), at_ms, key));
++            }
++            scanned_to = Some(p.clone());
++        }
++    }
++    (entries, scanned_to, key, true)
++}
++
++fn qa_filters(rng: &mut Rng, q: &mut WorkActivityQuery) {
++    if rng.chance(30) {
++        q.member = Some(rng.pick(&["m0", "m1", "m3", "nobody"]).into());
++    }
++    if rng.chance(30) {
++        q.team_members = Some(match rng.below(3) {
++            0 => vec![],
++            1 => vec!["m2".into()],
++            _ => vec!["m0".into(), "m1".into()],
++        });
++    }
++    if rng.chance(30) {
++        q.project = Some(rng.pick(&["p0", "p1", "p2", "pX"]).into());
++    }
++}
++
++const QA_LS: [u32; 7] = [0, 1, 2, 3, 7, 100, 2000];
++
++fn qa_walk(fx: &Fx, m: &WModel, start: WorkActivityQuery) -> (Vec<(WorkActivityPosition, u64)>, usize) {
++    let (mut q, mut out, mut pages) = (start, Vec::<(WorkActivityPosition, u64)>::new(), 0usize);
++    loop {
++        pages += 1;
++        assert!(pages <= 200_000, "no progress");
++        let page = fx.reads.activity_page(&q).unwrap();
++        assert_eq!(page, fx.reads.activity_page(&q).unwrap(), "pure function of the query");
++        assert!(page.entries.len() <= q.limit.max(1) as usize);
++        assert_eq!(qa_flat(&page), qa_oracle(m, &q), "oracle mismatch for {q:?}");
++        if let Some(to) = &page.scanned_to {
++            let start = q.before.as_ref().map_or(q.ceiling, |b| b.feed_seq);
++            let counted = m
++                .rows
++                .iter()
++                .filter(|s| **s >= to.feed_seq && **s <= start)
++                .filter(|s| q.before.as_ref().is_none_or(|b| b.feed_seq != **s))
++                .count();
++            assert!(counted <= q.scan.max(1) as usize, "scan cap: {counted} > {}", q.scan);
++        }
++        assert!(page.frontier <= q.prev_key);
++        for w in page.entries.windows(2) {
++            assert!(w[0].position > w[1].position && w[0].key >= w[1].key);
++        }
++        if let (Some(last), Some(first)) = (out.last(), page.entries.first()) {
++            assert!(last.0 > first.position, "duplicate/disorder at the join");
++            assert!(last.1 >= first.key);
++        }
++        out.extend(page.entries.iter().map(|e| (e.position.clone(), e.key)));
++        if page.exhausted {
++            return (out, pages);
++        }
++        let to = page.scanned_to.clone().expect("a non-exhausted page scanned something");
++        assert!(q.before.as_ref().is_none_or(|b| to < *b), "no progress {to:?} vs {:?}", q.before);
++        (q.before, q.prev_key) = (Some(to), page.frontier);
++    }
++}
++
++#[test]
++fn qa_work_random_walks_join_to_the_unpaged_read_and_match_the_oracle() {
++    let (mut walks, mut single, mut latest_checks, mut invalid) = (0, 0, 0, 0);
++    let sizes = [0usize, 1, 2, 5, 40, 300, 1500];
++    for seed in 1..=40u64 {
++        let size = sizes[(seed % 7) as usize];
++        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
++        let fx = setup(true);
++        qa_fill(&fx, &mut rng, size);
++        let m = qa_model(&fx);
++        let head = fx.reads.head().unwrap().1;
++        assert_eq!(head, m.rows.first().copied().unwrap_or(0));
++        // Unpaged read: independent key model.
++        let mut base = query(head);
++        (base.limit, base.scan) = (u32::MAX, u32::MAX);
++        let whole = fx.reads.activity_page(&base).unwrap();
++        assert!(whole.exhausted);
++        let mut key = u64::MAX;
++        let expect: Vec<_> = m
++            .events
++            .iter()
++            .map(|(p, e)| {
++                key = org_work::parse_ms(&e.at).map_or(key, |a| a.min(key));
++                (p.clone(), key)
++            })
++            .collect();
++        assert_eq!(
++            whole.entries.iter().map(|e| (e.position.clone(), e.key)).collect::<Vec<_>>(),
++            expect
++        );
++        let big = size > 300;
++        for _ in 0..4 {
++            let mut q = query(if rng.chance(30) && head > 1 { 1 + rng.below(head) } else { head });
++            q.limit = rng.pick(&QA_LS);
++            q.scan = rng.pick(&QA_LS);
++            if big && (q.limit <= 3 || q.scan <= 1) && rng.chance(70) {
++                q.limit = 100;
++            }
++            qa_filters(&mut rng, &mut q);
++            if rng.chance(20) {
++                q.prev_key = rng.pick(&[0u64, T0 + 20_000, u64::MAX - 1]);
++            }
++            let mut whole_q = q.clone();
++            (whole_q.limit, whole_q.scan) = (u32::MAX, u32::MAX);
++            let whole_f = fx.reads.activity_page(&whole_q).unwrap();
++            assert!(whole_f.exhausted);
++            let (joined, pages) = qa_walk(&fx, &m, q.clone());
++            assert_eq!(
++                joined,
++                whole_f.entries.iter().map(|e| (e.position.clone(), e.key)).collect::<Vec<_>>(),
++                "join != unpaged: {q:?} ({pages} pages)"
++            );
++            walks += 1;
++        }
++        for _ in 0..25 {
++            let mut q = query(head);
++            if rng.chance(40) {
++                q.ceiling = rng.below(head + 1);
++            }
++            q.limit = rng.pick(&QA_LS);
++            q.scan = rng.pick(&QA_LS);
++            qa_filters(&mut rng, &mut q);
++            q.prev_key = rng.pick(&[u64::MAX, 0, T0 + 30_000, T0, 1]);
++            if rng.chance(75) {
++                q.before = Some(match rng.below(6) {
++                    0 | 1 if !m.events.is_empty() => m.events[rng.below(m.events.len() as u64) as usize].0.clone(),
++                    2 => marker(rng.below(head + 3)),
++                    3 => pos(rng.below(head + 3), rng.pick(&["A", "H", "Z", "nope"]), rng.below(6)),
++                    4 => pos(rng.below(head + 1), "", rng.below(2)),
++                    _ => marker(1 + rng.below(head.max(1))),
++                });
++            }
++            let got = fx.reads.activity_page(&q);
++            if qa_valid_before(&m, &q) {
++                let got = got.unwrap_or_else(|e| panic!("valid query refused ({e:?}): {q:?}"));
++                assert_eq!(qa_flat(&got), qa_oracle(&m, &q), "{q:?}");
++                single += 1;
++            } else {
++                assert!(matches!(got, Err(WorkActivityError::InvalidPosition)), "{q:?}: {got:?}");
++                invalid += 1;
++            }
++        }
++        // latest_by_project against the model
++        for _ in 0..4 {
++            let ceiling = rng.pick(&[0u64, head, head / 2, head + 5, u64::MAX, i64::MAX as u64, i64::MAX as u64 + 1]);
++            let projects: Vec<String> = ["p0", "p1", "p2", "pX", "p0"][..(1 + rng.below(5) as usize)]
++                .iter()
++                .map(|s| s.to_string())
++                .collect();
++            let got = fx.reads.latest_by_project(ceiling, &projects).unwrap();
++            let want: Vec<(String, LatestActivity)> = projects
++                .iter()
++                .map(|p| {
++                    let newest = m
++                        .events
++                        .iter()
++                        .filter(|(e, _)| e.feed_seq <= ceiling)
++                        .filter(|(e, _)| m.project.get(&e.target_id).and_then(|x| x.as_deref()) == Some(p.as_str()))
++                        .next();
++                    let v = match newest {
++                        None => LatestActivity::None,
++                        Some((_, e)) => org_work::parse_ms(&e.at).map_or(Unknown, At),
++                    };
++                    (p.clone(), v)
++                })
++                .collect();
++            assert_eq!(got, want, "latest_by_project ceiling {ceiling} projects {projects:?}");
++            latest_checks += 1;
++        }
++    }
++    eprintln!("QA work: {walks} walks, {single} valid single pages, {invalid} invalid befores, {latest_checks} latest_by_project");
++}
++
++fn wk_kind(r: &Result<WorkActivityPage, WorkActivityError>) -> String {
++    match r {
++        Ok(p) => format!(
++            "ok entries={} scanned_to={:?} frontier={} exhausted={}",
++            p.entries.len(),
++            p.scanned_to.as_ref().map(|t| (t.feed_seq, t.target_id.as_str(), t.version)),
++            p.frontier,
++            p.exhausted
++        ),
++        Err(WorkActivityError::SnapshotRequired) => "SnapshotRequired".into(),
++        Err(WorkActivityError::InvalidPosition) => "InvalidPosition".into(),
++        Err(WorkActivityError::Store(e)) => format!("Store({e:?})"),
++    }
++}
++
++#[test]
++fn qa_work_edge_table() {
++    let fx = setup(true);
++    fx.commit(vec![
++        vec![ev("A", T0 + 10), ev("A", T0 + 11), ev("B", T0 + 12)],
++        vec![],
++        vec![ev("C", T0 + 30).by("m1").assigned("m2")],
++        vec![ev("A", T0 + 20), ev("C", T0 + 5)],
++    ]);
++    let head = fx.reads.head().unwrap().1;
++    assert_eq!(head, 4);
++    let mut out: Vec<String> = Vec::new();
++    let mut run = |name: String, q: WorkActivityQuery| {
++        let r = fx.reads.activity_page(&q);
++        out.push(format!("QAWORK {name} -> {}", wk_kind(&r)));
++    };
++    for limit in [0u32, 1, u32::MAX] {
++        for scan in [0u32, 1, 2, u32::MAX] {
++            let mut q = query(head);
++            (q.limit, q.scan) = (limit, scan);
++            run(format!("limit {limit} scan {scan}"), q);
++        }
++    }
++    let befores = [
++        ("before = newest event", pos(4, "C", 2)),
++        ("before = oldest event", pos(1, "A", 1)),
++        ("before = marker of ceiling row", marker(4)),
++        ("before = marker of empty row 2", marker(2)),
++        ("before = marker of row 1", marker(1)),
++        ("before = marker row 0", marker(0)),
++        ("before = marker row head+1", marker(5)),
++        ("before = marker version 1", pos(2, "", 1)),
++        ("before = missing target", pos(4, "Z", 1)),
++        ("before = target not in row", pos(2, "A", 1)),
++        ("before = version not committed", pos(4, "A", 9)),
++        ("before = version 0 on a target", pos(4, "A", 0)),
++        ("before = feed_seq u64::MAX marker", marker(u64::MAX)),
++        ("before = feed_seq i64::MAX marker", marker(i64::MAX as u64)),
++        ("before = feed_seq i64::MAX+1 marker", marker(i64::MAX as u64 + 1)),
++        ("before = feed_seq i64::MAX+1 target", pos(i64::MAX as u64 + 1, "A", 1)),
++        ("before = version i64::MAX+1", pos(1, "A", i64::MAX as u64 + 1)),
++    ];
++    for (name, b) in befores {
++        let mut q = query(head);
++        q.before = Some(b.clone());
++        run(name.into(), q);
++        let mut q = query(u64::MAX);
++        q.before = Some(b);
++        run(format!("{name} (ceiling u64::MAX)"), q);
++    }
++    for (name, ceiling) in [
++        ("ceiling 0", 0u64),
++        ("ceiling head+1", head + 1),
++        ("ceiling 1<<62", 1 << 62),
++        ("ceiling i64::MAX", i64::MAX as u64),
++        ("ceiling i64::MAX+1", i64::MAX as u64 + 1),
++        ("ceiling u64::MAX", u64::MAX),
++    ] {
++        run(name.into(), query(ceiling));
++        let mut q = query(ceiling);
++        q.incarnation = None;
++        run(format!("{name}, incarnation None"), q);
++    }
++    for (name, pk) in [("prev_key 0", 0u64), ("prev_key MAX", u64::MAX)] {
++        let mut q = query(head);
++        q.prev_key = pk;
++        run(name.into(), q);
++    }
++    for (limit, scan) in [(1u32, 1u32), (0, 0)] {
++        let mut q = query(head);
++        (q.limit, q.scan, q.team_members) = (limit, scan, Some(vec![]));
++        run(format!("team_members empty, limit {limit} scan {scan}"), q);
++        let mut q = query(head);
++        (q.limit, q.scan, q.team_members) = (limit, scan, Some(vec!["m2".into()]));
++        run(format!("team_members [m2], limit {limit} scan {scan}"), q);
++        let mut q = query(head);
++        (q.limit, q.scan, q.member) = (limit, scan, Some("m1".into()));
++        run(format!("member m1, limit {limit} scan {scan}"), q);
++        let mut q = query(head);
++        (q.limit, q.scan, q.project) = (limit, scan, Some("nowhere".into()));
++        run(format!("project none, limit {limit} scan {scan}"), q);
++    }
++    let mut q = query(head);
++    q.incarnation = Some(org_work::ulid_from_parts(T0, 9));
++    run("wrong incarnation".into(), q);
++    for line in &out {
++        eprintln!("{line}");
++    }
++    // empty log
++    let empty = setup(true);
++    let show = |name: &str, q: WorkActivityQuery| eprintln!("QAWORK empty log {name} -> {}", wk_kind(&empty.reads.activity_page(&q)));
++    show("ceiling 0", query(0));
++    show("ceiling 5", query(5));
++    let mut q = query(0);
++    q.before = Some(marker(0));
++    show("before marker 0", q);
++    // one-row log
++    let one = setup(true);
++    one.commit(vec![vec![ev("A", T0)]]);
++    let show = |name: &str, q: WorkActivityQuery| eprintln!("QAWORK one-row log {name} -> {}", wk_kind(&one.reads.activity_page(&q)));
++    show("ceiling 1", query(1));
++    let mut q = query(1);
++    q.before = Some(pos(1, "A", 1));
++    show("before A1", q.clone());
++    q.before = Some(marker(1));
++    show("before marker 1", q);
++    // lastly a no-incarnation office with events
++    let bare = setup(false);
++    bare.commit(vec![vec![ev("A", T0)]]);
++    let mut q = query(1);
++    q.incarnation = None;
++    eprintln!("QAWORK no-incarnation office, incarnation None ceiling 1 -> {}", wk_kind(&bare.reads.activity_page(&q)));
++}
++
++#[test]
++fn qa_work_page_with_a_ceiling_beyond_the_head_is_not_a_pure_function_of_its_query() {
++    let fx = setup(true);
++    fx.commit(vec![vec![ev("A", T0)], vec![ev("A", T0 + 1)]]);
++    let q = query(10);
++    let first = fx.reads.activity_page(&q).unwrap();
++    fx.commit(vec![vec![ev("B", T0 + 2)]]);
++    let second = fx.reads.activity_page(&q).unwrap();
++    assert_eq!(first, second, "same query, different page after a commit above the old head");
++}
++
++#[test]
++fn qa_work_reads_do_not_write_under_random_pages() {
++    let fx = setup(true);
++    let mut rng = Rng(99);
++    qa_fill(&fx, &mut rng, 200);
++    let before = fx.meta_and_sequences();
++    let head = fx.reads.head().unwrap().1;
++    let spy = |db: &Connection| db.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0)).unwrap();
++    fx.store
++        .read(|s| {
++            let v = spy(s);
++            for scan in [1u32, 100, u32::MAX] {
++                let mut q = query(head);
++                (q.scan, q.project) = (scan, Some("p1".into()));
++                fx.reads.activity_page(&q).unwrap();
++            }
++            fx.reads.latest_by_project(head, &["p1".into()]).unwrap();
++            assert_eq!(spy(s), v);
++            Ok(())
++        })
++        .unwrap();
++    assert_eq!(fx.meta_and_sequences(), before);
++}
++
++#[test]
++fn qa_work_large_logs_cross_the_default_scan_cap() {
++    let (mut walks, mut single) = (0, 0);
++    for (seed, size) in [(201u64, 2_600usize), (202, 3_100)] {
++        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
++        let fx = setup(true);
++        qa_fill(&fx, &mut rng, size);
++        let m = qa_model(&fx);
++        let head = fx.reads.head().unwrap().1;
++        for (limit, scan) in [(100u32, 2_000u32), (u32::MAX, u32::MAX), (3_000, 7), (50, 513), (1, 2_000)] {
++            let mut q = query(head);
++            (q.limit, q.scan) = (limit, scan);
++            qa_filters(&mut rng, &mut q);
++            if limit == 1 {
++                q.member = Some("m0".into());
++                q.limit = 40; // keep the walk short
++            }
++            let mut w = q.clone();
++            (w.limit, w.scan) = (u32::MAX, u32::MAX);
++            let whole = fx.reads.activity_page(&w).unwrap();
++            let (joined, _) = qa_walk(&fx, &m, q.clone());
++            assert_eq!(
++                joined,
++                whole.entries.iter().map(|e| (e.position.clone(), e.key)).collect::<Vec<_>>(),
++                "{q:?}"
++            );
++            walks += 1;
++        }
++        for _ in 0..30 {
++            let mut q = query(head);
++            if rng.chance(30) {
++                q.ceiling = 1 + rng.below(head);
++            }
++            (q.limit, q.scan) = (rng.pick(&[1u32, 50, 2_000]), rng.pick(&[1u32, 100, 2_000, u32::MAX]));
++            qa_filters(&mut rng, &mut q);
++            q.before = Some(m.events[rng.below(m.events.len() as u64) as usize].0.clone());
++            if q.before.as_ref().unwrap().feed_seq > q.ceiling {
++                q.before = Some(marker(q.ceiling));
++            }
++            let got = fx.reads.activity_page(&q).unwrap();
++            assert_eq!(qa_flat(&got), qa_oracle(&m, &q), "{q:?}");
++            single += 1;
++        }
++    }
++    eprintln!("QA work large: {walks} walks, {single} single pages");
++}
++
++#[test]
++fn qa_work_time_parser_never_panics_on_arbitrary_text() {
++    let mut rng = Rng(0xDEADBEEF);
++    let alphabet: Vec<&str> = vec!["0", "1", "2", "9", "-", "T", ":", ".", "Z", "+", " ", "\u{e9}", "\u{1F600}"];
++    for _ in 0..200_000 {
++        let n = rng.below(30);
++        let s: String = (0..n).map(|_| rng.pick(&alphabet)).collect();
++        let _ = org_work::parse_ms(&s);
++        let canon = format!(
++            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
++            rng.below(10_000), rng.below(14), rng.below(33), rng.below(26), rng.below(62), rng.below(62), rng.below(1000)
++        );
++        let _ = org_work::parse_ms(&canon);
++        // multibyte text of exactly 24 bytes
++        let _ = org_work::parse_ms("2026-11-08T12:00:00.\u{e9}\u{e9}Z");
++    }
++}

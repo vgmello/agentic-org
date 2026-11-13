@@ -1,0 +1,15 @@
+[package]
+name = "fuzz-docs"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+org-docs = { path = "../../../crates/org-docs" }
+serde_json = "=1.0.154"
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true
