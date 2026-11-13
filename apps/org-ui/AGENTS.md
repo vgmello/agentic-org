@@ -1,3 +1,5 @@
+> Optional tooling: the Svelte MCP server (`.mcp.json`) and the `.claude/` skills and agent are a convenience, not a requirement. No gate, review or merge depends on them; work without them if they are not loaded. They run from the exact, lockfile-pinned dev dependency `@sveltejs/mcp` in `apps/org-ui/node_modules` (start Claude in `apps/org-ui` after `bun install --frozen-lockfile`); the package is never downloaded at run time, and without `node_modules` they fail instead. The documentation tools query svelte.dev; the autofixer runs locally.
+
 You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
 
 ## Available Svelte MCP Tools:
