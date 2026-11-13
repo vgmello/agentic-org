@@ -39,7 +39,11 @@ in. Tier A. Each slice is at most 250 non-test code lines.
    - Own work is `Some` when:
      - any tip descends from the base, differs from it, and isn't in the integration branch;
      - or there are uncommitted changes;
-     - or any copy is missing or unreadable.
+     - or the branch or HEAD copy is missing, or any copy is unreadable. A missing `own_tip`
+       (none recorded yet) or remote head (never pushed) is normal, not own work (amended in
+       P5b: §4.1 has `own_tip?`, and §4.2's "missing branch" is the `work.git` branch);
+     - or any copy is unrelated (neither descends from the base nor is in the integration
+       branch, e.g. a reset onto someone else's branch): fail closed (P5b reading, for ada).
    - `Merged` applies only when `own_tip` is in the integration branch and no copy has work
      beyond it.
    - Otherwise it is `None`, which covers a tip at `base_sha` or a tip in the integration branch.

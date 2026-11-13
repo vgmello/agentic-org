@@ -11,7 +11,8 @@ mod resolve;
 
 pub use file::{Moments, Problem, ProblemKind, ProcessFile, Status, Step};
 pub use one_branch::{
-    check_start, rule_on, Exception, OneBranchOpen, Record, Start, State, Target, TaskRef,
+    check_start, guarded_move, own_work, rule_on, Caller, Exception, Found, Move, OneBranchOpen,
+    OwnWork, Record, Refused, Role, Start, State, Target, TaskRef, Tip, Tips,
 };
 pub use place::{location, Level, Location, MemberId, Place, ProcessKey, ProjectKey, Repo, TeamId};
 pub use resolve::{

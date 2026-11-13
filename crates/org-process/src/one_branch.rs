@@ -1,19 +1,24 @@
-//! One open task branch (processes.md §4.2, A54, A55): whether the rule is on ([`rule_on`]) and
-//! whether an agent may start a task ([`check_start`]). Pure: the office passes in the project's
-//! effective set, the agent's task branch records and the target task's exception, and keeps
-//! the records and exceptions itself.
+//! One open task branch (processes.md §4.2, A54, A55): whether the rule is on ([`rule_on`]),
+//! whether an agent may start a task ([`check_start`]), and own work ([`own_work`]) and the
+//! guarded moves ([`guarded_move`]). Pure: the office passes in the project's effective set,
+//! the agent's task branch records and the target task's exception, and keeps the records and
+//! exceptions itself.
 
 use crate::place::{MemberId, Place, ProcessKey};
 use crate::resolve::{EffectiveSet, Layer, Outcome};
+
+mod moves;
+
+pub use moves::{guarded_move, own_work, Caller, Found, Move, OwnWork, Refused, Role, Tip, Tips};
 
 /// The process key whose approved `off` turns the rule off (A64). If U26 splits it, this becomes
 /// `one-open-branch`.
 const RULE_KEY: &str = "branch-and-merge";
 
-/// Whether the rule is on in the target task's project (§4.2 "The rule is on", with the ruling
-/// on conflicts). `set` is that project's effective set, none when it can't be computed (PROC-17);
-/// `approved` says whether the `off` file in a layer (its place, path and version) had its blob
-/// approved by a non-author (§5).
+/// Whether the rule is on in the target task's project (§4.2 "The rule is on", with its rulings
+/// on conflicts and files that fail). `set` is that project's effective set, none when it can't
+/// be computed (PROC-17); `approved` says whether the `off` file in a layer (its place, path and
+/// version) had its blob approved by a non-author (§5).
 ///
 /// The rule is off only when the set was computed for a project ([`EffectiveSet::inputs`] has
 /// one), turns the key off ([`EffectiveSet::turned_off`]), its entry's chain has a turned-off
@@ -122,8 +127,8 @@ impl Start {
         self.reuse
     }
 
-    /// Whether the start used up the exception: it was held for the target task and its
-    /// assignee, and the record this start creates is the one it covers (§4.3).
+    /// Whether the start used up the exception held for the target task and its assignee (§4.2
+    /// "An exception", with ada's ruling; §4.3).
     pub fn exception_used(&self) -> bool {
         self.exception_used
     }
@@ -180,15 +185,15 @@ fn blocking_rank(state: State) -> Option<u8> {
     }
 }
 
-/// The start check (§4.2 Start, with the ruling on `closing` records), at both of its points:
+/// The start check (§4.2 Start, with ada's rulings), at both of its points:
 /// `task start` (point 1), which the office runs only when the target task has no reserved or
 /// open record, and branch creation (point 2), which reuses the task's own reservation. `records`
 /// are the assignee's task branch records; `exception` is the one held on the target task, if any.
 ///
-/// - A reserved or open record of the target task allows the start as a reuse: it creates no
-///   record and uses no exception. A closing, merged or archived one doesn't.
-/// - Otherwise an exception for the target task and its assignee allows the start and is used up
-///   by the record it creates.
+/// - A reserved or open record of the target task allows the start as a reuse, which creates no
+///   record. A closing, merged or archived one doesn't.
+/// - Otherwise an exception for the target task and its assignee allows the start; when it is
+///   used up is §4.2's ruling on exceptions.
 /// - Otherwise, with the rule off, the start is allowed.
 /// - Otherwise a reserved, open or closing record for another task blocks it: the first by state
 ///   (open, then closing, then reserved), then by branch, then by task. Merged and archived
