@@ -385,6 +385,7 @@ mod tests {
             let _ = std::fs::remove_file(folder.join(sidecar));
         }
         let old = crate::store::Schema {
+            admit: None,
             version: 1,
             create: |tx| {
                 tx.execute_batch(

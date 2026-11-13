@@ -564,6 +564,7 @@ fn origin_sql_integer_conversion_accepts_boundaries_and_refuses_negatives() {
 }
 
 const V3: Schema = Schema {
+    admit: None,
     version: 3,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;

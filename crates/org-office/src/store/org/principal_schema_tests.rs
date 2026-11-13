@@ -9,12 +9,14 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 const LEGACY_V1: Schema = Schema {
+    admit: None,
     version: 1,
     create: |tx| tx.execute_batch(include_str!("fixtures/schema-v1.sql")),
     upgrade: |_, _| panic!("the frozen v1 reader cannot upgrade"),
 };
 
 const LEGACY_V2: Schema = Schema {
+    admit: None,
     version: 2,
     create: |tx| {
         tx.execute_batch(include_str!("fixtures/schema-v1.sql"))?;
