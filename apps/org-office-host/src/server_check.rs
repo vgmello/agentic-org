@@ -1,9 +1,10 @@
 //! Who may get an office's database key: the check of every office server the host starts,
-//! before its first line (which carries the key) is written.
+//! before it learns where to fetch its keys (launch v3: the first line names a rendezvous, made
+//! only after this check, and the keys go only to the admitted token's connection).
 //!
 //! The threat: a same-user process runs the signed host from a copy, a symlink or a hard link,
 //! next to its own `org-server` (the host starts the server next to its own executable),
-//! and receives every office's key on the first line. So a release host checks each server it
+//! and receives every office's key. So a release host checks each server it
 //! spawns, before that server has run a single instruction: it starts it **suspended**
 //! (`spawn::spawn_suspended`; otherwise the image's first code could start a helper that
 //! inherits stdin, then `exec` the genuine server and pass the check), and checks it by its
@@ -20,11 +21,10 @@
 //!   and certificate leaf[subject.OU] = "<ORG_APP_TEAM_ID>"
 //! ```
 //!
-//! **Residual risk:** another same-user process can resume a suspended child itself before the
-//! host takes its token (stopping or starving the host makes that easy), and so get the check to see the genuine server while its own helper keeps
-//! stdin (see `spawn`'s module docs). Closing that needs the key handed to an authenticated
-//! reader, a contract change; until then this check stops every attack in which nothing resumes the
-//! child before the host takes its token.
+//! An early resumer (another same-user process that resumes the child before the host takes its
+//! token, see `spawn`'s module docs) can still leave a helper holding stdin, but stdin carries
+//! no secret now: the keys go to the rendezvous connection whose peer token is the admitted one
+//! (`supervisor::rendezvous`).
 //!
 //! Only a child that passes is resumed. Right before the first line is written, its audit token
 //! is taken again and must be unchanged, so an `exec` after the check is refused. A child that
@@ -33,8 +33,9 @@
 //! (retried with backoff, up to the give-up rule).
 //!
 //! A release host with no team id compiled in can't check anything, so it starts no server at
-//! all (logged loudly). **Debug builds don't check** (their servers are unsigned development and
-//! test builds), which is logged at startup.
+//! all (logged loudly). **Debug builds skip only the signing requirement** (their servers are
+//! unsigned development and test builds), which is logged at startup: the token is still taken,
+//! re-checked and matched to the rendezvous peer.
 
 /// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
 /// only to a server signed with it by the app's team (`server_check`). The bundle must sign
@@ -46,7 +47,8 @@ use crate::peer::AuditToken;
 /// How the host checks the office servers it starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ServerCheck {
-    /// Debug builds: no check.
+    /// Debug builds: no signing requirement; the token is still taken and checked (X-02 §5.1
+    /// step 6).
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     Skip,
     /// Every server must satisfy this requirement and run hardened code.
@@ -63,7 +65,7 @@ pub(crate) enum ServerCheck {
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// [`ServerCheck::admit`]: the admitted token (`None`: not checked), or a refusal.
+    /// [`ServerCheck::admit`]: the admitted token, or a refusal.
     Admit,
     /// [`ServerCheck::still`]: the child's token now.
     Still,
@@ -73,7 +75,7 @@ pub(crate) enum Step {
 #[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct Scripted(
-    pub(crate) std::sync::Arc<dyn Fn(Step, u32) -> Result<Option<AuditToken>, String> + Send + Sync>,
+    pub(crate) std::sync::Arc<dyn Fn(Step, u32) -> Result<AuditToken, String> + Send + Sync>,
 );
 
 #[cfg(test)]
@@ -110,7 +112,7 @@ impl ServerCheck {
     pub(crate) fn describe(&self) -> String {
         match self {
             ServerCheck::Skip => "debug build: office servers' code signatures aren't checked \
-                                  before they get an office's key"
+                                  (their audit tokens are) before they get an office's key"
                 .to_owned(),
             ServerCheck::Requirement(requirement) => format!(
                 "office servers get an office's key only if they run hardened code satisfying: \
@@ -137,9 +139,8 @@ impl ServerCheck {
         }
     }
 
-    /// After the spawn of child `pid`: its audit token if it may get a key (`None`: not
-    /// checked, a debug build), or why not.
-    pub(crate) fn admit(&self, pid: u32) -> Result<Option<AuditToken>, String> {
+    /// After the spawn of child `pid`: its audit token if it may get a key, or why not.
+    pub(crate) fn admit(&self, pid: u32) -> Result<AuditToken, String> {
         #[cfg(test)]
         if let ServerCheck::Scripted(scripted) = self {
             return (scripted.0)(Step::Admit, pid);
@@ -149,19 +150,12 @@ impl ServerCheck {
 
     /// Right before child `pid`'s first line: whether it is still the image `admitted` (what
     /// [`ServerCheck::admit`] returned).
-    pub(crate) fn still(&self, pid: u32, admitted: Option<AuditToken>) -> Result<(), String> {
-        let now = || {
-            #[cfg(test)]
-            if let ServerCheck::Scripted(scripted) = self {
-                return (scripted.0)(Step::Still, pid)
-                    .and_then(|token| token.ok_or_else(|| "no token".to_owned()));
-            }
-            token_of(pid)
-        };
-        match admitted {
-            None => Ok(()),
-            Some(admitted) => unchanged(admitted, now()),
+    pub(crate) fn still(&self, pid: u32, admitted: AuditToken) -> Result<(), String> {
+        #[cfg(test)]
+        if let ServerCheck::Scripted(scripted) = self {
+            return unchanged(admitted, (scripted.0)(Step::Still, pid));
         }
+        unchanged(admitted, token_of(pid))
     }
 }
 
@@ -177,16 +171,16 @@ fn admit(
     check: &ServerCheck,
     token: impl FnOnce() -> Result<AuditToken, String>,
     satisfies: impl FnOnce(&AuditToken, &str) -> bool,
-) -> Result<Option<AuditToken>, String> {
+) -> Result<AuditToken, String> {
     match check {
-        ServerCheck::Skip => Ok(None),
+        ServerCheck::Skip => token().map_err(|why| format!("its audit token: {why}")),
         ServerCheck::Refuse => Err("this build has no app team id to check servers with".into()),
         #[cfg(test)]
         ServerCheck::Scripted(_) => Err("a scripted check isn't decided here".into()),
         ServerCheck::Requirement(requirement) => {
             let token = token().map_err(|why| format!("its audit token: {why}"))?;
             if satisfies(&token, requirement) {
-                Ok(Some(token))
+                Ok(token)
             } else {
                 Err(
                     "it isn't the signed office server (its code signature doesn't satisfy the \
@@ -272,15 +266,20 @@ mod tests {
             asked.set(Some(r.to_owned()));
             true
         };
-        assert_eq!(admit(&check, || Ok([7; 32]), yes), Ok(Some([7; 32])));
+        assert_eq!(admit(&check, || Ok([7; 32]), yes), Ok([7; 32]));
         assert_eq!(asked.take().as_deref(), Some("R"));
         assert!(admit(&check, || Ok([7; 32]), |_, _| false).is_err());
         // No token: refused, and the requirement isn't even checked.
         let err = admit(&check, || Err("gone".into()), |_, _| panic!("checked")).unwrap_err();
         assert!(err.contains("gone"), "{err}");
-        // Debug skips; no team id refuses; neither asks for anything.
+        // Debug skips only the requirement: the token is still taken, and needed.
+        assert_eq!(
+            admit(&ServerCheck::Skip, || Ok([7; 32]), |_, _| panic!()),
+            Ok([7; 32])
+        );
+        assert!(admit(&ServerCheck::Skip, || Err("gone".into()), |_, _| panic!()).is_err());
+        // No team id refuses, and asks for nothing.
         let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
-        assert_eq!(admit(&ServerCheck::Skip, never, |_, _| panic!()), Ok(None));
         assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!()).is_err());
     }
 
@@ -328,7 +327,7 @@ mod tests {
         let token = crate::spawn::audit_token_of_child(child.id()).unwrap();
         let met = crate::code_signing::code_for_audit_token(&token)
             .is_some_and(|code| crate::code_signing::meets(&code, "anchor apple"));
-        let still = check.still(child.id(), Some(token));
+        let still = check.still(child.id(), token);
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(verdict.is_err(), "{verdict:?}");

@@ -310,13 +310,35 @@ impl TestHome {
             .collect()
     }
 
-    /// The fingerprints of the app tokens the fake's runs for `key` got, in order (one per run
-    /// that accepted its first line).
-    pub fn token_fingerprints(&self, key: &str) -> Vec<String> {
-        self.log_fields("token", key)
+    /// The fingerprints of the grant keys the fake's runs for `key` got, in order (one per run
+    /// that got its handoff).
+    pub fn grant_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("grant", key)
             .iter()
             .map(|f| f[3].clone())
             .collect()
+    }
+
+    /// The first lines the fake's runs for `key` read: `(instance_id, owner_member_id or -)`.
+    pub fn first_lines(&self, key: &str) -> Vec<(String, String)> {
+        self.log_fields("line", key)
+            .iter()
+            .map(|f| (f[3].clone(), f[4].clone()))
+            .collect()
+    }
+
+    /// How many descriptors each of the fake's runs for `key` got with its handoff (runs that
+    /// got none, a discard's, aren't listed).
+    pub fn transfers(&self, key: &str) -> Vec<usize> {
+        self.log_fields("transfer", key)
+            .iter()
+            .map(|f| f[3].parse().unwrap())
+            .collect()
+    }
+
+    /// How many of the fake's runs for `key` got a recovery code.
+    pub fn recovery_codes(&self, key: &str) -> usize {
+        self.log_fields("recovery", key).len()
     }
 
     /// The fingerprints of the database keys the fake's runs for `key` ("create" or an office
@@ -404,7 +426,7 @@ impl TestHome {
             .collect()
     }
 
-    /// Asserts no log holds an app token's wire form: 64 lowercase hex digits in a row. Tests
+    /// Asserts no log holds a key's wire form: 64 lowercase hex digits in a row. Tests
     /// never see the tokens, so this looks for any such run.
     pub fn assert_no_token_in_logs(&self) {
         // An environment variable that already looks like a token in the tests' own environment
@@ -431,7 +453,7 @@ impl TestHome {
         }
     }
 
-    /// Asserts no secret (an app token or a database key: 64 lowercase hex digits in a row) is
+    /// Asserts no secret (a grant key or a database key: 64 lowercase hex digits in a row) is
     /// in any file in the office home (its logs, the offices' folders, `.refused/`, the fake's
     /// files), and no stored key's hex is either: keys live only in the key folder, outside the
     /// home. Also checks the logs as [`TestHome::assert_no_token_in_logs`] does.
@@ -489,14 +511,8 @@ pub fn has_hex_run(text: &str, len: usize) -> bool {
     false
 }
 
-/// The fingerprint the fake records for a token (64-bit FNV-1a of its 32 bytes, as hex), so a
-/// test can match a token the host hands out with the one a server got.
-pub fn fingerprint(token: &org_proto::AppToken) -> String {
-    let json = serde_json::to_string(token).unwrap();
-    fingerprint_hex(json.trim_matches('"'))
-}
-
-/// The fingerprint of a secret given as 64 hex digits (see [`fingerprint`]).
+/// The fingerprint the fake records for a secret given as 64 hex digits (64-bit FNV-1a of its
+/// 32 bytes, as hex).
 pub fn fingerprint_hex(hex: &str) -> String {
     let hex = hex.to_lowercase();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;

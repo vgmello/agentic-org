@@ -303,6 +303,10 @@ pub fn default_server_program() -> io::Result<PathBuf> {
     Ok(dir.join(SERVER_PROGRAM_NAME))
 }
 
+/// The instance a host without a registered one names on its servers' first lines (launch v3
+/// requires one). Such a home is never adopted by a registered instance, which has its own.
+const LEGACY_INSTANCE_ID: &str = "00000000000000000000000000";
+
 /// A running host. [`Host::shutdown`] (or dropping it) stops it.
 pub struct Host {
     layout: Layout,
@@ -415,6 +419,10 @@ impl Host {
             program: config.server_program.clone(),
             home: layout.home.clone(),
             runtime_dir: Some(layout.run.clone()),
+            instance_id: instance
+                .as_ref()
+                .map_or(LEGACY_INSTANCE_ID, |i| i.id())
+                .to_owned(),
             logs_dir: layout.logs.clone(),
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),

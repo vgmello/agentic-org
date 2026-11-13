@@ -1,5 +1,4 @@
-//! Making the host's secrets, `std` only: app tokens (ADR-0003 §2.1, launch v2, retired with
-//! it), database keys, grant keys and recovery codes.
+//! Making the host's secrets, `std` only: database keys, grant keys and recovery codes.
 //!
 //! The host makes an office's database key once, when it creates the office, and stores it in its
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its
@@ -12,34 +11,19 @@
 use std::fs::File;
 use std::io::{self, Read};
 
-use org_proto::{
-    AppToken, DbKey, GrantKey, RecoveryCode, APP_TOKEN_BYTES, DB_KEY_BYTES, GRANT_KEY_BYTES,
-};
+use org_proto::{DbKey, GrantKey, RecoveryCode, DB_KEY_BYTES, GRANT_KEY_BYTES};
 
 /// The recovery code's alphabet (Crockford Base32) and shape: 8 groups of 4, 160 bits.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_GROUPS: usize = 8;
 
-/// A fresh app token: 32 bytes from `/dev/urandom`.
-pub(crate) fn generate_app_token() -> io::Result<AppToken> {
-    random(AppToken::from_bytes)
-}
-
 /// A fresh grant key: 32 bytes from `/dev/urandom`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "sent by the v3 spawn, next branch")
-)]
 pub(crate) fn generate_grant_key() -> io::Result<GrantKey> {
     random(GrantKey::from_bytes)
 }
 
 /// A fresh recovery code, `XXXX-XXXX-…` (8 groups of 4 Crockford Base32 characters, 160 bits
 /// from `/dev/urandom`), built in place: no copy of it is left behind.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "sent by the v3 create, next branch")
-)]
 pub(crate) fn generate_recovery_code() -> io::Result<RecoveryCode> {
     let mut bytes = [0u8; 20];
     let read = File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes));
@@ -69,7 +53,7 @@ pub(crate) fn generate_db_key() -> io::Result<DbKey> {
 /// 32 bytes from `/dev/urandom`, wrapped by `wrap`. The bytes read are zeroed afterwards (best
 /// effort), whether or not the read succeeded; only the wrapped secret keeps them.
 fn random<T>(wrap: impl FnOnce([u8; 32]) -> T) -> io::Result<T> {
-    const _: () = assert!(APP_TOKEN_BYTES == 32 && GRANT_KEY_BYTES == 32 && DB_KEY_BYTES == 32);
+    const _: () = assert!(GRANT_KEY_BYTES == 32 && DB_KEY_BYTES == 32);
     let mut bytes = [0u8; 32];
     let read = File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut bytes));
     let secret = read.map(|()| wrap(bytes));
@@ -89,13 +73,6 @@ pub(crate) fn zero(bytes: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tokens_are_random() {
-        let (a, b) = (generate_app_token().unwrap(), generate_app_token().unwrap());
-        assert!(a != b);
-        assert!(a != AppToken::from_bytes([0; 32]));
-    }
 
     #[test]
     fn grant_keys_are_random() {

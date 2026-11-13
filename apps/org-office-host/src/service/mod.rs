@@ -243,6 +243,7 @@ mod tests {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
             runtime_dir: None,
+            instance_id: "01JINSTANCE000000000000000".into(),
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),

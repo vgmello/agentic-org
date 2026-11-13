@@ -8,8 +8,7 @@
 //!
 //! The unfinished folders found at startup are discarded in the background, a few at a time,
 //! so the host answers at once; only the calls that need a settled catalog wait for them
-//! (`organization.create`, `office.restart`, and `office.app_token` for an office still being
-//! discarded).
+//! (`organization.create` and `office.restart`).
 //!
 //! Every change of an office's state is announced as `office.status_changed` through the
 //! [`Broadcast`], in order with the list answers.
@@ -21,11 +20,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_office_launch::{office_dir, CreateOffice, FailCode, OfficeFile, OFFICE_FILE_NAME};
+use org_office_launch::v3::{CreateLine, OfficeLine};
+use org_office_launch::{office_dir, FailCode, OfficeFile, OFFICE_FILE_NAME};
 use org_proto::{
-    ApiError, AppToken, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged,
-    OfficeStatusChangedData, OfficeStatusReason, Organization, OrganizationCreated,
-    OrganizationName,
+    ApiError, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged, OfficeStatusChangedData,
+    OfficeStatusReason, Organization, OrganizationCreated, OrganizationName,
 };
 
 use crate::broadcast::Broadcast;
@@ -35,8 +34,8 @@ use crate::host_log;
 use crate::ids;
 use crate::secrets;
 use crate::supervisor::{
-    CreateOutcome, CreateStartError, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver,
-    Supervisor,
+    CreateOutcome, CreateStartError, DiscardOutcome, NewOffice, OfficeState, RestartOutcome,
+    StatusObserver, Supervisor,
 };
 use crate::sync::lock;
 use crate::timings::Timings;
@@ -201,43 +200,6 @@ impl Offices {
         }
         *creates += 1;
         Ok(CreateSlot(self))
-    }
-
-    /// `office.app_token`: runs `use_token` with a running office's app token (it's written
-    /// straight into the response, never copied). Errors: `not_found` (no such office here),
-    /// `not_ready` (the office is still being created, or still being discarded at startup
-    /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
-    /// caller's code signature is checked before this.
-    #[cfg_attr(
-        not(all(feature = "test-support", debug_assertions)),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
-    pub(crate) fn app_token<R>(
-        &self,
-        office_id: &str,
-        use_token: impl FnOnce(&AppToken) -> R,
-    ) -> Result<R, ApiError> {
-        if lock(&self.discarding).contains(office_id) {
-            self.wait_for_startup(Instant::now() + self.create_wait)?;
-        }
-        self.settled_office(office_id)?;
-        let running = self.supervisor.state(office_id).is_some_and(|state| {
-            matches!(state.status, OfficeStatus::Starting | OfficeStatus::Active)
-        });
-        if !running {
-            return Err(ApiError::new(
-                ErrorCode::Unavailable,
-                "the office isn't running, so it has no app token",
-            ));
-        }
-        self.supervisor
-            .with_app_token(office_id, use_token)
-            .ok_or_else(|| {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "the office isn't running, so it has no app token",
-                )
-            })
     }
 
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
@@ -675,17 +637,27 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
     }
 }
 
-/// The create message for `plan`, with a fresh app token (the office's for this host run) and a
-/// fresh database key (the office's for good, stored before its server starts).
-fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
-    Ok(CreateOffice {
-        org_id: plan.org_id.clone(),
-        org_name: plan.org_name.clone(),
+/// The create for `plan` (the spawn fills in the instance and the rendezvous): the owner's
+/// member id (chosen by the host, X-02 §5.4), a fresh
+/// database key (the office's for good, stored before its server starts) and a fresh recovery
+/// code (§6.4).
+fn create_message(plan: &CreatePlan) -> io::Result<NewOffice> {
+    let office = OfficeLine {
+        instance_id: String::new(),
         office_id: plan.office_id.clone(),
-        office_name: plan.office_name.clone(),
-        role: plan.role,
-        app_token: secrets::generate_app_token()?,
+        rendezvous: String::new(),
+    };
+    Ok(NewOffice {
+        line: CreateLine {
+            office,
+            org_id: plan.org_id.clone(),
+            org_name: plan.org_name.clone(),
+            office_name: plan.office_name.clone(),
+            role: plan.role,
+            owner_member_id: ids::generate()?,
+        },
         db_key: secrets::generate_db_key()?,
+        recovery_code: secrets::generate_recovery_code()?,
     })
 }
 
@@ -780,7 +752,8 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: script,
             home: home.to_path_buf(),
-            runtime_dir: None,
+            runtime_dir: Some(home.to_path_buf()),
+            instance_id: "01JINSTANCE000000000000000".into(),
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -820,6 +793,7 @@ mod tests {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
             runtime_dir: None,
+            instance_id: "01JINSTANCE000000000000000".into(),
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -874,6 +848,7 @@ mod tests {
                 program: home.join("no-such-server"),
                 home: home.to_path_buf(),
                 runtime_dir: None,
+                instance_id: "01JINSTANCE000000000000000".into(),
                 logs_dir: home.join("logs"),
                 log_max_bytes: 1024,
                 timings: Timings::default(),
@@ -919,6 +894,7 @@ mod tests {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
             runtime_dir: None,
+            instance_id: "01JINSTANCE000000000000000".into(),
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),

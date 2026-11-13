@@ -1,9 +1,9 @@
 //! The host's office contract (org-proto, docs/design/office-host-boundary.md §4): status reasons,
-//! `next_restart_at`, `office.status_changed`, the give-up rule, and the app-only
-//! `office.app_token` and `office.restart`, against the fake office server.
+//! `next_restart_at`, `office.status_changed`, the give-up rule, and `office.restart`, against
+//! the fake office server. App tokens are retired (launch v3).
 //!
-//! Retired wire calls are refused under every peer configuration. Native token/restart
-//! lifecycle checks use the temporary in-process fixture; these gate tests do not establish
+//! Retired wire calls are refused under every peer configuration. Native restart lifecycle
+//! checks use the temporary in-process fixture; these gate tests do not establish
 //! signed-peer authorization. Real app_auth wire coverage returns with verified sessions in2b.3.
 
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
@@ -16,7 +16,6 @@
 
 mod support;
 
-use std::fs;
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -27,7 +26,7 @@ use org_proto::{
     OfficeStatus, OfficeStatusChanged, OfficeStatusReason,
 };
 use serde_json::{json, Value};
-use support::{eventually, fingerprint, hq, office_info, rfc3339, Client, TestHome};
+use support::{eventually, hq, office_info, rfc3339, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -67,9 +66,6 @@ fn wire_restart(socket: &Path, office_id: &str) -> Result<(), ApiError> {
         .map(drop)
 }
 
-fn app_token(host: &Host, office_id: &str) -> Result<org_proto::AppToken, ApiError> {
-    org_office_host::test_support::Fixture::new(host).token(office_id)
-}
 fn restart(host: &Host, office_id: &str) -> Result<(), ApiError> {
     org_office_host::test_support::Fixture::new(host).restart(office_id)
 }
@@ -94,21 +90,6 @@ fn wait_for_state(
         last = Some(info);
         thread::sleep(Duration::from_millis(20));
     }
-}
-
-// Needs the development fallback: a debug build.
-#[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
-#[test]
-fn native_fixture_gets_the_token_its_office_was_started_with() {
-    let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
-    let host = home.start(app_config(&home)).unwrap();
-    wait_for_state(&host, A, OfficeStatus::Active, None);
-    let token = app_token(&host, A).unwrap();
-    assert_eq!(home.token_fingerprints(A), [fingerprint(&token)]);
-    home.assert_no_secret_in_home();
-    host.shutdown();
 }
 
 #[cfg(target_os = "macos")]
@@ -142,64 +123,6 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
 }
 
 // Needs the development fallback: a debug build.
-#[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
-#[test]
-fn native_token_errors_follow_the_runtime_contract() {
-    let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
-    // An unfinished folder whose discard is slow, and a slow create.
-    let unfinished = "01UNFINISHEDUNFINISHEDUNFI";
-    fs::create_dir_all(home.office_dir(unfinished)).unwrap();
-    home.script(json!({
-        A: {"do": "fail", "code": "key_missing"},
-        "discard": {"do": "ready", "delay_ms": 3000},
-        "create": {"do": "ready", "delay_ms": 3000}
-    }));
-    let mut config = app_config(&home);
-    config.timings.create_wait = Duration::from_millis(300);
-    let host = home.start(config).unwrap();
-
-    // Still being discarded at startup: `not_ready`, after a short wait.
-    let err = app_token(&host, unfinished).unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotReady);
-    // No such office: `not_found`.
-    let err = app_token(&host, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotFound);
-    // Not running (`unavailable`: its key is missing): `unavailable`.
-    wait_for_state(
-        &host,
-        A,
-        OfficeStatus::Unavailable,
-        Some(OfficeStatusReason::KeyMissing),
-    );
-    let err = app_token(&host, A).unwrap_err();
-    assert_eq!(err.code, ErrorCode::Unavailable);
-
-    // Still being created: `not_ready`. (Creates wait for the startup discards first.)
-    // Wait for the startup discard to be over (the host itself says so: the folder is no
-    // longer being discarded, so it's simply `not_found`), so the create doesn't wait for it.
-    eventually(WAIT, "the startup discard to finish", || {
-        app_token(&host, unfinished).is_err_and(|e| e.code == ErrorCode::NotFound)
-    });
-    let creating = {
-        let mut client = Client::for_host(&host);
-        thread::spawn(move || {
-            client.call::<org_proto::OrganizationCreate>(&org_proto::OrganizationCreateParams {
-                name: "Beta".into(),
-            })
-        })
-    };
-    eventually(WAIT, "the create's folder", || {
-        home.office_folders().iter().any(|f| f != A)
-    });
-    let new_id = home.office_folders().into_iter().find(|f| f != A).unwrap();
-    let err = app_token(&host, &new_id).unwrap_err();
-    assert_eq!(err.code, ErrorCode::NotReady);
-    creating.join().unwrap().unwrap();
-    host.shutdown();
-}
-
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
 #[cfg(target_os = "macos")]
@@ -593,7 +516,5 @@ fn retired_calls_stay_refused_with_a_buffered_suffix() {
             }
         }
     }
-    // The native fixture still reaches the token backend; no wire call was authorized.
-    assert!(app_token(&host, A).is_ok());
     host.shutdown();
 }

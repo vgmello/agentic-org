@@ -94,12 +94,6 @@ impl Fixture {
     pub fn offices(&self) -> Vec<org_proto::OfficeInfo> {
         self.offices.offices()
     }
-    /// Obtain the typed token for native key assertions without exposing a wire method.
-    pub fn token(&self, id: &str) -> Result<org_proto::AppToken, ApiError> {
-        self.offices.app_token(id, |token| {
-            serde_json::from_value(serde_json::to_value(token).unwrap()).unwrap()
-        })
-    }
     pub fn restart(&self, id: &str) -> Result<(), ApiError> {
         self.offices.restart_office(id)
     }

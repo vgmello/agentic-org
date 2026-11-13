@@ -6,7 +6,7 @@
 //! Every start loads the office's database key from the key store first. A missing item, or one
 //! that isn't a key, starts no server: the office is `unavailable`/`key_missing`, the same as a
 //! server reporting `key_missing`, and `office.restart` loads it again. Any other key store error
-//! is a `storage_error`, retried with backoff. The key is dropped once its line is written.
+//! is a `storage_error`, retried with backoff. The key is dropped once its handoff is sent.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::{AppToken, OfficeStatusReason};
+use org_proto::OfficeStatusReason;
 
 use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
@@ -40,9 +40,6 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 /// Everything one office's supervision thread owns.
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
-    /// The office's app token for this host run: every start gets it. Shared with the
-    /// supervisor, which hands the token to the app (`office.app_token`).
-    pub(crate) token: Arc<AppToken>,
     /// Where the office's database key is kept; loaded before every start.
     pub(crate) keys: Arc<dyn KeyStore>,
     pub(crate) spawner: Spawner,
@@ -195,12 +192,11 @@ impl OfficeRunner {
                 };
             }
         };
-        let mode = Mode::Office(&self.office_id, &self.token, &key);
+        // The spawn takes the key: only the key store holds it once the handoff is sent.
+        let mode = Mode::Office(self.office_id.clone(), key);
         let spawned = self
             .spawner
             .spawn(mode, *generation, self.sender.clone(), self.log.clone());
-        // The line is written (or can't be): only the key store holds the key from here on.
-        drop(key);
         *generation += 1;
         match spawned {
             Ok(child) => self.watch(Adopted {
@@ -250,8 +246,8 @@ impl OfficeRunner {
             let signal = match backlog.next() {
                 Some(signal) => signal,
                 None => {
-                    // Wake at least every `exit_poll`: a server whose stdout a descendant still
-                    // holds exits without its pipe closing, so its exit is watched for directly.
+                    // Wake at least every `exit_poll`: a server whose rendezvous a descendant
+                    // still holds exits without it closing, so its exit is watched for directly.
                     let mut wait = self.timings.exit_poll;
                     if ready_at.is_none() {
                         wait = wait.min(ready_deadline.saturating_duration_since(Instant::now()));
@@ -336,7 +332,7 @@ impl OfficeRunner {
     }
 
     /// After a server's exit was seen directly: takes the lines it sent that are still on their
-    /// way from its stdout reader (until its pipe closes, at most [`EXIT_LINES_WAIT`]), so a
+    /// way from its rendezvous reader (until it closes, at most [`EXIT_LINES_WAIT`]), so a
     /// fatal `failed` isn't missed. Returns the failure it reported, or `None` if the host is
     /// stopping.
     fn lines_after_exit(

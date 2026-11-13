@@ -93,23 +93,16 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
 #[test]
 fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
     let home = TestHome::registered();
-    let mut config = home.config();
+    let config = home.config();
     // Lists the key folder as each `--create` server starts.
-    config.set_server_program(home.wrapper(
-        "list-keys",
-        &format!(
-            "if [ \"$1\" = --create ]; then ls '{}' > \"$ORG_OFFICE_HOME/keys-at-create\"; fi\n\
-             exec \"$FAKE\" \"$@\"",
-            home.keys_dir().display()
-        ),
-    ));
+    home.script(json!({"create": {"list_dir": home.keys_dir()}}));
     let host = home.start(config.clone()).unwrap();
     let org = create(&host, "Acme").unwrap();
     let office_id = org.offices[0].id.clone();
-    let listed = fs::read_to_string(home.path().join("keys-at-create")).unwrap();
+    let listed = fs::read_to_string(home.path().join("listed-create")).unwrap();
     assert_eq!(
         listed,
-        format!("{office_id}.key\n"),
+        format!("{office_id}.key"),
         "the key wasn't stored before the spawn"
     );
     // The server got the stored key, and nothing else in the folder.

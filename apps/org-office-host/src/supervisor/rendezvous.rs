@@ -18,14 +18,6 @@
 //!
 //! Every error is a fixed reason, never a secret: the caller kills and reaps the child.
 
-#![cfg_attr(
-    any(not(test), not(target_os = "macos")),
-    expect(
-        dead_code,
-        reason = "wired into the spawn by river/host-launch-v3-life"
-    )
-)]
-
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, BufReader, Read, Write};
 use std::os::fd::AsFd;

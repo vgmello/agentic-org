@@ -1,8 +1,10 @@
 //! A fake `org-server` for `org-office-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
-//! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key
-//! store, and does what the test scripted. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
+//! It follows the launch protocol (`org-office-launch` v3: the first line, then the rendezvous,
+//! `ready_for_secrets`, the handoff read with `recvmsg` and its transfer descriptor, and
+//! `fds_received`) without SQLCipher or a key store, and does what the test scripted. Its events
+//! go over the rendezvous, and its lifetime is the rendezvous: it ends at its EOF. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
 //! {"create": [{"do": "fail", "code": "invalid_name"}, {"do": "ready"}],
 //!  "01ABC…": {"do": "crash"}}
@@ -13,7 +15,7 @@
 //! - `do`: `ready` (default), `fail` (with `code`), `crash` (exit 3 without a line, `at`
 //!   `start` (default), `stored` (`--create`: after writing `office.json`, before `created`),
 //!   `created` or `ready`), `hang` (never report anything).
-//! - `ignore_eof`: on stdin EOF, keep running (until SIGKILLed) instead of exiting 0.
+//! - `ignore_eof`: on rendezvous EOF, keep running (until SIGKILLed) instead of exiting 0.
 //! - `linger` (with `fail`): after the `failed` line, keep running (until SIGKILLed).
 //! - `orphan_stdout_ms`: first start a `sleep` of this long that holds the fake's stdout, so the
 //!   control pipe stays open after the fake exits (recorded as `orphan <key> <pid> <sleep pid>`).
@@ -25,16 +27,19 @@
 //! - `ready_delay_ms`: wait this long more just before `ready` (after `created`).
 //! - `report` (`--create`): fields of the office it stores and reports in `created` that
 //!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
+//! - `list_dir`: first record this folder's entry names in `<home>/listed-<key>`.
+//! - `forge_stdout`: right after the handoff, write `created` (a create, for the office asked
+//!   for) or `discarded` (a discard) on stdout, which a v3 host must ignore.
 //!
 //! Its first stdin line must match its flag, as the contract says: a `create` message with
 //! `--create`, a `start` message with `--office`, a `discard` message with `--discard`. A
 //! malformed or other line is refused with `failed: invalid_request` (a broken pipe with
 //! `storage_error`), before any scripted step (for `--discard`, before its step too). EOF before
 //! the first line means the host is gone: it exits 0 without a line.
-//! It never logs a secret: for the app token and the database key it records only a fingerprint
+//! It never logs a secret: for the grant key and the database key it records only a fingerprint
 //! (the 64-bit FNV-1a hash of the 32 bytes, as 16 hex digits), in `fake.log` and, unless
-//! `stderr_bytes` is set, the token's on stderr (so in the office's log), so tests can tell
-//! secrets apart without seeing them.
+//! `stderr_bytes` is set, the grant key's on stderr (so in the office's log), so tests can tell
+//! secrets apart without seeing them. Of a create's recovery code it records only that it came.
 //!
 //! On `--create` it makes the office folder and holds `office.lock` before anything else (so a
 //! failure or crash leaves an unfinished folder, like a real server could), then writes a `db`
@@ -46,7 +51,9 @@
 //! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
-//! `start <key> <pid> <run> <unix ms>`, `token <key> <pid> <fingerprint>`,
+//! `start <key> <pid> <run> <unix ms>`, `grant <key> <pid> <fingerprint>`,
+//! `line <key> <pid> <instance_id> <owner_member_id or ->`, `transfer <key> <pid> <fds>`,
+//! `recovery <key> <pid>`,
 //! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
 //! for `--discard`), `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
@@ -64,20 +71,29 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use org_office_launch::{
-    office_dir, read_host_message, write_server_event, FailCode, HostMessage, OfficeFile,
-    ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME,
-    OFFICE_LOCK_WAIT,
+    office_dir, write_server_event, FailCode, FirstLine, OfficeFile, ServerEvent, CREATE_FLAG,
+    DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
 use org_proto::location::{
     office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
 };
 use org_proto::{
-    ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
+    ApiError, DbKey, ErrorCode, GrantKey, Hello, HelloResult, OfficeHello, OfficeInfo,
     OfficeStatus, Request, Response,
 };
 use serde::Serialize;
 use serde_json::Value;
+
+use org_office_launch::v3::{self, Handoff, HostFirstLine, RendezvousEvent};
+use org_socket::rights::{ReceiveError, StreamReceiver};
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::sync::{Mutex, OnceLock};
+
+/// The rendezvous connection, once the handoff is done: events go here.
+static RENDEZVOUS: OnceLock<Mutex<UnixStream>> = OnceLock::new();
+/// The transfer descriptor it got, held for its life.
+static TRANSFER: OnceLock<Vec<OwnedFd>> = OnceLock::new();
 
 /// The fake's stand-in for an office's databases, in its folder.
 const DB_FILE_NAME: &str = "db";
@@ -96,6 +112,8 @@ struct Step {
     corrupt_office_file: bool,
     orphan_stdout_ms: Option<u64>,
     ready_delay: Duration,
+    list_dir: Option<String>,
+    forge_stdout: bool,
 }
 
 fn main() {
@@ -126,6 +144,18 @@ fn main() {
     check_no_token_in_argv_or_env(&home, &key);
     record_env_names(&home, &key);
     let step = step(&home, &key, run);
+    if let Some(dir) = &step.list_dir {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        let _ = fs::write(home.join(format!("listed-{key}")), names.join("\n"));
+    }
     if let Some(ms) = step.orphan_stdout_ms {
         orphan_stdout(&home, &key, ms);
     }
@@ -165,14 +195,36 @@ fn main() {
     // another id: a refused create must not replace another office's live socket.
     let (office, lock, socket_id) = match office_id {
         None => {
-            let create = match first_line(&home, &key, &mut stdin) {
-                HostMessage::Create(create) => create,
+            let create = match first_line(&home, &key, &mut stdin, FirstLine::Create) {
+                (
+                    HostFirstLine::Create(create),
+                    Handoff::Create {
+                        db_key, grant_key, ..
+                    },
+                ) => {
+                    note_token(&home, &key, &step, &grant_key);
+                    note_db_key(&home, &key, Some(&db_key), "");
+                    record(&home, &format!("recovery {key} {}", std::process::id()));
+                    if step.forge_stdout {
+                        let office = OfficeFile::new(
+                            create.office.office_id.clone(),
+                            create.office_name.clone(),
+                            create.role,
+                            create.org_id.clone(),
+                            create.org_name.clone(),
+                            now_rfc3339(),
+                        );
+                        let _ = write_server_event(
+                            &mut io::stdout().lock(),
+                            &ServerEvent::Created { office },
+                        );
+                    }
+                    create
+                }
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
-            note_token(&home, &key, &step, &create.app_token);
-            note_db_key(&home, &key, Some(&create.db_key), "");
-            let create_id = create.office_id.clone();
-            let dir = office_dir(&home, &create.office_id).unwrap_or_else(|| {
+            let create_id = create.office.office_id.clone();
+            let dir = office_dir(&home, &create.office.office_id).unwrap_or_else(|| {
                 fail(FailCode::InvalidRequest);
             });
             if fs::DirBuilder::new().mode(0o700).create(&dir).is_err() {
@@ -194,7 +246,7 @@ fn main() {
                 .and_then(|role| serde_json::from_value(role.clone()).ok())
                 .unwrap_or(create.role);
             let office = OfficeFile::new(
-                reported("office_id", create.office_id),
+                reported("office_id", create.office.office_id),
                 reported("office_name", create.office_name),
                 role,
                 reported("org_id", create.org_id),
@@ -230,10 +282,15 @@ fn main() {
             (office, lock, socket_id)
         }
         Some(id) => {
-            match first_line(&home, &key, &mut stdin) {
-                HostMessage::Start(start) => {
-                    note_token(&home, &key, &step, &start.app_token);
-                    note_db_key(&home, &key, Some(&start.db_key), "");
+            match first_line(&home, &key, &mut stdin, FirstLine::Start) {
+                (
+                    HostFirstLine::Start(_),
+                    Handoff::Start {
+                        db_key, grant_key, ..
+                    },
+                ) => {
+                    note_token(&home, &key, &step, &grant_key);
+                    note_db_key(&home, &key, Some(&db_key), "");
                 }
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
@@ -325,11 +382,18 @@ fn inherited_fds() -> String {
     }
 }
 
-/// The first stdin line. An unreadable one is refused here; the caller checks that its op
-/// matches the flag. EOF before it means the host is gone: exit 0 without a line.
-fn first_line(home: &Path, key: &str, stdin: &mut impl BufRead) -> HostMessage {
-    match read_host_message(stdin) {
-        Ok(Some(message)) => message,
+/// The first stdin line, then the rendezvous it names: `ready_for_secrets`, the handoff read a
+/// byte at a time with `recvmsg`, its descriptors, and `fds_received`. An unreadable line is
+/// refused here; the caller checks that the ops match. EOF before it means the host is gone:
+/// exit 0 without a line.
+fn first_line(
+    home: &Path,
+    key: &str,
+    stdin: &mut impl BufRead,
+    expected: FirstLine,
+) -> (HostFirstLine, Handoff) {
+    let line = match v3::read_first_line(stdin, expected) {
+        Ok(Some(line)) => line,
         Ok(None) => {
             record(
                 home,
@@ -338,7 +402,61 @@ fn first_line(home: &Path, key: &str, stdin: &mut impl BufRead) -> HostMessage {
             exit(0);
         }
         Err(e) => refuse_first_line(home, key, e.fail_code()),
+    };
+    let office = line.office().expect("a known op");
+    let owner = match &line {
+        HostFirstLine::Create(create) => create.owner_member_id.as_str(),
+        _ => "-",
+    };
+    record(
+        home,
+        &format!(
+            "line {key} {} {} {owner}",
+            std::process::id(),
+            office.instance_id
+        ),
+    );
+    let mut stream = UnixStream::connect(&office.rendezvous).unwrap_or_else(|_| exit(5));
+    if frame::write_message(&mut stream, &v3::ReadyForSecrets).is_err() {
+        exit(5);
     }
+    let fence = Mutex::new(());
+    let mut receiver = StreamReceiver::new(stream.try_clone().unwrap_or_else(|_| exit(5)));
+    let mut receive = |count| loop {
+        let _ = org_socket::poll_readable(stream.as_raw_fd(), Duration::from_secs(1));
+        match receiver.receive_byte(count, &fence) {
+            Ok(got) => return got,
+            Err(ReceiveError::WouldBlock) => {}
+            Err(ReceiveError::Fatal(_)) => exit(5),
+        }
+    };
+    let mut header = Vec::new();
+    loop {
+        match receive(0) {
+            (b'\n', _) => break,
+            (byte, _) => header.push(byte),
+        }
+    }
+    let handoff = v3::decode_handoff(&header).unwrap_or_else(|_| exit(5));
+    if !handoff.fds().is_empty() {
+        let (marker, fds) = receive(handoff.fds().len());
+        if marker != v3::FD_MARKER {
+            exit(5);
+        }
+        record(
+            home,
+            &format!("transfer {key} {} {}", std::process::id(), fds.len()),
+        );
+        let _ = TRANSFER.set(fds);
+        let received = RendezvousEvent::FdsReceived {
+            of: "handoff".into(),
+        };
+        if v3::write_rendezvous_event(&mut stream, &received).is_err() {
+            exit(5);
+        }
+    }
+    let _ = RENDEZVOUS.set(Mutex::new(stream));
+    (line, handoff)
 }
 
 fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
@@ -351,16 +469,16 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
 
 /// Records the token's fingerprint (never the token) in `fake.log`, and on stderr unless the
 /// step writes its own stderr bytes.
-fn note_token(home: &Path, key: &str, step: &Step, token: &AppToken) {
+fn note_token(home: &Path, key: &str, step: &Step, token: &GrantKey) {
     let fingerprint = fingerprint(token);
     record(
         home,
-        &format!("token {key} {} {fingerprint}", std::process::id()),
+        &format!("grant {key} {} {fingerprint}", std::process::id()),
     );
     if step.stderr_bytes == 0 {
         let _ = writeln!(
             io::stderr(),
-            "fake office server {key}: got its first line, token fingerprint {fingerprint}"
+            "fake office server {key}: got its handoff, grant key fingerprint {fingerprint}"
         );
     }
 }
@@ -404,8 +522,13 @@ fn nibble(hex: u8) -> u8 {
 /// `--discard <id>`: removes an unfinished office's folder, then exits. Without a key it
 /// refuses a folder holding databases (`db`).
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let db_key = match first_line(home, key, stdin) {
-        HostMessage::Discard(discard) => discard.db_key,
+    let db_key = match first_line(home, key, stdin, FirstLine::Discard) {
+        (HostFirstLine::Discard(_), Handoff::Discard { db_key, .. }) => {
+            if step.forge_stdout {
+                let _ = write_server_event(&mut io::stdout().lock(), &ServerEvent::Discarded);
+            }
+            db_key
+        }
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     };
     note_db_key(home, key, db_key.as_ref(), id);
@@ -453,10 +576,21 @@ fn act_before(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
     }
 }
 
-/// Blocks until stdin closes, then returns, unless the step ignores EOF.
+/// Blocks until the rendezvous (or, before it, stdin) closes, then returns, unless the step
+/// ignores EOF.
 fn wait_for_eof(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
     let mut sink = Vec::new();
-    let _ = stdin.read_to_end(&mut sink);
+    match RENDEZVOUS
+        .get()
+        .map(|stream| stream.lock().map(|s| s.try_clone()))
+    {
+        Some(Ok(Ok(mut stream))) => {
+            let _ = io::Read::read_to_end(&mut stream, &mut sink);
+        }
+        _ => {
+            let _ = stdin.read_to_end(&mut sink);
+        }
+    }
     if step.ignore_eof {
         record(home, &format!("eof-ignored {key} {}", std::process::id()));
         loop {
@@ -474,10 +608,22 @@ fn fail(code: FailCode) -> ! {
     exit(1);
 }
 
+/// Writes an event on the rendezvous; before there is one (a refused first line), on stdout,
+/// which the host never reads. A rendezvous the host already ended fails the write: the fake
+/// then carries on to its EOF wait, which ends it cleanly.
 fn emit(event: &ServerEvent) {
-    let mut out = io::stdout().lock();
-    if write_server_event(&mut out, event).is_err() {
-        exit(4);
+    match RENDEZVOUS.get() {
+        Some(stream) => {
+            if let Ok(mut stream) = stream.lock() {
+                let event = RendezvousEvent::Server(event.clone());
+                let _ = v3::write_rendezvous_event(&mut *stream, &event);
+            }
+        }
+        None => {
+            if write_server_event(&mut io::stdout().lock(), event).is_err() {
+                exit(4);
+            }
+        }
     }
 }
 
@@ -637,6 +783,14 @@ fn step(home: &Path, key: &str, run: u64) -> Step {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
         ),
+        list_dir: entry
+            .get("list_dir")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        forge_stdout: entry
+            .get("forge_stdout")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 

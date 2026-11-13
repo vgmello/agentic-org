@@ -328,11 +328,42 @@ fn the_host_never_logs_a_token() {
         !has_hex_run(&log, 64),
         "the host's log holds 64 hex digits:\n{log}"
     );
+    // Each create got a recovery code (X-02 §6.4), and none reached a log in its shape.
+    assert_eq!(home.recovery_codes("create"), 3);
+    for (path, text) in home
+        .logs()
+        .into_iter()
+        .chain([(home.path().join("host.err"), log)])
+    {
+        assert!(
+            !has_recovery_code(&text),
+            "{} holds a recovery code",
+            path.display()
+        );
+    }
     // Neither a token nor a key anywhere in the home (the host's stderr file included). The
     // keys of the stored office, the refused create and the good one stay in the key folder;
     // the failed create's went with its discard.
     home.assert_no_secret_in_home();
     assert_eq!(home.key_ids().len(), 3, "{:?}", home.key_ids());
+}
+
+/// Whether `text` holds a recovery code's shape: 8 groups of 4 Crockford Base32 characters.
+fn has_recovery_code(text: &str) -> bool {
+    let code = |c: u8| c.is_ascii_digit() || c.is_ascii_uppercase();
+    text.as_bytes().windows(39).any(|w| {
+        w.iter()
+            .enumerate()
+            .all(|(i, &c)| if i % 5 == 4 { c == b'-' } else { code(c) })
+    })
+}
+
+#[test]
+fn the_recovery_code_check_finds_one() {
+    assert!(has_recovery_code(
+        "x 0123-4567-89AB-CDEF-GHJK-MNPQ-RSTV-WXYZ y"
+    ));
+    assert!(!has_recovery_code("0123-4567-89AB-CDEF-GHJK-MNPQ-RSTV"));
 }
 
 #[cfg(debug_assertions)]
