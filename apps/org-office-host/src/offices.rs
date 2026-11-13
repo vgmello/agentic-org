@@ -745,7 +745,9 @@ mod tests {
         let script = home.join("server");
         fs::write(
             &script,
-            "#!/bin/sh\necho \"$@\" >> \"$ORG_OFFICE_HOME/ran\"\n",
+            // bash, not macOS's /bin/sh trampoline, which `exec`s a shell: the host refuses a
+            // child whose image changed after its admission.
+            "#!/bin/bash\necho \"$@\" >> \"$ORG_OFFICE_HOME/ran\"\n",
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();

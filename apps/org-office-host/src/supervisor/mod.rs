@@ -707,10 +707,12 @@ mod tests {
         })
     }
 
-    /// An executable `sh` script in `dir`.
+    /// An executable `bash` script in `dir`.
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
         let path = dir.join(name);
-        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        // bash, not macOS's /bin/sh trampoline, which `exec`s a shell: the host refuses a child
+        // whose image changed after its admission.
+        fs::write(&path, format!("#!/bin/bash\n{body}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         path
     }

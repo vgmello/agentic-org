@@ -104,23 +104,34 @@ fn a_create_names_an_owner_the_host_chose_and_gets_a_recovery_code() {
     home.assert_no_secret_in_home();
 }
 
-/// X-02 §5.1 step 4: a server whose rendezvous peer isn't the admitted image (here `sh`, which
-/// was admitted, starts the fake as its child, or `exec`s it) is killed and gets no key.
+/// X-02 §5.1 step 4: a server whose rendezvous peer isn't the admitted image is killed and
+/// gets no key. `bash` (a real binary, unlike macOS's `/bin/sh` trampoline, which `exec`s the
+/// selected shell) is admitted and starts the fake as its child: the peer token check alone
+/// refuses it (bash's own task token never changes; the trailing `exit` keeps bash from
+/// `exec`ing its last command). When the wrapper `exec`s the fake, the token check does.
 #[cfg(target_os = "macos")]
 #[test]
 fn a_peer_that_isnt_the_admitted_image_gets_no_keys() {
     for (name, body) in [
-        ("child", r#""$FAKE" "$@""#),
-        ("exec", r#"exec "$FAKE" "$@""#),
+        ("child", "\"$FAKE\" \"$@\"\nexit $?"),
+        ("exec", "exec \"$FAKE\" \"$@\""),
     ] {
         let home = TestHome::registered();
         home.write_office(&hq(A, "01ORGA", "Acme", T));
+        let wrapper = home.fixture_base().join(name);
+        let fake = support::fake_server();
+        let script = format!("#!/bin/bash\nFAKE='{}'\n{body}\n", fake.display());
+        std::fs::write(&wrapper, script).unwrap();
+        let executable = std::os::unix::fs::PermissionsExt::from_mode(0o700);
+        std::fs::set_permissions(&wrapper, executable).unwrap();
         let mut config = home.config();
-        config.set_server_program(home.wrapper(name, body));
+        config.set_server_program(wrapper);
         let host = home.start(config).unwrap();
         eventually(WAIT, "two refused starts", || home.runs(A) >= 2);
         thread::sleep(Duration::from_millis(200));
         assert_ne!(status(&host, A), OfficeStatus::Active, "{name}");
+        // The fake ran and connected, and got nothing.
+        assert!(!home.first_lines(A).is_empty(), "{name}");
         assert!(home.grant_fingerprints(A).is_empty(), "{name}");
         assert!(home.db_key_fingerprints(A).is_empty(), "{name}");
         assert!(home.transfers(A).is_empty(), "{name}");
