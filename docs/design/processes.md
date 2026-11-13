@@ -168,9 +168,9 @@ The task's owning office keeps one record per task branch: `{ task_id, member_id
 - **Stuck.** A record idle for over a day goes to the lead's Needs you, with **Mark merged…** (decision 12). Until the merge flow gives `stage`, the work state shows open or merged and the refusal says "isn't merged yet" (A63).
 
 ### 4.2 The check and the guarded moves (`org_process::one_branch`, pure)
-**Start.** Inputs: the agent's reserved and open records, the target task, its exception, and whether the rule is on. Answer: allowed, or `OneBranchOpen { branch, task, stage }`.
-- **The rule is on** unless a valid, approved `off` of `branch-and-merge` (its blob approved by a non-author, §5) survives resolution in the target task's project. A missing, clashed or invalid key, or no set, leaves it on (A64, A72).
-- **Blocked** when the agent has a reserved or open record for another task. Its own task's record never blocks it.
+**Start.** Inputs: the agent's reserved, open and closing records, the target task, its exception, and whether the rule is on. Answer: allowed, or `OneBranchOpen { branch, task, stage }`.
+- **The rule is on** unless a valid, approved `off` of `branch-and-merge` (its blob approved by a non-author, §5) survives resolution in the target task's project. A missing, clashed or invalid key, or no set, leaves it on (A64, A72). A conflict on the key leaves the rule on, even when the version applying meanwhile is an approved `off` (ruled 2026-11-13: ada).
+- **Blocked** when the agent has a reserved or open record for another task. Its own task's record never blocks it. A `closing` record blocks it too: it is an open record mid-move (ruled 2026-11-13: ada).
 - **An exception** on the target task allows one record for that task and assignee, then is used up.
 
 It runs at A54's two points, each in one write transaction with the record it creates (A67):
