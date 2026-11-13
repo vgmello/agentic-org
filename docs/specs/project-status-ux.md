@@ -19,7 +19,7 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
-**Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task or bug stopped or held by its budget, `costs-and-budgets-v1` §5.4; an agent's budget pause belongs to the agent, not a project, so it doesn't count). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). No criteria changed.
+**Revision 5 (2026-11-13): costs-and-budgets-v1 alignment.** Monthly project budgets are gone (`costs-and-insights-ux.md` rev 6), so "over budget" in the health rule and the Investment tile becomes "a Budget reached item is open on the project's work" (a task or bug stopped or held by its budget, `costs-and-budgets-v1` §5.4; an agent's budget pause belongs to the agent, not a project, so it doesn't count). The mock-up's Why line names it ("1 task stopped at its budget"). The cost tile opens the usage records behind it, and missing usage reads "Usage incomplete: {reason}" (`costs-and-insights-ux.md` rev 6). The Reporter shows as "Reporter (one-off run 31)" (`agent-run-modes-ux.md` rev 10). No criteria changed.
 
 **Revision 4 (2026-11-08): review fixes.** Revision 3's note on waiting on you now states the narrow rule for decisions, as §4 does: only a task Blocked waiting for your decision on a proposed ADR, while it's the blocker. No criteria changed.
 
@@ -45,6 +45,7 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 ```
  Agentic Org · Status                                   ● At risk             [Generate report]
  Why: you've been waited on for 26 h (3 questions) · FEAT-0006 is past twice its typical cycle time
+      · 1 task stopped at its budget
  ┌ Features ──────────────────────────────┐ ┌ Investment ─────────────┐ ┌ Flow (last 7 d) ───────────┐
  │ FEAT-0007 Quick capture  ▓▓▓▓░░ 4/6     │ │ ≈ $1,240 to date         │ │ 31 tasks done · 9 bugs fixed│
  │ FEAT-0006 Run modes      ▓░░░░░ 1/7     │ │ ≈ $412 this month ▲18%   │ │ cycle time median 3 h 10 m │
@@ -60,9 +61,9 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
  Latest report: Mon 7 Dec · On track → today At risk                       [All reports]
 ```
 
-- Every tile opens the list behind it (the features, the bugs, the sessions behind the cost).
+- Every tile opens the list behind it (the features, the bugs, the usage records behind the cost).
 - **Charts:** the trend uses the dataviz rules (labelled values, never color alone, a table toggle for screen readers).
-- **States:** a new project ("Not enough history yet: status appears after the first week of work". The tiles show what exists) · a project with no features (the Features tile becomes "Tasks: 12 open · 31 done") · a source unavailable (for example no usage data: "Cost not available for Antigravity runs", never $0).
+- **States:** a new project ("Not enough history yet: status appears after the first week of work". The tiles show what exists) · a project with no features (the Features tile becomes "Tasks: 12 open · 31 done") · a source unavailable (for example no usage data: "Usage incomplete: Antigravity doesn't report usage", never $0).
 
 ## 2. Flow 2 · A status report
 
