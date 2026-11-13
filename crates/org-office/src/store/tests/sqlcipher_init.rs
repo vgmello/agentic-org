@@ -1,5 +1,9 @@
 #[path = "opener_inventory.rs"]
 mod opener_inventory;
+#[path = "opener_module_tests.rs"]
+mod opener_module_tests;
+#[path = "opener_modules.rs"]
+mod opener_modules;
 #[path = "opener_policy.rs"]
 mod opener_policy;
 #[path = "opener_scope.rs"]
@@ -162,7 +166,8 @@ fn sqlcipher_openers_and_clippy_overrides_keep_the_fence() {
 fn check_source_inventory(root: &Path) {
     let scope = opener_inventory::tracked(root);
     check_tracked_sources(&scope);
-    opener_sources::cargo_roots(&scope);
+    let roots = opener_sources::cargo_roots(&scope);
+    opener_modules::check(&scope, roots);
 }
 
 fn check_tracked_sources(scope: &opener_scope::SourceScope) {
@@ -455,16 +460,6 @@ fn check_rust_file(root: &Path, path: &Path, source: &str) {
     );
 }
 
-fn skip_policy_directory(relative: &Path) -> bool {
-    // Generated/dependency trees are irrelevant, but a source module may legally
-    // be named build, dist or target. Never omit a directory beneath src.
-    !relative.components().any(|part| part.as_os_str() == "src")
-        && matches!(
-            relative.file_name().and_then(|name| name.to_str()),
-            Some("target" | "node_modules" | ".git" | ".svelte-kit" | "dist" | "build")
-        )
-}
-
 fn opener_policy_config(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "Cargo.toml")
         || (path
@@ -502,21 +497,6 @@ fn check_opener_config(path: &Path, config: &str) {
 
 #[test]
 fn sqlcipher_policy_scans_source_directories_and_cargo_configuration() {
-    for name in [
-        "target",
-        "node_modules",
-        ".git",
-        ".svelte-kit",
-        "dist",
-        "build",
-    ] {
-        assert!(skip_policy_directory(Path::new(name)));
-        assert!(skip_policy_directory(&Path::new("apps/org-ui").join(name)));
-        assert!(!skip_policy_directory(
-            &Path::new("crates/org-office/src").join(name)
-        ));
-    }
-    assert!(!skip_policy_directory(Path::new("crates/org-office/tests")));
     for path in [
         "Cargo.toml",
         "crates/org-office/Cargo.toml",

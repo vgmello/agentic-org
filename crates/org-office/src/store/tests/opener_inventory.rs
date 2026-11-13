@@ -115,7 +115,7 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
     scope
 }
 
-fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
+pub(super) fn fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     std::fs::write(
@@ -1280,8 +1280,15 @@ fn sqlcipher_cargo_normalized_local_git_aliases_are_refused() {
             ),
             ("src/lib.rs", "pub struct Allowed;"),
         ]);
+        let mut cargo = Command::new("cargo");
+        cargo.env_clear().current_dir(dir.path());
+        for name in ["PATH", "HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"] {
+            if let Some(value) = std::env::var_os(name) {
+                cargo.env(name, value);
+            }
+        }
         let output = bounded_output(
-            Command::new("cargo").current_dir(dir.path()).args([
+            cargo.args([
                 "metadata",
                 "--locked",
                 "--offline",
@@ -1312,4 +1319,221 @@ fn sqlcipher_cargo_normalized_local_git_aliases_are_refused() {
         admitted.is_empty(),
         "inventory admitted local Git: {admitted:?}"
     );
+}
+
+#[test]
+fn sqlcipher_source_closure_refuses_untracked_ordinary_module() {
+    let dir = fixture(&[
+        (
+            "Cargo.toml",
+            "[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n",
+        ),
+        (
+            "Cargo.lock",
+            "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'\n",
+        ),
+        ("src/lib.rs", "mod hidden;"),
+    ]);
+    std::fs::write(dir.path().join("src/hidden.rs"), "#![allow(warnings)]").unwrap();
+    assert!(std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_err());
+}
+
+#[test]
+fn sqlcipher_manifest_refuses_local_registry_and_compound_git_schemes() {
+    let dir = fixture(&[("Cargo.toml", ""), ("src/lib.rs", "")]);
+    let scope = tracked(dir.path());
+    let mut admitted = Vec::new();
+    for (field, url) in [
+        ("registry-index", "file:///tmp/idx"),
+        ("registry-index", "https://example.invalid/idx"),
+        ("git", "git+file:///tmp/repo"),
+        ("git", "GIT+FiLe:///tmp/repo"),
+    ] {
+        let source = format!("[dependencies]\nhelper={{version='0.1.0',{field}='{url}'}}");
+        if std::panic::catch_unwind(|| {
+            super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &source)
+        })
+        .is_ok()
+        {
+            admitted.push(source);
+        }
+    }
+    assert!(admitted.is_empty(), "admitted source aliases: {admitted:?}");
+}
+
+#[test]
+fn sqlcipher_cargo_local_registry_and_compound_git_aliases_are_refused() {
+    let mut admitted = Vec::new();
+    for (field, url, expected) in [
+        ("registry-index", "file:///tmp/idx", "registry+file:"),
+        ("git", "git+file:///tmp/repo", "git+git+file:"),
+    ] {
+        let source = format!("[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n[dependencies]\nhelper={{version='0.1.0',{field}='{url}'}}");
+        let dir = fixture(&[
+            ("Cargo.toml", &source),
+            (
+                "Cargo.lock",
+                "version=4\n[[package]]\nname='fixture'\nversion='0.1.0'",
+            ),
+            ("src/lib.rs", "pub struct Allowed;"),
+        ]);
+        let mut cargo = Command::new("cargo");
+        cargo.env_clear().current_dir(dir.path());
+        for name in ["PATH", "HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"] {
+            if let Some(value) = std::env::var_os(name) {
+                cargo.env(name, value);
+            }
+        }
+        let output = bounded_output(
+            cargo.args([
+                "metadata",
+                "--locked",
+                "--offline",
+                "--no-deps",
+                "--format-version",
+                "1",
+            ]),
+            "source alias calibration",
+        );
+        let metadata: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(
+            metadata["packages"][0]["dependencies"][0]["source"]
+                .as_str()
+                .unwrap()
+                .starts_with(expected),
+            "Cargo did not normalize {field}={url}: {metadata}"
+        );
+        let lock = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
+        if std::panic::catch_unwind(|| super::check_source_inventory(dir.path())).is_ok() {
+            admitted.push(format!("{field}={url}"));
+        }
+        assert_eq!(std::fs::read(dir.path().join("Cargo.lock")).unwrap(), lock);
+    }
+    assert!(
+        admitted.is_empty(),
+        "admitted real Cargo aliases: {admitted:?}"
+    );
+}
+
+#[test]
+fn sqlcipher_cargo_alias_fixture_discards_ambient_environment() {
+    if std::env::var_os("QUINN_CARGO_FIXTURE_PROBE").is_some() {
+        sqlcipher_cargo_normalized_local_git_aliases_are_refused();
+        return;
+    }
+    let dir = tempfile::TempDir::new().unwrap();
+    let cargo = bounded_output(
+        Command::new("rustup").args(["which", "cargo"]),
+        "locate fixture Cargo",
+    );
+    let cargo = cargo.trim().replace('\'', "'\\''");
+    let script = dir.path().join("cargo");
+    let rustup_home = bounded_output(
+        Command::new("rustup").args(["show", "home"]),
+        "locate fixture rustup home",
+    );
+    let toolchain = bounded_output(
+        Command::new("rustup").args(["show", "active-toolchain"]),
+        "locate fixture toolchain",
+    );
+    let toolchain = toolchain.split_whitespace().next().unwrap();
+    let mut paths = vec![dir.path().to_owned()];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(paths).unwrap();
+    let marker = dir.path().join("reached");
+    let expected = [
+        ("PATH", path.to_string_lossy().into_owned()),
+        ("HOME", std::env::var("HOME").unwrap()),
+        ("RUSTUP_HOME", rustup_home.trim().to_owned()),
+        ("RUSTUP_TOOLCHAIN", toolchain.to_owned()),
+    ];
+    let mut body =
+        "#!/bin/sh\nif [ \"${QUINN_CARGO_POISON-}\" = poison ]; then exit 77; fi\n".to_owned();
+    for (name, value) in &expected {
+        body.push_str(&format!(
+            "test \"${{{name}-}}\" = '{}' || exit 78\n",
+            value.replace('\'', "'\\''")
+        ));
+    }
+    body.push_str(&format!(
+        "echo reached >> '{}'\nexec '{cargo}' \"$@\"\n",
+        marker.to_string_lossy().replace('\'', "'\\''")
+    ));
+    std::fs::write(&script, body).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let thread = std::thread::current();
+    let name = thread.name().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([name, "--exact", "--nocapture"])
+        .env("QUINN_CARGO_FIXTURE_PROBE", "1")
+        .env("QUINN_CARGO_POISON", "poison")
+        .envs(expected)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "fixture inherited ambient environment: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 6);
+}
+
+#[test]
+fn sqlcipher_manifest_local_source_aliases_cover_every_dependency_spelling() {
+    let dir = fixture(&[("Cargo.toml", ""), ("src/lib.rs", "")]);
+    let scope = tracked(dir.path());
+    for table in [
+        "dependencies",
+        "dev-dependencies",
+        "build-dependencies",
+        "dev_dependencies",
+        "build_dependencies",
+        "workspace.dependencies",
+        "target.'cfg(any())'.dependencies",
+        "target.'cfg(any())'.dev-dependencies",
+        "target.'cfg(any())'.build-dependencies",
+        "target.'cfg(any())'.dev_dependencies",
+        "target.'cfg(any())'.build_dependencies",
+    ] {
+        for (field, url) in [
+            ("registry-index", "file:///tmp/idx"),
+            ("registry-index", "https://example.invalid/idx"),
+            ("git", "file:///tmp/repo"),
+            ("git", "FILE:///tmp/repo"),
+            ("git", "git+file:///tmp/repo"),
+            ("git", "GIT+FiLe:///tmp/repo"),
+            ("git", "git+git+file:///tmp/repo"),
+            ("git", "sparse+file:///tmp/repo"),
+        ] {
+            for source in [
+                format!("[{table}]\nhelper={{version='0.1.0',{field}='{url}'}}"),
+                format!("[{table}.helper]\n{field}='{url}'"),
+                format!("[{table}]\nhelper.{field}='{url}'"),
+                format!("{table}.helper.{field}='{url}'"),
+            ] {
+                assert!(
+                    std::panic::catch_unwind(|| super::opener_policy::manifest_paths(
+                        &scope,
+                        &scope.root.join("Cargo.toml"),
+                        &source
+                    ))
+                    .is_err(),
+                    "accepted {source}"
+                );
+            }
+        }
+        for url in [
+            "https://example.invalid/repo",
+            "ssh://example.invalid/repo",
+            "git@example.invalid:repo",
+            "relative",
+            "https://example.invalid/+file:repo",
+        ] {
+            let source = format!("[{table}]\nhelper={{git='{url}'}}");
+            super::opener_policy::manifest_paths(&scope, &scope.root.join("Cargo.toml"), &source);
+        }
+    }
 }

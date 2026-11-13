@@ -662,17 +662,9 @@ pub(super) fn modules(root: &Path, file: &Path, source: &str) {
                         .join(path)
                         .canonicalize()
                         .expect("missing module path");
-                    let relative = target
+                    target
                         .strip_prefix(self.root)
                         .expect("module path escapes repository");
-                    let mut prefix = PathBuf::new();
-                    for part in relative.components() {
-                        prefix.push(part);
-                        assert!(
-                            !super::skip_policy_directory(&prefix),
-                            "module path is skipped by inventory"
-                        );
-                    }
                     assert!(target.is_file(), "module path is not a file");
                 }
                 ("path", _) => panic!("unsupported module path attribute"),
@@ -1260,6 +1252,8 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
         "#[cfg_attr(unix,cfg_attr(test,path=\"ok.rs\"))] mod child;",
         "#[path=\"build/ok.rs\"] mod child;",
         "#[path=\"../tests/core_limit.rs\"] mod child;",
+        "#[cfg_attr(unix,path=\"../build/rogue.rs\")] mod child;",
+        "#[path=\"../build/rogue.rs\"] mod child;",
         "// #[path=\"bad.inc\"] mod x;\nconst TEXT:&str=\"include!(bad)\";",
         "const TEXT:&str=include_str!(\"data\"); const BYTES:&[u8]=include_bytes!(\"data\");",
         "other! { include data; myinclude!(\"data\"); }",
@@ -1285,8 +1279,6 @@ fn sqlcipher_module_policy_checks_real_target_coverage_and_code_macros() {
     }
     for source in [
         "#[path=\"rogue.inc\"] mod child;",
-        "#[path=\"../build/rogue.rs\"] mod child;",
-        "#[cfg_attr(unix,path=\"../build/rogue.rs\")] mod child;",
         "#[r#path=\"rogue.inc\"] mod child;",
         "#[path=concat!(\"ok\",\".rs\")] mod child;",
         "#[path=\"missing.rs\"] mod child;",
@@ -2030,6 +2022,7 @@ pub(super) fn manifest_paths(
                     Some("path") => {
                         scope.require(&base.join(string(value)).join("Cargo.toml"));
                     }
+                    Some("registry-index") => panic!("registry-index sources unsupported"),
                     Some("git") => {
                         let url = string(value);
                         assert!(
@@ -2037,10 +2030,11 @@ pub(super) fn manifest_paths(
                                 .any(|byte| byte.is_ascii_control() || byte == b' '),
                             "unsupported Git URL whitespace"
                         );
-                        assert!(
-                            !url.to_ascii_lowercase().starts_with("file:"),
-                            "local Git sources unsupported"
-                        );
+                        let local = url.split_once(':').is_some_and(|(scheme, _)| {
+                            let scheme = scheme.to_ascii_lowercase();
+                            scheme == "file" || scheme.ends_with("+file")
+                        });
+                        assert!(!local, "local Git sources unsupported");
                     }
                     _ => {}
                 }
