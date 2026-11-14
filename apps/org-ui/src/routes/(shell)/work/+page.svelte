@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
+	import { owner } from '$lib/org/model';
 	import BugSheet from '$lib/components/BugSheet.svelte';
 	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
 	import RequestSheet from '$lib/components/RequestSheet.svelte';
@@ -22,7 +23,7 @@
 	let { data } = $props();
 	const organizationId = $derived(data.connection.organization.id);
 	const snapshot = $derived(data.snapshot);
-	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
+	const me = $derived(owner(snapshot)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
 	/** The open requests that read like these words, from the office (offered while typing). */
 	const find = (text: string) => workApi.similar(organizationId, { text, limit: 2 }).then((r) => r.items);
@@ -72,8 +73,11 @@
 			requestId = wanted;
 			requestStart = undefined;
 			requestOpen = true;
-		}
-		void goto(page.url.pathname, { replaceState: true, noScroll: true, keepFocus: true });
+		} else if (workApi.requests) toast('That request is no longer here.');
+		// Only the link's own parameter goes; the rest of the address stays as it was.
+		const rest = new URLSearchParams(page.url.searchParams);
+		rest.delete('request');
+		void goto(`${page.url.pathname}${rest.toString() ? `?${rest}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
 	});
 
 	// Work opens on the tab it was left on (per organization), as the queue's filters are remembered.
@@ -142,7 +146,7 @@
 			<p class="text-sm/6 text-gray-400">Loading work…</p>
 		{/if}
 	{:else if tab === 'requests'}
-		{#key organizationId}<RequestsPanel items={items} {snapshot} {now} {organizationId} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />{/key}
+		{#key organizationId}<RequestsPanel items={items} {snapshot} {me} {now} {organizationId} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />{/key}
 	{:else if (snapshot.projects ?? []).length === 0}
 		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-projects">No projects yet. Work items live in projects.</p>
 	{:else}
@@ -191,6 +195,6 @@
 </div>
 
 <NewRequestDialog bind:open={newRequestOpen} {snapshot} {find} {send} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} />
-<RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
+<RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} {me} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
 <TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
 <BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />
