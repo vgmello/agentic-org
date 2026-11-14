@@ -205,18 +205,22 @@ UNIQUE (organization_id, release_id, number),
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE project_documents (
+CREATE TABLE documents (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-project_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  feature_id TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report')),
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+  CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -514,6 +518,7 @@ CREATE INDEX projects_by_owner ON projects(organization_id, owner_team_id);
 CREATE INDEX tasks_by_project_status ON tasks(organization_id, project_id, status);
 CREATE INDEX tasks_by_assignee ON tasks(organization_id, assignee_id, status);
 CREATE INDEX tasks_by_milestone ON tasks(organization_id, milestone_id);
+CREATE INDEX documents_by_scope ON documents(organization_id, project_id, feature_id, kind);
 CREATE INDEX milestones_by_release ON milestones(organization_id, release_id);
 CREATE INDEX project_repositories_by_repo ON project_repositories(organization_id, repository_id);
 CREATE UNIQUE INDEX unique_employee_watcher ON watchers(organization_id, target_kind, target_id, watcher_id) WHERE watcher_kind = 'employee';

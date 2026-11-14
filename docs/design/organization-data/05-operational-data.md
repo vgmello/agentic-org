@@ -1,6 +1,6 @@
 # Operational data structure
 
-Structural draft for v1. Document revision 2.2. Watchers, owner questions and waiting spans are explicitly selected for implementation. This document defines their data, not notification delivery or process execution. It extends [typed tasks](03-features-and-work.md).
+Structural draft for v1. Document revision 2.3. Watchers, owner questions and waiting spans are explicitly selected for implementation. This document defines their data, not notification delivery or process execution. It extends [typed tasks](03-features-and-work.md).
 
 ## Relationships
 

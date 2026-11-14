@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.2. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
+Structural draft for v1. Document revision 2.3. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -9,8 +9,8 @@ Existing v1 designs remain the implementation reference until a migration is app
 | Document | Owns | Does not define |
 | --- | --- | --- |
 | [Organization structure](01-organization-structure.md) | Organization, offices, team tree, roles, repository registrations, structural process/standard documents | Process-engine execution or replication algorithms |
-| [Project structure](02-project-structure.md) | Project ownership, repository associations, integration branches, releases and milestones | Agent provisioning or task lifecycle engine |
-| [Features and work](03-features-and-work.md) | Features and typed tasks, checklists, comments and links | Areas, advanced Undo or additional v1 workflows not selected yet |
+| [Project structure](02-project-structure.md) | Project ownership, repository associations, integration branches, releases/milestones and project/feature document records | Agent provisioning or task lifecycle engine |
+| [Features and work](03-features-and-work.md) | Feature definitions and linked knowledge, typed tasks, checklists, comments and links | Areas, advanced Undo or additional v1 workflows not selected yet |
 | [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement boundary | Agent setup; separate specification pending |
 | [Operational data](05-operational-data.md) | Watchers, owner questions and waiting spans | Notification delivery, timers, scheduling or process-engine behaviour |
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
@@ -79,6 +79,7 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Offices | Durable organization records; support multiple offices |
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
+| Knowledge documents | Required project, optional same-project feature; feature definitions stay in `feature.md` |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup | Separate specification pending; do not port old setup automatically |

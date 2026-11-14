@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.2. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Structural draft for v1. Document revision 2.3. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -16,7 +16,8 @@ erDiagram
     releases ||--o{ release_repository_commits : pins
     project_repositories ||--o{ release_repository_commits : supplies
     milestones o|--o{ tasks : groups
-    projects ||--o{ project_documents : preserves
+    projects ||--o{ documents : preserves
+    features o|--o{ documents : scopes
     projects {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
@@ -73,13 +74,14 @@ erDiagram
         TEXT status "required"
         TEXT body_markdown "required"
     }
-    project_documents {
+    documents {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
         TEXT key "optional"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
+        TEXT feature_id FK "optional"
         TEXT kind "required"
         TEXT title "required"
         TEXT body_markdown "required"
@@ -98,7 +100,11 @@ A release has an `R-<number>` reference and an optional plain-text `version_labe
 projects/<project-id>/
 ├── project.yaml
 ├── brief.md
-├── features/<feature-id>.md
+├── features/<feature-id>/
+│   ├── feature.md                   # Definition, behaviour and known limitations
+│   ├── designs/<document-id>.md     # Feature-specific designs
+│   ├── decisions/<document-id>.md   # Feature-specific decisions
+│   └── reports/<document-id>.md     # Feature-specific findings
 ├── releases/<release-id>/
 │   ├── release.md
 │   └── milestones/<milestone-id>.md
@@ -128,6 +134,45 @@ repositories:
 
 The Product Agency's Care Platform and Trading Platform projects can reference the same infrastructure registration while selecting `release/care-v1` and `main`, respectively. The office still keeps one local cache for that repository. A Kitchen Display project may reference a local-only code registration without changing the organization repository's remote requirement.
 
+## Project documents and feature documents
+
+One `documents` table holds supporting knowledge at either scope. Every document requires `project_id`. Null `feature_id` means project scope; a present `feature_id` means feature scope and must reference a feature of that same project. A feature can have zero or many documents, and a supporting document belongs to at most one feature. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
+
+| Record | Content | Canonical location |
+| --- | --- | --- |
+| Project brief | Product purpose, goals and boundaries | `projects/<project-id>/brief.md` |
+| Project design | Shared architecture, integrations and cross-feature concepts | Project `designs/<document-id>.md` |
+| Project decision/report | Cross-feature decisions or findings | Project `decisions/` or `reports/` |
+| Feature definition | Purpose, current behaviour, rules, known limitations and non-goals | `features/<feature-id>/feature.md` |
+| Feature design | Detailed flows, interactions and implementation choices | Feature `designs/<document-id>.md` |
+| Feature decision/report | Feature-specific rationale, experiments or findings | Feature `decisions/` or `reports/` |
+
+`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. All paths above are inside the organization Git repository, retain stable ID filenames, and survive closure of related tasks.
+
+For Restaurant SaaS, shared Reservations architecture is a project design (`feature_id: null`). The table-booking feature definition explains booking behaviour and known limitations. Its overlap-handling design is a separate feature document:
+
+```markdown
+---
+schema_version: 1
+id: 01J00000000000000000000070
+revision: 1
+project_id: 01J00000000000000000000010
+feature_id: 01J00000000000000000000034
+kind: design
+title: Prevent overlapping table bookings
+---
+## Design
+Validate availability and reserve the selected table atomically.
+
+## Rationale
+Concurrent requests must not both reserve the same table and time range.
+
+## Limitations
+This design covers individual tables; combining tables needs a separate design.
+```
+
+Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id: null` and lives in the project-level folder. Path, `kind` and scope IDs must agree; the importer rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
+
 ## File to SQL mapping
 
 | Table | Source fields |
@@ -138,7 +183,7 @@ The Product Agency's Care Platform and Trading Platform projects can reference t
 | `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body. |
 | `release_repository_commits` | Release `repository_commits` map: repository ID to exact commit SHA; `release_id` and `project_id` come from its parent file. |
 | `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, `status`, and Markdown body. Path and explicit parent IDs must agree. |
-| `project_documents` | Brief/decision/design/report front matter: common identity fields, `project_id`, `kind`, `title`, and body. Structural process/standard content is owned by document 01. |
+| `documents` | Project/feature supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `kind`, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
 A manifest may cover multiple code repositories. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
 
@@ -242,18 +287,22 @@ UNIQUE (organization_id, release_id, number),
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE project_documents (
+CREATE TABLE documents (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-project_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  feature_id TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report')),
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+  CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```

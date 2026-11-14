@@ -1,6 +1,6 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.2. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Structural draft for v1. Document revision 2.3. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 

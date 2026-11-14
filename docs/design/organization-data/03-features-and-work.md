@@ -1,6 +1,6 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.2. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.3. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -9,6 +9,7 @@ There is one authored work entity and one physical `tasks` table. `type` disting
 ```mermaid
 erDiagram
     projects ||--o{ features : defines
+    features o|--o{ documents : supporting_knowledge
     projects ||--o{ feature_slugs : prefixes
     features ||--|| feature_slugs : exposes
     teams ||--o{ tasks : owns
@@ -134,6 +135,10 @@ title: Table booking
 status: planned
 ```
 
+Save this feature at `projects/<project-id>/features/<feature-id>/feature.md`. Its Markdown body is the current feature definition, with sections for Purpose, How it works, Rules, Known limitations, and Non-goals. Keep detailed designs and decisions in supporting documents under the same feature folder; their association is explicit `feature_id`, not merely a Markdown link. See [document scopes and example](02-project-structure.md).
+
+For table booking, the definition explains how a guest selects a table and time, what happens when availability changes, and limitations such as unsupported combined-table bookings. The feature's overlap-handling design documents the detailed concurrency mechanism. In Product Agency, shared authentication architecture belongs to the Care Platform project, while appointment reminder behaviour and its delivery limitations belong to that feature. Both examples use the same structure.
+
 The feature body contains its description. SQL derives `F-6` from the number; the `feature_slugs` view derives public slug `reservations/table-booking`. Files persist only `local_slug` and `project_id`, so there is no separately authored prefix to drift. A project-slug change automatically changes its features' full slugs; stable IDs, numbers and filenames stay unchanged. Aliases for old slugs are outside this draft.
 
 Full slug lookup splits on the single `/`, resolves the organization/project slug, then uses that project and feature local slug. SQL enforces lowercase kebab-case on both components, so neither can contain `/`. Existing UNIQUE indexes support both steps; a duplicate stored full-path column or extra text index is unnecessary.
@@ -207,7 +212,7 @@ erDiagram
 
 | Table | Source fields |
 | --- | --- |
-| `features` | `features/<id>.md`: stable `id`, `number`, `local_slug`, revision fields, `project_id`, `title`, `status`, body; `key` and public full slug are derived. |
+| `features` | `features/<id>/feature.md`: stable `id`, `number`, `local_slug`, revision fields, `project_id`, `title`, `status`, body; `key` and public full slug are derived. |
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required `team_id`, optional `project_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
