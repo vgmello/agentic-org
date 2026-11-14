@@ -1,6 +1,6 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.0. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Structural draft for v1. Document revision 2.1. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -20,7 +20,7 @@ erDiagram
     offices ||--o{ agent_placements : places_agents
     organizations {
         TEXT id PK, FK "required"
-        TEXT key "optional"
+        TEXT slug "required"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT name "required"
@@ -48,7 +48,8 @@ erDiagram
     teams {
         TEXT organization_id PK, FK "required"
         TEXT id PK, FK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT name "required"
@@ -58,7 +59,7 @@ erDiagram
     offices {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        TEXT slug "required"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT name "required"
@@ -93,19 +94,21 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── standards/<document-id>.md
 ├── teams/<team-id>/
 │   ├── team.yaml
+│   ├── work/tasks/<task-id>.md       # Team tasks of any type; project_id is null
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md
 │   ├── standards/<document-id>.md
 │   └── teams/<child-team-id>/...   # Same structure at every depth
 ├── projects/<project-id>/...       # Defined in document 02
-├── work/requests/<request-id>.md    # Requests with no project yet
+├── identity/counters/<scope-kind>/<scope-id>/<entity-kind>.yaml
+├── identity/allocations/<scope-kind>/<scope-id>/<entity-kind>/<number>.yaml
 └── tombstones/<kind>/<id>.yaml
 ```
 
 `team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder.
 
-An office file stores its stable ID, key, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
+An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
 
 ## Repository types
 
@@ -165,7 +168,7 @@ Product Agency
         └── Go to Market
 ```
 
-Every grouping in those examples is a team. Repeated display names such as Engineering have different stable IDs; their readable keys can repeat under different parent teams.
+Every grouping in those examples is a team. Repeated display names such as Engineering have different stable IDs and different organization-wide `TEAM-<number>` references. Team numbers do not depend on hierarchy depth or parent names. A director can assign a projectless task to another director through a team backlog.
 
 ## File to SQL mapping
 
@@ -176,7 +179,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | `organizations` | Same-named keys in `organization.yaml`; the selected organization repository must be remote. |
 | `repositories` | Entries of `repositories.yaml.repositories[]`, including `kind` and nullable `remote_url`. |
 | `roles` | Front matter and body of `roles/<id>.md`; agent-specific setup is pending document 04. |
-| `teams` | Same-named keys in `team.yaml`, including nullable `parent_team_id` and `lead_employee_id`. |
+| `teams` | Same-named fields in `team.yaml`, including `number`, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
 | `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content only; no process engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
@@ -187,7 +190,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 ```sql
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
-  key TEXT UNIQUE,
+  slug TEXT NOT NULL UNIQUE CHECK (length(slug) > 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   name TEXT NOT NULL,
@@ -225,14 +228,15 @@ UNIQUE (organization_id, key)
 CREATE TABLE teams (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
   parent_team_id TEXT,
   lead_employee_id TEXT,
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, parent_team_id, key),
+UNIQUE (organization_id, number),
   CHECK (parent_team_id IS NULL OR parent_team_id <> id),
   FOREIGN KEY (organization_id, parent_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -243,13 +247,13 @@ UNIQUE (organization_id, parent_team_id, key),
 CREATE TABLE offices (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  slug TEXT NOT NULL CHECK (length(slug) > 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('hq', 'satellite')),
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, key)
+UNIQUE (organization_id, slug)
 ) STRICT;
 
 CREATE TABLE structure_documents (

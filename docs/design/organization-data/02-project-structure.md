@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.0. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Structural draft for v1. Document revision 2.1. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -20,7 +20,8 @@ erDiagram
     projects {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT name "required"
@@ -41,7 +42,8 @@ erDiagram
     releases {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
@@ -60,7 +62,8 @@ erDiagram
     milestones {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
@@ -82,9 +85,9 @@ erDiagram
     }
 ```
 
-Each project has exactly one owning team and optional contributing teams. It may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects.
+Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. Every project task stores that same owning team in required `team_id`; a composite foreign key enforces the match. Reassigning project ownership must update its tasks in the same transaction. It may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects.
 
-A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
+A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
 
 ## Durable project files
 
@@ -101,10 +104,7 @@ projects/<project-id>/
 ├── reports/<document-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
-└── work/
-    ├── tasks/<task-id>.md
-    ├── bugs/<bug-id>.md
-    └── requests/<request-id>.md
+└── work/tasks/<task-id>.md          # type: task, bug, request, or another task type
 ```
 
 Tasks stay in the project work folder even when linked to a milestone; their explicit `milestone_id` is the relationship. This avoids moving task documents whenever their planning assignment changes. Milestone files themselves live inside their owning release.
@@ -112,7 +112,7 @@ Tasks stay in the project work folder even when linked to a milestone; their exp
 ```yaml
 schema_version: 1
 id: 01J00000000000000000000010
-key: reservations
+number: 8
 revision: 1
 name: Reservations
 owner_team_id: 01J00000000000000000000020
@@ -144,14 +144,16 @@ A manifest may cover multiple code repositories. Dates, release gates, progressi
 CREATE TABLE projects (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'P-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
   owner_team_id TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, key),
+UNIQUE (organization_id, number),
+  UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -182,7 +184,8 @@ CREATE TABLE project_repositories (
 CREATE TABLE releases (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'R-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
@@ -191,7 +194,7 @@ project_id TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, project_id, key),
+UNIQUE (organization_id, project_id, number),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
@@ -213,7 +216,8 @@ CREATE TABLE release_repository_commits (
 CREATE TABLE milestones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'M-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
@@ -222,7 +226,7 @@ project_id TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, release_id, key),
+UNIQUE (organization_id, release_id, number),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED

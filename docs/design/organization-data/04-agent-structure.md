@@ -1,6 +1,6 @@
 # Agent and employee structure boundary
 
-Structural draft for v1. Document revision 2.0. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
+Structural draft for v1. Document revision 2.1. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
 
 ## Confirmed relationships
 
@@ -18,7 +18,7 @@ erDiagram
     employees {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        TEXT handle "required"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT kind "required"
@@ -60,7 +60,7 @@ teams/<team-id>/
 ---
 schema_version: 1
 id: 01J00000000000000000000030
-key: ana
+handle: ana
 revision: 1
 kind: agent
 name: Ana
@@ -71,7 +71,7 @@ reports_to_employee_id: null
 Reservations team employee identity. Agent setup will be defined separately.
 ```
 
-The readable key is not automatically a messaging handle. Existing v1 handles and agent configuration must not be deleted or rewritten while the new setup document is pending. No `runtime`, model, tools, run mode, permission policy or memory directory is made mandatory by this draft.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Preserve existing v1 handles on import where valid and resolve collisions explicitly. Agent provisioning and messaging transport remain pending specifications. No `runtime`, model, tools, run mode, permission policy or memory directory is made mandatory by this draft.
 
 ## Runtime location
 
@@ -80,8 +80,8 @@ runtime/<office-id>/
 ├── repositories/<repository-id>.git/
 └── teams/<root-team-id>/teams/<child-team-id>/.../
     └── agents/<employee-id>/
-        └── projects/<project-id>/tasks/<task-id>/repositories/
-            └── <repository-id>/           # Working tree backed by the office cache
+        ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
+        └── tasks/<task-id>/repositories/<repository-id>/  # Team tasks
 ```
 
 The runtime team tree is the local office's projection of the organization-wide team hierarchy, containing only its placed agents and their necessary ancestors. One office's directories cannot define or replace organization-wide membership.
@@ -90,7 +90,7 @@ The runtime team tree is the local office's projection of the organization-wide 
 
 | Table | Source |
 | --- | --- |
-| `employees` | `profile.md`: common identity fields, `kind`, `name`, `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, and body. File location and `kind` must agree. |
+| `employees` | `profile.md`: stable identity/revision fields, required `handle`, `kind`, `name`, `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, and body. File location and `kind` must agree. |
 | `agent_placements` | Current office-controller state; runtime-only. Only agent employees are eligible. No durable `office_id` is silently added to a profile. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |
 
@@ -104,7 +104,7 @@ The agent setup document must decide its configuration fields, identity/provisio
 CREATE TABLE employees (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  handle TEXT NOT NULL CHECK (length(handle) > 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
@@ -114,7 +114,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   reports_to_employee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, key),
+UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
   CHECK (reports_to_employee_id IS NULL OR reports_to_employee_id <> id),
   FOREIGN KEY (organization_id, home_team_id) REFERENCES teams(organization_id, id)

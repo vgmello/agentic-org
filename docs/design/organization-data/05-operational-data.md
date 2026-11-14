@@ -1,6 +1,6 @@
 # Operational data structure
 
-Structural draft for v1. Document revision 2.0. Watchers, owner questions and waiting spans are explicitly selected for implementation. This document defines their data, not notification delivery or process execution. It extends [tasks, bugs and requests](03-features-and-work.md).
+Structural draft for v1. Document revision 2.1. Watchers, owner questions and waiting spans are explicitly selected for implementation. This document defines their data, not notification delivery or process execution. It extends [typed tasks](03-features-and-work.md).
 
 ## Relationships
 
@@ -48,13 +48,13 @@ erDiagram
     }
 ```
 
-Each record belongs to exactly one task, bug or request through a typed stable reference. A watcher can be an employee or the organization owner. An owner question references its question comment and optional answer comment instead of duplicating the text. A waiting span records who is awaited, why, and its start/end timestamps; a null end marks an open span.
+Each record belongs to exactly one task through `target_kind: task` and its stable task ID, irrespective of whether the task type is task, bug or request. A watcher can be an employee or the organization owner. An owner question references its question comment and optional answer comment instead of duplicating the text. A waiting span records who is awaited, why, and its start/end timestamps; a null end marks an open span.
 
 The owner is a special recipient/actor designation, not a new employee folder or an authentication record. Owner rows use kind `owner` and a null employee ID. This metadata grants no owner authority; authentication and permissions remain separate.
 
 ## Canonical file location
 
-Operational metadata lives in its owning task/bug/request's front matter. It is not stored in another folder that could drift from the work record.
+Operational metadata lives in its owning task's front matter. It is not stored in another folder that could drift from the work record.
 
 ```yaml
 operations:
@@ -97,7 +97,7 @@ Closing a record must not discard an unresolved question/span silently. The even
 ```sql
 CREATE TABLE watchers (
   organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('task', 'bug', 'request')),
+  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   watcher_kind TEXT NOT NULL CHECK (watcher_kind IN ('employee', 'owner')),
@@ -112,7 +112,7 @@ CREATE TABLE watchers (
 
 CREATE TABLE owner_questions (
   organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('task', 'bug', 'request')),
+  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   question_comment_id TEXT NOT NULL,
@@ -134,7 +134,7 @@ CREATE TABLE owner_questions (
 
 CREATE TABLE waiting_spans (
   organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('task', 'bug', 'request')),
+  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   reason TEXT NOT NULL,

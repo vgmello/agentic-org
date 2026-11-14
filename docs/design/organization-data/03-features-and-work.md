@@ -1,32 +1,30 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.0. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.1. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
-Tasks are tasks. The previous `work_items` label was a shared persistence abstraction for tasks, bugs and requests. It is removed from this model's authored entities and physical tables. The three kinds have their own tables and file folders. Shared comments and operational metadata use typed references to those tables.
+There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. All types use the same `T-<number>` sequence within their scope and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
 
 ```mermaid
 erDiagram
     projects ||--o{ features : defines
-    projects ||--o{ tasks : contains
-    projects ||--o{ bugs : contains
-    projects o|--o{ requests : scopes
+    teams ||--o{ tasks : owns
+    projects o|--o{ tasks : optionally_scopes
     features o|--o{ tasks : feature_id
-    features o|--o{ bugs : affected_feature
     milestones o|--o{ tasks : milestone_id
     employees o|--o{ tasks : assigned
-    employees o|--o{ bugs : assigned
-    employees o|--o{ requests : assigned
     tasks ||--o{ task_repositories : targets
-    project_repositories ||--o{ task_repositories : permits
+    repositories ||--o{ task_repositories : registered_target
     features {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
+        TEXT slug "required"
         TEXT title "required"
         TEXT status "required"
         TEXT body_markdown "required"
@@ -34,10 +32,13 @@ erDiagram
     tasks {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
-        TEXT key "optional"
+        INTEGER number "optional"
+        TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
-        TEXT project_id FK "required"
+        TEXT team_id FK "required"
+        TEXT project_id FK "optional"
+        TEXT type "required"
         TEXT title "required"
         TEXT status "required"
         TEXT assignee_id FK "optional"
@@ -45,57 +46,34 @@ erDiagram
         TEXT updated_at "required"
         TEXT body_markdown "required"
         TEXT feature_id FK "optional"
-        TEXT priority "required"
         TEXT milestone_id FK "optional"
+        TEXT priority "required"
+        TEXT severity "optional"
         TEXT resolution "optional"
         TEXT blocked_reason "optional"
-    }
-    bugs {
-        TEXT organization_id PK, FK "required"
-        TEXT id PK "required"
-        TEXT key "optional"
-        INTEGER schema_version "required"
-        INTEGER revision "required"
-        TEXT project_id FK "required"
-        TEXT title "required"
-        TEXT status "required"
-        TEXT assignee_id FK "optional"
-        TEXT created_at "required"
-        TEXT updated_at "required"
-        TEXT body_markdown "required"
-        TEXT feature_id FK "optional"
-        TEXT priority "required"
-        TEXT severity "required"
-    }
-    requests {
-        TEXT organization_id PK, FK "required"
-        TEXT id PK "required"
-        TEXT key "optional"
-        INTEGER schema_version "required"
-        INTEGER revision "required"
-        TEXT project_id FK "optional"
-        TEXT title "required"
-        TEXT status "required"
-        TEXT assignee_id FK "optional"
-        TEXT created_at "required"
-        TEXT updated_at "required"
-        TEXT body_markdown "required"
     }
     task_repositories {
         TEXT organization_id PK, FK "required"
         TEXT task_id PK, FK "required"
-        TEXT project_id FK "required"
         TEXT repository_id PK, FK "required"
         TEXT branch "optional"
         TEXT integrated_commit "optional"
     }
 ```
 
-- A task belongs to exactly one project, zero or one feature, zero or one milestone and zero or one assignee. It can target zero or many project repositories.
-- A feature belongs to exactly one project and can have many tasks. Feature and milestone membership are independent: a feature's tasks can span milestones/releases.
-- A bug belongs to one project and may name an affected feature. Fix relationships are explicit links from tasks to bugs.
-- A request may have no project until routed. Unrouted request files live at organization-level `work/requests/`; moving one into a project preserves its ID.
-- Each target repository gets its own task branch/worktree. A local-only target does not acquire a remote URL from being part of a project.
+- Every task requires `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's team must equal the project's owning team.
+- Creator, assignee and the assignee's home team do not determine ownership. A director may assign a team task to another director without creating an artificial project.
+- A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
+- A feature belongs to one project and has a numeric reference such as `F-6` plus a separate project-unique slug such as `table-booking`.
+- A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
+- A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on import/publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
+
+```text
+Project work: projects/<project-id>/work/tasks/<task-id>.md
+Team work:    teams/<team-id>/.../work/tasks/<task-id>.md
+```
+
+The team path includes its full ancestor chain. Task scope and path must agree; a project task does not get a second canonical file under its team.
 
 ## Task file example
 
@@ -103,7 +81,9 @@ erDiagram
 ---
 schema_version: 1
 id: 01J00000000000000000000040
-key: T-42
+number: 42
+type: bug
+team_id: 01J00000000000000000000020
 revision: 1
 project_id: 01J00000000000000000000010
 title: Prevent overlapping reservations
@@ -114,6 +94,7 @@ updated_at: "2026-11-14T10:00:00Z"
 feature_id: null
 milestone_id: null
 priority: high
+severity: major
 resolution: null
 blocked_reason: null
 repository_ids: [01J00000000000000000000002]
@@ -130,7 +111,9 @@ operations:
 Reject overlapping reservations for the same table. Include concurrent requests in the tests.
 ```
 
-The parent folder determines whether this is a task, bug or request. A `kind` column is not needed on each dedicated table. For typed associations, the importer derives `task`, `bug` or `request` from that validated location. All foreign references still use stable IDs, never `T-42`.
+The readable reference is derived as `T-42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
+
+Feature front matter contains `id`, `number: 6`, `slug: table-booking`, `project_id`, common revision fields, `title` and `status`; its body contains the feature description. `F-6` is derived, while the descriptive slug is explicitly stored.
 
 ## Shared child records
 
@@ -183,7 +166,10 @@ erDiagram
         TEXT key "optional"
         INTEGER schema_version "required"
         INTEGER revision "required"
+        TEXT team_id "optional"
         TEXT project_id "optional"
+        INTEGER number "optional"
+        TEXT type "optional"
         TEXT feature_id "optional"
         TEXT milestone_id "optional"
         TEXT terminal_state "required"
@@ -192,17 +178,15 @@ erDiagram
     }
 ```
 
-`record_refs` is a derived lookup index across entity types, not a fourth kind of work item. It allows shared metadata to point to `(target_kind, target_id)`. Before publishing a projection, validation must confirm each live lookup row has an actual source entity and each deleted row has a tombstone. Historical author/link references may resolve to tombstones.
+`record_refs` is a derived lookup index across entity types, not another authored work entity. Bugs and requests register as `kind: task`, never as separate entity kinds. It allows shared metadata to point to `(target_kind, target_id)`. Before publishing a projection, validation must confirm each live lookup row has an actual source entity and each deleted row has a tombstone. Historical author/link references may resolve to tombstones.
 
 ## File to SQL mapping
 
 | Table | Source fields |
 | --- | --- |
-| `features` | `features/<id>.md`: common identity fields, `project_id`, `title`, `status`, body. |
-| `tasks` | Task front matter: every same-named scalar column, plus body. `priority` defaults to `normal`; optional references and resolution/reason fields default to null. |
-| `bugs` | Bug front matter: every same-named scalar column, including required `severity`, plus body. |
-| `requests` | Request front matter: every same-named scalar column; `project_id` and `assignee_id` may be null, plus body. |
-| `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task/project IDs come from the task file. |
+| `features` | `features/<id>.md`: stable `id`, `number`, `slug`, revision fields, `project_id`, `title`, `status`, body; `key` is derived. |
+| `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required `team_id`, optional `project_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. |
+| `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
 | `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
 | `comments` | `comments[]`: `id`, `author_kind`, optional `author_id`, `created_at`, `body_markdown`; position is array order. Owner authors have `author_kind: owner` and null `author_id`; actual login identity remains in the separate authentication/audit subsystem. |
 | `links` | `links[]`: `id`, `kind`, `target_kind`, `target_id`; source type/ID come from the parent file. |
@@ -211,21 +195,26 @@ erDiagram
 
 Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
 
+An eventual import maps existing bug/request records into tasks with the corresponding `type`, preserving their stable IDs and mapping child references to entity kind `task`. It must detect collisions between previously separate entity namespaces before publishing anything. Existing readable references need an explicit mapping; this draft neither silently renumbers records nor implements that migration.
+
 ## SQLite tables
 
 ```sql
 CREATE TABLE features (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'F-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
+  slug TEXT NOT NULL CHECK (length(slug) > 0),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, project_id, key),
+UNIQUE (organization_id, project_id, number),
+  UNIQUE (organization_id, project_id, slug),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
@@ -234,10 +223,13 @@ UNIQUE (organization_id, project_id, key),
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  number INTEGER CHECK (number > 0),
+  key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'T-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-project_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  project_id TEXT,
+  type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   assignee_id TEXT,
@@ -245,74 +237,31 @@ project_id TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,
-  priority TEXT NOT NULL DEFAULT 'normal',
   milestone_id TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
   PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, id, project_id),
-  UNIQUE (organization_id, project_id, key),
-  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
+  UNIQUE (organization_id, project_id, number),
+  FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, milestone_id, project_id) REFERENCES milestones(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE bugs (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  key TEXT,
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  revision INTEGER NOT NULL CHECK (revision >= 1),
-project_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL,
-  assignee_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  body_markdown TEXT NOT NULL DEFAULT '',
-  feature_id TEXT,
-  priority TEXT NOT NULL DEFAULT 'normal',
-  severity TEXT NOT NULL,
-  PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, id, project_id),
-  UNIQUE (organization_id, project_id, key),
-  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
-CREATE TABLE requests (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  key TEXT,
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  revision INTEGER NOT NULL CHECK (revision >= 1),
-project_id TEXT,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL,
-  assignee_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  body_markdown TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (organization_id, id),
-UNIQUE (organization_id, id, project_id),
-  UNIQUE (organization_id, key),
-  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
 CREATE TABLE task_repositories (
   organization_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
-  project_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   branch TEXT,
   integrated_commit TEXT,
   PRIMARY KEY (organization_id, task_id, repository_id),
-  FOREIGN KEY (organization_id, task_id, project_id) REFERENCES tasks(organization_id, id, project_id)
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, project_id, repository_id) REFERENCES project_repositories(organization_id, project_id, repository_id)
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -326,7 +275,7 @@ CREATE TABLE record_refs (
 
 CREATE TABLE checklist_steps (
   organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('task', 'bug')),
+  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   position INTEGER NOT NULL CHECK (position >= 0),
@@ -341,7 +290,7 @@ CREATE TABLE checklist_steps (
 
 CREATE TABLE comments (
   organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('task', 'bug', 'request')),
+  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   position INTEGER NOT NULL CHECK (position >= 0),
@@ -358,7 +307,7 @@ CREATE TABLE comments (
 
 CREATE TABLE links (
   organization_id TEXT NOT NULL,
-  source_kind TEXT NOT NULL CHECK (source_kind IN ('task', 'bug', 'request')),
+  source_kind TEXT NOT NULL CHECK (source_kind = 'task'),
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
   kind TEXT NOT NULL,
@@ -378,7 +327,10 @@ CREATE TABLE tombstones (
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
+  team_id TEXT,
   project_id TEXT,
+  number INTEGER CHECK (number > 0),
+  type TEXT,
   feature_id TEXT,
   milestone_id TEXT,
   terminal_state TEXT NOT NULL,
