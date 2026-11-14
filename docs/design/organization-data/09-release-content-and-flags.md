@@ -1,6 +1,6 @@
 # Release content, changelogs and feature flags
 
-Structural draft for v1. Document revision 2.5. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
+Structural draft for v1. Document revision 2.6. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
 
 ## Product release knowledge and technical deployment knowledge
 

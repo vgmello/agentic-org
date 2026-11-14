@@ -1,6 +1,6 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Structural draft for v1. Document revision 2.5. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Structural draft for v1. Document revision 2.6. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 
@@ -41,7 +41,7 @@ At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, the [cost UX specificat
 
 Proposed selected-scope extension: features and tasks have nullable `work_type: build | run`, displayed as Build (R&D) and Run (KTLO). Build creates or materially improves capabilities; Run maintains existing service and ongoing operations. It is independent of task `type`: a bug found during new-feature development may be Build, while a production maintenance bug may be Run. It is also independent of team, project, release and office.
 
-Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. This adds classification data only. Cost records, allocation accounting, budgets, stop rules and retrospectives remain unselected; no existing usage records are rewritten or implicitly ported.
+Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. This adds classification data only. Usage events, historical attribution and price versions are now selected in [usage accounting](10-usage-and-cost-accounting.md). Budgets, stop rules and retrospectives remain unselected. Existing usage records are not silently reclassified; the captured Build/Run value is historical accounting data.
 
 ## Explicit relationship types
 

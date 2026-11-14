@@ -1,6 +1,6 @@
 # Identity and numbering
 
-Structural draft for v1. Document revision 2.5. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Structural draft for v1. Document revision 2.6. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 

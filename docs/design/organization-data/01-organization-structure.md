@@ -1,6 +1,6 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.5. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Structural draft for v1. Document revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -127,6 +127,7 @@ An employee has exactly one home team. Each team may have direct people, direct 
 <organization repository>/
 ├── organization.yaml
 ├── repositories.yaml
+├── pricing/models/<price-id>.yaml   # Immutable once used by accounting
 ├── offices/<office-id>.yaml
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md

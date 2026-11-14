@@ -1,6 +1,6 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.5. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.6. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -96,6 +96,8 @@ Team work:    teams/<team-id>/.../work/tasks/<task-id>.md
 ```
 
 The team path includes its full ancestor chain. Task scope and path must agree; a project task does not get a second canonical file under its team.
+
+Task token/cost totals are derived from the [usage ledger](10-usage-and-cost-accounting.md), including reviewers/helpers and retained task identities after archival. They are not counters stored on task files. Attribution captures work scope and Build/Run classification when consumption occurs, rather than joining to the task's current parents later.
 
 ## Task file example
 

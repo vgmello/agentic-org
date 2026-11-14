@@ -816,6 +816,126 @@ CREATE TABLE deployment_flag_settings (
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE model_prices (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
+  input_micro_usd_per_million INTEGER CHECK (input_micro_usd_per_million >= 0),
+  output_micro_usd_per_million INTEGER CHECK (output_micro_usd_per_million >= 0),
+  cache_read_micro_usd_per_million INTEGER CHECK (cache_read_micro_usd_per_million >= 0),
+  cache_write_micro_usd_per_million INTEGER CHECK (cache_write_micro_usd_per_million >= 0),
+  created_at TEXT NOT NULL,
+  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, provider, model, effective_from),
+  UNIQUE (organization_id, id, provider, model),
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE usage_records (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  origin_office_id TEXT NOT NULL,
+  producer_id TEXT NOT NULL,
+  source_event_id TEXT NOT NULL,
+  source_sequence INTEGER NOT NULL CHECK (source_sequence >= 1),
+  execution_office_id TEXT,
+  run_id TEXT,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('agent', 'one_off')),
+  employee_id TEXT,
+  runtime TEXT NOT NULL,
+  provider TEXT,
+  model TEXT,
+  occurred_at TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  recorded_by_id TEXT,
+  normalization_version INTEGER NOT NULL CHECK (normalization_version >= 1),
+  source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+  input_tokens INTEGER CHECK (input_tokens >= 0),
+  output_tokens INTEGER CHECK (output_tokens >= 0),
+  cache_read_tokens INTEGER CHECK (cache_read_tokens >= 0),
+  cache_write_tokens INTEGER CHECK (cache_write_tokens >= 0),
+  reasoning_tokens INTEGER CHECK (reasoning_tokens >= 0),
+  token_status TEXT NOT NULL CHECK (token_status IN ('complete', 'partial', 'unavailable')),
+  token_issue TEXT,
+  price_id TEXT,
+  cost_micro_usd INTEGER CHECK (cost_micro_usd >= 0),
+  cost_basis TEXT NOT NULL CHECK (cost_basis IN ('runtime_estimate', 'token_estimate', 'unpriced', 'unknown')),
+  cost_status TEXT NOT NULL CHECK (cost_status IN ('complete', 'partial', 'unavailable')),
+  cost_issue TEXT,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task', 'project', 'team', 'organization')),
+  task_id TEXT,
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
+  project_id TEXT,
+  team_id TEXT,
+  feature_id TEXT,
+  milestone_id TEXT,
+  release_id TEXT,
+  task_type_snapshot TEXT,
+  work_type TEXT CHECK (work_type IN ('build', 'run')),
+  attribution_basis TEXT NOT NULL CHECK (attribution_basis IN ('work_for', 'current_task', 'explicit_context', 'unattributed', 'manual_correction', 'legacy')),
+  supersedes_id TEXT,
+  correction_kind TEXT CHECK (correction_kind IN ('usage', 'attribution')),
+  correction_reason TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, origin_office_id, producer_id, source_event_id),
+  UNIQUE (organization_id, origin_office_id, producer_id, source_sequence),
+  UNIQUE (organization_id, supersedes_id),
+  CHECK ((actor_kind = 'agent' AND employee_id IS NOT NULL) OR (actor_kind = 'one_off' AND employee_id IS NULL)),
+  CHECK ((recorded_by_kind = 'employee' AND recorded_by_id IS NOT NULL) OR (recorded_by_kind <> 'employee' AND recorded_by_id IS NULL)),
+  CHECK (reasoning_tokens IS NULL OR output_tokens IS NULL OR reasoning_tokens <= output_tokens),
+  CHECK (token_status <> 'complete' OR (input_tokens IS NOT NULL AND output_tokens IS NOT NULL AND cache_read_tokens IS NOT NULL AND cache_write_tokens IS NOT NULL)),
+  CHECK (token_status <> 'unavailable' OR (input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL AND reasoning_tokens IS NULL)),
+  CHECK (token_status = 'complete' OR (token_issue IS NOT NULL AND length(token_issue) > 0)),
+  CHECK ((cost_basis IN ('runtime_estimate', 'token_estimate') AND cost_micro_usd IS NOT NULL AND cost_status IN ('complete', 'partial'))
+    OR (cost_basis IN ('unpriced', 'unknown') AND cost_micro_usd IS NULL AND cost_status = 'unavailable')),
+  CHECK (cost_status = 'complete' OR (cost_issue IS NOT NULL AND length(cost_issue) > 0)),
+  CHECK (cost_basis <> 'token_estimate' OR (price_id IS NOT NULL AND token_status <> 'unavailable')),
+  CHECK (price_id IS NULL OR (provider IS NOT NULL AND model IS NOT NULL)),
+  CHECK ((scope_kind = 'task' AND task_id IS NOT NULL)
+    OR (scope_kind = 'project' AND task_id IS NULL AND project_id IS NOT NULL)
+    OR (scope_kind = 'team' AND task_id IS NULL AND project_id IS NULL AND team_id IS NOT NULL)
+    OR (scope_kind = 'organization' AND task_id IS NULL AND project_id IS NULL AND team_id IS NULL)),
+  CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL AND release_id IS NULL)),
+  CHECK ((supersedes_id IS NULL AND correction_kind IS NULL AND correction_reason IS NULL)
+    OR (supersedes_id IS NOT NULL AND supersedes_id <> id AND correction_kind IS NOT NULL AND correction_reason IS NOT NULL AND length(correction_reason) > 0)),
+  FOREIGN KEY (organization_id, origin_office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, execution_office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, recorded_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, price_id, provider, model) REFERENCES model_prices(organization_id, id, provider, model) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, task_kind, task_id) REFERENCES record_refs(organization_id, kind, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, feature_id) REFERENCES features(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, milestone_id) REFERENCES milestones(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, release_id) REFERENCES releases(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, supersedes_id) REFERENCES usage_records(organization_id, id)
+) STRICT;
+
+CREATE TABLE usage_stream_checkpoints (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  origin_office_id TEXT NOT NULL,
+  producer_id TEXT NOT NULL,
+  high_water_sequence INTEGER NOT NULL CHECK (high_water_sequence >= 0),
+  head_sha256 TEXT,
+  state TEXT NOT NULL CHECK (state IN ('open', 'sealed')),
+  checkpointed_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, origin_office_id, producer_id),
+  CHECK ((high_water_sequence = 0 AND head_sha256 IS NULL)
+    OR (high_water_sequence > 0 AND head_sha256 IS NOT NULL AND length(head_sha256) = 64 AND head_sha256 NOT GLOB '*[^0-9a-f]*')),
+  FOREIGN KEY (organization_id, origin_office_id) REFERENCES offices(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE VIEW feature_slugs AS
 SELECT f.organization_id, f.id AS feature_id, f.project_id,
        p.slug || '/' || f.local_slug AS slug
@@ -835,6 +955,77 @@ SELECT organization_id, 'document', id, 'documents',
        CASE WHEN feature_id IS NOT NULL THEN 'feature' WHEN release_id IS NOT NULL THEN 'release' WHEN deployment_id IS NOT NULL THEN 'deployment' ELSE 'project' END,
        CAST(COALESCE(feature_id, release_id, deployment_id, project_id) AS TEXT)
 FROM documents;
+
+CREATE VIEW usage_stream_coverage AS
+SELECT k.organization_id, k.origin_office_id, k.producer_id,
+       c.high_water_sequence, c.checkpointed_at, c.state,
+       CASE WHEN c.producer_id IS NULL THEN 1 ELSE 0 END AS checkpoint_missing,
+       SUM(CASE WHEN u.source_sequence <= c.high_water_sequence THEN 1 ELSE 0 END) AS received_events,
+       CASE WHEN c.producer_id IS NULL THEN NULL ELSE c.high_water_sequence - SUM(CASE WHEN u.source_sequence <= c.high_water_sequence THEN 1 ELSE 0 END) END AS missing_events,
+       CASE WHEN c.high_water_sequence = 0 THEN 1
+         ELSE MAX(CASE WHEN u.source_sequence = c.high_water_sequence AND u.payload_sha256 = c.head_sha256 THEN 1 ELSE 0 END) END AS head_matches,
+       CASE WHEN c.producer_id IS NOT NULL
+         AND c.high_water_sequence = SUM(CASE WHEN u.source_sequence <= c.high_water_sequence THEN 1 ELSE 0 END)
+         AND SUM(CASE WHEN u.source_sequence > c.high_water_sequence THEN 1 ELSE 0 END) = 0
+         AND (c.high_water_sequence = 0 OR MAX(CASE WHEN u.source_sequence = c.high_water_sequence AND u.payload_sha256 = c.head_sha256 THEN 1 ELSE 0 END) = 1)
+         THEN 1 ELSE 0 END AS coverage_complete
+FROM (SELECT organization_id, origin_office_id, producer_id FROM usage_records
+      UNION SELECT organization_id, origin_office_id, producer_id FROM usage_stream_checkpoints) k
+LEFT JOIN usage_stream_checkpoints c
+  ON c.organization_id=k.organization_id AND c.origin_office_id=k.origin_office_id AND c.producer_id=k.producer_id
+LEFT JOIN usage_records u
+  ON u.organization_id=k.organization_id AND u.origin_office_id=k.origin_office_id AND u.producer_id=k.producer_id
+GROUP BY k.organization_id, k.origin_office_id, k.producer_id;
+
+CREATE VIEW effective_usage_records AS
+SELECT u.* FROM usage_records u
+WHERE NOT EXISTS (SELECT 1 FROM usage_records replacement
+  WHERE replacement.organization_id = u.organization_id AND replacement.supersedes_id = u.id);
+
+CREATE VIEW usage_task_totals AS
+SELECT organization_id, task_id, COUNT(*) AS usage_count,
+       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+       SUM(reasoning_tokens) AS reasoning_tokens,
+       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+       SUM(cost_micro_usd) AS known_cost_micro_usd,
+       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
+       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
+FROM effective_usage_records e WHERE task_id IS NOT NULL
+GROUP BY organization_id, task_id;
+
+CREATE VIEW usage_agent_totals AS
+SELECT organization_id, employee_id, COUNT(*) AS usage_count,
+       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+       SUM(reasoning_tokens) AS reasoning_tokens,
+       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+       SUM(cost_micro_usd) AS known_cost_micro_usd,
+       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
+       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
+FROM effective_usage_records e WHERE employee_id IS NOT NULL
+GROUP BY organization_id, employee_id;
+
+CREATE VIEW usage_project_totals AS
+SELECT organization_id, project_id, COUNT(*) AS usage_count,
+       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+       SUM(reasoning_tokens) AS reasoning_tokens,
+       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+       SUM(cost_micro_usd) AS known_cost_micro_usd,
+       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
+       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
+FROM effective_usage_records e WHERE project_id IS NOT NULL
+GROUP BY organization_id, project_id;
 
 CREATE INDEX documents_by_release ON documents(organization_id, release_id, kind);
 CREATE INDEX documents_by_deployment ON documents(organization_id, deployment_id, kind);
@@ -983,3 +1174,64 @@ BEGIN
     EXISTS (SELECT 1 FROM release_flag_settings s WHERE s.organization_id = OLD.organization_id AND s.flag_id = OLD.id)
     OR EXISTS (SELECT 1 FROM deployment_flag_settings s WHERE s.organization_id = OLD.organization_id AND s.flag_id = OLD.id);
 END;
+
+CREATE INDEX usage_by_task_time ON usage_records(organization_id, task_id, occurred_at);
+CREATE INDEX usage_by_agent_time ON usage_records(organization_id, employee_id, occurred_at);
+CREATE INDEX usage_by_project_time ON usage_records(organization_id, project_id, occurred_at);
+CREATE TRIGGER usage_records_immutable_update BEFORE UPDATE ON usage_records
+BEGIN SELECT RAISE(ABORT, 'usage records are immutable; append a correction'); END;
+CREATE TRIGGER usage_records_immutable_delete BEFORE DELETE ON usage_records
+BEGIN SELECT RAISE(ABORT, 'usage history must be retained'); END;
+CREATE TRIGGER used_model_price_immutable_update BEFORE UPDATE ON model_prices
+WHEN EXISTS (SELECT 1 FROM usage_records u WHERE u.organization_id = OLD.organization_id AND u.price_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'used price versions are immutable'); END;
+CREATE TRIGGER usage_actor_must_be_agent BEFORE INSERT ON usage_records
+WHEN NEW.actor_kind = 'agent'
+BEGIN
+  SELECT RAISE(ABORT, 'usage actor must be an agent') WHERE EXISTS (
+    SELECT 1 FROM employees e WHERE e.organization_id = NEW.organization_id AND e.id = NEW.employee_id AND e.kind <> 'agent'
+  );
+END;
+CREATE TRIGGER usage_correction_parent_exists BEFORE INSERT ON usage_records
+WHEN NEW.supersedes_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'correction parent must already exist') WHERE NOT EXISTS (
+    SELECT 1 FROM usage_records p WHERE p.organization_id = NEW.organization_id AND p.id = NEW.supersedes_id
+  );
+END;
+CREATE TRIGGER attribution_correction_preserves_facts BEFORE INSERT ON usage_records
+WHEN NEW.correction_kind = 'attribution'
+BEGIN
+  SELECT RAISE(ABORT, 'attribution correction cannot change consumption or valuation') WHERE EXISTS (
+    SELECT 1 FROM usage_records p WHERE p.organization_id = NEW.organization_id AND p.id = NEW.supersedes_id AND (
+      NEW.execution_office_id IS NOT p.execution_office_id OR
+      NEW.run_id IS NOT p.run_id OR
+      NEW.actor_kind IS NOT p.actor_kind OR
+      NEW.employee_id IS NOT p.employee_id OR
+      NEW.runtime IS NOT p.runtime OR
+      NEW.provider IS NOT p.provider OR
+      NEW.model IS NOT p.model OR
+      NEW.occurred_at IS NOT p.occurred_at OR
+      NEW.normalization_version IS NOT p.normalization_version OR
+      NEW.source_metadata_json IS NOT p.source_metadata_json OR
+      NEW.input_tokens IS NOT p.input_tokens OR
+      NEW.output_tokens IS NOT p.output_tokens OR
+      NEW.cache_read_tokens IS NOT p.cache_read_tokens OR
+      NEW.cache_write_tokens IS NOT p.cache_write_tokens OR
+      NEW.reasoning_tokens IS NOT p.reasoning_tokens OR
+      NEW.token_status IS NOT p.token_status OR
+      NEW.token_issue IS NOT p.token_issue OR
+      NEW.price_id IS NOT p.price_id OR
+      NEW.cost_micro_usd IS NOT p.cost_micro_usd OR
+      NEW.cost_basis IS NOT p.cost_basis OR
+      NEW.cost_status IS NOT p.cost_status OR
+      NEW.cost_issue IS NOT p.cost_issue
+    )
+  );
+END;
+
+CREATE TRIGGER usage_checkpoint_monotonic BEFORE UPDATE ON usage_stream_checkpoints
+WHEN NEW.high_water_sequence < OLD.high_water_sequence
+  OR (NEW.high_water_sequence = OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
+  OR (OLD.state = 'sealed' AND (NEW.state <> 'sealed' OR NEW.high_water_sequence <> OLD.high_water_sequence))
+BEGIN SELECT RAISE(ABORT, 'usage checkpoint regressed, forked or reopened'); END;
