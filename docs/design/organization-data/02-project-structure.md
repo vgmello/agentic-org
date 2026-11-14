@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.1. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Structural draft for v1. Document revision 2.2. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -24,6 +24,7 @@ erDiagram
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
+        TEXT slug "required"
         TEXT name "required"
         TEXT owner_team_id FK "required"
         INTEGER archived "required"
@@ -85,7 +86,9 @@ erDiagram
     }
 ```
 
-Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. Every project task stores that same owning team in required `team_id`; a composite foreign key enforces the match. Reassigning project ownership must update its tasks in the same transaction. It may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects.
+HQ creates projects, releases and milestones. Other offices can request their creation and replicate the resulting records; replication is not a new creation. This restriction does not make HQ the owner of project data or its tasks. See [creation and registration](06-identity-and-numbering.md).
+
+Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. It also requires an organization-unique `slug`, such as `reservations`, assigned and registered by HQ when the project is created. Every project task stores that same owning team in required `team_id`; a composite foreign key enforces the match. Reassigning project ownership must update its tasks in the same transaction. It may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects.
 
 A release has an `R-<number>` reference and an optional plain-text `version_label`, such as `1.4.0` or `Spring launch`. The label is independent of identity and need not follow semantic versioning. A release belongs to one project and contains zero or more milestones. Every milestone requires exactly one same-project release. A task can reference zero or one milestone. Releases are delivery records, not organization-wide repository branches.
 
@@ -113,6 +116,7 @@ Tasks stay in the project work folder even when linked to a milestone; their exp
 schema_version: 1
 id: 01J00000000000000000000010
 number: 8
+slug: reservations
 revision: 1
 name: Reservations
 owner_team_id: 01J00000000000000000000020
@@ -128,7 +132,7 @@ The Product Agency's Care Platform and Trading Platform projects can reference t
 
 | Table | Source fields |
 | --- | --- |
-| `projects` | `project.yaml`: common identity fields, `name`, `owner_team_id`, `archived` (default false). |
+| `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false). |
 | `project_contributing_teams` | One row per `contributing_team_ids[]`; `project_id` comes from that project. |
 | `project_repositories` | One row per `repositories[]` entry with `repository_id`, `integration_branch`; `project_id` comes from the project. |
 | `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body. |
@@ -148,11 +152,17 @@ CREATE TABLE projects (
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'P-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-name TEXT NOT NULL,
+slug TEXT NOT NULL CHECK (
+    length(slug) > 0 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
+  name TEXT NOT NULL,
   owner_team_id TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
+  UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED

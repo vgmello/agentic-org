@@ -1,10 +1,10 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.1. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Structural draft for v1. Document revision 2.2. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
-An organization contains independent offices, a team forest, projects, roles and repository registrations. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
+An organization contains independent offices, a team forest, projects, roles and repository registrations. HQ creates teams; replicas in other offices do not become independent team-creation authorities. Teams own child teams. Projects name their owning team. Offices locate execution; they do not own the team hierarchy.
 
 ```mermaid
 erDiagram

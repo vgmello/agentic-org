@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.1. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
+Structural draft for v1. Document revision 2.2. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -27,16 +27,16 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Office | `slug`, e.g. `hq` | Organization; no counter |
 | Agent or person | `handle`, displayed as `@ana` | Organization, shared across both employee kinds; no counter |
 | Team | `TEAM-12` | Team counter within organization |
-| Project | `P-8` | Project counter within organization |
+| Project | `P-8` and `slug`, e.g. `reservations` | Project counter and slug uniqueness within organization |
 | Task of any type | `T-42` | Task counter within project, or within team when projectless |
-| Feature | `F-6` and a separate `slug`, e.g. `table-booking` | Feature counter and slug uniqueness within project |
+| Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |
 | Repository or role | Existing descriptive `key` | Organization, separately per entity type; no counter |
 
-Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes an offline draft or unresolved import and exposes no final readable reference. An online accepted record must have a number and a durable allocation. Separate scopes can both contain `T-42`: use `P-8/T-42` or `TEAM-12/T-42` outside an already selected scope. Changing task type never changes its ID or number.
+Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created task/feature awaiting allocation, or an unresolved import and exposes no final readable reference. A record accepted by the organization authority must have a number and a durable allocation; local tasks/features can be used by stable ID while registration is pending. Separate scopes can both contain `T-42`: use `P-8/T-42` or `TEAM-12/T-42` outside an already selected scope. Changing task type never changes its ID or number.
 
-Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Features intentionally have both a numeric reference and a descriptive slug. Release version labels are plain text, not an enforced semantic-version type or identity.
+Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
 `schema_version` selects the file format; `revision` is the entity's concurrency revision. Dates/timestamps are quoted strings in YAML. Domain rows inherit `organization_id` from `organization.yaml`. Nested comments, checklist steps, watchers, questions and waiting spans have stable IDs without counters. See [identity and numbering](06-identity-and-numbering.md) for allocation, durability and index contracts.
 
@@ -66,7 +66,7 @@ SQLite is the indexed projection for domain records. Runtime placements, cache p
 
 Structural import validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
-Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. Agents in every office submit accepted task creation to the same logical organization write authority, which allocates numbers atomically. Offline drafts retain stable IDs and receive final numbers after reconnection. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
+Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
 ## Selected and pending v1 decisions
 
@@ -77,6 +77,8 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Readable references | `TEAM-`, `P-`, `T-`, `F-`, `R-`, `M-`; slugs/handles for selected identities |
 | Single home team, nested teams, lead authority | Include the agreed structure |
 | Offices | Durable organization records; support multiple offices |
+| Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
+| Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup | Separate specification pending; do not port old setup automatically |

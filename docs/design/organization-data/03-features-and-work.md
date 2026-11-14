@@ -1,6 +1,6 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.1. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.2. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
@@ -9,6 +9,8 @@ There is one authored work entity and one physical `tasks` table. `type` disting
 ```mermaid
 erDiagram
     projects ||--o{ features : defines
+    projects ||--o{ feature_slugs : prefixes
+    features ||--|| feature_slugs : exposes
     teams ||--o{ tasks : owns
     projects o|--o{ tasks : optionally_scopes
     features o|--o{ tasks : feature_id
@@ -24,10 +26,16 @@ erDiagram
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT project_id FK "required"
-        TEXT slug "required"
+        TEXT local_slug "required"
         TEXT title "required"
         TEXT status "required"
         TEXT body_markdown "required"
+    }
+    feature_slugs {
+        TEXT organization_id "derived"
+        TEXT feature_id "derived"
+        TEXT project_id "derived"
+        TEXT slug "derived"
     }
     tasks {
         TEXT organization_id PK, FK "required"
@@ -64,7 +72,7 @@ erDiagram
 - Every task requires `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's team must equal the project's owning team.
 - Creator, assignee and the assignee's home team do not determine ownership. A director may assign a team task to another director without creating an artificial project.
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
-- A feature belongs to one project and has a numeric reference such as `F-6` plus a separate project-unique slug such as `table-booking`.
+- A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
 - A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on import/publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
@@ -113,7 +121,22 @@ Reject overlapping reservations for the same table. Include concurrent requests 
 
 The readable reference is derived as `T-42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
 
-Feature front matter contains `id`, `number: 6`, `slug: table-booking`, `project_id`, common revision fields, `title` and `status`; its body contains the feature description. `F-6` is derived, while the descriptive slug is explicitly stored.
+Tasks and features may be created in any office. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
+
+```yaml
+schema_version: 1
+id: 01J00000000000000000000034
+number: 6
+local_slug: table-booking
+revision: 1
+project_id: 01J00000000000000000000010
+title: Table booking
+status: planned
+```
+
+The feature body contains its description. SQL derives `F-6` from the number; the `feature_slugs` view derives public slug `reservations/table-booking`. Files persist only `local_slug` and `project_id`, so there is no separately authored prefix to drift. A project-slug change automatically changes its features' full slugs; stable IDs, numbers and filenames stay unchanged. Aliases for old slugs are outside this draft.
+
+Full slug lookup splits on the single `/`, resolves the organization/project slug, then uses that project and feature local slug. SQL enforces lowercase kebab-case on both components, so neither can contain `/`. Existing UNIQUE indexes support both steps; a duplicate stored full-path column or extra text index is unnecessary.
 
 ## Shared child records
 
@@ -184,7 +207,8 @@ erDiagram
 
 | Table | Source fields |
 | --- | --- |
-| `features` | `features/<id>.md`: stable `id`, `number`, `slug`, revision fields, `project_id`, `title`, `status`, body; `key` is derived. |
+| `features` | `features/<id>.md`: stable `id`, `number`, `local_slug`, revision fields, `project_id`, `title`, `status`, body; `key` and public full slug are derived. |
+| `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required `team_id`, optional `project_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
 | `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
@@ -208,17 +232,27 @@ CREATE TABLE features (
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
-  slug TEXT NOT NULL CHECK (length(slug) > 0),
+  local_slug TEXT NOT NULL CHECK (
+    length(local_slug) > 0 AND local_slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(local_slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(local_slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(local_slug, '--') = 0),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, project_id, number),
-  UNIQUE (organization_id, project_id, slug),
+  UNIQUE (organization_id, project_id, local_slug),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE VIEW feature_slugs AS
+SELECT f.organization_id, f.id AS feature_id, f.project_id,
+       p.slug || '/' || f.local_slug AS slug
+FROM features AS f
+JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),

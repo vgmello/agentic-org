@@ -1,10 +1,10 @@
 # Identity and numbering
 
-Structural draft for v1. Document revision 2.1. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Structural draft for v1. Document revision 2.2. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 
-Generate new UUIDv7 IDs before submitting creation, and preserve all existing v1 IDs. An ID is not an incrementing number. Slugs/handles are explicit identity fields. Numeric `key` columns are generated from stored `number`, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers; null is limited to drafts or import staging. Resolve slugs and handles by their documented scope rather than by display names.
+Generate new UUIDv7 IDs before submitting creation, and preserve all existing v1 IDs. An ID is not an incrementing number. Slugs/handles are explicit identity fields. Numeric `key` columns are generated from stored `number`, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers; null is limited to tasks/features pending organization registration or import staging. Resolve slugs and handles by their documented scope rather than by display names.
 
 Counter rows identify `(organization_id, scope_kind, scope_id, entity_kind)`:
 
@@ -22,11 +22,22 @@ Teams and projects each have their own organization-wide sequence. A project tas
 
 ## Multiple offices
 
-Teams, projects and their counters belong to organization data. Offices host agent execution and local replicas. Every office submits online creation to the same logical organization write authority; replicas do not allocate numbers independently. The authority can initially run alongside HQ, but its identity is not the office ID. A project's agents can work in several offices without creating several project counters.
+Teams, projects and their counters belong to organization data. Offices host agent execution and local replicas.
+
+| Entity | Creation authority |
+| --- | --- |
+| Team, project, release, milestone | HQ only; other offices may submit a request |
+| Task of any type, feature | Any office, including a local creation while disconnected |
+
+Creation authority is a command/API rule, not an `office_id` on projects or teams. Restoring files or replicating an existing HQ-created record into another office is allowed. Replication must not be mistaken for independent creation, and an office replica's raw SQL access cannot establish caller authority. Other office/employee provisioning rules remain outside this decision.
+
+Locally created tasks/features receive stable IDs and durable local files immediately; agents can use them before organization registration. The shared logical organization authority registers final numbers and validates feature-slug uniqueness. It serializes allocations across offices; an office must not independently increment its replicated counter. Local creation does not require routing all task/feature content creation through HQ. Pending registration is represented by `number: null`; final references are exposed after acknowledgement. HQ assigns project slugs at project creation and enforces organization-wide uniqueness.
+
+Feature files store only a project-scoped `local_slug`. Their full public slug is automatically prefixed with the project's slug, as exposed by `feature_slugs`: `reservations/table-booking`. Two different projects can both use local slug `table-booking`. Two offices creating that local slug in the same project must resolve the conflict before both records can be registered; no silent overwrite or automatic record merge is permitted. Stable IDs allow those pending records to remain distinct.
 
 For two concurrent requests in P-8, the authority assigns T-42 and T-43. In one authoritative transaction: look up an existing allocation by scope/kind/entity ID; return it on retry; otherwise increment the counter with `UPDATE ... RETURNING`, insert the allocation and entity, and commit. Use `BEGIN IMMEDIATE` for SQLite and handle contention by bounded retry. Never use a client-side `MAX(number) + 1`. A GUID supplied by the client makes retries of the same creation idempotent.
 
-An offline office can save a local draft with a GUID and `number: null`. The final number is assigned after reconnection. Published accepted records require a durable allocation. Gaps are allowed; previously issued numbers are never reused. Task-type changes do not allocate a new number. Moving a task between team/project scopes is a separate mutation contract: preserve its ID and historical allocations; never silently carry an unrelated scope's number into the destination.
+An offline office can create and save a local task or feature with a GUID and `number: null`. The final number is assigned after reconnection. HQ-only entities cannot be independently created at a disconnected satellite office. Published accepted records require a durable allocation. Gaps are allowed; previously issued numbers are never reused. Task-type changes do not allocate a new number. Moving a task between team/project scopes is a separate mutation contract: preserve its ID and historical allocations; never silently carry an unrelated scope's number into the destination.
 
 ## Canonical files and recovery
 
@@ -56,7 +67,7 @@ Import validation must ensure counter scope IDs resolve, allocations point to th
 
 ## Indexes and ownership
 
-Primary keys and UNIQUE constraints already create indexes; do not duplicate them. Organization/office slug and employee handle constraints support scoped lookups. Number constraints support team/project/feature/release/milestone lookups; the partial `team_task_numbers` index covers projectless tasks. Features have a separate project/slug UNIQUE index. Look up numeric references by their parsed scope and number, not by scanning generated key text. Additional task indexes support team/project/status, assignee and milestone queries. Foreign keys do not automatically index referencing columns.
+Primary keys and UNIQUE constraints already create indexes; do not duplicate them. Organization/office slug and employee handle constraints support scoped lookups. Projects additionally have an organization/slug UNIQUE constraint. Number constraints support team/project/feature/release/milestone lookups; the partial `team_task_numbers` index covers projectless tasks. Features have a separate project/local_slug UNIQUE index. The `feature_slugs` view derives full paths by joining to project slugs; lookups split the path and use the two existing unique indexes. Look up numeric references by their parsed scope and number, not by scanning generated key text. Additional task indexes support team/project/status, assignee and milestone queries. Foreign keys do not automatically index referencing columns.
 
 | Table | Canonical source |
 | --- | --- |

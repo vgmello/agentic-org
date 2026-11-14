@@ -115,11 +115,17 @@ CREATE TABLE projects (
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'P-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
-name TEXT NOT NULL,
+slug TEXT NOT NULL CHECK (
+    length(slug) > 0 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
+  name TEXT NOT NULL,
   owner_team_id TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
+  UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
@@ -222,17 +228,27 @@ CREATE TABLE features (
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 project_id TEXT NOT NULL,
-  slug TEXT NOT NULL CHECK (length(slug) > 0),
+  local_slug TEXT NOT NULL CHECK (
+    length(local_slug) > 0 AND local_slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(local_slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(local_slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(local_slug, '--') = 0),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, project_id, number),
-  UNIQUE (organization_id, project_id, slug),
+  UNIQUE (organization_id, project_id, local_slug),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE VIEW feature_slugs AS
+SELECT f.organization_id, f.id AS feature_id, f.project_id,
+       p.slug || '/' || f.local_slug AS slug
+FROM features AS f
+JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
