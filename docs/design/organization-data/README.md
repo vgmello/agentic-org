@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.4. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
+Structural draft for v1. Document revision 2.5. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -16,6 +16,7 @@ Existing v1 designs remain the implementation reference until a migration is app
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
 | [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
 | [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or full event history |
+| [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 
 Each document contains its own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines those tables with indexes and team-cycle checks. Load all sections together: cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
 
@@ -85,11 +86,11 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Offices | Durable organization records; support multiple offices |
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
-| Knowledge documents | Required project, optional same-project feature; feature definitions stay in `feature.md` |
+| Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
 | Accountability and lifecycle | Feature/document owners; active/archived teams, active/inactive employees, draft/current/deprecated documents |
 | Attribution and relationships | Common creation/update actors and times; typed authored links and derived inverse/scope relationships |
 | Build / Run | Proposed classification data, informed by v1's Build/R&D and deferred KTLO UX; no cost-engine port |
-| Delivery | Release deployment records and commit snapshots; build artifacts remain out of scope |
+| Delivery | Release product changelog and content manifest; deployment technical changelogs, commit/flag snapshots; build artifacts remain out of scope |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup | Separate specification pending; do not port old setup automatically |

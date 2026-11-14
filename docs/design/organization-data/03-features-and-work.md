@@ -1,6 +1,6 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.4. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.5. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 

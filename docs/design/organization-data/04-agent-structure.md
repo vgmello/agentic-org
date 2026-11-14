@@ -1,6 +1,6 @@
 # Agent and employee structure boundary
 
-Structural draft for v1. Document revision 2.4. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
+Structural draft for v1. Document revision 2.5. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
 
 ## Confirmed relationships
 

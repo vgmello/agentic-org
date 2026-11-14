@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.4. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Structural draft for v1. Document revision 2.5. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -19,6 +19,8 @@ erDiagram
     milestones o|--o{ tasks : groups
     projects ||--o{ documents : preserves
     features o|--o{ documents : scopes
+    releases o|--o{ documents : release_knowledge
+    deployments o|--o{ documents : technical_knowledge
     projects {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
@@ -101,6 +103,8 @@ erDiagram
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT feature_id FK "optional"
+        TEXT release_id FK "optional"
+        TEXT deployment_id FK "optional"
         TEXT status "required"
         TEXT kind "required"
         TEXT owner_employee_id FK "optional"
@@ -126,6 +130,7 @@ A release has an `R-<number>` reference and an optional plain-text `version_labe
 ```text
 projects/<project-id>/
 ├── project.yaml
+├── feature-flags/<flag-id>.md
 ├── brief.md
 ├── features/<feature-id>/
 │   ├── feature.md                   # Definition, behaviour and known limitations
@@ -134,8 +139,14 @@ projects/<project-id>/
 │   └── reports/<document-id>.md     # Feature-specific findings
 ├── releases/<release-id>/
 │   ├── release.md
+│   ├── changelog.md                  # Product changes
+│   ├── flag-settings.yaml
+│   ├── documents/<document-id>.md
 │   ├── milestones/<milestone-id>.md
-│   └── deployments/<deployment-id>.md  # Durable attempt/outcome records
+│   └── deployments/<deployment-id>/
+│       ├── deployment.md
+│       ├── changelog.md              # Technical changes
+│       └── documents/<document-id>.md
 ├── decisions/<document-id>.md
 ├── designs/<document-id>.md
 ├── reports/<document-id>.md
@@ -162,9 +173,9 @@ repositories:
 
 The Product Agency's Care Platform and Trading Platform projects can reference the same infrastructure registration while selecting `release/care-v1` and `main`, respectively. The office still keeps one local cache for that repository. A Kitchen Display project may reference a local-only code registration without changing the organization repository's remote requirement.
 
-## Project documents and feature documents
+## Project, feature, release and deployment documents
 
-One `documents` table holds supporting knowledge at either scope. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). Every document requires `project_id`. Null `feature_id` means project scope; a present `feature_id` means feature scope and must reference a feature of that same project. A feature can have zero or many documents, and a supporting document belongs to at most one feature. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
+One `documents` table holds supporting knowledge at these four scopes. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). Every document requires `project_id` and can optionally name exactly one of `feature_id`, `release_id` or `deployment_id`, constrained to that same project. All three null means project scope. Release and deployment documents are described in [release content and flags](09-release-content-and-flags.md). Each scope can have zero or many documents. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
 
 | Record | Content | Canonical location |
 | --- | --- | --- |
@@ -175,7 +186,7 @@ One `documents` table holds supporting knowledge at either scope. Each document 
 | Feature design | Detailed flows, interactions and implementation choices | Feature `designs/<document-id>.md` |
 | Feature decision/report | Feature-specific rationale, experiments or findings | Feature `decisions/` or `reports/` |
 
-`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. All paths above are inside the organization Git repository, retain stable ID filenames, and survive closure of related tasks.
+`feature.md` projects into the `features` table; it is not duplicated as a `documents` row. Other feature documents use `kind: design`, `decision` or `report`. A `brief` document is project-wide. `kind: changelog` is restricted to release or deployment scope and lives at its scope's `changelog.md`. Other release/deployment documents live under that scope's `documents/`. All paths above are inside the organization Git repository, retain stable ID filenames, and survive closure of related tasks.
 
 For Restaurant SaaS, shared Reservations architecture is a project design (`feature_id: null`). The table-booking feature definition explains booking behaviour and known limitations. Its overlap-handling design is a separate feature document:
 
@@ -207,7 +218,7 @@ Concurrent requests must not both reserve the same table and time range.
 This design covers individual tables; combining tables needs a separate design.
 ```
 
-Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id: null` and lives in the project-level folder. Path, `kind` and scope IDs must agree; the importer rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
+Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id`, `release_id` and `deployment_id` all null and lives in the project-level folder. Path, `kind` and scope IDs must agree; the importer rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
 
 ## File to SQL mapping
 
@@ -216,10 +227,10 @@ Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md
 | `projects` | `project.yaml`: common identity fields, required organization-unique `slug`, `name`, `owner_team_id`, `archived` (default false). |
 | `project_contributing_teams` | One row per `contributing_team_ids[]`; `project_id` comes from that project. |
 | `project_repositories` | One row per `repositories[]` entry with `repository_id`, `integration_branch`; `project_id` comes from the project. |
-| `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body. |
+| `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body; `feature_ids[]`/`task_ids[]` are projected by document 09. |
 | `release_repository_commits` | Release `repository_commits` map: repository ID to exact commit SHA; `release_id` and `project_id` come from its parent file. |
 | `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, `status`, and Markdown body. Path and explicit parent IDs must agree. |
-| `documents` | Project/feature supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
+| `documents` | Supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `release_id` or `deployment_id` (at most one), `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
 A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
 
@@ -361,8 +372,10 @@ CREATE TABLE documents (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
+  release_id TEXT,
+  deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report')),
+  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -376,7 +389,14 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
+  CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
   CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
+  CHECK (kind <> 'brief' OR (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL)),
+  CHECK (kind <> 'changelog' OR release_id IS NOT NULL OR deployment_id IS NOT NULL),
+  FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, deployment_id, project_id) REFERENCES deployments(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)

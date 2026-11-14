@@ -308,8 +308,10 @@ CREATE TABLE documents (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
+  release_id TEXT,
+  deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report')),
+  kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report', 'changelog')),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -323,7 +325,14 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
+  CHECK ((feature_id IS NOT NULL) + (release_id IS NOT NULL) + (deployment_id IS NOT NULL) <= 1),
   CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
+  CHECK (kind <> 'brief' OR (feature_id IS NULL AND release_id IS NULL AND deployment_id IS NULL)),
+  CHECK (kind <> 'changelog' OR release_id IS NOT NULL OR deployment_id IS NOT NULL),
+  FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, deployment_id, project_id) REFERENCES deployments(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
@@ -663,6 +672,7 @@ CREATE TABLE deployments (
   target TEXT NOT NULL DEFAULT 'primary' CHECK (length(target) > 0),
   operation TEXT NOT NULL DEFAULT 'deploy' CHECK (operation IN ('deploy', 'rollback')),
   rollback_of_id TEXT,
+  baseline_deployment_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
   started_at TEXT,
   finished_at TEXT,
@@ -678,6 +688,10 @@ CREATE TABLE deployments (
   UNIQUE (organization_id, id, project_id),
   UNIQUE (organization_id, id, project_id, environment, target),
   CHECK (rollback_of_id IS NULL OR rollback_of_id <> id),
+  CHECK (baseline_deployment_id IS NULL OR baseline_deployment_id <> id),
+  FOREIGN KEY (organization_id, baseline_deployment_id, project_id, environment, target)
+    REFERENCES deployments(organization_id, id, project_id, environment, target)
+    DEFERRABLE INITIALLY DEFERRED,
   CHECK ((operation = 'deploy' AND rollback_of_id IS NULL) OR (operation = 'rollback' AND rollback_of_id IS NOT NULL)),
   CHECK ((status = 'queued' AND started_at IS NULL AND finished_at IS NULL)
     OR (status = 'running' AND started_at IS NOT NULL AND finished_at IS NULL)
@@ -708,6 +722,100 @@ CREATE TABLE deployment_repository_commits (
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE release_features (
+  organization_id TEXT NOT NULL,
+  release_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, release_id, feature_id),
+  FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE release_tasks (
+  organization_id TEXT NOT NULL,
+  release_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
+  PRIMARY KEY (organization_id, release_id, task_id),
+  FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, task_kind, task_id) REFERENCES record_refs(organization_id, kind, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE feature_flags (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  project_id TEXT NOT NULL,
+  feature_id TEXT,
+  key TEXT NOT NULL CHECK (length(key) > 0),
+  owner_employee_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'retired')),
+  value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number', 'json')),
+  default_value_json TEXT NOT NULL CHECK (json_valid(default_value_json)),
+  body_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, project_id, key),
+  UNIQUE (organization_id, id, project_id),
+  CHECK (status <> 'active' OR owner_employee_id IS NOT NULL),
+  CHECK ((value_type = 'boolean' AND json_type(default_value_json) IN ('true', 'false'))
+    OR (value_type = 'string' AND json_type(default_value_json) = 'text')
+    OR (value_type = 'number' AND json_type(default_value_json) IN ('integer', 'real'))
+    OR value_type = 'json'),
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE release_flag_settings (
+  organization_id TEXT NOT NULL,
+  release_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  flag_id TEXT NOT NULL,
+  environment TEXT NOT NULL CHECK (length(environment) > 0),
+  target TEXT NOT NULL DEFAULT 'primary' CHECK (length(target) > 0),
+  value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+  rollout_rules_json TEXT CHECK (rollout_rules_json IS NULL OR (json_valid(rollout_rules_json) AND json_type(rollout_rules_json) = 'object')),
+  PRIMARY KEY (organization_id, release_id, environment, target, flag_id),
+  FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, flag_id, project_id) REFERENCES feature_flags(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE deployment_flag_settings (
+  organization_id TEXT NOT NULL,
+  deployment_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  flag_id TEXT NOT NULL,
+  value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+  rollout_rules_json TEXT CHECK (rollout_rules_json IS NULL OR (json_valid(rollout_rules_json) AND json_type(rollout_rules_json) = 'object')),
+  applied_at TEXT,
+  PRIMARY KEY (organization_id, deployment_id, flag_id),
+  FOREIGN KEY (organization_id, deployment_id, project_id) REFERENCES deployments(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, flag_id, project_id) REFERENCES feature_flags(organization_id, id, project_id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE VIEW feature_slugs AS
 SELECT f.organization_id, f.id AS feature_id, f.project_id,
        p.slug || '/' || f.local_slug AS slug
@@ -724,10 +832,17 @@ SELECT organization_id, 'task', id, 'implements', 'feature', feature_id
 FROM tasks WHERE feature_id IS NOT NULL
 UNION ALL
 SELECT organization_id, 'document', id, 'documents',
-       CASE WHEN feature_id IS NULL THEN 'project' ELSE 'feature' END,
-       CAST(COALESCE(feature_id, project_id) AS TEXT)
+       CASE WHEN feature_id IS NOT NULL THEN 'feature' WHEN release_id IS NOT NULL THEN 'release' WHEN deployment_id IS NOT NULL THEN 'deployment' ELSE 'project' END,
+       CAST(COALESCE(feature_id, release_id, deployment_id, project_id) AS TEXT)
 FROM documents;
 
+CREATE INDEX documents_by_release ON documents(organization_id, release_id, kind);
+CREATE INDEX documents_by_deployment ON documents(organization_id, deployment_id, kind);
+CREATE UNIQUE INDEX one_release_changelog ON documents(organization_id, release_id) WHERE kind = 'changelog' AND release_id IS NOT NULL;
+CREATE UNIQUE INDEX one_deployment_changelog ON documents(organization_id, deployment_id) WHERE kind = 'changelog' AND deployment_id IS NOT NULL;
+CREATE INDEX release_features_by_feature ON release_features(organization_id, feature_id);
+CREATE INDEX release_tasks_by_task ON release_tasks(organization_id, task_id);
+CREATE INDEX feature_flags_by_feature ON feature_flags(organization_id, feature_id);
 CREATE INDEX features_by_owner ON features(organization_id, owner_employee_id, status);
 CREATE INDEX documents_by_owner ON documents(organization_id, owner_employee_id, status);
 CREATE INDEX links_by_target ON links(organization_id, target_kind, target_id, kind);
@@ -820,4 +935,51 @@ BEGIN
         AND l.source_kind = 'task' AND l.target_kind = 'task' AND NOT (l.source_kind = OLD.source_kind AND l.source_id = OLD.source_id AND l.id = OLD.id)
     ) SELECT 1 FROM prerequisites WHERE id = NEW.source_id
   );
+END;
+CREATE TRIGGER release_flag_settings_value_type_insert BEFORE INSERT ON release_flag_settings
+BEGIN
+  SELECT RAISE(ABORT, 'flag value type mismatch') WHERE EXISTS (
+    SELECT 1 FROM feature_flags f WHERE f.organization_id = NEW.organization_id AND f.id = NEW.flag_id
+      AND NOT ((f.value_type = 'boolean' AND json_type(NEW.value_json) IN ('true', 'false'))
+    OR (f.value_type = 'string' AND json_type(NEW.value_json) = 'text')
+    OR (f.value_type = 'number' AND json_type(NEW.value_json) IN ('integer', 'real'))
+    OR f.value_type = 'json')
+  );
+END;
+CREATE TRIGGER release_flag_settings_value_type_update BEFORE UPDATE ON release_flag_settings
+BEGIN
+  SELECT RAISE(ABORT, 'flag value type mismatch') WHERE EXISTS (
+    SELECT 1 FROM feature_flags f WHERE f.organization_id = NEW.organization_id AND f.id = NEW.flag_id
+      AND NOT ((f.value_type = 'boolean' AND json_type(NEW.value_json) IN ('true', 'false'))
+    OR (f.value_type = 'string' AND json_type(NEW.value_json) = 'text')
+    OR (f.value_type = 'number' AND json_type(NEW.value_json) IN ('integer', 'real'))
+    OR f.value_type = 'json')
+  );
+END;
+CREATE TRIGGER deployment_flag_settings_value_type_insert BEFORE INSERT ON deployment_flag_settings
+BEGIN
+  SELECT RAISE(ABORT, 'flag value type mismatch') WHERE EXISTS (
+    SELECT 1 FROM feature_flags f WHERE f.organization_id = NEW.organization_id AND f.id = NEW.flag_id
+      AND NOT ((f.value_type = 'boolean' AND json_type(NEW.value_json) IN ('true', 'false'))
+    OR (f.value_type = 'string' AND json_type(NEW.value_json) = 'text')
+    OR (f.value_type = 'number' AND json_type(NEW.value_json) IN ('integer', 'real'))
+    OR f.value_type = 'json')
+  );
+END;
+CREATE TRIGGER deployment_flag_settings_value_type_update BEFORE UPDATE ON deployment_flag_settings
+BEGIN
+  SELECT RAISE(ABORT, 'flag value type mismatch') WHERE EXISTS (
+    SELECT 1 FROM feature_flags f WHERE f.organization_id = NEW.organization_id AND f.id = NEW.flag_id
+      AND NOT ((f.value_type = 'boolean' AND json_type(NEW.value_json) IN ('true', 'false'))
+    OR (f.value_type = 'string' AND json_type(NEW.value_json) = 'text')
+    OR (f.value_type = 'number' AND json_type(NEW.value_json) IN ('integer', 'real'))
+    OR f.value_type = 'json')
+  );
+END;
+CREATE TRIGGER used_flag_identity_immutable BEFORE UPDATE OF key, value_type, project_id ON feature_flags
+WHEN NEW.key <> OLD.key OR NEW.value_type <> OLD.value_type OR NEW.project_id <> OLD.project_id
+BEGIN
+  SELECT RAISE(ABORT, 'used flag identity is immutable') WHERE
+    EXISTS (SELECT 1 FROM release_flag_settings s WHERE s.organization_id = OLD.organization_id AND s.flag_id = OLD.id)
+    OR EXISTS (SELECT 1 FROM deployment_flag_settings s WHERE s.organization_id = OLD.organization_id AND s.flag_id = OLD.id);
 END;

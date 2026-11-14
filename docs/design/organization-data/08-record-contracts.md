@@ -1,14 +1,14 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Structural draft for v1. Document revision 2.4. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Structural draft for v1. Document revision 2.5. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 
-Features, supporting documents, and process/standard content records have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content) marked `current` require an explicit owner. Import validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
+Features, supporting documents, feature flag definitions, and process/standard content records have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content) marked `current` require an explicit owner. Active flag definitions also require an owner. Import validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
 
 ## Common attribution
 
-The authored tables organizations, repositories, roles, teams, offices, structure_documents, projects, releases, milestones, features, tasks, documents, employees and deployments share these fields:
+The authored tables organizations, repositories, roles, teams, offices, structure_documents, projects, releases, milestones, features, tasks, documents, employees, feature_flags and deployments share these fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -50,10 +50,10 @@ Null means not classified, not Build or Run. Store each record's classification 
 | `depends_on` | Authored task A requires task B. Stored once in A's `links[]`; task dependency cycles and self-links are rejected. |
 | `blocks` | Inverse of `depends_on`: B blocks A. Derived on query, never stored as a duplicate link. |
 | `implements` | Task implements its single `feature_id`. Derived from the task foreign key, preserving the zero-or-one feature rule. |
-| `documents` | Supporting document describes its optional feature, otherwise its project. Derived from document scope foreign keys. |
+| `documents` | Supporting document describes its optional feature, release or deployment, otherwise its project. Derived from document scope foreign keys. |
 | `relates_to` | Authored reference from a project, feature, task or document to another registered entity in the same organization. It does not change ownership or imply a dependency. |
 
-The `entity_relationships` view presents both authored and derived relationships. `links` stores only `depends_on` and `relates_to`. For cross-feature knowledge, keep one canonical project document and use `relates_to` links; a document still has at most one owning feature. Cross-project task dependencies are allowed within one organization. Source and target resolve through `record_refs`, including historical tombstones. A dependency on a deleted task needs explicit disposition before accepting new active work; it is never silently treated as satisfied.
+The `entity_relationships` view presents both authored and derived relationships. `links` stores only `depends_on` and `relates_to`. For cross-feature knowledge, keep one canonical project document and use `relates_to` links; a document still has at most one feature/release/deployment owner in addition to its required project. Cross-project task dependencies are allowed within one organization. Source and target resolve through `record_refs`, including historical tombstones. A dependency on a deleted task needs explicit disposition before accepting new active work; it is never silently treated as satisfied.
 
 `links[]` belongs in its source record's front matter and contains `id`, `kind`, `target_kind`, `target_id`. Source/organization IDs come from that parent. Every participating project/feature/document may have this array in addition to tasks. `record_refs` includes these document and project identities. Inverse queries use the target index instead of writing duplicate arrays on the target.
 
@@ -131,7 +131,7 @@ SELECT organization_id, 'task', id, 'implements', 'feature', feature_id
 FROM tasks WHERE feature_id IS NOT NULL
 UNION ALL
 SELECT organization_id, 'document', id, 'documents',
-       CASE WHEN feature_id IS NULL THEN 'project' ELSE 'feature' END,
-       CAST(COALESCE(feature_id, project_id) AS TEXT)
+       CASE WHEN feature_id IS NOT NULL THEN 'feature' WHEN release_id IS NOT NULL THEN 'release' WHEN deployment_id IS NOT NULL THEN 'deployment' ELSE 'project' END,
+       CAST(COALESCE(feature_id, release_id, deployment_id, project_id) AS TEXT)
 FROM documents;
 ```

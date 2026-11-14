@@ -1,6 +1,6 @@
 # Release deployment records
 
-Structural draft for v1. Document revision 2.4. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
+Structural draft for v1. Document revision 2.5. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
 
 ## Relationships
 
@@ -22,6 +22,7 @@ erDiagram
         TEXT target FK "required"
         TEXT operation "required"
         TEXT rollback_of_id FK "optional"
+        TEXT baseline_deployment_id FK "optional"
         TEXT status "required"
         TEXT started_at "optional"
         TEXT finished_at "optional"
@@ -43,9 +44,9 @@ erDiagram
     }
 ```
 
-A release has zero or many deployment records. Each record belongs to exactly one release and its project, one named `environment` such as staging or production, and one `target` such as primary or eu-west. A retry is a new record with a new stable ID. Deployments need no additional readable-number counter; use the release reference, environment and time in the UI.
+A release has zero or many deployment records. Each record belongs to exactly one release and its project, one named `environment` such as staging or production, and one `target` such as primary or eu-west. A retry is a new record with a new stable ID. Each attempt can own one technical changelog and other supporting documents, distinct from the release's product changelog. See [release content and flags](09-release-content-and-flags.md). Deployments need no additional readable-number counter; use the release reference, environment and time in the UI.
 
-Each record captures `operation: deploy | rollback`, `status: queued | running | succeeded | failed | cancelled`, actual start/end timestamps when known, an optional external job URL, common creator/update attribution, and a Markdown outcome. These are data values, not a process engine. A rollback is a new attempt against the release being restored, with `rollback_of_id` pointing to the attempt being undone in the same project/environment/target. Preserve all earlier attempts; never rewrite a prior successful deployment into a rollback.
+Each record captures `operation: deploy | rollback`, `status: queued | running | succeeded | failed | cancelled`, actual start/end timestamps when known, an optional external job URL, common creator/update attribution, and a Markdown outcome. These are data values, not a process engine. Optional `baseline_deployment_id` identifies a recorded baseline in the same project/environment/target for the technical delta; null records an unknown baseline. A rollback is a new attempt against the release being restored, with `rollback_of_id` pointing to the attempt being undone in the same project/environment/target. Preserve all earlier attempts; never rewrite a prior successful deployment into a rollback.
 
 `repository_commits` snapshots the exact commit intended for each targeted project repository. Once execution starts, preserve its release, environment, target and commit snapshot, even if the release manifest later changes. It is a commit map, not a build-artifact model. Import/publication validates that every started attempt has at least one commit entry. A successful attempt means the listed target changes completed; a failed attempt may have partial effects, so deployment history alone must not claim a failed attempt established the environment's current state. Outcomes can explain partial results.
 
@@ -54,8 +55,14 @@ Each record captures `operation: deploy | rollback`, `status: queued | running |
 ```text
 projects/<project-id>/releases/<release-id>/
 ├── release.md
+├── changelog.md                      # Product changes for the release
+├── flag-settings.yaml
+├── documents/<document-id>.md
 ├── milestones/<milestone-id>.md
-└── deployments/<deployment-id>.md
+└── deployments/<deployment-id>/
+    ├── deployment.md
+    ├── changelog.md                  # Technical changes for this attempt
+    └── documents/<document-id>.md
 ```
 
 ```markdown
@@ -87,6 +94,8 @@ Reservations release R-3 deployed to production/primary. Validation passed.
 
 These records remain in organization Git after tasks close and runtime caches are deleted. Store metadata and links rather than raw execution logs or credentials. HQ's release-creation restriction does not mean that an office executing a deployment must be HQ: approved execution/integration may report attempts from other offices. No deployment command or authorization policy is implemented by this draft.
 
+Deployment `flag_settings[]` captures confirmed applied flag values/rules, separately from release intent. Technical changelogs record environment changes, migrations, applied flags, validation and rollback details; product-facing release changes stay in the release changelog. The full flag/schema contract is in [document 09](09-release-content-and-flags.md).
+
 ## File to SQL mapping
 
 | Table | Source |
@@ -108,6 +117,7 @@ CREATE TABLE deployments (
   target TEXT NOT NULL DEFAULT 'primary' CHECK (length(target) > 0),
   operation TEXT NOT NULL DEFAULT 'deploy' CHECK (operation IN ('deploy', 'rollback')),
   rollback_of_id TEXT,
+  baseline_deployment_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
   started_at TEXT,
   finished_at TEXT,
@@ -123,6 +133,10 @@ CREATE TABLE deployments (
   UNIQUE (organization_id, id, project_id),
   UNIQUE (organization_id, id, project_id, environment, target),
   CHECK (rollback_of_id IS NULL OR rollback_of_id <> id),
+  CHECK (baseline_deployment_id IS NULL OR baseline_deployment_id <> id),
+  FOREIGN KEY (organization_id, baseline_deployment_id, project_id, environment, target)
+    REFERENCES deployments(organization_id, id, project_id, environment, target)
+    DEFERRABLE INITIALLY DEFERRED,
   CHECK ((operation = 'deploy' AND rollback_of_id IS NULL) OR (operation = 'rollback' AND rollback_of_id IS NOT NULL)),
   CHECK ((status = 'queued' AND started_at IS NULL AND finished_at IS NULL)
     OR (status = 'running' AND started_at IS NOT NULL AND finished_at IS NULL)
