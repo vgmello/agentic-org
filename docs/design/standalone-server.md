@@ -101,6 +101,8 @@ key; a checksum downloaded from an unauthenticated source is not sufficient.
 
 ### Browser listener and privilege boundary
 
+The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) keeps browser-specific response mapping at the gateway and reusable use cases in their owning Rust modules, ready for future integration API adapters.
+
 **Chosen topology:** one new `org-gateway` helper (`apps/org-gateway/`, planned)
 per instance terminates browser HTTP/TLS, serves `org-ui` assets and manages browser
 sessions/events for all authorized HQ organizations on that listener. It runs as

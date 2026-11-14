@@ -44,6 +44,8 @@ remaining domain moves are separate work. The inspected names in the table above
 
 ## 2. Architecture to follow
 
+The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) records browser API priorities, reusable module boundaries, future integration adapters, and browser preloading.
+
 Use **domain modules containing vertical slices**:
 
 `application -> domain module -> feature/use case`
