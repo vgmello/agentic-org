@@ -1,5 +1,11 @@
 # Rust Style Guide
 
+Adapted from the [Google Rust Style Guide](https://google.github.io/styleguide/rustguide.md),
+downloaded on 2026-11-14, under
+[Creative Commons Attribution 3.0 Unported](rust-style-guide.LICENSE).
+Chrome/Chromium-specific rules, exceptions, examples, and related references
+have been removed for this repository.
+
 <!-- mdformat off -->
 * TOC
 {:toc}
@@ -20,13 +26,6 @@
   padding: 2px 6px;
 }
 
-.chrome {
-  background-color: #4285F4;
-  color: white;
-  border-radius: 5px;
-  padding: 2px 6px;
-}
-
 .fuchsia {
   background-color: #c154c1;
   color: white;
@@ -34,7 +33,7 @@
   padding: 2px 6px;
 }
 
-:is(h1, h2, h3, h4, h5, h6) :is(.google3, .android, .chrome, .fuchsia) {
+:is(h1, h2, h3, h4, h5, h6) :is(.google3, .android, .fuchsia) {
   font-size: large;
   border-radius: 5px;
   padding: 4px 8px;
@@ -48,7 +47,7 @@ includes guidance on API and implementation design.
 
 Rust is used in many places, including
 [google3](https://opensource.google/documentation/reference/glossary#google3),
-Android, ChromeOS, Fuchsia, and Chrome, and we'd like for Rust usage at Google
+Android and Fuchsia, and we'd like for Rust usage at Google
 to be consistent both within and across codebases. In addition to bringing
 consistency to our Rust code, style guidance also helps establish a standard of
 quality.
@@ -59,7 +58,7 @@ quality.
 
 The current scope of authority of the rules outlined in this guide:
 
-*   **In Android, Chromium, and other codebases**: This style guide has been
+*   **In Android and other codebases**: This style guide has been
     developed in consultation with other codebases, and they intend to start
     applying it. These codebases may have their own rules about how strictly
     this is expected to be applied. Expect more information here as these
@@ -177,74 +176,6 @@ required to meet the immediate need.
 *   A Rust *module* is a unit of code organization within a crate. Rust modules
     are used to control visibility of names. Modules can be nested. They can
     also be used to split code across files and directories.
-
-The following sections convey that in Chromium, it is preferable to **not** make
-use of all possibilities of splitting modules across files.
-
-<a id="small-crates"></a>
-
-### Prefer small crates <span class="chrome">[chrome]</span>
-
-Prefer small crates in Chromium; ideally, but not necessarily, a single file
-(focusing on one abstraction). If your code can be split up into small crates,
-do so.
-
-A crate corresponds to a single `rust_static_library` (chrome) rule, which may
-contain one or more `.rs` files.
-
-Additional considerations:
-
-*   The root module is allowed to `re-export` public APIs from
-    `leaf submodules`, making submodules an implementation detail of the crate
-    (as users don't need to know about these submodules).
-
-*   This rule about small crates applies equally to crates with and without
-    submodules. First, evaluate whether the APIs need to be in the same crate,
-    and only then consider whether submodules could help organize the APIs.
-
-*   If you decide to use submodules, follow the
-    [expected file structure](#structure).
-
-Larger crates are allowed when
-[trait impl coherence rules](https://smallcultfollowing.com/babysteps/blog/2015/01/14/little-orphan-impls/)
-force multiple types and traits to be included in one library, or if you're
-building a large foundational library.
-
-Rationale
-
-Fine-grained library targets are recommended in Chromium due to the massive size
-of our codebase, non-local effects of adding dependencies in the build graph,
-and to improve performance of parallel compilation and build caching.
-
-<a id="structure"></a>
-
-### Use flat file layout for `rust_library` sources <span class="chrome">[chrome]</span>
-
-In Chromium `.rs` source files belonging to one `rust_library` (one Rust crate)
-must reside in a single directory.
-
-Don't use subdirectories to organize files that belong to a single crate. If
-organizing one crate's files into subdirectories feels necessary, this is a
-strong indication that the crate has grown [too large](#small-crates) and should
-be split.
-
-This crate layout is intentionally different from the conventional Cargo
-directory structure typically used in open-source repositories.
-
-Exception: Rust code in `//third_party` that is also built with
-[Cargo](https://doc.rust-lang.org/cargo/) should follow the conventional Cargo
-directory structure.
-
-Rationale
-
-The approach in Chromium is driven by the following factors:
-
-*   Based on the preference for [small crates](#small-crates), most
-    `rust_library` targets will only contain one source file.
-*   Because of the above point, creating a directory for each `rust_library`
-    target would result in most directories containing only one source file.
-*   Multi-file `rust_library` targets should not create dedicated directories
-    for submodules either; this ensures a consistent approach.
 
 <a id="userdefined-item"></a>
 
@@ -396,9 +327,6 @@ Exceptions:
 *   When importing functions with sufficiently disambiguated names, e.g.,
     functions from C++ (where it is typical to call top-level (free) functions
     directly).
-*   In Chromium, when importing functions from
-    [small, single-purpose first-party crates](#small-crates).
-
 *   When the module name itself is prone to collisions. For example, when the
     module name is a C++ namespace name, and multiple crates define the same
     submodules.
@@ -435,12 +363,6 @@ Rationale
 
 This rule largely exists to avoid reviewer disagreements.
 
-<a id="import-macro"></a>
-
-### Use the appropriate import mechanism <span class="chrome">[chrome]</span>
-
-*   <span class="chrome">Chrome</span> Use `chromium::import!()`.
-
 <a id="code-formatting"></a>
 
 ## Code formatting and aesthetics
@@ -449,7 +371,7 @@ This rule largely exists to avoid reviewer disagreements.
 
 ### Use the appropriate formatting tool
 
-Use the appropriate formatting tool (e.g., `git cl format` in Chromium).
+Use the appropriate formatting tool.
 
 Configuration (for style guide authors)
 
@@ -966,18 +888,6 @@ This enables convenient use of struct update syntax
 Never reach inside a poisoned mutex to get at its insides, no matter how
 tempting the use case may seem.
 
-<a id="async-await-chrome"></a>
-
-### Don't use `async` / `.await` <span class="chrome">[chrome]</span>
-
-Don't use `async` / `.await` in Chromium.
-
-<a id="std-thread"></a>
-
-### Don't start new threads through the Rust standard library <span class="chrome">[chrome]</span>
-
-In Chromium, prefer to use sequences instead of threads.
-
 <a id="fuchsia-mutex"></a>
 
 ### Use `fuchsia_sync::Mutex` <span class="fuchsia">[Fuchsia]</span>
@@ -1240,9 +1150,6 @@ Exceptions:
     use of certain unstable features. While review will be required to enable
     them (to help search for alternatives), features absolutely required to
     build an artifact correctly will generally be approved.
-*   <span class="chrome">Chrome</span> Style arbiters may blanket-approve a
-    small list of features for the entire codebase. Typically, only features
-    that have a clear path to stabilization will be approved.
 *   <span class="fuchsia">Fuchsia</span> See guidance
     [here](https://fuchsia.dev/fuchsia-src/development/languages/rust/unstable).
 
@@ -1758,15 +1665,14 @@ Exceptions:
     convince the reviewer that the codebase is doing most of what it can to
     avoid panics. This exception only applies to code that has the possibility
     of being run with `panic=unwind` (so this does not apply to
-    <span class=chrome>Chrome</span>, <span class=android>Android</span>,
-    <span class=fuchsia>Fuchsia</span>).
+    <span class=android>Android</span> or <span class=fuchsia>Fuchsia</span>).
 
 Rationale
 
 Rust code may be used in many environments, and `panic::catch_unwind` will only
 function correctly in environments with `panic=unwind`. While the final panic
-disposition of prod binaries has not yet been determined, Chrome, Android, and
-Fuchsia all require `panic=abort`.
+disposition of prod binaries has not yet been determined, Android and Fuchsia
+require `panic=abort`.
 
 <a id="prefer-format-or-write"></a>
 
@@ -1791,10 +1697,6 @@ Rationale
 ## Use the right per-codebase test framework
 
 Most codebases use their own specific test framework rather than `#[test]`.
-
-*   <span class="chrome">Chrome</span> Use
-    [rust_gtest_interop](https://source.chromium.org/chromium/chromium/src/+/main:testing/rust_gtest_interop/).
-    This makes it possible to integrate Rust tests into C++ test binaries.
 
 *   <span class="fuchsia">Fuchsia</span> Use `#[fuchsia::test]`. See
     [here](https://fuchsia.dev/fuchsia-src/development/languages/rust/testing.md)

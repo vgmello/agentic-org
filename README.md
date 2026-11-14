@@ -98,8 +98,8 @@ cd apps/desktop && npm i && npm run tauri dev   # the app, once scaffolded
 
 Read [AGENTS.md](AGENTS.md) before changing anything. The code is MIT-licensed (see [LICENSE](LICENSE)). The app's UI uses licensed Tailwind Plus components *inside the app only*. See AGENTS.md.
 
-The [Google Rust Style Guide](docs/rust-style-guide.md) is an unmodified reference
+The [Google Rust Style Guide](docs/rust-style-guide.md) is adapted from the guide
 downloaded from [Google](https://google.github.io/styleguide/rustguide.md) on
-2026-11-14. It is licensed separately under
+2026-11-14, with Chrome/Chromium-specific guidance removed. It is licensed separately under
 [Creative Commons Attribution 3.0 Unported](docs/rust-style-guide.LICENSE)
 ([license URI](https://creativecommons.org/licenses/by/3.0/)).
