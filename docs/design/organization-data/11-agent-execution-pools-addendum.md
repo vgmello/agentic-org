@@ -1,19 +1,850 @@
-# Addendum: agent execution, subscription pools and supervisor ownership
+# Agent execution and subscription pools: implementation contract
 
-Status: **separate review proposal**. This addendum does not amend the existing organization documents, `schema.sql`, application code or runtime contracts. It proposes how the supplied subscription-pool design fits the organization model and identifies the remaining decisions before integration.
+Status: **implementation specification, revision 1**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
-Source input: `requirements_design_document_subscription_pool_model_profile_architecture.md`, supplied by the owner; SHA-256 `c3189b7af897be77cc9e8d4214edcc71a66039f3c14a95f6d08d3da5678c43dc`. Its implementation checklist is requirements context, not an instruction to run authentication commands, provision accounts or implement the checklist now. Model names, provider commands and isolation variables in that input are examples to verify against supported installed drivers, not a verified capability catalog.
+Only this addendum is being revised. The existing organization documents and `schema.sql` remain unchanged. The SQL extension in §12 is the exact integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
 
-## 1. Decisions supplied by the owner
+Requirements source: owner-supplied `requirements_design_document_subscription_pool_model_profile_architecture.md`, SHA-256 `c3189b7af897be77cc9e8d4214edcc71a66039f3c14a95f6d08d3da5678c43dc`. Provider commands/model names in that source are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
 
-- Extend the existing agent employees. A person and an agent keep the identity/home-team/handle model in [agent structure](04-agent-structure.md); an execution configuration is a one-to-one extension for employees of kind agent. There is no second competing agent identity table.
-- An agent selects a model profile and a target model. A model profile contains ordered provider connections, with no manually maintained per-model list or overrides.
-- The proposed **`org-agent-supervisor` process** owns connection switching, preparation of the execution environment and control of the agent process.
-- Keep this proposal in one separate addendum for review. Existing canonical diagrams, schema and folder definitions remain unchanged until integration is separately requested.
+## 1. Fixed decisions and scope
 
-The supplied design also requests isolated subscription contexts, discovered model capabilities, automatic single-connection profiles, health/entitlement-aware routing and cooldown failover. Those requirements are retained here with the storage and execution qualifications below. This addendum does not select the rest of v1's scheduling, memory, delegation, budget or messaging implementation for porting.
+| Topic | Required implementation |
+| --- | --- |
+| Identity | An agent is an existing employee of kind agent, extended by exactly zero or one `agent_execution_configs` row. People have no execution configuration. |
+| Runtime topology | One `org-agent-supervisor` process per office, hosting a logical controller and one main-process slot per placed agent. Do not launch one supervisor daemon per employee. |
+| Launch authority | The supervisor alone selects routes, prepares child environments, launches/drives/stops agent processes and recovers its children. |
+| Pool configuration | Agents select one model profile and canonical model ID. Profiles contain only an ordered list of connection IDs, never a manual model map. |
+| Connection capabilities | Discover/cache entitlement and model-ID translation per connection and office. Unknown or stale auth/model evidence cannot qualify a route. |
+| Shared quota | HQ's organization service coordinates turn permits across offices. Per-connection concurrency defaults to one and is explicitly configurable. |
+| Failover | Same target model, first eligible connection by priority. Each connection is tried at most once per dispatch cycle. Replay/resume requires the proof rules in §7. |
+| Fast iteration | Reuse an idle verified process when its connection, model, workspace and launch digest match. Otherwise perform a controlled switch. No Git fetch, model discovery or authentication flow runs on the selection hot path. |
+| Persistence | Organization config in Git; local auth and execution journal outside Git; SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
+| Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation and budget-triggered pausing are excluded. |
 
-## 2. What starts processes in v1 today?
+The process boundary and existing-employee extension were explicitly requested by the owner. The remaining rows are the concrete architectural choices made by this specification. They can be changed by a later explicit revision, not by an implementation team's silent assumptions.
+
+## 2. Processes, modules and exclusive ownership
+
+```mermaid
+flowchart TD
+    Host[org-office-host] --> Server[org-server: office APIs and projections]
+    Host --> Supervisor[org-agent-supervisor: one per office]
+    Server -->|authenticated revisioned commands| Supervisor
+    Supervisor -->|journaled events and query results| Server
+    Supervisor --> Pump[org-office-sessions: controller and protocol pump]
+    Pump --> Port[org-runtime adapter contract]
+    Pump --> OS[org-supervise process library]
+    OS --> CLI[Native CLI agent process]
+    OS --> HTTP[org-agent-http-worker: framework agent loop]
+    Supervisor -->|Acquire / Renew / Release| HQ[HQ quota coordinator]
+```
+
+The host starts the server, waits for office readiness, then starts the supervisor with an office-scoped service capability. Host/server/supervisor generations are distinct from employee placement generation. The host restarts a failed supervisor; it does not independently adopt or reap the supervisor's agent children. The new supervisor acquires an exclusive office lock in its durable local supervision directory, recovers journaled children, and only then admits new starts.
+
+`apps/org-agent-supervisor` and `apps/org-agent-http-worker` are thin composition binaries. `org-office-sessions` owns routing/controller/pump orchestration behind the stable `org-runtime` port; adapters depend on that port, not on each other or office storage. `org-supervise` retains OS ownership and performs spawn/stop/reap. The server owns its data-service API and SQLite writer; the supervisor never opens `office.db` as a second independent writer. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
+
+The supervisor's local journal is authoritative for its live process ownership, turn/attempt changes and command receipts. Server-side process/status rows are projections of that journal. Organization config and HQ permit state have their own authorities (§3/§6). Migrate legacy owned-agent recovery rows before enabling the new owner; a row has exactly one recovery owner. The existing server recovery adapter must not also recover a child delegated to the supervisor.
+
+## 3. Storage authority and exact paths
+
+```text
+<organization repository>/
+├── provider-connections/<connection-id>.yaml
+├── model-profiles/<profile-id>.yaml
+└── teams/<team-id>/.../agents/<employee-id>/
+    ├── profile.md
+    └── execution.md
+
+<data-root>/<organization-id>/durable/
+├── authority/agent-execution/              # HQ placement generations, permits and cooldowns
+└── local/offices/<office-id>/
+    ├── connections/<connection-id>/binding.yaml
+    ├── auth/<connection-id>/               # Private CLI state, or external vault binding
+    └── supervision/
+        ├── supervisor.lock
+        ├── journal/<sequence>.json
+        ├── turns/<turn-id>/input.json
+        ├── checkpoints/<checkpoint-id>.json
+        └── tools/<operation-id>.json
+
+<data-root>/<organization-id>/runtime/<office-id>/
+├── supervisor/control.sock
+├── supervisor/generated/<process-id>/     # Rendered adapter/native-agent configuration
+└── teams/.../agents/<employee-id>/...      # Existing task/project worktrees
+```
+
+| Projection tables | Canonical source |
+| --- | --- |
+| `provider_connections`, `model_profiles` | Same-named YAML fields and common attribution; profiles additionally contain `connection_ids[]`. |
+| `model_profile_connections` | Profile `connection_ids[]`; zero-based array position plus one becomes priority. |
+| `agent_execution_configs` | `execution.md` front matter: employee/profile/model IDs, revision/schema, enabled, tools_config; body is system_prompt_markdown. Common attribution follows [record contracts](08-record-contracts.md). |
+| `office_connection_bindings` | Local binding YAML with same-named fields. Never shared Git content. |
+| `office_connection_state`, `office_connection_models` | Supervisor-owned discovery/auth observations, rebuilt from verified probes after cache loss. Their journal snapshots improve startup but are not fresh proof after restart. |
+| `agent_placements.placement_generation` | HQ agent-execution journal; current placement row remains the existing employee-to-office projection. |
+| `connection_quota_state`, `connection_turn_permits` | HQ agent-execution journal; atomically committed before permit acknowledgement. |
+| `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts` | Supervisor journal transactions and immutable input/checkpoint/tool files. |
+
+Journal records are ordered UTF-8 JSON transaction envelopes: `{schema_version, sequence, operation_id, payload_sha256, mutations, response}`. Write a complete transaction to a temporary file, fsync it, atomically rename to its sequence name, then fsync the parent directory before acknowledgement. Mutations contain full same-named row snapshots or explicit projection removals. A projector applies each sequence once in one SQLite transaction; a gap or checksum conflict blocks new execution until recovered. Asynchronous fact transactions use null operation_id, payload_sha256 and response and create no command receipt. Input/checkpoint/tool files referenced by a transaction are fsynced before publishing it. Canonical JSON expands defaults/nulls, sorts keys and uses compact UTF-8 encoding; digests use the [accounting](10-usage-and-cost-accounting.md) SHA-256 convention.
+
+Credentials never enter organization Git, command payloads, journal events or logs. The local binding holds only a vault/keychain reference or a private auth-directory path. Auth directories are owned by the office user with mode 0700; generated files are 0600. Rebind on a new machine and probe again. Native auth variables require a reviewed adapter allowlist; HTTP keys are resolved into the approved provider-client context, not ordinary tool environments.
+
+Keep live ownership evidence until cleanup is proven. A fresh office cache replays identities/config, HQ authority data and supervisor journals, then performs marked-process recovery before starts. If local recovery evidence or input/checkpoints were lost while a child may exist, return `RECOVERY_REQUIRED`; do not infer that deletion of a cache ended the process. Recovery on a different machine requires a new placement generation and the old office's cleanup acknowledgement or an explicitly verified machine fence; automatic timeout-only reassignment is outside this version.
+
+This explicitly extends document 04's runtime-only placement contract with a small durable coordination/fencing journal outside Git; employee home-team and organization membership remain unchanged. HQ owns monotonically increasing placement_generation per employee. Moving an agent first requires the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence; HQ then journals the new office and incremented generation atomically. Every command, permit and attempt carries that generation. The migration default of one is a projection bootstrap, not permission to start a legacy process: recovery must finish before HQ admits its first generation. Lost authority evidence blocks starts until restored. Historical attempts retain their original office/generation independently of current placement.
+
+## 4. Configuration transactions and discovery
+
+All IDs use the existing stable-ID contract. `workspace_id` from the upload maps to organization_id. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
+
+Connection creation is one idempotent organization transaction: create the connection, an auto-generated model profile, and its one membership. The profile records generated_for_connection_id. Exactly one generated default is allowed per connection. Auto-generated profiles contain exactly their source connection; converting one to a manual pool clears the generated designation in that same revisioned transaction. Profile membership is 1..64 connections in contiguous priority order. Reorder by replacing the membership set inside one transaction, then validate before commit; do not perform individually visible priority swaps.
+
+Archiving or deleting an assigned profile returns `PROFILE_IN_USE` with affected employee IDs. Referenced connections cannot be deleted through a membership cascade. Disable/retire definitions with history and explicitly reassign/detach before deletion. Changing provider/auth-mode/driver/endpoint is a revisioned configuration change; a supervisor never mutates a live child's environment to adopt it. Missing execution config means an employee is not runnable, not that the framework chooses a default model.
+
+The supervisor probes at startup, after binding changes, on explicit RefreshConnection and every 60 seconds while a connection is in use. Auth/model observations are valid for at most 300 seconds. A changed binding revision invalidates all previous observations immediately. Driver preflight must prove the installed version and the intended account context; provider account identity evidence is retained in account_identity_ref, with explicit operator attestation required when a provider exposes no account identity API. A public `/models` list alone is not entitlement proof.
+
+Canonical model IDs and driver-specific model/deployment IDs are stored on discovered connection observations. Profiles contain no manual per-model mapping. The SQL union view lists discovered confirmed support per office; ListProfileModels returns `{model_id, supporting_connections, first_priority, as_of, stale, ready_connections}` per model. ready_connections counts locally fresh compatible evidence, never guarantees quota admission. Employee-specific policy readiness is returned by GetAgentReadiness. Requested models remain valid declarative configuration while discovery is pending, with readiness `MODEL_UNVERIFIED`. They are not silently replaced or removed from agent files.
+
+```yaml
+# execution.md front matter; common attribution fields omitted here for readability
+schema_version: 1
+employee_id: existing-agent-employee-id
+revision: 1
+enabled: true
+model_profile_id: subscription-pool-id
+model_id: canonical-target-model-id
+tools_config: [approved-shell-tool-id, approved-org-tool-id]
+```
+
+The associated organization files have the following serialization (nullable common attribution fields omitted, created_by_kind and updated_by_kind default to unknown):
+
+```yaml
+# provider-connections/subscription-a.yaml
+organization_id: example-org-id
+id: subscription-a
+schema_version: 1
+revision: 1
+key: subscription-a
+name: Subscription A
+provider_type: example-provider
+auth_mode: subscription_cli
+runtime_driver: verified-native-driver
+endpoint_url: null
+enabled: true
+archived: false
+max_concurrent_turns: 1
+```
+
+```yaml
+# model-profiles/primary-pool.yaml
+organization_id: example-org-id
+id: primary-pool
+schema_version: 1
+revision: 1
+key: primary-pool
+name: Primary pool
+description: Same-model fallback across two verified accounts
+is_auto_generated: false
+generated_for_connection_id: null
+archived: false
+connection_ids: [subscription-a, subscription-b]
+```
+
+subscription-b must have its own connection definition and office-local binding before it is eligible. This manually assembled pool coexists with each connection's generated single-member default profile. Boolean YAML values become SQLite 0/1; tools_config and connection_ids serialize arrays rather than JSON strings. File and record IDs must match; reject unknown fields or unsupported schema versions. Example IDs denote existing stable IDs, not a new ID format.
+
+For a concrete dispatch: an agent in the east office requests the canonical target model from primary-pool. Both connections have fresh confirmed entitlement. HQ grants the subscription-a permit; its first request returns 429 before any effect. The supervisor records cooldown/attempt usage, verifies cleanup, releases that permit, then requests subscription-b's permit and launches with its isolated binding. Success produces one logical turn, two attempts and route-specific usage. If the first attempt had an uncertain tool result, the same example stops at recovery_required instead of starting subscription-b.
+
+The body is the system prompt. Existing employee identity, role, home team and reporting lines remain in profile.md. Effective role/process authority is resolved by the office and snapshotted with tool/policy revisions; execution.md cannot grant itself extra permissions.
+
+## 5. Commands and IPC
+
+The supervisor exposes a length-prefixed UTF-8 JSON protocol over its private 0600 Unix socket under a 0700 parent. Frames have a four-byte unsigned big-endian byte length, maximum 1 MiB. Connections use OS peer credentials plus a host-issued office/generation-scoped service capability delivered over the inherited launch/control channel, never argv or query strings. Only the authorized office service and quota coordinator act as service peers. Employee tool credentials do not authorize supervisor commands.
+
+Every request envelope contains `{protocol_version:1, organization_id, office_id, supervisor_generation, operation_id, command, payload, payload_sha256}`. Validate scope/authentication before admission. payload_sha256 hashes canonical `{command, organization_id, office_id, payload}` only; transport capabilities and supervisor_generation are excluded so an original operation can be retried after restart. Mutation payloads include expected object revisions/placement generation; responses are `{operation_id, outcome, code, data}`. Journal the result and associated state atomically before replying. Same ID/digest returns the original response; same ID/different payload returns `IDEMPOTENCY_CONFLICT` without side effects. A lost acknowledgement is resolved by `GetOperation(operation_id)` or the same-ID retry, never a newly generated command. Keep receipts while their turn/process/config revision is retained; no time-only dedupe expiry is introduced.
+
+| Command | Required payload / result |
+| --- | --- |
+| `RunTurn` | turn_id, employee_id, placement_generation, expected_agent_config_revision, expected_profile_revision, task_id or null, workspace_key, immutable input_ref/input_sha256. Returns accepted turn identity. A second open turn for the employee returns BUSY. |
+| `ResumeTurn` | turn_id, expected_turn_revision; recovery-required turns also require recovery `{checkpoint_ref, receipt_dispositions:[{operation_id, outcome, result_ref, evidence_ref}]}`. Outcome is confirmed_completed or confirmed_not_started, with evidence verified by the tool broker/operator recovery authority. Unknown outcomes remain recovery_required. Retries a blocked turn or resumes only after validated reconciliation. Preserves turn ID, model and workspace. |
+| `CancelTurn` | turn_id, expected_turn_revision. Stops current work and becomes cancelled only after completion/cleanup facts are known. |
+| `StopAgent` | employee_id, placement_generation. Stops active and idle main processes. It creates no future automatic wake or budget policy. |
+| `BindConnection` | connection_id, expected_binding_revision, local credential reference, verified executable path where required. Invalidates observations. Raw credentials use the local auth broker, not this payload. |
+| `RefreshConnection` | connection_id. Returns refreshed status/catalog or structured unavailable status. Never starts an employee LLM turn. |
+| Queries | GetOperation, GetTurn, GetAgentReadiness, ListProfileModels. Queries have no mutation receipt and expose no secret values. |
+
+The server rejects stale placement/config revisions before forwarding. The supervisor checks them again against its admitted snapshot. No new starts occur while its office-control channel is unavailable. Existing work has a 60-second control lease renewed every 10 seconds; loss begins a stop while at least 20 seconds remain. Unresolved cleanup retains the process/turn slot. Client deadlines of 10 seconds are response deadlines only; they do not prove a command failed or cancel accepted work.
+
+Run input is a private immutable JSON file containing the resolved employee/role/system instructions, visible messages/attachments by content reference, approved tool/policy manifests, work scope, requested model and ordered pool snapshot. Large content uses content-addressed local references; it is not embedded past the frame limit. Resolve paths against the office's approved roots and reject traversal/symlink substitution. The same turn keeps its original target model, profile order, workspace and input digest through every attempt. Connection disabling, revoked authority and invalid credentials override old eligibility; ordinary profile/prompt changes take effect on the next turn. Resume does not silently broaden the admitted policy.
+
+## 6. Shared quota and deterministic selection
+
+HQ's organization service is the single permit/cooldown coordinator. It journals before acknowledging and updates its projection in one `BEGIN IMMEDIATE` transaction: expire overdue active permits to release_pending; read connection and applicable model cooldowns; count active plus release_pending permits; grant only below max_concurrent_turns. Permission to proceed is a scoped opaque permit ID bound to employee/office/placement/model and coordinator generation. There is no global counter on the agent and no quota authority in an office's cached healthy flag.
+
+Permits last 60 seconds and renew every 10 seconds while a model turn is active. Compute local deadlines conservatively from the monotonic request-send time and the returned remaining duration. Start stop/recovery with at least 20 seconds remaining when renewal fails. **Expiry does not free capacity:** release_pending continues to count until a supervisor proves the model turn ended with no outstanding work, or proves its process/descendants gone. Unknown cleanup is not a release acknowledgement. Warm verified-idle processes consume no turn permit. Coordinator restart replays its journal and marks prior active permits release_pending before issuing new permits; affected supervisors stop/reconcile rather than reusing an old coordinator generation.
+
+A 429/quota failure is connection-wide unless verified provider evidence identifies a model-specific window. Use the provider reset/Retry-After value when present; otherwise cooldown is 900 seconds. Cooldown expiry permits another guarded attempt if local auth/entitlement evidence is still fresh; it is not an assertion that quota is known available. Unsupported quota probes leave quota status unknown and can still obtain a bounded permit, with that uncertainty exposed. Auth-expired is an office-binding observation until verified reauthentication. Never convert a tool/policy denial into permission to try a less restrictive driver.
+
+For each RunTurn/ResumeTurn dispatch cycle:
+
+1. Read the frozen ordered pool and admitted policy. Reject archived profile, disabled execution config, inactive employee or stale placement.
+2. In ascending priority, check connection enabled/non-archived, local binding, exact binding revision, installed driver/verified version, fresh auth readiness, confirmed model entitlement and policy/tool/context compatibility. Unknown/stale evidence produces a skip code and asynchronous refresh, not hot-path discovery.
+3. Ask HQ for a turn permit. A full/cooling-down connection is skipped; coordinator unavailability blocks dispatch rather than bypassing global admission.
+4. Reserve the employee's exclusive process slot. Reuse an idle process only if connection, driver/version, canonical model, workspace and launch digest match. The digest covers connection definition revision/endpoint, canonical and resolved model IDs, driver version/executable fingerprint, workspace, resolved instructions/tool-policy revisions and binding revision, never plaintext secret values. Validate the process row matches the admitted connection/driver/model before attaching an attempt.
+5. Otherwise stop/reap/recover the previous process, create a new mark/instance, fsync planned ownership, prepare the explicit environment/launch plan, spawn through org-supervise, fsync PID/start/boot identity, then admit input. No replacement starts while cleanup is unresolved.
+6. Journal attempt and turn transitions, pump protocol, persist usage before final completion acknowledgement, release the permit after a verified terminal/idle boundary, and keep the process warm for compatible subsequent turns. Configuration changes do not rewrite the current attempt.
+
+Each connection is attempted at most once in a dispatch cycle. Exhaustion yields `POOL_EXHAUSTED` with ordered per-connection reasons and any known earliest cooldown time; the turn becomes blocked. Explicit ResumeTurn starts another bounded cycle, not an unbounded retry loop. Concurrent input is BUSY; this version has no implicit scheduling queue.
+
+## 7. Failover, checkpoints and side effects
+
+Retry-eligible driver errors are rate_limited, quota_exhausted, auth_expired and model_unavailable. Invalid input, policy denial, unsupported capability and unknown protocol/provider errors are not automatic retry instructions. A switching attempt retains usage already consumed, ends/reconciles the old process where required, releases/quarantines its permit and selects the next eligible connection for the same logical turn.
+
+| Proven execution boundary | Required action |
+| --- | --- |
+| Before any external/tool effect; adapter proves effect_state none | Replay the frozen turn on the next connection after old-process cleanup. Provisional streamed text is attempt output, not a second committed final reply. |
+| Effects occurred; a verified compatible checkpoint includes completed operation receipts and no unknown in-flight effect | Resume after that checkpoint. Do not replay completed tools. |
+| Effect state unknown, missing checkpoint/receipt or unsupported cross-driver/account resume | Stop/reconcile and set RECOVERY_REQUIRED. Keep the task/worktree and evidence; do not blindly retry. |
+
+A checkpoint is an immutable private JSON object with schema_version, checkpoint_id, turn_id, attempt_id, employee_id, workspace_key, input/policy digests, visible message/event watermark, completed tool receipt references, any native conversation-state reference, format_id, portability and content_sha256. Portability is one of same_process, same_connection, same_driver or portable. A destination adapter must explicitly accept that format/version/scope and pass its conformance tests; same vendor/model name is insufficient. Missing context-window capacity returns CONTEXT_LIMIT, not silent truncation. Opaque account-bound CLI state cannot be relabelled portable.
+
+Every brokered effect has a durable tool receipt `{operation_id, payload_sha256, turn_id, status, result_ref}`. Journal pending before invocation and terminal outcome before acknowledging its result. Same operation/payload returns the recorded outcome; a different payload conflicts. A crash between side effect and receipt completion produces outcome_unknown and requires reconciliation, not an automatic second invocation. Native unbrokered tools need verified start/completion visibility; otherwise the adapter marks effects unknown from the point visibility is lost. Message sends, repository commits and deployment calls are effects too. Pending approvals from an old attempt are cancelled and cannot authorize a replacement.
+
+Native CLI environments change only on a new process launch. HTTP drivers run inside `org-agent-http-worker`, which owns the common agent loop and exposes the same framed turn/usage/tool protocol; a raw SDK completion is not a complete agent runtime. Supervisor-approved tool requests go through the tool broker. API secrets enter only the approved provider-client context; ordinary tool children do not inherit them. An in-process connection switch is allowed only when the worker advertises verified compatible switching and has no in-flight effect; the supervisor remains the sole switch authority.
+
+This qualifies source FR-6 deliberately: automatic mid-turn failover is required at a proven safe replay/resume boundary. RECOVERY_REQUIRED is the specified fallback where the harness cannot prove safety, not an unimplemented decision for the team to invent.
+
+## 8. Driver contract and failures
+
+Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
+
+Driver manifest requirements are auth modes, supported isolation mechanism, model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not execute the upload's onboarding commands or claim its example models/variables are supported without that evidence.
+
+| Error code | Stable outcome |
+| --- | --- |
+| STALE_CONFIG / STALE_PLACEMENT / IDEMPOTENCY_CONFLICT | Reject before admission; no process or permit created. |
+| PROFILE_IN_USE / INVALID_PROFILE_MEMBERSHIP | Reject configuration transaction atomically. |
+| BINDING_MISSING / AUTH_EXPIRED / DRIVER_UNAVAILABLE / DRIVER_UNVERIFIED | Skip route; return readiness evidence and refresh/rebind action. |
+| MODEL_UNVERIFIED / MODEL_NOT_ENTITLED / POLICY_UNSUPPORTED / CONTEXT_LIMIT | Skip route; never change the requested model or drop policy. |
+| COORDINATOR_UNAVAILABLE / POOL_EXHAUSTED | Accepted turn becomes blocked; no uncontrolled start. |
+| PROCESS_CLEANUP_PENDING / RECOVERY_REQUIRED | Keep ownership/open-turn slots until explicit reconciliation. |
+| UNKNOWN_COMMAND_OUTCOME | Resolve original operation ID; do not resubmit a fresh start. |
+
+## 9. States and accounting
+
+```mermaid
+stateDiagram-v2
+    [*] --> accepted
+    accepted --> running: route and permit admitted
+    accepted --> blocked: no eligible route
+    running --> switching: retry-eligible failure
+    switching --> running: safe next attempt
+    switching --> recovery_required: no proven safe continuation
+    switching --> blocked: pool exhausted after verified cleanup
+    running --> succeeded: verified completion and usage capture
+    running --> failed: terminal non-retry error and reconciled effects
+    accepted --> cancelled: cancellation
+    running --> cancelled: cancellation with verified stop
+    blocked --> accepted: explicit ResumeTurn
+    recovery_required --> accepted: explicit validated recovery
+    recovery_required --> cancelled: explicit reconciled cancellation
+    succeeded --> [*]
+    failed --> [*]
+    cancelled --> [*]
+```
+
+Process states are planned → starting → idle/busy → stopping → gone; any uncertain exit becomes cleanup_required and retains the exclusive slot. Turns in accepted/running/switching/blocked/recovery_required are open. The SQL unique indexes enforce one open turn and one not-gone main process per employee. Transition validation occurs in journal transactions; arbitrary SQL updates are not a public execution API. Cancellation with unknown effects remains recovery_required until reconciled. Turn success is not task closure; task lifecycle remains a separate contract.
+
+Every chargeable attempt captures actual consuming employee/one-off context and work attribution through [usage accounting](10-usage-and-cost-accounting.md). Add the following routing object to source_metadata_json before hashing each new event:
+
+```json
+{"routing":{"turn_id":"logical-turn-id","attempt_id":"attempt-id","process_instance_id":"process-id","model_profile_id":"profile-id","provider_connection_id":"selected-connection-id","runtime_driver":"driver-id","requested_model_id":"canonical-id","resolved_model_id":"driver-model-id","agent_config_revision":1,"profile_revision":1,"binding_revision":1}}
+```
+
+Provider/model and price_id describe the actual route used, not the first pool member. Retain usage on failed/partial attempts, preserve unknown counts and distinguish normalization of overlapping aggregate/component reports. A failover is not permission to count the same consumed event twice. Runtime attempt projections may later be discarded after termination and accounting handoff; minimal routing evidence remains in the durable usage archive without a foreign key to a live process. Do not rewrite old immutable events to backfill routing fields. Spending-limit enforcement and automatic budget pauses remain excluded; provider quota cooldown is a different mechanism.
+
+## 10. Required acceptance criteria
+
+| ID | Passing evidence |
+| --- | --- |
+| AE-01 | Person execution config rejected; existing employee IDs/handles/roles/team relationships remain unchanged. |
+| AE-02 | Connection registration creates exactly one default pool/member under same-ID retries; generated profile invariants survive restore. |
+| AE-03 | Duplicate/out-of-range priorities and cross-organization links fail; reorder is atomic; assigned/used profiles cannot be silently deleted. |
+| AE-04 | Two simultaneous RunTurn commands for one employee admit at most one open turn/process; lost ACK replay starts no second child. |
+| AE-05 | Isolated bindings select intended accounts; no secrets/global-environment mutation; binding revision invalidates cached readiness. |
+| AE-06 | Union is derived; stale/unknown entitlement or unsupported policy does not become runnable; pool order is deterministic. |
+| AE-07 | Two offices competing for one configured slot receive at most one active permit; expiry/unresolved cleanup does not free capacity. |
+| AE-08 | 429 updates correct quota scope, default cooldown is 900 seconds, attempt count per cycle is bounded by pool size. |
+| AE-09 | Pre-effect replay uses the next connection; recorded-effect resume does not repeat a tool; unknown effect enters recovery_required. |
+| AE-10 | Crashes before spawn, after spawn before identity acknowledgement, during tools and during supervisor restart all retain evidence and block unsafe replacement. |
+| AE-11 | Warm compatible process is reused; changed binding/model/workspace/policy digest causes controlled cleanup/relaunch. |
+| AE-12 | Actual successful and failed route usage survives fresh-cache reconstruction; tokens/cost are not assigned to the configured primary when backup consumed them. |
+| AE-13 | Cached candidate selection for up to 64 members has p95 below 5 ms over 10,000 warmed lookups on recorded CI hardware. Report quota/network/probe/startup time separately; no performance claim without the result. |
+| AE-14 | Every production adapter has pinned-version auth/model/tool/checkpoint/stop/usage fixtures. Unsupported capability returns its defined error, never a permissive fallback. |
+| AE-15 | Only the new supervisor owns its children; server/host recovery cannot reap the same child independently. No new placement starts until old ownership is fenced/reconciled. |
+
+## 11. Implementation sequence and integration boundaries
+
+1. Add the §12 migration and serializers/projectors with AE-01..03. Preserve employee identity; do not create a second agents table. Integrate document 04 and schema.sql in that implementation change, not in this addendum-only edit.
+2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06).
+3. Implement HQ permit coordinator and office command/receipt journal (AE-04, AE-07..08).
+4. Add the supervisor binary, host startup/IPC capability handshake, protocol pump and recovery-owner migration (AE-10..11, AE-15).
+5. Implement native adapters and the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
+6. Connect durable usage capture/routing evidence and restoration (AE-12), then report the performance gate (AE-13).
+
+The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service. Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
+
+## 12. SQL extension and file mapping
+
+Apply this extension after [schema.sql](schema.sql) during implementation. Existing tables are referenced, not recreated. The one added existing-table column is agent_placements.placement_generation; triggers reject generation regression, office moves without an increment, and changing a configured agent into a person. The HQ service still verifies cleanup/fencing; a SQL generation check alone cannot prove an old process stopped. SQLite STRICT types and foreign keys are required. Use schema-versioned migrations and rebuild projections from the named authorities. Common attribution for authored organization records follows [record contracts](08-record-contracts.md); legacy unknown metadata is not fabricated.
+
+```mermaid
+erDiagram
+    employees ||--o| agent_execution_configs : extends_agent
+    model_profiles ||--o{ agent_execution_configs : selected_pool
+    model_profiles ||--o{ model_profile_connections : ordered_members
+    provider_connections ||--o{ model_profile_connections : supplies
+    provider_connections o|--o| model_profiles : generated_default
+    provider_connections {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        INTEGER schema_version "required"
+        INTEGER revision "required"
+        TEXT key "required"
+        TEXT name "required"
+        TEXT provider_type "required"
+        TEXT auth_mode "required"
+        TEXT runtime_driver "required"
+        TEXT endpoint_url "optional"
+        INTEGER enabled "required"
+        INTEGER archived "required"
+        INTEGER max_concurrent_turns "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
+    }
+    model_profiles {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        INTEGER schema_version "required"
+        INTEGER revision "required"
+        TEXT key "required"
+        TEXT name "required"
+        TEXT description "required"
+        INTEGER is_auto_generated "required"
+        TEXT generated_for_connection_id FK "optional"
+        INTEGER archived "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
+    }
+    model_profile_connections {
+        TEXT organization_id PK, FK "required"
+        TEXT model_profile_id PK, FK "required"
+        TEXT connection_id PK, FK "required"
+        INTEGER priority "required"
+    }
+    agent_execution_configs {
+        TEXT organization_id PK, FK "required"
+        TEXT employee_id PK, FK "required"
+        INTEGER schema_version "required"
+        INTEGER revision "required"
+        TEXT model_profile_id FK "required"
+        TEXT model_id "required"
+        TEXT system_prompt_markdown "required"
+        TEXT tools_config_json "required"
+        INTEGER enabled "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
+    }
+```
+
+```mermaid
+erDiagram
+    employees ||--o| agent_placements : placed_agent
+    offices ||--o{ agent_placements : hosts
+    offices ||--o{ office_connection_bindings : local_auth
+    provider_connections ||--o{ office_connection_bindings : bound_connection
+    office_connection_bindings ||--o| office_connection_state : observed_auth
+    office_connection_bindings ||--o{ office_connection_models : discovered_models
+    provider_connections ||--o{ connection_quota_state : shared_observation
+    provider_connections ||--o{ connection_turn_permits : grants
+    agent_execution_configs ||--o{ agent_execution_turns : receives
+    agent_execution_configs ||--o{ agent_process_instances : owns
+    agent_execution_turns ||--o{ agent_execution_attempts : bounded_attempts
+    agent_process_instances o|--o{ agent_execution_attempts : executes
+    connection_turn_permits ||--o{ agent_execution_attempts : authorizes
+    offices ||--o{ supervisor_command_receipts : deduplicates
+    agent_placements {
+        TEXT organization_id PK, FK "required"
+        TEXT employee_id PK, FK "required"
+        TEXT office_id FK "required"
+        INTEGER placement_generation "required"
+    }
+    office_connection_bindings {
+        TEXT organization_id PK, FK "required"
+        TEXT office_id PK, FK "required"
+        TEXT connection_id PK, FK "required"
+        INTEGER revision "required"
+        TEXT auth_context_ref "required"
+        TEXT runtime_binary_path "optional"
+        TEXT account_identity_ref "optional"
+        TEXT updated_at "required"
+    }
+    office_connection_state {
+        TEXT organization_id PK, FK "required"
+        TEXT office_id PK, FK "required"
+        TEXT connection_id PK, FK "required"
+        TEXT status "required"
+        INTEGER binding_revision "required"
+        TEXT driver_version "optional"
+        TEXT observed_at "optional"
+        TEXT valid_until "optional"
+        TEXT issue_code "optional"
+    }
+    office_connection_models {
+        TEXT organization_id PK, FK "required"
+        TEXT office_id PK, FK "required"
+        TEXT connection_id PK, FK "required"
+        TEXT model_id PK "required"
+        TEXT driver_model_id "required"
+        TEXT entitlement "required"
+        TEXT capabilities_json "required"
+        TEXT observed_at "required"
+        TEXT valid_until "required"
+    }
+    connection_quota_state {
+        TEXT organization_id PK, FK "required"
+        TEXT connection_id PK, FK "required"
+        TEXT scope_key PK "required"
+        TEXT model_id "optional"
+        TEXT status "required"
+        TEXT cooldown_until "optional"
+        TEXT observed_at "required"
+        TEXT observed_by_office_id FK "required"
+        INTEGER coordinator_generation "required"
+    }
+    connection_turn_permits {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        TEXT connection_id FK "required"
+        TEXT office_id FK "required"
+        TEXT employee_id FK "required"
+        INTEGER placement_generation "required"
+        TEXT model_id "required"
+        TEXT state "required"
+        TEXT issued_at "required"
+        TEXT expires_at "required"
+        INTEGER coordinator_generation "required"
+    }
+    agent_execution_turns {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        TEXT employee_id FK "required"
+        TEXT office_id FK "required"
+        INTEGER placement_generation "required"
+        INTEGER revision "required"
+        TEXT task_id FK "optional"
+        TEXT task_kind FK "required"
+        TEXT workspace_key "required"
+        TEXT input_ref "required"
+        TEXT input_sha256 "required"
+        INTEGER agent_config_revision "required"
+        TEXT model_profile_id FK "required"
+        INTEGER profile_revision "required"
+        TEXT model_id "required"
+        TEXT pool_snapshot_json "required"
+        TEXT status "required"
+        TEXT created_at "required"
+        TEXT ended_at "optional"
+        TEXT error_code "optional"
+    }
+    agent_process_instances {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        TEXT employee_id FK "required"
+        TEXT office_id FK "required"
+        INTEGER placement_generation "required"
+        TEXT connection_id FK "required"
+        TEXT runtime_driver "required"
+        TEXT driver_version "required"
+        TEXT model_id "required"
+        TEXT resolved_model_id "required"
+        INTEGER connection_revision "required"
+        TEXT workspace_key "required"
+        TEXT launch_digest "required"
+        INTEGER binding_revision "required"
+        TEXT session_mark "required"
+        INTEGER pid "optional"
+        INTEGER pgid "optional"
+        TEXT process_start_identity "optional"
+        TEXT boot_id "optional"
+        TEXT state "required"
+        TEXT updated_at "required"
+    }
+    agent_execution_attempts {
+        TEXT organization_id PK, FK "required"
+        TEXT id PK "required"
+        TEXT turn_id FK "required"
+        INTEGER attempt_no "required"
+        TEXT employee_id FK "required"
+        TEXT office_id FK "required"
+        INTEGER placement_generation FK "required"
+        TEXT connection_id FK "required"
+        TEXT permit_id FK "required"
+        TEXT process_instance_id FK "optional"
+        TEXT runtime_driver "required"
+        TEXT driver_version "required"
+        TEXT requested_model_id FK "required"
+        TEXT resolved_model_id "required"
+        INTEGER connection_revision "required"
+        INTEGER binding_revision "required"
+        TEXT state "required"
+        TEXT effect_state "required"
+        TEXT checkpoint_ref "optional"
+        TEXT predecessor_attempt_id FK "optional"
+        TEXT started_at "optional"
+        TEXT ended_at "optional"
+        TEXT error_code "optional"
+    }
+    supervisor_command_receipts {
+        TEXT organization_id PK, FK "required"
+        TEXT office_id PK, FK "required"
+        TEXT operation_id PK "required"
+        TEXT command "required"
+        TEXT employee_id FK "optional"
+        TEXT payload_sha256 "required"
+        TEXT outcome "required"
+        TEXT response_json "required"
+        TEXT recorded_at "required"
+    }
+```
+
+```sql
+ALTER TABLE agent_placements ADD COLUMN placement_generation INTEGER NOT NULL DEFAULT 1 CHECK (placement_generation>=1);
+
+CREATE TABLE provider_connections (
+organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+key TEXT NOT NULL CHECK (length(key)>0),
+  name TEXT NOT NULL,
+  provider_type TEXT NOT NULL CHECK (length(provider_type)>0),
+  auth_mode TEXT NOT NULL CHECK (auth_mode IN ('subscription_cli','api_key','cloud_iam')),
+  runtime_driver TEXT NOT NULL,
+  endpoint_url TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+  max_concurrent_turns INTEGER NOT NULL DEFAULT 1 CHECK (max_concurrent_turns>=1),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id,id),
+UNIQUE (organization_id,key),
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE model_profiles (
+organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+key TEXT NOT NULL CHECK (length(key)>0),
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  is_auto_generated INTEGER NOT NULL DEFAULT 0 CHECK (is_auto_generated IN (0,1)),
+  generated_for_connection_id TEXT,
+  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id,id),
+UNIQUE (organization_id,key),
+  UNIQUE (organization_id,generated_for_connection_id),
+  CHECK ((is_auto_generated=1 AND generated_for_connection_id IS NOT NULL) OR (is_auto_generated=0 AND generated_for_connection_id IS NULL)),
+  FOREIGN KEY (organization_id,generated_for_connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE model_profile_connections (
+organization_id TEXT NOT NULL,
+  model_profile_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 64),
+  PRIMARY KEY (organization_id,model_profile_id,connection_id),
+  UNIQUE (organization_id,model_profile_id,priority),
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE agent_execution_configs (
+organization_id TEXT NOT NULL REFERENCES organizations(id),
+  employee_id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+model_profile_id TEXT NOT NULL,
+  model_id TEXT NOT NULL CHECK (length(model_id)>0),
+  system_prompt_markdown TEXT NOT NULL CHECK (length(system_prompt_markdown)>0),
+  tools_config_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tools_config_json) AND json_type(tools_config_json)='array'),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','owner','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','owner','system','unknown')),
+  updated_by_id TEXT,
+  PRIMARY KEY (organization_id,employee_id),
+FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE office_connection_bindings (
+organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision>=1),
+  auth_context_ref TEXT NOT NULL CHECK (length(auth_context_ref)>0),
+  runtime_binary_path TEXT,
+  account_identity_ref TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,office_id,connection_id),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE office_connection_state (
+organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('unknown','ready','auth_expired','unavailable')),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision>=1),
+  driver_version TEXT,
+  observed_at TEXT,
+  valid_until TEXT,
+  issue_code TEXT,
+  PRIMARY KEY (organization_id,office_id,connection_id),
+  CHECK (status<>'ready' OR (driver_version IS NOT NULL AND observed_at IS NOT NULL AND valid_until IS NOT NULL)),
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE office_connection_models (
+organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  driver_model_id TEXT NOT NULL,
+  entitlement TEXT NOT NULL CHECK (entitlement IN ('confirmed','denied','unknown')),
+  capabilities_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(capabilities_json) AND json_type(capabilities_json)='object'),
+  observed_at TEXT NOT NULL,
+  valid_until TEXT NOT NULL,
+  PRIMARY KEY (organization_id,office_id,connection_id,model_id),
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE connection_quota_state (
+organization_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  model_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('unknown','open','cooldown')),
+  cooldown_until TEXT,
+  observed_at TEXT NOT NULL,
+  observed_by_office_id TEXT NOT NULL,
+  coordinator_generation INTEGER NOT NULL CHECK (coordinator_generation>=1),
+  PRIMARY KEY (organization_id,connection_id,scope_key),
+  CHECK ((model_id IS NULL AND scope_key='connection') OR (model_id IS NOT NULL AND scope_key='model:'||model_id)),
+  CHECK (status<>'cooldown' OR cooldown_until IS NOT NULL),
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE connection_turn_permits (
+organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
+  model_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('active','release_pending','released')),
+  issued_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  coordinator_generation INTEGER NOT NULL CHECK (coordinator_generation>=1),
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id),
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE agent_execution_turns (
+organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
+  revision INTEGER NOT NULL CHECK (revision>=1),
+  task_id TEXT,
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind='task'),
+  workspace_key TEXT NOT NULL,
+  input_ref TEXT NOT NULL,
+  input_sha256 TEXT NOT NULL CHECK (length(input_sha256)=64),
+  agent_config_revision INTEGER NOT NULL CHECK (agent_config_revision>=1),
+  model_profile_id TEXT NOT NULL,
+  profile_revision INTEGER NOT NULL CHECK (profile_revision>=1),
+  model_id TEXT NOT NULL,
+  pool_snapshot_json TEXT NOT NULL CHECK (json_valid(pool_snapshot_json) AND json_type(pool_snapshot_json)='array'),
+  status TEXT NOT NULL CHECK (status IN ('accepted','running','switching','blocked','recovery_required','succeeded','failed','cancelled')),
+  created_at TEXT NOT NULL,
+  ended_at TEXT,
+  error_code TEXT,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE agent_process_instances (
+organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
+  connection_id TEXT NOT NULL,
+  runtime_driver TEXT NOT NULL,
+  driver_version TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  resolved_model_id TEXT NOT NULL,
+  connection_revision INTEGER NOT NULL CHECK (connection_revision>=1),
+  workspace_key TEXT NOT NULL,
+  launch_digest TEXT NOT NULL CHECK (length(launch_digest)=64),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision>=1),
+  session_mark TEXT NOT NULL,
+  pid INTEGER,
+  pgid INTEGER,
+  process_start_identity TEXT,
+  boot_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('planned','starting','idle','busy','stopping','cleanup_required','gone')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,session_mark),
+  UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
+  CHECK ((pid IS NULL AND pgid IS NULL AND process_start_identity IS NULL AND boot_id IS NULL)
+    OR (pid IS NOT NULL AND pgid IS NOT NULL AND pid>0 AND pgid>0 AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
+  CHECK (state NOT IN ('idle','busy') OR (pid IS NOT NULL AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE agent_execution_attempts (
+organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  attempt_no INTEGER NOT NULL CHECK (attempt_no>=1),
+  employee_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
+  connection_id TEXT NOT NULL,
+  permit_id TEXT NOT NULL,
+  process_instance_id TEXT,
+  runtime_driver TEXT NOT NULL,
+  driver_version TEXT NOT NULL,
+  requested_model_id TEXT NOT NULL,
+  resolved_model_id TEXT NOT NULL,
+  connection_revision INTEGER NOT NULL CHECK (connection_revision>=1),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision>=1),
+  state TEXT NOT NULL CHECK (state IN ('selected','starting','running','switching','succeeded','failed','cancelled','recovery_required')),
+  effect_state TEXT NOT NULL CHECK (effect_state IN ('none','recorded','unknown')),
+  checkpoint_ref TEXT,
+  predecessor_attempt_id TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  error_code TEXT,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,turn_id,attempt_no),
+  UNIQUE (organization_id,id,turn_id),
+  CHECK (predecessor_attempt_id IS NULL OR predecessor_attempt_id<>id),
+  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,permit_id,connection_id,employee_id,office_id,placement_generation,requested_model_id) REFERENCES connection_turn_permits(organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE supervisor_command_receipts (
+organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  command TEXT NOT NULL CHECK (command IN ('RunTurn','ResumeTurn','CancelTurn','StopAgent','BindConnection','RefreshConnection')),
+  employee_id TEXT,
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256)=64),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','rejected')),
+  response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,office_id,operation_id),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements
+WHEN NEW.placement_generation<OLD.placement_generation OR (NEW.office_id<>OLD.office_id AND NEW.placement_generation<=OLD.placement_generation)
+BEGIN SELECT RAISE(ABORT,'office changes require a newer placement generation'); END;
+CREATE INDEX agent_configs_by_profile ON agent_execution_configs(organization_id,model_profile_id);
+CREATE INDEX profiles_by_connection ON model_profile_connections(organization_id,connection_id);
+CREATE INDEX attempts_by_turn ON agent_execution_attempts(organization_id,turn_id,state);
+CREATE INDEX permits_by_connection ON connection_turn_permits(organization_id,connection_id,state);
+CREATE UNIQUE INDEX one_open_turn_per_agent ON agent_execution_turns(organization_id,employee_id)
+WHERE status IN ('accepted','running','switching','blocked','recovery_required');
+CREATE UNIQUE INDEX one_owned_main_process ON agent_process_instances(organization_id,employee_id)
+WHERE state<>'gone';
+CREATE TRIGGER agent_config_requires_agent BEFORE INSERT ON agent_execution_configs
+BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EXISTS (
+ SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
+CREATE TRIGGER agent_config_update_requires_agent BEFORE UPDATE OF employee_id,organization_id ON agent_execution_configs
+BEGIN SELECT RAISE(ABORT,'execution config requires an agent employee') WHERE EXISTS (
+ SELECT 1 FROM employees e WHERE e.organization_id=NEW.organization_id AND e.id=NEW.employee_id AND e.kind<>'agent'); END;
+CREATE TRIGGER configured_employee_stays_agent BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM agent_execution_configs c WHERE c.organization_id=OLD.organization_id AND c.employee_id=OLD.id)
+BEGIN SELECT RAISE(ABORT,'configured employee must remain an agent'); END;
+
+CREATE VIEW model_profile_model_union AS
+SELECT m.organization_id,m.office_id,p.model_profile_id,m.model_id,
+ COUNT(*) AS supporting_connections,MIN(p.priority) AS first_priority
+FROM model_profile_connections p JOIN office_connection_models m
+ ON m.organization_id=p.organization_id AND m.connection_id=p.connection_id
+WHERE m.entitlement='confirmed'
+GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
+```
+
+## Appendix A. Verified v1 starting point
 
 Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These are repository findings, not claims about processes running on a user's machine.
 
@@ -26,233 +857,6 @@ Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These a
 | `org-server` | Contains a recovery-record adapter over office-owned process rows. This is a real integration component, not proof that the whole agent launch loop is wired. | [Owned recovery adapter](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-server/src/owned_recovery.rs#L1). |
 | Employee supervisor/session pump | **Proposed design:** the office hosts a logical employee supervisor; `org-office-sessions` is intended to implement the session pump. No `org-office-sessions`, native runtime-adapter packages or `org-agent-supervisor` executable appear in the checked Cargo workspace. A complete native-agent launch integration was not found there. | [Employee-supervision proposal](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/employee-supervision.md#L1), [planned session integration](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/agent-sessions.md#L125), [workspace](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/Cargo.toml). |
 
-Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. This proposal introduces that explicit process boundary, whereas the older supervision document allows an office-hosted control loop without requiring a separate daemon.
+Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. This specification introduces that explicit process boundary, whereas the older supervision document allows an office-hosted control loop without requiring a separate daemon.
 
 V1's environment preparation is intentionally restricted. Its reviewed runtime-switch list does not currently include the connection-specific auth-context variables shown in the upload. See [reviewed switches](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L137) and [explicit environment construction](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/environment.rs#L52). Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
-
-## 3. Proposed process responsibilities
-
-`org-agent-supervisor` is a deterministic program controlling execution, not an extra LLM deciding how another LLM should behave. It is separate from employee identity and from the `org-agent` CLI employees use to communicate with the organization.
-
-Suggested wiring for review:
-
-```mermaid
-flowchart TD
-    Host[Office service host] --> Server[org-server: office data and control API]
-    Host --> Supervisor[org-agent-supervisor: proposed execution process]
-    Server -->|authorized controls and revisioned configuration| Supervisor
-    Supervisor -->|persist lifecycle facts and usage| Server
-    Supervisor --> Router[Pool selection and switch controller]
-    Router --> Adapter[Runtime adapter: launch plan and protocol]
-    Supervisor --> Primitives[org-supervise library: process ownership and cleanup]
-    Adapter -->|validated plan| Primitives
-    Primitives --> Agent[Agent runtime process]
-    Agent -->|protocol events| Supervisor
-```
-
-The diagram is a proposed integration boundary, not an existing binary arrangement. Reusing the current office host to launch the new supervisor is the initial recommendation; startup/IPC ownership requires review with the host/server contracts. Recommend one supervisor service per office, with a logical controller and exclusive main-run slot per placed agent. One wrapper process per agent remains a deployment option to evaluate; the supplied requirements do not settle that granularity.
-
-| Responsibility | Proposed owner |
-| --- | --- |
-| Durable organization/employee/profile configuration and authorized commands | Organization/office data services |
-| Resolve ordered pool, check local eligibility and coordinate a switch | `org-agent-supervisor` |
-| Prepare directories, credential bindings, workspace and explicit child environment | `org-agent-supervisor`, through reviewed binding/adapter contracts |
-| Vendor-specific model/driver mapping, launch plan and protocol translation | Runtime adapter |
-| Spawn, process identity, signals, stop, cleanup and reaping | `org-supervise`, called by the supervisor |
-| Drive pipes/protocol, serialize turns and observe execution outcomes | Supervisor's session-pump layer |
-| Persist accounting observations | Durable accounting ingestion using the actual selected route |
-
-Keep one process owner for an agent child. The office server and the new supervisor must not independently reap/recover the same child. The existing server recovery adapter and any new IPC boundary need an explicit ownership handoff. Persist a launch mark before spawn and the process identity before admitting input, as v1's primitives require. Failed cleanup retains the run slot; it does not permit an overlapping replacement process.
-
-## 4. Candidate data relationships
-
-`workspace_id` in the supplied document maps to **`organization_id`** here. Teams, employees, profiles and connection definitions remain organization data outside office placement. Every reference below is scoped to the same organization and uses stable IDs. Readable keys/names do not replace foreign keys.
-
-```mermaid
-erDiagram
-    employees ||--o| agent_execution_configs : agent_only_extension
-    model_profiles ||--o{ agent_execution_configs : selected_pool
-    model_profiles ||--o{ model_profile_connections : ordered_members
-    provider_connections ||--o{ model_profile_connections : included_connection
-    provider_connections o|--o| model_profiles : generated_default
-    offices ||--o{ office_connection_bindings : local_credentials
-    provider_connections ||--o{ office_connection_bindings : bound_locally
-    employees {
-        TEXT organization_id PK
-        TEXT id PK
-        TEXT kind "existing agent or person"
-        TEXT handle "existing identity"
-        TEXT home_team_id FK "existing membership"
-    }
-    agent_execution_configs {
-        TEXT organization_id PK
-        TEXT employee_id PK, FK
-        INTEGER schema_version
-        INTEGER revision
-        TEXT model_profile_id FK
-        TEXT model_id "canonical requested model"
-        TEXT system_prompt_markdown
-        TEXT tools_config_json "approved tool references"
-    }
-    provider_connections {
-        TEXT organization_id PK
-        TEXT id PK
-        INTEGER schema_version
-        INTEGER revision
-        TEXT key "organization unique"
-        TEXT name
-        TEXT provider_type
-        TEXT auth_mode
-        TEXT runtime_driver
-        TEXT endpoint_url "optional public endpoint"
-        INTEGER enabled "durable operator setting"
-    }
-    model_profiles {
-        TEXT organization_id PK
-        TEXT id PK
-        INTEGER schema_version
-        INTEGER revision
-        TEXT key "organization unique"
-        TEXT name
-        TEXT description
-        INTEGER is_auto_generated
-        TEXT generated_for_connection_id FK "optional and organization unique"
-    }
-    model_profile_connections {
-        TEXT organization_id PK
-        TEXT model_profile_id PK, FK
-        TEXT connection_id PK, FK
-        INTEGER priority "positive and unique within profile"
-    }
-    office_connection_bindings {
-        TEXT organization_id PK
-        TEXT office_id PK, FK
-        TEXT connection_id PK, FK
-        INTEGER revision
-        TEXT auth_context_ref "local secret reference or private directory"
-        TEXT runtime_binary_path "optional verified local executable"
-    }
-```
-
-These are candidate table/field names for review, not additions to `schema.sql`. The employee entity is abbreviated to its existing identity fields; its full definition remains in document 04. Normal authored organization records retain the common attribution contract in [record contracts](08-record-contracts.md). Local bindings are machine data and are not imported as shared organization Git content.
-
-- `agent_execution_configs.employee_id` is the existing employee ID and its primary key extension; only agent employees are eligible. Keep handle, name, role, team and reporting relationships on the employee. Do not duplicate them in a second `agents` entity.
-- A profile holds only ordered connection references. Its model union is computed from discovered connection capabilities; it is not a second authored model list.
-- `model_profile_connections` has one membership per profile/connection and a unique positive priority per profile. Reordering is one revisioned update; do not expose a half-reordered pool.
-- An auto-generated default profile identifies its source connection. Create that profile and its one membership idempotently with the connection registration. Exactly one generated default exists per connection. A default marked auto-generated contains only that connection; promoting it to a manually edited pool clears that designation while preserving its ID/history.
-- Deleting an assigned profile is restricted until agents are reassigned. Prefer retiring definitions that have execution/accounting history. Connection removal must explicitly detach memberships rather than silently empty an assigned pool through a cascade.
-- A connection's durable `enabled` setting is separate from observed authentication, quota and discovery status. Missing runtime observations mean unknown, not healthy.
-
-### Runtime observations and attempts
-
-| Candidate record | Key and minimum fields | Storage |
-| --- | --- | --- |
-| `office_connection_state` | Organization, office, connection; observed auth/readiness state, driver version, observation/expiry times and fixed issue code | Runtime projection; rediscovered after loss |
-| `office_connection_models` | Organization, office, connection, canonical model ID; driver-specific model/deployment ID, entitlement/capability evidence and observation/expiry times | Runtime discovery cache |
-| `connection_quota_state` | Organization, connection, quota scope/key (connection-wide or model-specific); cooldown/reset, source observation and freshness | Coordinated runtime state across offices; provider observations are refreshed after loss |
-| `agent_execution_attempts` | Stable attempt ID, employee, office/placement generation, task/run/turn context, selected profile/connection/driver/model, configuration revisions, predecessor attempt, checkpoint reference, state and times | Runtime control/history; minimal charged-attempt evidence also enters durable usage |
-
-Discovery may normalize a provider's model/deployment identifier into a canonical model ID **on the connection observation**. This is driver-discovered routing metadata, not a manual per-model profile mapping. An endpoint's public model catalog is not, by itself, proof that a particular account can invoke every listed model. Preserve unknown entitlement rather than fabricating an available model list.
-
-Expose the configured/discovered union separately from models runnable in a specific office. A model can be in the union while every supporting connection lacks a local binding, is cooling down or cannot enforce the required tools/policy. Healthy/eligible counts must state their office context and freshness. On restoration, an agent's requested model remains intact while discovery is pending; missing caches do not invalidate the durable agent configuration or silently choose another model.
-
-The same subscription used by several offices has shared quota limits. Per-office auth health is local; account/model cooldown evidence must coordinate across offices. A model-specific limit must not automatically disable unrelated models unless provider evidence says the limit is connection-wide. The coordination/admission protocol remains a review decision; independent office-local healthy flags are insufficient.
-
-## 5. Proposed storage layout
-
-```text
-<organization repository>/
-├── provider-connections/<connection-id>.yaml
-├── model-profiles/<profile-id>.yaml       # Ordered connection_ids; no model list
-└── teams/<team-id>/.../agents/<employee-id>/
-    ├── profile.md                        # Existing identity, role and home team
-    └── execution.md                      # Profile/model/tools front matter; prompt body
-
-<data-root>/<organization-id>/durable/local/offices/<office-id>/
-├── connections/<connection-id>/binding.yaml
-├── auth/<connection-id>/                 # Private CLI state, or external vault binding
-└── supervision/ownership-journal/        # Live-process recovery evidence until cleanup
-
-<data-root>/<organization-id>/runtime/<office-id>/
-├── supervisor/                          # Attempt state, discovery and temporary files
-└── teams/.../agents/<employee-id>/...     # Existing project/task worktrees
-```
-
-Only logical connection definitions and agent/model configuration enter organization Git. API keys, OAuth state, local absolute paths and resolved environments stay outside it. CLI authentication directories use private permissions; external vault references resolve locally. Validate that each office binding actually identifies the intended account. Recreating an office restores definitions first, then rebinds credentials and refreshes observations.
-
-Lifecycle marks and exact process identities must remain recoverable while children may exist. The proposed local ownership journal preserves that evidence outside disposable logs/cache, and is retired only after cleanup is verified. This is a proposed adaptation to the new recoverable-storage model; v1 currently provides office-owned process records and recovery ports. Choose one canonical persistence owner/port during integration, not two independently authoritative journals.
-
-Example `execution.md` front matter (selected fields):
-
-```yaml
-schema_version: 1
-employee_id: existing-agent-employee-id
-revision: 1
-model_profile_id: subscription-pool-id
-model_id: canonical-model-id-from-discovery
-tools_config: [approved-shell-tool-id, approved-org-tool-id]
-```
-
-The Markdown body is the agent's system prompt. The existing role reference remains on `profile.md`; execution configuration does not override role authority. Tool references request approved capabilities, not access to secrets or arbitrary workspace tools. This example uses illustrative opaque IDs; new records follow the existing stable-ID contract.
-
-## 6. Switching and environment preparation
-
-The supervisor controls the following sequence:
-
-1. Check the authoritative placement generation and the employee's exclusive main-run slot. Read a revisioned agent/pool snapshot from indexed/in-memory state.
-2. Examine connections in priority order. Check operator enablement, current-office credential binding, driver availability, entitlement/capability evidence, applicable quota/cooldown and policy compatibility. Record structured skip reasons.
-3. Resolve the selected credential context locally. Build an explicit per-child environment and launch context through the reviewed adapter/process boundary. Never mutate the server/supervisor's global environment to switch one agent, and never hand every connection's credentials to the child.
-4. Persist attempt/ownership evidence, prepare the launch, spawn through `org-supervise`, persist process identity, then admit input and drive the protocol. Keep prompt, work scope and selected configuration revisions available for recovery.
-5. When a connection fails, classify the failure and update the appropriately scoped observation. The supervisor decides whether a replacement can resume or replay, then stops/reaps the old process or uses a verified live-switch capability before admitting the replacement.
-6. Retain actual route and usage evidence for every charged attempt, including failures. If no compatible connection can continue, expose the reason and recoverable state rather than silently changing the agent's target model or declaring its task complete.
-
-A native CLI's environment is fixed at process creation. Selecting another auth directory does not change an already-running process. A compatible API-backed agent loop may support connection replacement without an OS restart, but that is an explicit driver capability. The supervisor coordinates either case. Auth variable names in the source document require installed-version evidence and typed allowlist support; this addendum does not establish that any particular variable is supported today.
-
-For HTTP drivers, resolve secret material only into the approved provider-client context; ordinary agent tool processes receive no provider keys. CLI environment switches select an approved private authentication context rather than embedding plaintext credentials in employee configuration.
-
-The supplied FR-6 asks for an immediate mid-turn retry after 429/quota exhaustion. Before tool execution, a retry may be straightforward. After file edits, commits, API calls or other side effects, blindly rerunning the turn can repeat completed work. Continue only from a compatible checkpoint/resume contract or verified idempotent boundary; otherwise preserve the attempt and require recovery. Authentication-context changes may also affect where native conversation state is stored. Same vendor/model name alone does not prove that a conversation is portable between accounts.
-
-An HTTP SDK is an inference transport, while a CLI can own the agent's tool/conversation loop. HTTP drivers require a compatible framework agent loop and equivalent tool/policy/session guarantees before they qualify as overflow targets. Until that exists, report the connection as unsupported for this execution contract rather than treating CLI and HTTP calls as interchangeable.
-
-Connection switching preserves employee identity, task assignment and task workspace. It does not create a new task, close the old one or discard its worktree. At most one main agent process owns that workspace/run slot. Fenced placement and verified cleanup are required before an agent moves offices or a replacement process starts.
-
-The source's routing target of less than 5 ms applies to cached selection work. Discovery, credential refresh, shared-quota admission, checkpointing and OS startup are separately measured operations. This addendum neither claims that target has been measured nor requires network discovery on every turn.
-
-## 7. Accounting integration without changing the ledger now
-
-The [existing accounting draft](10-usage-and-cost-accounting.md) already records actual runtime, provider/model, consumer, work attribution, run correlation and source metadata. Candidate new capture adds a routing snapshot inside `source_metadata_json`:
-
-```json
-{
-  "routing": {
-    "attempt_id": "execution-attempt-id",
-    "model_profile_id": "subscription-pool-id",
-    "provider_connection_id": "selected-connection-id",
-    "runtime_driver": "selected-driver-id",
-    "requested_model_id": "canonical-requested-model-id",
-    "resolved_model_id": "actual-driver-model-or-deployment-id",
-    "agent_config_revision": 1,
-    "profile_revision": 1
-  }
-}
-```
-
-Record the route actually used, not only the first configured pool member. Price the actual provider/model using the selected price version; subscription usage remains API-equivalent accounting, not an invoice. Count distinct consumption on retries, while avoiding duplicate reports of the same consumption. Missing failed-attempt usage stays explicitly incomplete. Capture the routing snapshot before hashing a new normalized event; do not rewrite old immutable events to add it.
-
-Detailed live attempt state remains reconstructable/temporary; its minimum attribution evidence survives in the accounting archive without a foreign key to a live runtime process. Typed routing columns or additional durable attempt tables can be proposed after this addendum's review. Neither `usage_records` nor any existing schema table is changed here. Budget enforcement and automatic spending-limit pauses remain outside this addendum.
-
-## 8. Review decisions before integration
-
-| Topic | Proposal / remaining decision |
-| --- | --- |
-| Employee identity | Accepted by owner: extend the existing agent employee; retain one home team and stable identity. |
-| Supervisor responsibility | Accepted by owner: `org-agent-supervisor` owns switching and environment/process setup. |
-| Supervisor deployment | Recommend one service per office and one logical main-run controller per placed employee; confirm process granularity and startup/IPC contracts. |
-| Reuse from v1 | Reuse the process/adapter boundaries and verified recovery primitives. Implement the missing integration; do not rename the library and claim a complete supervisor already exists. |
-| Driver compatibility | Specify which CLI/HTTP combinations can resume the same execution contract; prove installed-driver behavior before advertising failover. |
-| Shared subscription coordination | Define quota observation/admission/freshness across offices; it is separate from organizational spending budgets. |
-| Recovery storage | Confirm the single canonical ownership-journal/store port and its relationship to process marks, placement fencing and office-cache reconstruction. |
-| Source-provider assumptions | Verify model discovery, entitlement evidence and auth isolation for each supported installed version. Provider IDs/model strings in the upload are illustrative. |
-| Scope still open | Complete task/session lifecycle, schedules, memory/checkpoints, messaging and delegation need their own selected contracts. This addendum supplies provider selection and supervision boundaries, not a port of every old agent behavior. |
-
-After review, integration can update the agent document, canonical SQL and accounting relationships together. Until then, this file is the only added repository document and the existing structure remains the baseline for comparison.
