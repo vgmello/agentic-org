@@ -1,7 +1,7 @@
 use super::*;
 
 // Opaque, structurally valid PHC fixture; the registry never hashes a password.
-pub(super) const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+pub(in crate::hostdb) const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 pub(super) fn assert_first_account(db: &HostDb) {
     let c = db.connection.lock().unwrap();
@@ -394,7 +394,12 @@ fn mismatched_first_account_refuses_before_any_registry_or_secret_write() {
         if change_bootstrap {
             value.bootstrap.account.push('x');
         } else {
-            value.first_account.account_id.push('x');
+            value.first_account = FirstAccount::new(
+                "01J00000000000000000000004",
+                "Sage",
+                journal::Verifier::new(PHC.into()).unwrap(),
+            )
+            .unwrap();
         }
         assert!(matches!(
             HostDb::create(home.path(), &secrets, &value),
@@ -410,9 +415,14 @@ fn failed_first_account_insert_rolls_back_schema_metadata_and_tls_and_retries() 
     for length in [25, 27] {
         let home = home();
         let secrets = Secrets::default();
-        let mut value = init(true);
-        value.first_account.account_id = "A".repeat(length);
-        value.bootstrap.account = value.first_account.account_id.clone();
+        let value = init(true);
+        INSERT_FAILURE.with(|slot| slot.set(true));
+        assert!(FirstAccount::new(
+            &"A".repeat(length),
+            "Sage",
+            journal::Verifier::new(PHC.into()).unwrap()
+        )
+        .is_err());
         let error = HostDb::create(home.path(), &secrets, &value).err().unwrap();
         assert_eq!(error, Error::Sql(rusqlite::ErrorCode::ConstraintViolation));
         assert!(!format!("{error:?}").contains(PHC));
@@ -441,9 +451,12 @@ fn repeat_create_never_replaces_the_original_account_or_registry() {
     drop(db);
     let before = bytes(home.path());
     let mut value = init(false);
-    value.first_account.login_key = "replacement".into();
-    value.first_account.login = "Replacement".into();
-    value.first_account.verifier = journal::Verifier::new("private replacement PHC".into());
+    value.first_account = FirstAccount::new(
+        "01J00000000000000000000003",
+        "Replacement",
+        journal::Verifier::new(PHC.replace("$AAAAAAAA", "$BAAAAAAA")).unwrap(),
+    )
+    .unwrap();
     assert!(matches!(
         HostDb::create(home.path(), &secrets, &value),
         Err(Error::Exists)
@@ -476,4 +489,33 @@ fn login_key_binary_collation_allows_distinct_case_keys() {
             .unwrap(),
         2
     );
+}
+
+thread_local! { static INSERT_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+pub(in crate::hostdb) fn before_insert(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
+    if INSERT_FAILURE.with(|slot| slot.replace(false)) {
+        tx.execute_batch("CREATE TEMP TRIGGER fail_first_account BEFORE INSERT ON accounts BEGIN SELECT RAISE(ABORT,'account constraint fault'); END;")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn checked_first_account_derives_display_key_and_refuses_invalid_identity_before_io() {
+    let home = home();
+    let secrets = Secrets::default();
+    for (id, login) in [("invalid", "Sage"), ("01J00000000000000000000003", "")] {
+        assert!(FirstAccount::new(id, login, journal::Verifier::new(PHC.into()).unwrap()).is_err());
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+        assert!(secrets.0.lock().unwrap().is_empty());
+    }
+    let value = FirstAccount::new(
+        "01J00000000000000000000003",
+        "E\u{301}",
+        journal::Verifier::new(PHC.into()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value.account_id(), "01J00000000000000000000003");
+    assert_eq!(value.login(), "E\u{301}");
+    assert_eq!(value.login_key(), "é");
+    assert_eq!(value.verifier().expose(), PHC);
 }

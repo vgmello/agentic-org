@@ -4,8 +4,7 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::Mutex;
 
-pub(super) mod accounts;
-mod first_account;
+pub(in crate::hostdb) mod first_account;
 mod lockout;
 
 // Only plaintext test fixtures may proceed after a completed initializer reports
@@ -106,7 +105,7 @@ pub(super) fn checkpoint(step: u8) -> Result<(), Error> {
     Ok(())
 }
 #[derive(Default)]
-pub(super) struct Secrets(Mutex<BTreeMap<Name, Vec<u8>>>);
+pub(in crate::hostdb) struct Secrets(Mutex<BTreeMap<Name, Vec<u8>>>);
 impl HostSecrets for Secrets {
     fn put(&self, name: &Name, value: &Value) -> Result<(), crate::host_secrets::Error> {
         self.0
@@ -137,7 +136,7 @@ fn home() -> tempfile::TempDir {
     fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
     home
 }
-fn init(tls: bool) -> HostDbInit {
+pub(in crate::hostdb) fn init(tls: bool) -> HostDbInit {
     HostDbInit {
         instance_id: "01J00000000000000000000000".into(),
         clock_high_ms: 123,
@@ -148,12 +147,12 @@ fn init(tls: bool) -> HostDbInit {
             account: "01J00000000000000000000003".into(),
             finished: false,
         },
-        first_account: FirstAccount {
-            account_id: "01J00000000000000000000003".into(),
-            login_key: "sage".into(),
-            login: "Sage".into(),
-            verifier: journal::Verifier::new(first_account::PHC.into()),
-        },
+        first_account: FirstAccount::new(
+            "01J00000000000000000000003",
+            "Sage",
+            journal::Verifier::new(first_account::PHC.into()).unwrap(),
+        )
+        .unwrap(),
         tls_pair: tls.then(|| TlsPair {
             cert_pem: "test certificate".into(),
             pair_fp: [0xab; 32],
@@ -162,7 +161,7 @@ fn init(tls: bool) -> HostDbInit {
         }),
     }
 }
-pub(super) fn fixture() -> (tempfile::TempDir, Secrets, HostDb) {
+pub(in crate::hostdb) fn fixture() -> (tempfile::TempDir, Secrets, HostDb) {
     let home = home();
     let secrets = Secrets::default();
     let db = HostDb::create(home.path(), &secrets, &init(true)).unwrap();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::hostdb::tests::first_account::PHC;
 use serde_json::json;
 
 thread_local! {
@@ -55,10 +56,7 @@ fn create_effect(account: &str) -> Effect {
         stored: Stored::Completed {
             result: json!({"account":account}),
         },
-        verifier: Some((
-            account.into(),
-            Verifier::new("opaque-create-time-PHC".into()),
-        )),
+        verifier: Some((account.into(), Verifier::new(PHC.into()).unwrap())),
     }
 }
 fn scalar(db: &HostDb, sql: &str) -> i64 {
@@ -320,7 +318,7 @@ fn verifier_is_atomic_and_successful_create_never_blindly_replays() {
     let db = HostDb::open(home.path(), &secrets).unwrap();
     match db.lookup(&op, NOW).unwrap() {
         Lookup::NeedsVerification { verifier, stored } => {
-            assert_eq!(verifier.expose(), "opaque-create-time-PHC");
+            assert_eq!(verifier.expose(), PHC);
             assert_eq!(stored, create_effect("created").stored);
         }
         _ => panic!("successful create cannot Replay"),
@@ -974,7 +972,7 @@ fn deleting_one_accounts_verifiers_preserves_another_accounts_create_replay() {
         let mut effect = create_effect("created-b");
         effect.verifier = Some((
             "created-b".into(),
-            Verifier::new("second-create-time-PHC".into()),
+            Verifier::new(PHC.replace("$AAAAAAAA", "$BAAAAAAA")).unwrap(),
         ));
         Ok(effect)
     })
@@ -993,7 +991,7 @@ fn deleting_one_accounts_verifiers_preserves_another_accounts_create_replay() {
     ));
     match db.lookup(&second, NOW).unwrap() {
         Lookup::NeedsVerification { verifier, stored } => {
-            assert_eq!(verifier.expose(), "second-create-time-PHC");
+            assert_eq!(verifier.expose(), &PHC.replace("$AAAAAAAA", "$BAAAAAAA"));
             assert_eq!(stored, create_effect("created-b").stored);
         }
         _ => panic!("the other account must retain its own create-time verifier"),
@@ -1063,9 +1061,39 @@ fn a_failed_prune_commit_preserves_rows_verifiers_and_clock_after_reopen() {
     );
     match db.lookup(&op, NOW).unwrap() {
         Lookup::NeedsVerification { verifier, stored } => {
-            assert_eq!(verifier.expose(), "opaque-create-time-PHC");
+            assert_eq!(verifier.expose(), PHC);
             assert_eq!(stored, create_effect("created").stored);
         }
         _ => panic!("failed pruning must preserve create replay after reopen"),
     }
+}
+
+#[test]
+fn malformed_stored_replay_verifier_refuses_instead_of_exposing_unchecked_phc() {
+    let (_home, _secrets, db) = super::super::tests::fixture();
+    let operation = id(NOW, 1);
+    let op = Attempt {
+        kind: "account.create",
+        ..attempt(&operation)
+    };
+    db.write(&op, NOW, |_| Ok(create_effect("created")))
+        .unwrap();
+    db.connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE op_verifiers SET verifier=?1",
+            ["invalid sensitive PHC"],
+        )
+        .unwrap();
+    assert!(matches!(db.lookup(&op, NOW), Err(Error::Unsafe)));
+    assert_eq!(
+        db.connection
+            .lock()
+            .unwrap()
+            .query_row("SELECT verifier FROM op_verifiers", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        "invalid sensitive PHC"
+    );
 }

@@ -3,6 +3,9 @@
 
 pub(crate) mod accounts;
 mod clock;
+mod first_account;
+mod verifier;
+pub(crate) use first_account::FirstAccount;
 pub(crate) mod journal;
 pub(crate) mod lockout;
 mod schema;
@@ -82,14 +85,6 @@ pub(crate) struct HostDbInit {
     pub(crate) first_account: FirstAccount,
     pub(crate) tls_pair: Option<TlsPair>,
 }
-/// Prepared before registry creation; no password hashing runs under the database lock.
-/// The opaque verifier has no Debug implementation and zeroizes its owned PHC on drop.
-pub(crate) struct FirstAccount {
-    pub(crate) account_id: String,
-    pub(crate) login_key: String,
-    pub(crate) login: String,
-    pub(crate) verifier: journal::Verifier,
-}
 pub(crate) struct HostDb {
     connection: Mutex<Connection>,
 }
@@ -99,7 +94,7 @@ impl HostDb {
         secrets: &dyn HostSecrets,
         init: &HostDbInit,
     ) -> Result<Self, Error> {
-        if init.first_account.account_id != init.bootstrap.account {
+        if init.first_account.account_id() != init.bootstrap.account {
             return Err(Error::Unsafe);
         }
         let home = checked_home(home)?;
@@ -170,13 +165,15 @@ impl HostDb {
         ] {
             tx.execute("INSERT INTO meta(key,value) VALUES (?1,?2)", (name, value))?;
         }
+        #[cfg(test)]
+        tests::first_account::before_insert(&tx)?;
         tx.execute(
             "INSERT INTO accounts VALUES (?1,?2,?3,?4,1,?5,?5,NULL)",
             (
-                &init.first_account.account_id,
-                &init.first_account.login_key,
-                &init.first_account.login,
-                init.first_account.verifier.expose(),
+                init.first_account.account_id(),
+                init.first_account.login_key(),
+                init.first_account.login(),
+                init.first_account.verifier().expose(),
                 init.clock_high_ms,
             ),
         )?;

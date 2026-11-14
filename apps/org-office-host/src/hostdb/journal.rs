@@ -24,21 +24,7 @@ impl<'a> Attempt<'a> {
     }
 }
 
-/// Opaque account PHC string. Only 2b.3's bounded Argon2 path may inspect it.
-pub(crate) struct Verifier(String);
-impl Verifier {
-    pub(crate) fn new(phc: String) -> Self {
-        Self(phc)
-    }
-    pub(crate) fn expose(&self) -> &str {
-        &self.0
-    }
-}
-impl Drop for Verifier {
-    fn drop(&mut self) {
-        crate::secrets::zero(&mut std::mem::take(&mut self.0).into_bytes());
-    }
-}
+pub(crate) use super::verifier::Verifier;
 pub(crate) enum Lookup {
     Vacant,
     Replay(Stored),
@@ -207,7 +193,7 @@ fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> 
                 .optional()?
                 .ok_or(Error::OperationReused)?;
             return Ok(Lookup::NeedsVerification {
-                verifier: Verifier::new(verifier),
+                verifier: Verifier::new(verifier)?,
                 stored,
             });
         }

@@ -36,6 +36,7 @@ name = "shutdown_signals"
 harness = false
 
 [dependencies]
+argon2.workspace = true
 org-host-control = { path = "../../crates/org-host-control" }
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
