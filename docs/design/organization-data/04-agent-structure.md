@@ -1,6 +1,6 @@
 # Agent and employee structure boundary
 
-Structural draft for v1. Document revision 2.3. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
+Structural draft for v1. Document revision 2.4. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
 
 ## Confirmed relationships
 
@@ -27,6 +27,13 @@ erDiagram
         TEXT role_id FK "optional"
         TEXT reports_to_employee_id FK "optional"
         TEXT body_markdown "required"
+        TEXT status "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     agent_placements {
         TEXT organization_id PK, FK "required"
@@ -43,7 +50,7 @@ erDiagram
     }
 ```
 
-Employees are agents or people. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
+Employees are agents or people, with `status: active | inactive` and common creator/update attribution. Inactive profiles retain their handles and stable IDs for historical references; new active task assignment or ownership must resolve to an active employee. [Record contracts](08-record-contracts.md) specifies lifecycle and attribution. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
 
 Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. On a fresh reconstruction, placements may be recreated at HQ; the other durable office definitions remain present.
 
@@ -63,6 +70,7 @@ id: 01J00000000000000000000030
 handle: ana
 revision: 1
 kind: agent
+status: active
 name: Ana
 home_team_id: 01J00000000000000000000020
 role_id: null
@@ -113,6 +121,13 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   role_id TEXT,
   reports_to_employee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
@@ -122,7 +137,11 @@ UNIQUE (organization_id, handle),
   FOREIGN KEY (organization_id, role_id) REFERENCES roles(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, reports_to_employee_id) REFERENCES employees(organization_id, id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_placements (

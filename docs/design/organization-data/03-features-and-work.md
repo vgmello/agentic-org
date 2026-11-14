@@ -1,10 +1,10 @@
 # Features and work structure
 
-Structural draft for v1. Document revision 2.3. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Structural draft for v1. Document revision 2.4. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
 
 ## Explicit entities
 
-There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. All types use the same `T-<number>` sequence within their scope and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
+There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. Task `type` is separate from optional `work_type: build | run` (Build/R&D or Run/KTLO). [Record contracts](08-record-contracts.md) records the v1 evidence and proposed classification extension. All types use the same `T-<number>` sequence within their scope and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
 
 ```mermaid
 erDiagram
@@ -28,9 +28,17 @@ erDiagram
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT local_slug "required"
+        TEXT owner_employee_id FK "optional"
+        TEXT work_type "optional"
         TEXT title "required"
         TEXT status "required"
         TEXT body_markdown "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     feature_slugs {
         TEXT organization_id "derived"
@@ -48,11 +56,10 @@ erDiagram
         TEXT team_id FK "required"
         TEXT project_id FK "optional"
         TEXT type "required"
+        TEXT work_type "optional"
         TEXT title "required"
         TEXT status "required"
         TEXT assignee_id FK "optional"
-        TEXT created_at "required"
-        TEXT updated_at "required"
         TEXT body_markdown "required"
         TEXT feature_id FK "optional"
         TEXT milestone_id FK "optional"
@@ -60,6 +67,12 @@ erDiagram
         TEXT severity "optional"
         TEXT resolution "optional"
         TEXT blocked_reason "optional"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     task_repositories {
         TEXT organization_id PK, FK "required"
@@ -92,6 +105,7 @@ schema_version: 1
 id: 01J00000000000000000000040
 number: 42
 type: bug
+work_type: build
 team_id: 01J00000000000000000000020
 revision: 1
 project_id: 01J00000000000000000000010
@@ -100,6 +114,10 @@ status: todo
 assignee_id: null
 created_at: "2026-11-14T10:00:00Z"
 updated_at: "2026-11-14T10:00:00Z"
+created_by_kind: employee
+created_by_id: 01J00000000000000000000030
+updated_by_kind: employee
+updated_by_id: 01J00000000000000000000030
 feature_id: null
 milestone_id: null
 priority: high
@@ -129,6 +147,8 @@ schema_version: 1
 id: 01J00000000000000000000034
 number: 6
 local_slug: table-booking
+owner_employee_id: 01J00000000000000000000030
+work_type: build
 revision: 1
 project_id: 01J00000000000000000000010
 title: Table booking
@@ -138,6 +158,8 @@ status: planned
 Save this feature at `projects/<project-id>/features/<feature-id>/feature.md`. Its Markdown body is the current feature definition, with sections for Purpose, How it works, Rules, Known limitations, and Non-goals. Keep detailed designs and decisions in supporting documents under the same feature folder; their association is explicit `feature_id`, not merely a Markdown link. See [document scopes and example](02-project-structure.md).
 
 For table booking, the definition explains how a guest selects a table and time, what happens when availability changes, and limitations such as unsupported combined-table bookings. The feature's overlap-handling design documents the detailed concurrency mechanism. In Product Agency, shared authentication architecture belongs to the Care Platform project, while appointment reminder behaviour and its delivery limitations belong to that feature. Both examples use the same structure.
+
+The feature has nullable `owner_employee_id` and explicit `work_type`, plus common creation/update attribution. Planned features may be unassigned; `in_progress` and `live` features require an active accountable owner. These fields do not grant management or repository permissions.
 
 The feature body contains its description. SQL derives `F-6` from the number; the `feature_slugs` view derives public slug `reservations/table-booking`. Files persist only `local_slug` and `project_id`, so there is no separately authored prefix to drift. A project-slug change automatically changes its features' full slugs; stable IDs, numbers and filenames stay unchanged. Aliases for old slugs are outside this draft.
 
@@ -178,15 +200,6 @@ erDiagram
         TEXT created_at "required"
         TEXT body_markdown "required"
     }
-    links {
-        TEXT organization_id PK, FK "required"
-        TEXT source_kind PK, FK "required"
-        TEXT source_id PK, FK "required"
-        TEXT id PK "required"
-        TEXT kind "required"
-        TEXT target_kind FK "required"
-        TEXT target_id FK "required"
-    }
     tombstones {
         TEXT organization_id PK, FK "required"
         TEXT kind PK "required"
@@ -203,6 +216,7 @@ erDiagram
         TEXT terminal_state "required"
         TEXT resolution "optional"
         TEXT archived_commit "optional"
+        TEXT record_metadata_json "required"
     }
 ```
 
@@ -218,8 +232,8 @@ erDiagram
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
 | `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
 | `comments` | `comments[]`: `id`, `author_kind`, optional `author_id`, `created_at`, `body_markdown`; position is array order. Owner authors have `author_kind: owner` and null `author_id`; actual login identity remains in the separate authentication/audit subsystem. |
-| `links` | `links[]`: `id`, `kind`, `target_kind`, `target_id`; source type/ID come from the parent file. |
-| `tombstones` | `tombstones/<kind>/<id>.yaml`: every same-named field; references describe historical identity and do not require live owner records. |
+| `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
+| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
 Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
@@ -242,22 +256,31 @@ project_id TEXT NOT NULL,
     AND substr(local_slug, 1, 1) GLOB '[a-z0-9]'
     AND substr(local_slug, -1, 1) GLOB '[a-z0-9]'
     AND instr(local_slug, '--') = 0),
+  owner_employee_id TEXT,
+  work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
+  CHECK (status NOT IN ('in_progress', 'live') OR owner_employee_id IS NOT NULL),
+  FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
 UNIQUE (organization_id, project_id, number),
   UNIQUE (organization_id, project_id, local_slug),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
-
-CREATE VIEW feature_slugs AS
-SELECT f.organization_id, f.id AS feature_id, f.project_id,
-       p.slug || '/' || f.local_slug AS slug
-FROM features AS f
-JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 
 CREATE TABLE tasks (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
@@ -269,11 +292,10 @@ CREATE TABLE tasks (
   team_id TEXT NOT NULL,
   project_id TEXT,
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
+  work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   assignee_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,
   milestone_id TEXT,
@@ -281,6 +303,12 @@ CREATE TABLE tasks (
   severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
   UNIQUE (organization_id, project_id, number),
@@ -288,7 +316,11 @@ CREATE TABLE tasks (
   FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, milestone_id, project_id) REFERENCES milestones(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id, milestone_id, project_id) REFERENCES milestones(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE task_repositories (
@@ -344,21 +376,6 @@ CREATE TABLE comments (
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE links (
-  organization_id TEXT NOT NULL,
-  source_kind TEXT NOT NULL CHECK (source_kind = 'task'),
-  source_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  target_kind TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  PRIMARY KEY (organization_id, source_kind, source_id, id),
-  FOREIGN KEY (organization_id, source_kind, source_id) REFERENCES record_refs(organization_id, kind, id)
-    DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
-    DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
 CREATE TABLE tombstones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   kind TEXT NOT NULL,
@@ -375,6 +392,13 @@ CREATE TABLE tombstones (
   terminal_state TEXT NOT NULL,
   resolution TEXT,
   archived_commit TEXT,
+  record_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(record_metadata_json) AND json_type(record_metadata_json) = 'object'),
   PRIMARY KEY (organization_id, kind, id)
 ) STRICT;
+
+CREATE VIEW feature_slugs AS
+SELECT f.organization_id, f.id AS feature_id, f.project_id,
+       p.slug || '/' || f.local_slug AS slug
+FROM features AS f
+JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 ```

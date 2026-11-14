@@ -1,6 +1,6 @@
 # Project structure
 
-Structural draft for v1. Document revision 2.3. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Structural draft for v1. Document revision 2.4. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -13,6 +13,7 @@ erDiagram
     repositories ||--o{ project_repositories : shared_registration
     projects ||--o{ releases : contains
     releases ||--o{ milestones : owns
+    releases ||--o{ deployments : records_delivery
     releases ||--o{ release_repository_commits : pins
     project_repositories ||--o{ release_repository_commits : supplies
     milestones o|--o{ tasks : groups
@@ -29,6 +30,12 @@ erDiagram
         TEXT name "required"
         TEXT owner_team_id FK "required"
         INTEGER archived "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     project_contributing_teams {
         TEXT organization_id PK, FK "required"
@@ -53,6 +60,12 @@ erDiagram
         TEXT version_label "optional"
         TEXT status "required"
         TEXT body_markdown "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     release_repository_commits {
         TEXT organization_id PK, FK "required"
@@ -73,6 +86,12 @@ erDiagram
         TEXT title "required"
         TEXT status "required"
         TEXT body_markdown "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
     documents {
         TEXT organization_id PK, FK "required"
@@ -82,9 +101,17 @@ erDiagram
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT feature_id FK "optional"
+        TEXT status "required"
         TEXT kind "required"
+        TEXT owner_employee_id FK "optional"
         TEXT title "required"
         TEXT body_markdown "required"
+        TEXT created_at "optional"
+        TEXT created_by_kind "required"
+        TEXT created_by_id FK "optional"
+        TEXT updated_at "optional"
+        TEXT updated_by_kind "required"
+        TEXT updated_by_id FK "optional"
     }
 ```
 
@@ -107,7 +134,8 @@ projects/<project-id>/
 │   └── reports/<document-id>.md     # Feature-specific findings
 ├── releases/<release-id>/
 │   ├── release.md
-│   └── milestones/<milestone-id>.md
+│   ├── milestones/<milestone-id>.md
+│   └── deployments/<deployment-id>.md  # Durable attempt/outcome records
 ├── decisions/<document-id>.md
 ├── designs/<document-id>.md
 ├── reports/<document-id>.md
@@ -136,7 +164,7 @@ The Product Agency's Care Platform and Trading Platform projects can reference t
 
 ## Project documents and feature documents
 
-One `documents` table holds supporting knowledge at either scope. Every document requires `project_id`. Null `feature_id` means project scope; a present `feature_id` means feature scope and must reference a feature of that same project. A feature can have zero or many documents, and a supporting document belongs to at most one feature. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
+One `documents` table holds supporting knowledge at either scope. Each document has `owner_employee_id`, `status: draft | current | deprecated` and common creation/update attribution; a current document requires an accountable owner. See [record contracts](08-record-contracts.md). Every document requires `project_id`. Null `feature_id` means project scope; a present `feature_id` means feature scope and must reference a feature of that same project. A feature can have zero or many documents, and a supporting document belongs to at most one feature. Reusable cross-feature knowledge stays at project scope and can be linked from several feature documents rather than copied.
 
 | Record | Content | Canonical location |
 | --- | --- | --- |
@@ -159,6 +187,14 @@ revision: 1
 project_id: 01J00000000000000000000010
 feature_id: 01J00000000000000000000034
 kind: design
+status: draft
+owner_employee_id: 01J00000000000000000000030
+created_at: "2026-11-14T10:00:00Z"
+created_by_kind: employee
+created_by_id: 01J00000000000000000000030
+updated_at: "2026-11-14T10:00:00Z"
+updated_by_kind: employee
+updated_by_id: 01J00000000000000000000030
 title: Prevent overlapping table bookings
 ---
 ## Design
@@ -183,9 +219,9 @@ Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md
 | `releases` | `release.md`: common identity fields, `project_id`, `title`, optional `version_label`, `status`, and Markdown body. |
 | `release_repository_commits` | Release `repository_commits` map: repository ID to exact commit SHA; `release_id` and `project_id` come from its parent file. |
 | `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, `status`, and Markdown body. Path and explicit parent IDs must agree. |
-| `documents` | Project/feature supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `kind`, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
+| `documents` | Project/feature supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body. Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
-A manifest may cover multiple code repositories. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
+A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
 
 ## SQLite tables
 
@@ -205,12 +241,22 @@ slug TEXT NOT NULL CHECK (
   name TEXT NOT NULL,
   owner_team_id TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
   UNIQUE (organization_id, slug),
   UNIQUE (organization_id, id, owner_team_id),
   FOREIGN KEY (organization_id, owner_team_id) REFERENCES teams(organization_id, id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE project_contributing_teams (
@@ -248,11 +294,21 @@ project_id TEXT NOT NULL,
   version_label TEXT,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, project_id, number),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE release_repository_commits (
@@ -280,11 +336,21 @@ project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   status TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, release_id, number),
   UNIQUE (organization_id, id, project_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE documents (
@@ -295,14 +361,29 @@ CREATE TABLE documents (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
   kind TEXT NOT NULL CHECK (kind IN ('brief', 'decision', 'design', 'report')),
+  owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
+  FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK (status <> 'current' OR owner_employee_id IS NOT NULL),
   CHECK (feature_id IS NULL OR kind IN ('design', 'decision', 'report')),
   FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id, created_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```

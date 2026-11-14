@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.3. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
+Structural draft for v1. Document revision 2.4. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -14,6 +14,8 @@ Existing v1 designs remain the implementation reference until a migration is app
 | [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement boundary | Agent setup; separate specification pending |
 | [Operational data](05-operational-data.md) | Watchers, owner questions and waiting spans | Notification delivery, timers, scheduling or process-engine behaviour |
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
+| [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
+| [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or full event history |
 
 Each document contains its own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines those tables with indexes and team-cycle checks. Load all sections together: cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
 
@@ -39,6 +41,10 @@ Numbered records persist `number`; SQL derives `key` as the prefix plus number. 
 Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
 `schema_version` selects the file format; `revision` is the entity's concurrency revision. Dates/timestamps are quoted strings in YAML. Domain rows inherit `organization_id` from `organization.yaml`. Nested comments, checklist steps, watchers, questions and waiting spans have stable IDs without counters. See [identity and numbering](06-identity-and-numbering.md) for allocation, durability and index contracts.
+
+## Common record contracts
+
+[Record contracts](08-record-contracts.md) defines owner fields, common creator/update metadata, lifecycle states, typed relationships and Build/Run classification. All authored entity YAML/front matter stores the same-named SQL scalar fields. Defaults are only those explicitly documented; missing historical provenance stays unknown. Examples show selected fields rather than complete accepted-write payloads. Runtime-only rows and association projections do not become independently authored records.
 
 ## Shared storage contract
 
@@ -80,6 +86,10 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature; feature definitions stay in `feature.md` |
+| Accountability and lifecycle | Feature/document owners; active/archived teams, active/inactive employees, draft/current/deprecated documents |
+| Attribution and relationships | Common creation/update actors and times; typed authored links and derived inverse/scope relationships |
+| Build / Run | Proposed classification data, informed by v1's Build/R&D and deferred KTLO UX; no cost-engine port |
+| Delivery | Release deployment records and commit snapshots; build artifacts remain out of scope |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup | Separate specification pending; do not port old setup automatically |
