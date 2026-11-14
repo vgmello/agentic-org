@@ -1,6 +1,6 @@
 # Agent execution and subscription pools: implementation contract
 
-Status: **implementation specification, revision 1**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **implementation specification, revision 2**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 Only this addendum is being revised. The existing organization documents and `schema.sql` remain unchanged. The SQL extension in §12 is the exact integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
 
@@ -11,7 +11,7 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Topic | Required implementation |
 | --- | --- |
 | Identity | An agent is an existing employee of kind agent, extended by exactly zero or one `agent_execution_configs` row. People have no execution configuration. |
-| Runtime topology | One `org-agent-supervisor` process per office, hosting a logical controller and one main-process slot per placed agent. Do not launch one supervisor daemon per employee. |
+| Runtime topology | One `agentic-org-office` process per office. Its internal agent supervisor hosts a logical controller and one main-process slot per placed agent. There is no separate agent-supervisor daemon. |
 | Launch authority | The supervisor alone selects routes, prepares child environments, launches/drives/stops agent processes and recovers its children. |
 | Pool configuration | Agents select one model profile and canonical model ID. Profiles contain only an ordered list of connection IDs, never a manual model map. |
 | Connection capabilities | Discover/cache entitlement and model-ID translation per connection and office. Unknown or stale auth/model evidence cannot qualify a route. |
@@ -21,29 +21,47 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Persistence | Organization config in Git; local auth and execution journal outside Git; SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
 | Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation and budget-triggered pausing are excluded. |
 
-The process boundary and existing-employee extension were explicitly requested by the owner. The remaining rows are the concrete architectural choices made by this specification. They can be changed by a later explicit revision, not by an implementation team's silent assumptions.
+The owner-approved revision 2 uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI. It supersedes revision 1's dedicated supervisor process. The existing-employee extension and supervision responsibilities remain. These are target names and boundaries; this addendum does not rename implemented packages or claim unfinished components exist.
 
-## 2. Processes, modules and exclusive ownership
+## 2. Executables, modules and exclusive ownership
+
+| Target executable | Responsibility | Inspected v1 source / disposition |
+| --- | --- | --- |
+| `agentic-org` | Human management CLI; `--server` is the long-running installation/service host, release manager and office-key custodian. | The planned setup CLI plus existing `org-office-host` lifecycle behavior. Extract reusable host behavior into a library; do not link app implementations together. |
+| `agentic-org-web` | Browser HTTPS, authentication, static org-ui assets, browser APIs and live events. One per installation hosting HQ offices; none for a satellite-only installation. | Planned `org-gateway`; rename the target executable, preserving its restricted authority. |
+| `agentic-org-office` | One HQ or satellite office worker, with data services, replication and internal agent supervision. | Existing `org-server`; executable rename is implementation work. |
+| `agent-os` | Small agent CLI for authorized messages, work operations and other tools. Invoked on demand, not a permanent daemon. | Existing `org-agent`; keep distinct from the human CLI and host key-access identity. |
+
+These names define executables, not a mandatory rename of every org-* library or SQL table. org-ui stays a static asset build, with no Node server. Provider agent CLIs are external runtime dependencies. An API-backed agent may require an isolated worker implementing a complete agent loop; add that child only when its backend ships, not as another mandatory service. No separate updater, synchronization or agent-supervisor daemon is required.
 
 ```mermaid
 flowchart TD
-    Host[org-office-host] --> Server[org-server: office APIs and projections]
-    Host --> Supervisor[org-agent-supervisor: one per office]
-    Server -->|authenticated revisioned commands| Supervisor
-    Supervisor -->|journaled events and query results| Server
-    Supervisor --> Pump[org-office-sessions: controller and protocol pump]
-    Pump --> Port[org-runtime adapter contract]
-    Pump --> OS[org-supervise process library]
-    OS --> CLI[Native CLI agent process]
-    OS --> HTTP[org-agent-http-worker: framework agent loop]
-    Supervisor -->|Acquire / Renew / Release| HQ[HQ quota coordinator]
+    Manager[OS service manager] --> Host[agentic-org --server]
+    Host --> Web[agentic-org-web: HQ browser service]
+    Host --> API
+    Web -->|typed authorized operations| API
+    subgraph Office[agentic-org-office: one process per office]
+        API[Office APIs and single data writer] --> Supervisor[Agent supervisor module]
+        Supervisor --> Router[Connection router]
+        Router --> Runner[Session runner]
+        Runner --> OS[org-supervise library]
+    end
+    OS --> Runtime[Native agent or API-backed worker]
+    Runtime --> AgentCLI[agent-os: invoked as a tool]
+    AgentCLI -->|employee-scoped local operations| API
 ```
 
-The host starts the server, waits for office readiness, then starts the supervisor with an office-scoped service capability. Host/server/supervisor generations are distinct from employee placement generation. The host restarts a failed supervisor; it does not independently adopt or reap the supervisor's agent children. The new supervisor acquires an exclusive office lock in its durable local supervision directory, recovers journaled children, and only then admits new starts.
+The OS service manager starts/restarts agentic-org --server. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its execution journal and reconciles marked children before admitting starts. A worker restart requires agent recovery; this version does not promise uninterrupted agent execution across worker restarts. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
 
-`apps/org-agent-supervisor` and `apps/org-agent-http-worker` are thin composition binaries. `org-office-sessions` owns routing/controller/pump orchestration behind the stable `org-runtime` port; adapters depend on that port, not on each other or office storage. `org-supervise` retains OS ownership and performs spawn/stop/reap. The server owns its data-service API and SQLite writer; the supervisor never opens `office.db` as a second independent writer. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
+Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
 
-The supervisor's local journal is authoritative for its live process ownership, turn/attempt changes and command receipts. Server-side process/status rows are projections of that journal. Organization config and HQ permit state have their own authorities (§3/§6). Migrate legacy owned-agent recovery rows before enabling the new owner; a row has exactly one recovery owner. The existing server recovery adapter must not also recover a child delegated to the supervisor.
+The worker has one SQLite writer and one agent recovery owner. Its internal supervisor submits journal/projection changes through the office data service; it does not open another writer or communicate with a sibling supervisor daemon. The execution journal remains authoritative for process ownership, turn/attempt changes and command receipts; SQL rows are projections. Integrate existing owned-recovery records into this path before enabling launches. Organization configuration and HQ coordination keep their authorities (§3/§6).
+
+**Release lifecycle.** agentic-org owns online downloads and offline local-bundle installation. Stage and verify a complete platform release, including every framework executable and web assets, before activation. Check signed metadata and checksums against installed trust; offline install/upgrade performs no network requests. Startup uses the pinned installed release even if update checking fails. Background checks do not imply immediate activation: apply the configured policy, drain affected work, switch the release pin, restart through the OS service manager and verify readiness. Preserve the prior release and compatible recoverable data state; executable-only rollback after an incompatible schema change is forbidden. Updating the running host itself needs platform-aware replacement/restart. An offline bundle is not a promise of offline cloud-model access.
+
+**Satellite operation.** HQ and satellite are roles of the same office executable, not different binaries. A satellite enrolls once and reconnects outbound to HQ's authenticated federation endpoint using its office identity; browser authentication and federation TLS remain separate boundaries. Agent tools call the local worker through agent-os. The worker replicates relevant shared data and uses local repository caches/worktrees; teams/projects remain organization-wide. Disconnected tasks/features can be saved with stable IDs and pending readable numbers, as defined in document 06. The current HQ permit contract still blocks new model turns without coordinator access and stops active turns when renewal cannot be maintained. Reserved offline capacity is a later explicit extension, not an implied exception. HQ/satellite protocol compatibility is checked during independently activated installation updates.
+
+The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or database keys. Moving host behavior into agentic-org --server must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
 
 ## 3. Storage authority and exact paths
 
@@ -68,7 +86,6 @@ The supervisor's local journal is authoritative for its live process ownership, 
         └── tools/<operation-id>.json
 
 <data-root>/<organization-id>/runtime/<office-id>/
-├── supervisor/control.sock
 ├── supervisor/generated/<process-id>/     # Rendered adapter/native-agent configuration
 └── teams/.../agents/<employee-id>/...      # Existing task/project worktrees
 ```
@@ -155,11 +172,11 @@ For a concrete dispatch: an agent in the east office requests the canonical targ
 
 The body is the system prompt. Existing employee identity, role, home team and reporting lines remain in profile.md. Effective role/process authority is resolved by the office and snapshotted with tool/policy revisions; execution.md cannot grant itself extra permissions.
 
-## 5. Commands and IPC
+## 5. Commands and admission
 
-The supervisor exposes a length-prefixed UTF-8 JSON protocol over its private 0600 Unix socket under a 0700 parent. Frames have a four-byte unsigned big-endian byte length, maximum 1 MiB. Connections use OS peer credentials plus a host-issued office/generation-scoped service capability delivered over the inherited launch/control channel, never argv or query strings. Only the authorized office service and quota coordinator act as service peers. Employee tool credentials do not authorize supervisor commands.
+The office exposes execution operations through its existing authenticated service boundary and dispatches typed commands to the internal supervisor. There is no additional supervisor socket, framing protocol or server-to-supervisor service credential. Existing local IPC and federation transports retain their own framing and peer admission. Execution command content is bounded to 1 MiB; larger inputs use approved immutable local content references. Validate the admitted principal, organization, office and operation scope before internal dispatch. An employee token permits only the operations explicitly authorized for that employee; it is not host administration authority.
 
-Every request envelope contains `{protocol_version:1, organization_id, office_id, supervisor_generation, operation_id, command, payload, payload_sha256}`. Validate scope/authentication before admission. payload_sha256 hashes canonical `{command, organization_id, office_id, payload}` only; transport capabilities and supervisor_generation are excluded so an original operation can be retried after restart. Mutation payloads include expected object revisions/placement generation; responses are `{operation_id, outcome, code, data}`. Journal the result and associated state atomically before replying. Same ID/digest returns the original response; same ID/different payload returns `IDEMPOTENCY_CONFLICT` without side effects. A lost acknowledgement is resolved by `GetOperation(operation_id)` or the same-ID retry, never a newly generated command. Keep receipts while their turn/process/config revision is retained; no time-only dedupe expiry is introduced.
+Every internal command envelope contains `{protocol_version:1, organization_id, office_id, operation_id, command, payload, payload_sha256}`; protocol_version is the internal execution-contract version, independent of existing transport API versions. Validate scope/authentication before admission. payload_sha256 hashes canonical `{command, organization_id, office_id, payload}` only; transport capabilities and worker generation are excluded so an original operation can be retried after restart. Mutation payloads include expected object revisions/placement generation; responses are `{operation_id, outcome, code, data}`. Journal the result and associated state atomically before replying. Same ID/digest returns the original response; same ID/different payload returns `IDEMPOTENCY_CONFLICT` without side effects. A lost acknowledgement is resolved by `GetOperation(operation_id)` or the same-ID retry, never a newly generated command. Keep receipts while their turn/process/config revision is retained; no time-only dedupe expiry is introduced.
 
 | Command | Required payload / result |
 | --- | --- |
@@ -171,7 +188,7 @@ Every request envelope contains `{protocol_version:1, organization_id, office_id
 | `RefreshConnection` | connection_id. Returns refreshed status/catalog or structured unavailable status. Never starts an employee LLM turn. |
 | Queries | GetOperation, GetTurn, GetAgentReadiness, ListProfileModels. Queries have no mutation receipt and expose no secret values. |
 
-The server rejects stale placement/config revisions before forwarding. The supervisor checks them again against its admitted snapshot. No new starts occur while its office-control channel is unavailable. Existing work has a 60-second control lease renewed every 10 seconds; loss begins a stop while at least 20 seconds remain. Unresolved cleanup retains the process/turn slot. Client deadlines of 10 seconds are response deadlines only; they do not prove a command failed or cancel accepted work.
+The office validates placement/config revisions and dispatches through the internal supervisor against the same admitted snapshot. No new starts occur while the worker is stopping, recovering or has lost its host-control authority. The existing host/worker launch contract controls that lifecycle; there is no separate server-to-supervisor lease. HQ turn-permit renewal remains mandatory under §6. Unresolved cleanup retains the process/turn slot. Client deadlines of 10 seconds are response deadlines only; they do not prove a command failed or cancel accepted work.
 
 Run input is a private immutable JSON file containing the resolved employee/role/system instructions, visible messages/attachments by content reference, approved tool/policy manifests, work scope, requested model and ordered pool snapshot. Large content uses content-addressed local references; it is not embedded past the frame limit. Resolve paths against the office's approved roots and reject traversal/symlink substitution. The same turn keeps its original target model, profile order, workspace and input digest through every attempt. Connection disabling, revoked authority and invalid credentials override old eligibility; ordinary profile/prompt changes take effect on the next turn. Resume does not silently broaden the admitted policy.
 
@@ -208,7 +225,7 @@ A checkpoint is an immutable private JSON object with schema_version, checkpoint
 
 Every brokered effect has a durable tool receipt `{operation_id, payload_sha256, turn_id, status, result_ref}`. Journal pending before invocation and terminal outcome before acknowledging its result. Same operation/payload returns the recorded outcome; a different payload conflicts. A crash between side effect and receipt completion produces outcome_unknown and requires reconciliation, not an automatic second invocation. Native unbrokered tools need verified start/completion visibility; otherwise the adapter marks effects unknown from the point visibility is lost. Message sends, repository commits and deployment calls are effects too. Pending approvals from an old attempt are cancelled and cannot authorize a replacement.
 
-Native CLI environments change only on a new process launch. HTTP drivers run inside `org-agent-http-worker`, which owns the common agent loop and exposes the same framed turn/usage/tool protocol; a raw SDK completion is not a complete agent runtime. Supervisor-approved tool requests go through the tool broker. API secrets enter only the approved provider-client context; ordinary tool children do not inherit them. An in-process connection switch is allowed only when the worker advertises verified compatible switching and has no in-flight effect; the supervisor remains the sole switch authority.
+Native CLI environments change only on a new process launch. When an API-backed backend ships, its isolated HTTP agent worker owns the common agent loop and exposes a versioned turn/usage/tool protocol; a raw SDK completion is not a complete agent runtime. Supervisor-approved tool requests go through the tool broker. API secrets enter only the approved provider-client context; ordinary tool children do not inherit them. An in-process connection switch is allowed only when the worker advertises verified compatible switching and has no in-flight effect; the supervisor remains the sole switch authority.
 
 This qualifies source FR-6 deliberately: automatic mid-turn failover is required at a proven safe replay/resume boundary. RECOVERY_REQUIRED is the specified fallback where the harness cannot prove safety, not an unimplemented decision for the team to invent.
 
@@ -279,15 +296,15 @@ Provider/model and price_id describe the actual route used, not the first pool m
 | AE-12 | Actual successful and failed route usage survives fresh-cache reconstruction; tokens/cost are not assigned to the configured primary when backup consumed them. |
 | AE-13 | Cached candidate selection for up to 64 members has p95 below 5 ms over 10,000 warmed lookups on recorded CI hardware. Report quota/network/probe/startup time separately; no performance claim without the result. |
 | AE-14 | Every production adapter has pinned-version auth/model/tool/checkpoint/stop/usage fixtures. Unsupported capability returns its defined error, never a permissive fallback. |
-| AE-15 | Only the new supervisor owns its children; server/host recovery cannot reap the same child independently. No new placement starts until old ownership is fenced/reconciled. |
+| AE-15 | The office worker's supervisor is its single agent recovery owner; host recovery cannot race that live owner. No new placement starts until old ownership is fenced/reconciled. |
 
 ## 11. Implementation sequence and integration boundaries
 
 1. Add the §12 migration and serializers/projectors with AE-01..03. Preserve employee identity; do not create a second agents table. Integrate document 04 and schema.sql in that implementation change, not in this addendum-only edit.
 2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06).
 3. Implement HQ permit coordinator and office command/receipt journal (AE-04, AE-07..08).
-4. Add the supervisor binary, host startup/IPC capability handshake, protocol pump and recovery-owner migration (AE-10..11, AE-15).
-5. Implement native adapters and the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
+4. Integrate supervisor/router/session-runner modules inside agentic-org-office, host startup/launch admission and the existing recovery adapter (AE-10..11, AE-15). Apply the executable names in §2 with existing signed-launch/credential tests; retain agent-os as the small separate CLI.
+5. Implement native adapters and, when its backend ships, the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
 6. Connect durable usage capture/routing evidence and restoration (AE-12), then report the performance gate (AE-13).
 
 The first release accepts explicit turn commands only. Automatic schedules, long-term memory/consolidation, native delegate orchestration and cross-agent messaging policy are not hidden prerequisites; callers submit authorized input to this execution service. Later features use this service rather than creating another process owner. Provider/client libraries and platform launch extensions remain implementation work, but the ownership, state and failure behavior above are fixed.
@@ -857,6 +874,6 @@ Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These a
 | `org-server` | Contains a recovery-record adapter over office-owned process rows. This is a real integration component, not proof that the whole agent launch loop is wired. | [Owned recovery adapter](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-server/src/owned_recovery.rs#L1). |
 | Employee supervisor/session pump | **Proposed design:** the office hosts a logical employee supervisor; `org-office-sessions` is intended to implement the session pump. No `org-office-sessions`, native runtime-adapter packages or `org-agent-supervisor` executable appear in the checked Cargo workspace. A complete native-agent launch integration was not found there. | [Employee-supervision proposal](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/employee-supervision.md#L1), [planned session integration](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/agent-sessions.md#L125), [workspace](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/Cargo.toml). |
 
-Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. This specification introduces that explicit process boundary, whereas the older supervision document allows an office-hosted control loop without requiring a separate daemon.
+Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. Revision 2 retains the office-hosted control loop and defines its supervisor/router/runner responsibilities without a separate supervisor daemon. The executable names in §2 are target renames; evidence links here intentionally retain inspected v1 names.
 
 V1's environment preparation is intentionally restricted. Its reviewed runtime-switch list does not currently include the connection-specific auth-context variables shown in the upload. See [reviewed switches](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L137) and [explicit environment construction](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/environment.rs#L52). Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
