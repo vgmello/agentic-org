@@ -1,3 +1,4 @@
+mod typed;
 use super::*;
 use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
@@ -106,13 +107,17 @@ fn native_platform_state_table_checks_real_peer_errno_and_adoption_outcome() {
 }
 
 fn run_case(case: &str) {
+    run_child(
+        "rights::stream::tests::adoption_child",
+        "ORG_SOCKET_ADOPTION_CASE",
+        case,
+    );
+}
+
+fn run_child(test: &str, variable: &str, case: &str) {
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "rights::stream::tests::adoption_child",
-            "--nocapture",
-        ])
-        .env("ORG_SOCKET_ADOPTION_CASE", case)
+        .args(["--exact", test, "--nocapture"])
+        .env(variable, case)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -461,6 +466,7 @@ enum Fault {
     ProcShort,
     #[cfg(target_os = "macos")]
     ProcLong,
+    Kind,
     Peer,
     PeerEinval,
     #[cfg(target_os = "linux")]
@@ -525,7 +531,7 @@ fn temporary_directory_retries_pid_collisions_without_touching_existing_dirs() {
     drop(owned);
 }
 
-// SO_TYPE always executes real libc; only an otherwise unreachable later query fails.
+// Only the selected syscall fails; every other metadata query uses real libc.
 pub(super) unsafe fn getsockopt(
     fd: libc::c_int,
     level: libc::c_int,
@@ -533,6 +539,9 @@ pub(super) unsafe fn getsockopt(
     value: *mut libc::c_void,
     length: *mut libc::socklen_t,
 ) -> libc::c_int {
+    if option == libc::SO_TYPE && injected(Fault::Kind) {
+        return -1;
+    }
     #[cfg(target_os = "linux")]
     if option == libc::SO_ACCEPTCONN && injected(Fault::Listener) {
         return -1;
@@ -595,6 +604,13 @@ pub(super) unsafe fn proc_pidfdinfo(
         (Fault::ProcLong, size + 1),
     ] {
         if injected(fault) {
+            // Keep genuine metadata in the buffer so a deleted count guard is
+            // not masked by the listener's later state check.
+            // SAFETY: these are the unchanged live output buffers from the helper.
+            assert_eq!(
+                unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) },
+                size
+            );
             return result;
         }
     }
