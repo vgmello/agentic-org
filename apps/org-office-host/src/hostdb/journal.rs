@@ -1,4 +1,5 @@
 //! Registry-only journal transactions. Callers do all non-SQLite work between lookup/write.
+use super::clock::{advance_clock, now};
 use super::{Error, HostDb};
 use org_host_control::{journal::Journaled, HostOpResult};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -154,26 +155,6 @@ fn immediate(db: &mut Connection) -> Result<Transaction<'_>, Error> {
     #[cfg(test)]
     tests::after_begin();
     Ok(tx)
-}
-fn now(db: &Connection, wall_ms: i64) -> Result<i64, Error> {
-    let high: String = db.query_row(
-        "SELECT value FROM meta WHERE key='clock_high_ms'",
-        [],
-        |r| r.get(0),
-    )?;
-    let high: i64 = high.parse().map_err(|_| Error::Unsafe)?;
-    if wall_ms < 0 || high < 0 {
-        return Err(Error::Unsafe);
-    }
-    Ok(wall_ms.max(high))
-}
-/// Commit the served maximum with the decision; unchanged clocks produce no UPDATE.
-fn advance_clock(tx: &Transaction<'_>, now: i64) -> Result<(), Error> {
-    tx.execute(
-        "UPDATE meta SET value=?1 WHERE key='clock_high_ms' AND CAST(value AS INTEGER)<?1",
-        [now],
-    )?;
-    Ok(())
 }
 fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
     advance_clock(tx, now)?;

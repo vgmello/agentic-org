@@ -2,7 +2,9 @@
 //! No production caller creates a registry until 2b.3 accepts bootstrap.
 
 pub(crate) mod accounts;
+mod clock;
 pub(crate) mod journal;
+pub(crate) mod lockout;
 mod schema;
 mod sqlcipher;
 #[cfg(test)]

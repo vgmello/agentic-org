@@ -121,15 +121,16 @@ fn schema_has_pinned_columns_storage_flags_link_index_and_foreign_key() {
             "{table}"
         );
     }
-    assert_eq!(
-        c.query_row(
-            "SELECT name FROM pragma_index_info('account_links_org')",
-            [],
-            |r| r.get::<_, String>(0)
-        )
-        .unwrap(),
-        "org_id"
-    );
+    let columns: Vec<String> = c
+        .prepare("SELECT name FROM pragma_index_info('account_links_org') ORDER BY seqno")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(columns, vec!["org_id"]);
+    let flags: (i64,i64) = c.query_row("SELECT \"unique\",partial FROM pragma_index_list('account_links') WHERE name='account_links_org'",[],|r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(flags, (0, 0));
     let fk = c.query_row("SELECT \"table\",\"from\",\"to\",on_delete FROM pragma_foreign_key_list('account_links')", [], |r| Ok((r.get::<_, String>(0)?,r.get::<_, String>(1)?,r.get::<_, String>(2)?,r.get::<_, String>(3)?))).unwrap();
     assert_eq!(
         fk,
@@ -454,4 +455,25 @@ fn repeat_create_never_replaces_the_original_account_or_registry() {
             assert!(!body.windows(PHC.len()).any(|w| w == PHC.as_bytes()));
         }
     }
+}
+
+#[test]
+fn login_key_binary_collation_allows_distinct_case_keys() {
+    let (_home, _secrets, db) = fixture();
+    let c = db.connection.lock().unwrap();
+    c.execute("INSERT INTO accounts SELECT '01ARZ3NDEKTSV4RRFFQ69G5FAY','SAGE',login,password_phc,admin,created_at_ms,password_changed_at_ms,revoked_at_ms FROM accounts WHERE login_key='sage'",[]).unwrap();
+    assert_eq!(
+        c.query_row(
+            "SELECT count(*) FROM accounts WHERE login_key='SAGE'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
 }

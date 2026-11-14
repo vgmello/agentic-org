@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 pub(super) mod accounts;
 mod first_account;
+mod lockout;
 
 // Only plaintext test fixtures may proceed after a completed initializer reports
 // NoCipher. This module is cfg(test); production connect always propagates it.

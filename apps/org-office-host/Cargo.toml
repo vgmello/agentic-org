@@ -42,6 +42,7 @@ org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 libc.workspace = true
 rusqlite.workspace = true
 caseless = "=0.2.2"
