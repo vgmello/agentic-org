@@ -35,8 +35,11 @@ export async function inheritsColour(icon: Locator, control: Locator) {
 	await expect(icon).toHaveCount(1);
 	await expect(icon).toHaveCSS('color', await control.evaluate((e) => getComputedStyle(e).color));
 }
+export function buttonTabKey(page: Page) {
+	return page.context().browser()?.browserType().name() === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+}
 export async function keyboardFocus(page: Page, control: Locator) {
-	await page.keyboard.press('Tab');
+	await page.keyboard.press(buttonTabKey(page));
 	await control.focus();
 	await expect(control).toBeFocused();
 }

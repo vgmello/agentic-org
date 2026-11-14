@@ -111,7 +111,8 @@
 		},
 		"chat": {
 			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
-			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json", "e2e/chat-followups.ts"]
+			"sources": ["src/routes/(shell)/chat/**", "src/lib/modules/messaging/**", "e2e/fixtures/heroicons-*.json", "e2e/chat-followups.ts",
+        "e2e/memory/**"]
 		},
 		"org-chart": {
 			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],

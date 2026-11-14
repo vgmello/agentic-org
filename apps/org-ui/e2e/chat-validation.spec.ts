@@ -164,7 +164,7 @@ for (const target of ['message', 'ask'] as const) {
 		await row.locator(target === 'message' ? 'time' : 'p').first().click();
 		await page.mouse.move(350, 30);
 		await expect(row).not.toBeFocused();
-		if (target === 'message') await expect(row.getByRole('toolbar', { name: 'Message actions' })).toHaveCSS('opacity', '0');
+		if (target === 'message') await expect(row.getByRole('button', { name: 'React Seen', exact: true })).toHaveCount(0);
 		await shot(page, `chat-pointer-${target}-no-stuck-focus`);
 	});
 }
@@ -181,7 +181,7 @@ for (const place of ['conversation', 'thread'] as const) {
 		await row.hover();
 		await expect(row.getByRole('button', { name: 'React Seen', exact: true })).toBeDisabled();
 		await expect(row.getByRole('button', { name: 'Seen, 1', exact: true })).toBeDisabled();
-		await row.getByRole('button', { name: 'More actions', exact: true }).click();
+		await row.getByTestId('message-menu').click();
 		await expect(page.getByRole('menuitem', { name: 'Pin to the conversation', exact: true })).toBeDisabled();
 		await expect(page.getByRole('menuitem', { name: 'Mute Sam Okafor here', exact: true })).toBeDisabled();
 		await expect(page.getByRole('menuitem', { name: 'Daily digest from Sam Okafor', exact: true })).toBeDisabled();
@@ -203,6 +203,7 @@ test('CHAT-11 BUG-58: stopped-office member mute controls are disabled and guard
 		};
 	});
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+	await row.hover();
 	await row.getByRole('button', { name: 'React Seen', exact: true }).dispatchEvent('click');
 	await page.getByRole('button', { name: 'Members', exact: true }).click();
 	const select = page.getByTestId('members-panel').getByLabel('How you hear from Sam Okafor here');
@@ -218,7 +219,7 @@ test('CHAT-11 BUG-58: a running office still accepts reactions, pins and mute ch
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
 	await row.hover(); await row.getByRole('button', { name: 'React Seen', exact: true }).click();
 	await expect(row.getByRole('button', { name: 'Seen, 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
-	await row.getByRole('button', { name: 'More actions', exact: true }).click();
+	await row.getByTestId('message-menu').click();
 	await page.getByRole('menuitem', { name: 'Pin to the conversation', exact: true }).click();
 	await expect(row).toContainText('Pinned');
 	await page.getByRole('button', { name: 'Members', exact: true }).click();

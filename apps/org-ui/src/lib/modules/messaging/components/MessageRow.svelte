@@ -1,14 +1,14 @@
 <script lang="ts">
-	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import type { MicroIconName } from '$lib/components/heroicons';
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
-	import { Button } from '$lib/components/ui/button';
+	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
 	import type { ChatContext } from '../engine';
 	import type { DraftText } from '../drafts/store';
-	import { clockTime, collapse, foldedWords, KIND_WORD, muteOf, nameOf, repliesTo } from '../model';
-	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '../types';
+	import { clockTime, collapse, KIND_WORD, nameOf } from '../model';
+	import { REASON_LABEL, REACTIONS, type ChatMessage, type MuteMode, type Reaction } from '../types';
+	import type { MessageRowData } from '../row-data';
 	import AskCard from '../features/answer-ask/AskCard.svelte';
 	import Avatar from './Avatar.svelte';
 	import Rich from './Rich.svelte';
@@ -17,16 +17,18 @@
 	let {
 		message,
 		ctx,
-		chatState,
+		rowData,
 		now,
 		readOnly = false,
 		officeRunning = true,
+		active = false,
 		where,
 		inThread = false,
 		askDraftFor,
 		delivery,
 		onreact,
 		onthread,
+		onmenu,
 		onturn,
 		onmute,
 		onpin,
@@ -38,17 +40,19 @@
 	}: {
 		message: ChatMessage;
 		ctx: ChatContext;
-		chatState: ChatState;
+		rowData: MessageRowData;
 		now: string;
 		readOnly?: boolean;
 		officeRunning?: boolean;
+		active?: boolean;
 		where?: string;
 		inThread?: boolean;
 		askDraftFor?: (askId: string) => DraftText;
 		delivery?: { status: 'sending' | 'failed'; error?: string };
 		onreact?: (m: ChatMessage, r: Reaction) => void;
 		onthread?: (m: ChatMessage, opener: HTMLElement) => void;
-		onturn?: (m: ChatMessage, into: 'bug' | 'request' | 'task') => void;
+		onmenu?: (m: ChatMessage, open: boolean, opener: HTMLElement) => void;
+		onturn?: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
 		onmute?: (m: ChatMessage, mode: MuteMode) => void;
 		onpin?: (m: ChatMessage) => void;
 		onanswer?: (m: ChatMessage, answer: { option_id?: string; text?: string }) => Promise<void> | void;
@@ -62,11 +66,17 @@
 	const kindIcon: Partial<Record<ChatMessage['kind'], MicroIconName>> = { request: 'question-mark-circle', announcement: 'megaphone', handoff: 'arrows-right-left' };
 	const reactionIcon: Record<Reaction, MicroIconName> = { seen: 'check-circle', looking: 'eye' };
 	let expanded = $state(false);
+	let menuOpen = $state(false);
+	let hovered = $state(false);
+	let focusWithin = $state(false);
+	let trigger = $state<HTMLButtonElement | null>(null);
+	const toolbar = $derived(hovered || focusWithin || active);
 	const from = $derived(ctx.members.find((m) => m.id === message.from));
-	const replies = $derived(inThread ? [] : repliesTo(chatState, message.id));
-	const folded = $derived(foldedWords(chatState, ctx, message.id));
+	const replies = $derived(inThread ? [] : rowData.replies);
+	const folded = $derived(rowData.folded);
+	const replyable = $derived(!inThread && !!onthread);
 	const long = $derived(collapse(message.body));
-	const mode = $derived(from?.kind === 'agent' ? muteOf(chatState, message.conversation_id, message.from) : 'none');
+	const mode = $derived(from?.kind === 'agent' ? rowData.mode : 'none');
 	const mark = $derived(kindIcon[message.kind]);
 	const card = $derived(message.kind === 'request' || message.kind === 'handoff');
 	const messageId = $derived(message.id);
@@ -74,22 +84,27 @@
 	const askDraft = $derived(isRequest ? askDraftFor?.(messageId) : undefined);
 	const bridgeName = $derived({ slack: 'Slack', teams: 'Teams', discord: 'Discord' }[message.bridge ?? 'slack']);
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
+	const metadata = $derived(mark || message.bridge || message.also_in_channel || message.pinned || where || mode !== 'none');
+	const hasReactions = $derived(reactions.some(r => r.who.length));
+	const details = $derived(message.attachments?.length || hasReactions || (replies.length && onthread) || onopen || delivery);
 </script>
 
 <!-- Metadata threshold: (212.4375 kind + 72 avatar + 24 gap + 32 padding + 4 safety) / 32 = 10.765625rem rounded up. -->
 <!-- Announcement is the widest calibrated KIND_WORD; message-layout.test.ts guards the vocabulary. -->
 <div class="@container">
-<article class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
+<article onpointerenter={() => (hovered = true)} onpointerleave={() => (hovered = false)} onfocusin={() => (focusWithin = true)} onfocusout={(event) => (focusWithin = event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))} class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
 	<div class="row-span-2 @max-[10.765625rem]:row-span-1"><Avatar name={nameOf(ctx, message.from)} kind={from?.kind ?? 'person'} /></div>
 		<div class="col-start-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm/6 @max-[10.765625rem]:col-span-2 @max-[10.765625rem]:col-start-1">
 			<span class="font-semibold text-white">{nameOf(ctx, message.from)}</span>
 			<time class="text-xs/5 text-gray-400" datetime={message.created_at}>{clockTime(message.created_at)}</time>
-			{#if mark}<span class="text-xs/5 text-gray-300" title={KIND_WORD[message.kind]}><span class="inline-flex items-center gap-x-1 whitespace-nowrap"><HeroIcon class="text-current" variant="micro" name={mark} />{KIND_WORD[message.kind]}</span>{#if message.reason}{' · ' + REASON_LABEL[message.reason]}{/if}</span>{/if}
-			{#if message.bridge}<span class="rounded bg-white/10 px-1.5 text-[10px]/4 font-semibold text-gray-200" data-testid="bridge-badge" title="Posted from {bridgeName} as {nameOf(ctx, message.from)}, never as the owner">{bridgeName}</span>{/if}
-			{#if message.also_in_channel}<span class="text-xs/5 text-gray-400">replied to a thread</span>{/if}
-			{#if message.pinned}<span class="text-xs/5 text-gray-400" title="Pinned">Pinned</span>{/if}
-			{#if where}<span class="text-xs/5 text-gray-400">{'in ' + where}</span>{/if}
-			{#if mode !== 'none'}<span class="text-xs/5 text-gray-400">{mode === 'muted' ? 'muted' : 'digest'}</span>{/if}
+			{#if metadata}
+				{#if mark}<span class="text-xs/5 text-gray-300" title={KIND_WORD[message.kind]}><span class="inline-flex items-center gap-x-1 whitespace-nowrap"><HeroIcon class="text-current" variant="micro" name={mark} />{KIND_WORD[message.kind]}</span>{#if message.reason}{' · ' + REASON_LABEL[message.reason]}{/if}</span>{/if}
+				{#if message.bridge}<span class="rounded bg-white/10 px-1.5 text-[10px]/4 font-semibold text-gray-200" data-testid="bridge-badge" title="Posted from {bridgeName} as {nameOf(ctx, message.from)}, never as the owner">{bridgeName}</span>{/if}
+				{#if message.also_in_channel}<span class="text-xs/5 text-gray-400">replied to a thread</span>{/if}
+				{#if message.pinned}<span class="text-xs/5 text-gray-400" title="Pinned">Pinned</span>{/if}
+				{#if where}<span class="text-xs/5 text-gray-400">{'in ' + where}</span>{/if}
+				{#if mode !== 'none'}<span class="text-xs/5 text-gray-400">{mode === 'muted' ? 'muted' : 'digest'}</span>{/if}
+			{/if}
 		</div>
 	<div class="col-start-2 min-w-0">
 		{#if card}
@@ -98,62 +113,62 @@
 			</div>
 		{:else}
 			<div class="mt-0.5 min-w-0 [&_a]:whitespace-normal" data-testid="message-body">
-				<Rich body={expanded ? message.body : long.shown} />
-				{#if long.hidden > 0}
+				<Rich body={expanded ? message.body : long.shown} />{#if long.hidden > 0}
 					<button type="button" class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button>
 				{/if}
 			</div>
-		{/if}
+		{/if}{#if details}
+			{#if message.attachments?.length}
+				<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
+					{#each message.attachments as a (a)}<li class="inline-flex max-w-full items-start gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200"><HeroIcon class="mt-0.5" variant="micro" name="paper-clip" /><span class="min-w-0 [overflow-wrap:anywhere]">{a}</span></li>{/each}
+				</ul>
+			{/if}
 
-		{#if message.attachments?.length}
-			<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
-				{#each message.attachments as a (a)}<li class="inline-flex max-w-full items-start gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200"><HeroIcon class="mt-0.5" variant="micro" name="paper-clip" /><span class="min-w-0 [overflow-wrap:anywhere]">{a}</span></li>{/each}
-			</ul>
-		{/if}
+			{#if hasReactions}
+				<div class="mt-1 flex flex-wrap gap-1.5" aria-live="off">
+					{#each reactions as r (r.id)}
+						{#if r.who.length}
+							<button type="button" class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 outline-1 -outline-offset-1 {r.who.includes(ctx.actor) ? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50' : 'bg-white/5 text-gray-200 outline-white/10'}" disabled={!officeRunning} aria-pressed={r.who.includes(ctx.actor)} aria-label="{r.label}, {r.who.length}" title={r.label} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /> {r.who.length}</button>
+						{/if}
+					{/each}
+				</div>
+			{/if}
 
-		{#if reactions.some((r) => r.who.length)}
-			<div class="mt-1 flex flex-wrap gap-1.5" aria-live="off">
-				{#each reactions as r (r.id)}
-					{#if r.who.length}
-						<button type="button" class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 outline-1 -outline-offset-1 {r.who.includes(ctx.actor) ? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50' : 'bg-white/5 text-gray-200 outline-white/10'}" disabled={!officeRunning} aria-pressed={r.who.includes(ctx.actor)} aria-label="{r.label}, {r.who.length}" title={r.label} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /> {r.who.length}</button>
-					{/if}
-				{/each}
-			</div>
-		{/if}
+			{#if replies.length && onthread}
+				<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" aria-live="off" onclick={(event) => onthread?.(message, event.currentTarget)} data-testid="replies-link">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
+			{/if}
 
-		{#if replies.length && onthread}
-			<button type="button" class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" aria-live="off" onclick={(event) => onthread?.(message, event.currentTarget)} data-testid="replies-link">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}{#if folded}{' · ' + folded}{/if}</button>
-		{/if}
+			{#if onopen}
+				<button type="button" class="mt-1 block text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => onopen?.(message)}>Open in conversation</button>
+			{/if}
 
-		{#if onopen}
-			<button type="button" class="mt-1 block text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => onopen?.(message)}>Open in conversation</button>
-		{/if}
-
-		{#if delivery?.status === 'sending'}
-			<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">Sending…</p>
-		{:else if delivery?.status === 'failed'}
-			<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">Not delivered: {delivery.error} <button type="button" class="font-semibold underline" onclick={(event) => onretry?.(event.currentTarget)}>Retry</button> · <button type="button" class="underline" onclick={ondismiss}>Dismiss</button></p>
+			{#if delivery?.status === 'sending'}
+				<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">Sending…</p>
+			{:else if delivery?.status === 'failed'}
+				<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">Not delivered: {delivery.error} <button type="button" class="font-semibold underline" onclick={(event) => onretry?.(event.currentTarget)}>Retry</button> · <button type="button" class="underline" onclick={ondismiss}>Dismiss</button></p>
+			{/if}
 		{/if}
 	</div>
 
 	{#if !delivery && !readOnly}
-		<div class="absolute -top-3 right-2 flex items-center gap-0.5 rounded-md bg-gray-900 p-0.5 opacity-0 shadow ring-1 ring-white/10 group-focus-within:opacity-100 group-hover:opacity-100" role="toolbar" aria-label="Message actions">
-			{#each REACTIONS as r (r.id)}
-				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="React {r.label}" title={r.label} disabled={!officeRunning} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /></Button>
-			{/each}
-			{#if !inThread && onthread}
-				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="Reply in thread" title="Reply in thread" onclick={(event) => onthread?.(message, event.currentTarget)}><MessageSquareReply aria-hidden="true" /></Button>
-			{/if}
-			<DropdownMenu>
-				<DropdownMenuTrigger>
+		<div class="absolute -top-3 right-2 flex items-center gap-0.5 rounded-md bg-gray-900 p-0.5 shadow ring-1 ring-white/10 {toolbar ? 'opacity-100' : 'opacity-0'}" role="toolbar" aria-label="Message actions">
+			<DropdownMenu bind:open={menuOpen} onOpenChange={(open) => { if (trigger) onmenu?.(message, open, trigger); }}>
+				<DropdownMenuTrigger bind:ref={trigger}>
 					{#snippet child({ props })}
-						<Button {...props} class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="More actions" data-testid="message-menu"><Ellipsis aria-hidden="true" /></Button>
+						<button {...props} class="{buttonVariants({ variant: 'ghost', size: 'icon-xs' })} {actionFocus}" type="button" aria-label="Actions for {nameOf(ctx, message.from)}'s message, {clockTime(message.created_at)}" data-testid="message-menu"><svg class="size-3" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Zm7 0a1 1 0 1 1-2 0 1 1 0 1 1 2 0ZM6 12a1 1 0 1 1-2 0 1 1 0 1 1 2 0Z" /></svg></button>
 					{/snippet}
-				</DropdownMenuTrigger>
+				</DropdownMenuTrigger>{#if menuOpen}
 				<DropdownMenuContent align="end">
-					<DropdownMenuItem onSelect={() => onturn?.(message, 'bug')}>Turn into a bug…</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => onturn?.(message, 'request')}>Turn into a request…</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => onturn?.(message, 'task')}>Turn into a task…</DropdownMenuItem>
+					{#each REACTIONS as r (r.id)}
+						<DropdownMenuItem disabled={!officeRunning} onSelect={() => onreact?.(message, r.id)}>React {r.label}</DropdownMenuItem>
+					{/each}
+					{#if replyable}
+						<DropdownMenuItem onSelect={() => { if (trigger) onthread?.(message, trigger); }}>Reply in thread</DropdownMenuItem>
+					{/if}
+					<DropdownMenuSeparator />
+					<DropdownMenuItem onSelect={() => { if (trigger) onturn?.(message, 'bug', trigger); }}>Turn into a bug…</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => { if (trigger) onturn?.(message, 'request', trigger); }}>Turn into a request…</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => { if (trigger) onturn?.(message, 'task', trigger); }}>Turn into a task…</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem disabled={!officeRunning} onSelect={() => onpin?.(message)}>{message.pinned ? 'Unpin' : 'Pin to the conversation'}</DropdownMenuItem>
 					{#if from?.kind === 'agent' && onmute}
@@ -163,7 +178,15 @@
 						{#if mode !== 'none'}<DropdownMenuItem disabled={!officeRunning} onSelect={() => onmute?.(message, 'none')}>Show all from {from.name}</DropdownMenuItem>{/if}
 					{/if}
 				</DropdownMenuContent>
-			</DropdownMenu>
+				{/if}
+			</DropdownMenu>{#if toolbar}
+			{#each REACTIONS as r (r.id)}
+				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="React {r.label}" title={r.label} disabled={!officeRunning} onclick={() => onreact?.(message, r.id)}><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} /></Button>
+			{/each}
+			{#if replyable}
+				<Button class={actionFocus} type="button" variant="ghost" size="icon-xs" aria-label="Reply in thread" title="Reply in thread" onclick={(event) => onthread?.(message, event.currentTarget)}><MessageSquareReply aria-hidden="true" /></Button>
+			{/if}
+			{/if}
 		</div>
 	{/if}
 </article>

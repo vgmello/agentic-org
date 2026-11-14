@@ -544,9 +544,9 @@ describe('selector', () => {
 		const pw = ['bun', 'x', 'playwright', 'test'];
 		const webkitProjects = ['--project=chromium', '--project=production', '--project=webkit'];
 		const chat = specs.filter((spec) => spec === 'chat.spec.ts' || spec.startsWith('chat-')).map((spec) => `e2e/${spec.replace(/\./g, '\\.')}$`);
-		expect(chat).toHaveLength(13);
+		expect(chat).toHaveLength(14);
 		const cspChat = chat.filter((file) => !file.includes('chat-followups-default-font'));
-		expect(cspChat).toHaveLength(12);
+		expect(cspChat).toHaveLength(13);
 		const csp = [...pw, '--config', 'playwright.csp.config.ts'];
 		expect(list).toEqual([
 			{ name: 'ordinary: journeys', env: { PW_WEBKIT: '1' }, cmd: [...pw, '--grep', '@journey', ...webkitProjects] },

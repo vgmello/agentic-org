@@ -3,10 +3,11 @@
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { composerState, repliesTo, titleOf } from '$lib/modules/messaging/model';
+	import { composerState, titleOf } from '$lib/modules/messaging/model';
 	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
 	import MessageRow from '../../components/MessageRow.svelte';
+	import type { MessageRows } from '../../row-data';
 	import { useDraftStore } from '../../drafts/context';
 
 	/** A thread on the right (CHAT-8): the message, its replies, and a box that can also send to the channel. */
@@ -15,6 +16,9 @@
 		conversation,
 		ctx,
 		chatState,
+		rows,
+		active,
+		onmenu,
 		sidebarInline = true,
 		now,
 		officeRunning,
@@ -33,6 +37,9 @@
 		conversation: Conversation;
 		ctx: ChatContext;
 		chatState: ChatState;
+		rows: MessageRows;
+		active: (message: ChatMessage) => boolean;
+		onmenu: (message: ChatMessage, open: boolean, opener: HTMLElement) => void;
 		/** Whether the conversation list occupies its inline 256px column. */
 		sidebarInline?: boolean;
 		now: string;
@@ -43,7 +50,7 @@
 		undelivered?: Snippet;
 		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
-		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task') => void;
+		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
 		onmute: (m: ChatMessage, mode: MuteMode) => void;
 		onpin: (m: ChatMessage) => void;
 		onanswer: (m: ChatMessage, answer: { option_id?: string; text?: string }) => Promise<void> | void;
@@ -53,7 +60,7 @@
 	const draftStore = useDraftStore();
 	const threadId = $derived(root.id);
 	const drafts = $derived(draftStore.forThread(threadId));
-	const replies = $derived(repliesTo(chatState, root.id));
+	const replies = $derived(rows.forMessage(root).replies);
 	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
@@ -71,10 +78,10 @@
 	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]" data-focus-scope>
 		{#key threadId}
 			<div class="space-y-1" role="log" aria-label="Thread messages" aria-live="polite" aria-relevant="additions">
-				<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+				<MessageRow active={active(root)} {onmenu} message={root} {ctx} rowData={rows.forMessage(root)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 				<p class="px-2 pt-2 text-xs/5 text-gray-400" aria-live="off" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
 				{#each replies as r (r.id)}
-					<MessageRow message={r} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+					<MessageRow active={active(r)} {onmenu} message={r} {ctx} rowData={rows.forMessage(r)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 				{/each}
 			</div>
 		{/key}

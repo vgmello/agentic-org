@@ -75,8 +75,8 @@ test('BUG-98 BUG-70: reaction chip has visible keyboard outline', { tag: '@webki
 test('BUG-98 BUG-70: every message toolbar action has visible keyboard outline', { tag: '@webkit' }, async ({ page }) => {
 	await openChat(page, 1280, 1, '/chat?c=c-general');
 	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
-	for (const name of ['React Seen', 'React Looking', 'Reply in thread', 'More actions']) {
-		const control = row.getByRole('button', { name, exact: true });
+	for (const name of ['message-menu', 'React Seen', 'React Looking', 'Reply in thread']) {
+		const control = name === 'message-menu' ? row.getByTestId('message-menu') : row.getByRole('button', { name, exact: true });
 		await keyboardFocus(page, control); await focusOutline(control);
 		await shot(page, `bug98-toolbar-${name.replaceAll(' ', '-')}`, { context: row });
 	}
@@ -275,8 +275,8 @@ test('BUG-95 BUG-70: wide 1280/100 positions match the original flex column', { 
 for (const width of [320,640,960,1280]) test(`BUG-98/99 BUG-70: outlines remain visible at ${width}/200`, { tag: '@webkit' }, async ({ page }) => {
  await openChat(page,width,2,'/chat?c=c-general');
  const row=page.getByTestId('message').filter({hasText:'Ready for review: create-org'});
- for (const name of ['Seen, 1','React Seen','React Looking','Reply in thread','More actions']) {
-  const control=row.getByRole('button',{name,exact:true});
+ for (const name of ['message-menu','Seen, 1','React Seen','React Looking','Reply in thread']) {
+  const control=name === 'message-menu' ? row.getByTestId('message-menu') : row.getByRole('button',{name,exact:true});
   await keyboardFocus(page,control);await focusOutline(control);
  }
  await shot(page,`bug98-focus-200-${width}`,{context:row});
