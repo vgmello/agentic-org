@@ -29,6 +29,9 @@
 //!   params hash) and `expected_version` with per-field conflicts.
 //! - Time figures from events ([`time_figures`]).
 //!
+//! [`check_task_history_coverage`] separately checks selected task-history header coverage;
+//! payload verification and persistence remain the caller's responsibility.
+//!
 //! ## What phase 2 adds: bugs
 //! - `bug.report`, `bug.update`, `bug.triage`, `bug.assign`, `bug.mark_fixed`, `bug.verify`,
 //!   `bug.close` (duplicate, won't fix, can't reproduce) and `bug.reopen`, with the bug state
@@ -63,6 +66,7 @@ mod fail;
 mod feed;
 mod fixes;
 mod hash;
+mod history_coverage;
 mod ids;
 mod items;
 mod kpi;
@@ -86,6 +90,10 @@ pub use engine::{
     execute, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS, CHANGE_RESULT_KEEP_MS,
 };
 pub use hash::{canonical_json, params_hash};
+pub use history_coverage::{
+    check_task_history_coverage, TaskHistoryCoverage, TaskHistoryCoverageError, TaskHistoryHeader,
+    TaskHistoryOrigin,
+};
 pub use ids::{is_ulid, short_id, ulid_from_parts, ulid_time_ms};
 pub use items::DOC_KEY_MAX_CHARS;
 pub use kpi::{time_figures, TimeTally};
