@@ -1177,7 +1177,7 @@ impl EventKind for MessageDeliveryFailed {
     type Data = MessageDeliveryFailedData;
 }
 
-/// A `msg.send` written to the office's spool by `org-agent` while its office server is
+/// A `msg.send` written to the office's spool by `agent-os` while its office server is
 /// unreachable (ADR-0003 §3.5), and ingested by the office when it starts. Only
 /// fire-and-forget sends are spooled, never asks, so it has no deadline.
 ///
@@ -1222,7 +1222,7 @@ pub struct SpooledSend {
     pub meta: Meta,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
-    /// When `org-agent` wrote it, as the writer claims (see above).
+    /// When `agent-os` wrote it, as the writer claims (see above).
     pub created_at: String,
 }
 

@@ -1,5 +1,8 @@
 # Design: agent sessions (the office runs the agents)
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 **Standalone-v1 amendment (2026-11-09):**
 [standalone-server.md](standalone-server.md) changes deployment and access, not
 employee ownership or process supervision. All office/home/runtime paths resolve

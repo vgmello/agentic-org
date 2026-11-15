@@ -1,27 +1,27 @@
 # Executable migration from v1
 
-This change migrates implemented executable responsibilities. It preserves source/package identities unless extraction requires a move. It does not complete the separate standalone installer, production web authentication or agent execution/pool designs.
+This change migrates implemented executable responsibilities. Application directories, Cargo packages and executable names use the same names. Reusable domain/protocol libraries retain their existing org-* names. It does not complete the separate standalone installer, production web authentication or agent execution/pool designs.
 
 | Executable | Source/package | Implementation status |
 | --- | --- | --- |
-| agentic-org | apps/org-setup / org-setup | Human CLI dispatch and serve run the existing host library. setup is reserved for HQ-only onboarding but explicitly unavailable until protected bootstrap and service registration land. |
-| agentic-org-office | apps/org-server / org-server | Existing office daemon, unchanged launch/state protocol and storage. |
-| agentic-org-web | apps/org-gateway / org-gateway | Existing HTTP/assets/TLS library retained; new executable supports help/version and refuses production startup until authenticated host handoff and backend composition land. |
-| agent-os | apps/org-agent / org-agent | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+| agentic-org | apps/agentic-org / agentic-org | Human CLI dispatch and serve run the existing host library. setup is reserved for HQ-only onboarding but explicitly unavailable until protected bootstrap and service registration land. |
+| agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing office daemon, unchanged launch/state protocol and storage. |
+| agentic-org-web | apps/agentic-org-web / agentic-org-web | Existing HTTP/assets/TLS library retained; new executable supports help/version and refuses production startup until authenticated host handoff and backend composition land. |
+| agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
 
 ## Host extraction
 
-apps/org-office-host is rehomed to crates/org-office-host as a library, preserving its Cargo/library identity and build guard. apps/org-setup composes it; there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Service managers must use serve when their registration implementation lands.
+Host behavior lives in crates/org-host as a library, preserving its build guard. The human CLI in apps/agentic-org composes this library; it is not another executable, and there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Service managers must use serve when their registration implementation lands.
 
-Existing host integration tests and test-only fake/fixture binaries move to org-setup alongside the composition they exercise. Test-support features keep fixtures out of a normal production build. Host unit tests remain beside the library. Tracked-source SQLCipher/build-opener and UID-ownership audits follow the moved files; they are not disabled.
+Existing host integration tests and test-only fake/fixture binaries live in agentic-org alongside the composition they exercise. Test-support features keep fixtures out of a normal production build. Host unit tests remain beside the library. Tracked-source SQLCipher/build-opener and UID-ownership audits follow the moved files; they are not disabled.
 
 The host's sibling executable discovery now selects agentic-org-office. Code-signing identifiers, entitlement requirements, private launch framing, environment restrictions and key-store namespaces remain stable independently of filenames. Signing/release tooling must sign the new filenames with the existing required identities. This branch does not relax platform validation or ship a plaintext release credential fallback.
 
 ## State and live tooling
 
-No database migration, ID change, spool move, namespace reset, service installation or interaction with a running user's organization is performed by this source migration. The installed live org-agent executable remains untouched until a separately verified cutover. New build/test invocations use agent-os. CLI help and generated messaging/process hints use the new name while wire field names, ORG_AGENT/ORG_OFFICE bindings and deduplication semantics stay unchanged.
+No database migration, ID change, spool move, namespace reset, service installation or interaction with a running user's organization is performed by this source migration. The previously installed live CLI remains untouched until a separately verified cutover. New build/test invocations use agent-os. CLI help and generated messaging/process hints use the new name while wire field names, ORG_AGENT/ORG_OFFICE bindings and deduplication semantics stay unchanged.
 
-Removed production target names are org-office-host, org-server and org-agent; org-gateway previously had no executable. Old binary aliases are not emitted. Existing Cargo package names remain usable for build commands. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
+Superseded application directories and package/executable aliases are removed. Cargo build/test commands select the same name as the application directory and production binary. org-host is library-only. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
 
 ## Pending standalone integration
 

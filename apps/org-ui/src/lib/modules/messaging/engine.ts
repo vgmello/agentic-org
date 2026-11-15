@@ -307,7 +307,7 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	// A bridge posts as a mapped person, and only where that person is a member.
 	if (ctx.surface === 'bridge' && !isMember(c, ctx.actor)) return refuse('not_in_conversation', `${memberOf(ctx, ctx.actor)?.name ?? 'They'} is not a member of ${label(c)}.`);
 	if (c.kind === 'dm' && c.members.some((id) => memberOf(ctx, id)?.former)) return refuse('unavailable', `${memberOf(ctx, c.members.find((id) => memberOf(ctx, id)?.former)!)?.name} was offboarded.`);
-	// A DM keeps every kind ADR-0003 has, custom tags included, so agents' `org-agent msg send` keeps working (section 6 is
+	// A DM keeps every kind ADR-0003 has, custom tags included, so agents' `agent-os msg send` keeps working (section 6 is
 	// additive). Channels and group DMs take the chat kinds only.
 	const known = ['msg', 'request', 'handoff', 'announcement', 'reply'].includes(call.kind);
 	const tagShaped = /^[a-z][a-z0-9_.-]{0,63}$/.test(call.kind) && (call.kind as string) !== 'delivery_failed' && (call.kind as string) !== 'unknown';

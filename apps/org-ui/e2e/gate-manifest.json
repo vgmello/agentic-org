@@ -195,7 +195,7 @@
 	],
 	"rules": {
 		"ignore": ["**/*.md", "src/**/*.{test,spec}.{js,ts}", "scripts/ui-gate*.ts", ".gitignore", ".mcp.json"],
-		"noImpact": ["../org-agent/**", "../org-server/**", "../org-office-host/**", "../../docs/**", "../../spikes/**", "../../LICENSE", "../../.github/CODEOWNERS"],
+		"noImpact": ["../agent-os/**", "../agentic-org-office/**", "../agentic-org/**", "../../docs/**", "../../spikes/**", "../../LICENSE", "../../.github/CODEOWNERS"],
 		"shared": [
 			"src/lib/components/ui/**", "src/app.*", "src/hooks.*", "src/params/**", "src/routes/+*", "src/routes/(shell)/+*", "src/routes/(onboarding)/+*",
 			"src/lib/utils.ts", "src/lib/name.ts", "src/lib/office/**", "src/lib/work/**", "src/lib/org/agents*", "src/lib/org/reporting*", "src/lib/modules/messaging/drafts/**", "src/lib/nav.ts", "src/lib/format.ts", "src/lib/proto*.ts",
@@ -206,6 +206,6 @@
 			"e2e/gate-manifest.json", "e2e/fakes/**", "../../.github/workflows/**", "e2e/ready.ts", "e2e/shot.ts", "e2e/vite-composition.ts"
 		],
 		"cspFull": ["e2e-csp/{collector,teardown,vite-policy}.ts", "e2e-csp/*.spec.ts", "playwright*.config.ts", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock", "src/app.html", "src/hooks.*", "e2e/vite-composition.ts", "scripts/check-build-assets.ts", "../../config/csp/**"],
-		"gateway": ["../org-gateway/**", "../../crates/**", "../../Cargo.toml", "../../Cargo.lock", "../../rust-toolchain.toml", "../../config/csp/**", "e2e-csp-gateway/{control.ts,csp-gateway.spec.ts}", "playwright.csp-gateway.config.ts", "scripts/csp-gateway.ts", "scripts/check-build-assets.ts", "src/app.html", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock"]
+		"gateway": ["../agentic-org-web/**", "../../crates/**", "../../Cargo.toml", "../../Cargo.lock", "../../rust-toolchain.toml", "../../config/csp/**", "e2e-csp-gateway/{control.ts,csp-gateway.spec.ts}", "playwright.csp-gateway.config.ts", "scripts/csp-gateway.ts", "scripts/check-build-assets.ts", "src/app.html", "vite.config.ts", "svelte.config.js", "package.json", "bun.lock"]
 	}
 }

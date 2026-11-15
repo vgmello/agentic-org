@@ -1,7 +1,7 @@
 //! Reviewed executable build-script inputs. Re-pinning requires an explicit reviewed diff.
 //! Ordinary comments/whitespace are ignored; every Rust token, including literals, is pinned.
 pub(super) const SCRIPTS: &[(&str, &str)] = &[(
-    "crates/org-office-host/build.rs",
+    "crates/org-host/build.rs",
     r###"//! Marks release-profile builds, so the crate refuses to compile one with debug assertions on.
 //!
 //! The host's development paths (the dev key folder instead of the Keychain, no check of the

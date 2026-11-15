@@ -1,5 +1,8 @@
 # Design: standalone Agentic Org server (v1)
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 Status: **proposed implementation design**, 2026-11-09. The product decisions were
 made by the owner in the architecture discussion; wire formats, platform adapters
 and release mechanics still require review and implementation. Owner: ada.

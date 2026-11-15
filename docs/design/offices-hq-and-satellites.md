@@ -1,5 +1,8 @@
 # Design: offices, HQ and satellites
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 **Naming amendment (2026-11-10):** the worker app/package/binary is now
 `apps/org-server` / `org-server`;
 the retained browser application becomes `apps/org-ui` / `org-ui`. See

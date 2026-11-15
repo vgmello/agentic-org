@@ -572,10 +572,10 @@ describe('selector', () => {
 	});
 
 	it('runs the gateway tests for Rust inputs of the gateway and for CSP policy files, and ignores unrelated outside paths', () => {
-		for (const file of ['crates/org-proto/src/lib.rs', 'crates/org-host-control/Cargo.toml', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'apps/org-gateway/examples/csp_harness.rs', 'config/csp/html.txt']) {
+		for (const file of ['crates/org-proto/src/lib.rs', 'crates/org-host-control/Cargo.toml', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'apps/agentic-org-web/examples/csp_harness.rs', 'config/csp/html.txt']) {
 			expect(names([file]), file).toContain('gateway CSP (3 tests)');
 		}
-		expect(names(['apps/org-agent/src/main.rs', '.github/CODEOWNERS'])).toEqual(['ordinary: journeys']);
+		expect(names(['apps/agent-os/src/main.rs', '.github/CODEOWNERS'])).toEqual(['ordinary: journeys']);
 	});
 
 	it('treats a manifest edit as shared, so it can never be journeys-only', () => {
@@ -640,7 +640,7 @@ describe('selector', () => {
 	});
 
 	it('docs, unit-test and non-UI changes run the journeys only', () => {
-		for (const files of [['docs/design/x.md', ui('README.md')], [ui('src/lib/org/model.test.ts')], ['apps/org-agent/src/main.rs']]) {
+		for (const files of [['docs/design/x.md', ui('README.md')], [ui('src/lib/org/model.test.ts')], ['apps/agent-os/src/main.rs']]) {
 			expect(plan(files, manifest)).toMatchObject({ all: false, categories: [], gateway: false });
 			expect(names(files)).toEqual(['ordinary: journeys']);
 		}
@@ -657,7 +657,7 @@ describe('selector', () => {
 	});
 
 	it('a gateway-only change adds the 3 gateway tests and no CSP browser run', () => {
-		expect(names(['apps/org-gateway/src/lib.rs'])).toEqual(['ordinary: journeys', 'gateway CSP (3 tests)']);
+		expect(names(['apps/agentic-org-web/src/lib.rs'])).toEqual(['ordinary: journeys', 'gateway CSP (3 tests)']);
 	});
 
 	it('uses the journey WebKit subset by default and can drop WebKit', () => {
@@ -719,7 +719,7 @@ describe('selector', () => {
 	});
 	it('sends every outside path that is not on the no-impact list to the full suite', () => {
 		for (const file of ['package.json', 'bun.lock', 'bunfig.toml', '.npmrc', '.bun-version', 'packages/ui/index.ts', '.github/actions/setup/action.yml', 'new-top-level-dir/file.ts']) expect(plan([file], manifest).all, file).toBe(true);
-		for (const file of ['apps/org-agent/src/main.rs', 'apps/org-server/src/main.rs', 'apps/org-office-host/src/main.rs', 'docs/design/a.png', 'spikes/claude/run.sh', 'LICENSE', '.github/CODEOWNERS']) expect(plan([file], manifest), file).toMatchObject({ all: false, gateway: false, cspFull: false, categories: [] });
+		for (const file of ['apps/agent-os/src/main.rs', 'apps/agentic-org-office/src/main.rs', 'apps/agentic-org/src/main.rs', 'docs/design/a.png', 'spikes/claude/run.sh', 'LICENSE', '.github/CODEOWNERS']) expect(plan([file], manifest), file).toMatchObject({ all: false, gateway: false, cspFull: false, categories: [] });
 	});
 
 	it('classifies the CSP and gateway tooling files by name, and does not ignore other scripts', () => {

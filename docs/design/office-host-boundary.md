@@ -1,5 +1,8 @@
 # org-office-host ↔ org-server: the boundary (phase 1, HQ only)
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 **Browser HTTP separation (standalone-v1 review):** planned `org-gateway` is a
 separate supervised child for the instance browser listener. The host retains key
 custody and admits only typed, scoped local operations; it does not parse browser

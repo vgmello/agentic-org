@@ -4,9 +4,9 @@ use super::opener_scope::SourceScope;
 use super::opener_sources::metadata;
 use serde_json::{json, Value};
 
-const HOST: &str = "crates/org-office-host/build.rs";
+const HOST: &str = "crates/org-host/build.rs";
 const PIN: &str = "crates/org-office/src/store/tests/opener_build_pins.rs";
-const HOST_SOURCE: &str = include_str!("../../../../../crates/org-office-host/build.rs");
+const HOST_SOURCE: &str = include_str!("../../../../../crates/org-host/build.rs");
 
 fn package(scope: &SourceScope, id: &str, path: &str, kind: Value) -> Value {
     json!({"id":id,"manifest_path":scope.root.join("Cargo.toml"),
@@ -27,7 +27,7 @@ fn host_fixture() -> tempfile::TempDir {
         ("build.rs", HOST_SOURCE),
         ("other.rs", HOST_SOURCE),
         ("scripts/helper.rs", HOST_SOURCE),
-        ("vendor/crates/org-office-host/build.rs", HOST_SOURCE),
+        ("vendor/crates/org-host/build.rs", HOST_SOURCE),
         (
             PIN,
             "// Protected pin fixture. The compiled policy supplies the reviewed tokens.",
@@ -53,7 +53,7 @@ fn sqlcipher_build_inventory_refuses_unknown_scripts_in_every_position() {
         "build.rs",
         "other.rs",
         "scripts/helper.rs",
-        "vendor/crates/org-office-host/build.rs",
+        "vendor/crates/org-host/build.rs",
     ] {
         for kind in [
             json!(["custom-build"]),
@@ -230,7 +230,7 @@ fn sqlcipher_build_inventory_cargo_discovers_custom_default_and_disabled_scripts
         ("build='other.rs'", "other.rs", false),
         ("build='scripts/custom.rs'", "scripts/custom.rs", false),
         ("build=false", "build.rs", true),
-        ("build='crates/org-office-host/build.rs'", HOST, true),
+        ("build='crates/org-host/build.rs'", HOST, true),
     ] {
         let manifest = format!(
             "[workspace]\n[package]\nname='fixture'\nversion='0.1.0'\nedition='2021'\n{setting}\n"

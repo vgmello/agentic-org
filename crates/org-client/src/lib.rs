@@ -2,7 +2,7 @@
 //!
 //! Opens a connection to this machine's host or to an office server (local Unix sockets,
 //! found through `org_proto::location`) and speaks `org-proto`. Used by the desktop app's
-//! Tauri shell and by `org-agent`. Knows nothing about how an office stores its data.
+//! Tauri shell and by `agent-os`. Knows nothing about how an office stores its data.
 //!
 //! A [`Client`] is one long-lived connection that many threads may share. Calls are
 //! numbered from 1 and answered by `id`, several may be in flight at once, and every call
