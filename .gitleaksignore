@@ -1,0 +1,141 @@
+# Exact historical fixture/prose fingerprints from the initial full-history scan.
+# New commits, including new matches in the same files, remain scanned.
+# Never add a real credential here; revoke it and remove it instead.
+
+# Recovery test key
+caf9e99dd354616abfaaac75e181eb84e8fdd28d:apps/org-server/src/owned_recovery/tests.rs:generic-api-key:57
+
+# Intentional redaction-test credentials
+180eb203da26237020773f75f1d3e21ef7530f64:crates/org-copilot/src/tests.rs:aws-access-token:588
+4003b78fe4398a4efc663341eaf61db43769fe2c:crates/org-copilot/src/tests.rs:gitlab-pat:592
+4003b78fe4398a4efc663341eaf61db43769fe2c:crates/org-copilot/src/tests.rs:jwt:593
+4003b78fe4398a4efc663341eaf61db43769fe2c:crates/org-copilot/src/tests.rs:stripe-access-token:591
+
+# PEM parser test keys
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/src/pem.rs:private-key:289
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/src/pem.rs:private-key:301
+b14745cd50014c0443011ca2c3e389734c3335b2:crates/org-host-control/src/pem.rs:private-key:280
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/src/pem.rs:private-key:195
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/src/pem.rs:private-key:201
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/src/pem.rs:private-key:204
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/src/pem.rs:private-key:208
+
+# Host-control test key
+54c4a2144b43eca99eebb8664d93ee345799bc58:crates/org-host-control/src/tests.rs:private-key:184
+
+# Public cryptographic golden vectors (fixture keys and key digests)
+0d805af61235e364760419a84725758217c4c9a5:crates/org-host-control/test-vectors/journal.json:private-key:689
+0d805af61235e364760419a84725758217c4c9a5:crates/org-host-control/test-vectors/journal.json:private-key:700
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:generic-api-key:443
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:440
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:612
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:623
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:634
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:645
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:656
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:667
+18cd2f60bf42d1abe4d9bca0a571a3c204c3c2e1:crates/org-host-control/test-vectors/journal.json:private-key:678
+1cf30612172d747a129f9f089951a9bb113f152a:crates/org-host-control/test-vectors/journal.json:generic-api-key:432
+1cf30612172d747a129f9f089951a9bb113f152a:crates/org-host-control/test-vectors/journal.json:private-key:429
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:generic-api-key:405
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:generic-api-key:417
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:generic-api-key:429
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:190
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:204
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:230
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:245
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:260
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:275
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:290
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:305
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:402
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:414
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:426
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:540
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:550
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:561
+370eb0d21f8d5c7f5bf23f9e2861b2c98ca50d4e:crates/org-host-control/test-vectors/journal.json:private-key:572
+378a2bdcaa53cf8328f4db491f75126d427b3d9f:crates/org-host-control/test-vectors/journal.json:private-key:538
+378a2bdcaa53cf8328f4db491f75126d427b3d9f:crates/org-host-control/test-vectors/journal.json:private-key:549
+b14745cd50014c0443011ca2c3e389734c3335b2:crates/org-host-control/test-vectors/journal.json:private-key:275
+b14745cd50014c0443011ca2c3e389734c3335b2:crates/org-host-control/test-vectors/journal.json:private-key:290
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:294
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:305
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:316
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:327
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:338
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:349
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:generic-api-key:360
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:291
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:302
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:313
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:324
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:335
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:346
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:357
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:370
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:379
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:388
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:397
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:406
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:415
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:424
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:433
+ecfc236ffdce629340c63eaddebf14b09fe5a0e6:crates/org-host-control/test-vectors/journal.json:private-key:442
+
+# Public TLS golden vectors
+461b5d1ef82d92a8cb65e2f425b66c4d7d88cb58:crates/org-host-control/test-vectors/tls.json:private-key:100
+461b5d1ef82d92a8cb65e2f425b66c4d7d88cb58:crates/org-host-control/test-vectors/tls.json:private-key:11
+461b5d1ef82d92a8cb65e2f425b66c4d7d88cb58:crates/org-host-control/test-vectors/tls.json:private-key:157
+77f25d7608f164182b6c5d4d5201e2fda51f1f3e:crates/org-host-control/test-vectors/tls.json:private-key:185
+
+# Socket identifier fixture
+bcc9e20d89078f421b38075e7dc79ceb7b96a15e:crates/org-office-launch/src/tests.rs:generic-api-key:193
+bcc9e20d89078f421b38075e7dc79ceb7b96a15e:crates/org-office-launch/src/tests.rs:generic-api-key:206
+bcc9e20d89078f421b38075e7dc79ceb7b96a15e:crates/org-office-launch/src/tests.rs:generic-api-key:208
+bcc9e20d89078f421b38075e7dc79ceb7b96a15e:crates/org-office-launch/src/tests.rs:generic-api-key:210
+
+# Session-token test sentinel
+2d9334b58a088cb252720fe262afb8c05ccdf4af:crates/org-supervise/tests/env.rs:generic-api-key:47
+
+# Prose mistaken for an API key
+1d0651106fc47b5077f693d1cfa124f1fff49c9d:docs/design/gateway-api-v1.md:generic-api-key:12
+
+# Provider message IDs mistaken for API keys
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:10
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:11
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:12
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:16
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:17
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:18
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:4
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:5
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:6
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-text.jsonl:generic-api-key:8
+
+# Provider message IDs mistaken for API keys
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:10
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:11
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:12
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:14
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:15
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:16
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:4
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:5
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:6
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:7
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:8
+7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:9
+
+# Initial formatting-baseline SHA-256 values (now explicitly prefixed sha256:).
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:211
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:229
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:230
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:249
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:292
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:293
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:342
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:343
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:347
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:37
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:39
