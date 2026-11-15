@@ -1,6 +1,6 @@
 # Agent execution and subscription pools: implementation contract
 
-Status: **implementation specification, revision 2**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **implementation specification, revision 3**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 Only this addendum is being revised. The existing organization documents and `schema.sql` remain unchanged. The SQL extension in §12 is the exact integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
 
@@ -21,13 +21,13 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Persistence | Organization config in Git; local auth and execution journal outside Git; SQLite is a projection. Accounting remains durable as defined in [usage accounting](10-usage-and-cost-accounting.md). |
 | Delivery scope | Configuration, discovery, explicit turn execution, supervision, permits, safe switching and accounting capture. Business-process engines, automatic scheduling, delegated employees, memory consolidation and budget-triggered pausing are excluded. |
 
-The owner-approved revision 2 uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI. It supersedes revision 1's dedicated supervisor process. The existing-employee extension and supervision responsibilities remain. These are target names and boundaries; this addendum does not rename implemented packages or claim unfinished components exist.
+The owner-approved executable structure uses agentic-org as the human CLI/service host, agentic-org-web as the browser server, agentic-org-office as the office worker, and agent-os as the separate agent CLI. It supersedes revision 1's dedicated supervisor process. The existing-employee extension and supervision responsibilities remain. These are target names and boundaries; this addendum does not rename implemented packages or claim unfinished components exist.
 
 ## 2. Executables, modules and exclusive ownership
 
 | Target executable | Responsibility | Inspected v1 source / disposition |
 | --- | --- | --- |
-| `agentic-org` | Human management CLI; `--server` is the long-running installation/service host, release manager and office-key custodian. | The planned setup CLI plus existing `org-office-host` lifecycle behavior. Extract reusable host behavior into a library; do not link app implementations together. |
+| `agentic-org` | Human management CLI; `serve` runs the long-running installation/service host, release manager and office-key custodian. | The planned setup CLI plus existing `org-office-host` lifecycle behavior. Extract reusable host behavior into a library; do not link app implementations together. |
 | `agentic-org-web` | Browser HTTPS, authentication, static org-ui assets, browser APIs and live events. One per installation hosting HQ offices; none for a satellite-only installation. | Planned `org-gateway`; rename the target executable, preserving its restricted authority. |
 | `agentic-org-office` | One HQ or satellite office worker, with data services, replication and internal agent supervision. | Existing `org-server`; executable rename is implementation work. |
 | `agent-os` | Small agent CLI for authorized messages, work operations and other tools. Invoked on demand, not a permanent daemon. | Existing `org-agent`; keep distinct from the human CLI and host key-access identity. |
@@ -36,7 +36,7 @@ These names define executables, not a mandatory rename of every org-* library or
 
 ```mermaid
 flowchart TD
-    Manager[OS service manager] --> Host[agentic-org --server]
+    Manager[OS service manager] --> Host[agentic-org serve]
     Host --> Web[agentic-org-web: HQ browser service]
     Host --> API
     Web -->|typed authorized operations| API
@@ -51,7 +51,7 @@ flowchart TD
     AgentCLI -->|employee-scoped local operations| API
 ```
 
-The OS service manager starts/restarts agentic-org --server. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its execution journal and reconciles marked children before admitting starts. A worker restart requires agent recovery; this version does not promise uninterrupted agent execution across worker restarts. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
+The OS service manager starts/restarts agentic-org serve. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its execution journal and reconciles marked children before admitting starts. A worker restart requires agent recovery; this version does not promise uninterrupted agent execution across worker restarts. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
 
 Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
 
@@ -61,7 +61,53 @@ The worker has one SQLite writer and one agent recovery owner. Its internal supe
 
 **Satellite operation.** HQ and satellite are roles of the same office executable, not different binaries. A satellite enrolls once and reconnects outbound to HQ's authenticated federation endpoint using its office identity; browser authentication and federation TLS remain separate boundaries. Agent tools call the local worker through agent-os. The worker replicates relevant shared data and uses local repository caches/worktrees; teams/projects remain organization-wide. Disconnected tasks/features can be saved with stable IDs and pending readable numbers, as defined in document 06. The current HQ permit contract still blocks new model turns without coordinator access and stops active turns when renewal cannot be maintained. Reserved offline capacity is a later explicit extension, not an implied exception. HQ/satellite protocol compatibility is checked during independently activated installation updates.
 
-The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or database keys. Moving host behavior into agentic-org --server must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
+The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or database keys. Moving host behavior into agentic-org serve must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
+
+### 2.1 Initial setup and office onboarding
+
+The default onboarding flow has one command after obtaining the platform's agentic-org executable:
+
+```bash
+agentic-org setup
+```
+
+The online bootstrap downloads and verifies that executable, then invokes setup; direct-download users invoke it themselves. A bootstrap script must not implement another provisioning workflow. No Rust toolchain or source build is required on the target machine. Provider CLI dependencies, operating-system prerequisites and provider authentication are checked separately; successful framework setup alone does not mark every agent runtime ready.
+
+Setup runs a single resumable workflow:
+
+1. Select/create the named local installation; reuse its saved identity, data root, locks and release pin when it already exists. If selection is ambiguous, ask rather than creating an unrelated installation.
+2. Download and verify missing platform components into a complete versioned release, or load the supplied local bundle. On an existing installation, setup does not silently upgrade its release.
+3. Collect the first-office configuration through the shared office-setup workflow: create HQ with the existing protected administrator/identity bootstrap, or join an existing HQ as a satellite using the invitation/authentication flow. Prompt for sensitive enrollment material through protected input, not command-line arguments or logs.
+4. Register the per-user background service and start it using agentic-org serve with the selected installation's saved identity/root/release; complete office creation/enrollment through its protected setup operations. Reuse a matching registered service; do not create a second host or replace an unrelated service registration. The running host/office performs privileged provisioning, with no public administrative access before bootstrap authority is established.
+5. Probe the host and office readiness. Show the HQ web address, or the satellite's connection/enrollment status and local service status. Report incomplete stages explicitly rather than declaring an unenrolled office ready.
+
+Service registration is part of setup, not a separate user prerequisite. Where a supported service manager is unavailable, retain completed setup, explain that background registration is unavailable and offer the foreground serve command. The service manager owns host restart; serve does not daemonize itself or perform first-install downloads at every startup.
+
+Additional offices use the same office-setup workflow without repeating completed installation/service steps:
+
+```bash
+agentic-org office setup
+agentic-org office setup --hq https://hq.example.com
+```
+
+The first command prompts to create HQ or join as a satellite. Providing --hq selects satellite enrollment. On an uninitialized installation, office setup first ensures the shared installation foundation; users never need to run setup, install or service install as a prerequisite. These are alternative entry points into one workflow, not separate implementations or nested shell invocations.
+
+| Command | User-facing meaning |
+| --- | --- |
+| `agentic-org setup` | Complete initial setup, including service registration/start and first-office onboarding. |
+| `agentic-org office setup` | Configure an office, ensuring any missing installation prerequisites automatically. |
+| `agentic-org serve` | Run the configured service host in the foreground; also the OS service entry point. |
+| `agentic-org service start`, `stop`, `status` | Operate or inspect an already configured installation. No separate service-install step is required. |
+
+For an offline framework install, use the same setup entry point:
+
+```bash
+agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
+```
+
+Offline mode forbids external network requests during setup, including update checks and enrollment, and records a network-disabled policy for background processes until explicitly enabled for online operation. Setup children must honor that policy; private local control channels remain available. It verifies the local release and can configure a local HQ where all platform requirements are present. A requested remote satellite enrollment remains pending until an explicit online office setup can reach HQ; an offline bundle cannot complete that handshake. Existing enrolled satellites can reuse installed identity/configuration without reenrolling, subject to normal connectivity and permit rules.
+
+Every irreversible setup stage has a stable operation ID and durable completion marker. Repeating setup resumes pending work and reuses completed stages, offices, identities and service registration; it does not reset data, reenroll a completed office, silently add another office or activate an upgrade. On a completed installation, office setup explicitly creates/selects another office; retrying the same operation resumes its existing office. Serialize concurrent setup attempts for the selected installation. No service credentials, invitation secrets or recovery material enter diagnostics or completion markers.
 
 ## 3. Storage authority and exact paths
 
@@ -297,6 +343,8 @@ Provider/model and price_id describe the actual route used, not the first pool m
 | AE-13 | Cached candidate selection for up to 64 members has p95 below 5 ms over 10,000 warmed lookups on recorded CI hardware. Report quota/network/probe/startup time separately; no performance claim without the result. |
 | AE-14 | Every production adapter has pinned-version auth/model/tool/checkpoint/stop/usage fixtures. Unsupported capability returns its defined error, never a permissive fallback. |
 | AE-15 | The office worker's supervisor is its single agent recovery owner; host recovery cannot race that live owner. No new placement starts until old ownership is fenced/reconciled. |
+| AE-16 | Fresh setup downloads/verifies one complete release, configures one office and registers/starts one service. Interrupted/repeated/concurrent setup reuses durable steps and creates no duplicate service, identity or office. office setup uses the same foundation. |
+| AE-17 | Offline setup performs zero network requests, rejects untrusted/incomplete bundles, and leaves remote enrollment pending. Missing service-manager support reports foreground instructions; serve starts installed releases without a download prerequisite. |
 
 ## 11. Implementation sequence and integration boundaries
 
@@ -874,6 +922,6 @@ Inspected `origin/v1` at **`ee84e7ba231fbef79373f641c3d24fd26a248be5`**. These a
 | `org-server` | Contains a recovery-record adapter over office-owned process rows. This is a real integration component, not proof that the whole agent launch loop is wired. | [Owned recovery adapter](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/apps/org-server/src/owned_recovery.rs#L1). |
 | Employee supervisor/session pump | **Proposed design:** the office hosts a logical employee supervisor; `org-office-sessions` is intended to implement the session pump. No `org-office-sessions`, native runtime-adapter packages or `org-agent-supervisor` executable appear in the checked Cargo workspace. A complete native-agent launch integration was not found there. | [Employee-supervision proposal](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/employee-supervision.md#L1), [planned session integration](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/docs/design/agent-sessions.md#L125), [workspace](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/Cargo.toml). |
 
-Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. Revision 2 retains the office-hosted control loop and defines its supervisor/router/runner responsibilities without a separate supervisor daemon. The executable names in §2 are target renames; evidence links here intentionally retain inspected v1 names.
+Therefore, v1 supplies useful low-level process machinery and a proposed employee-control design. It does not establish that a finished `org-agent-supervisor` process already launches agents. The current revision retains the office-hosted control loop and defines its supervisor/router/runner responsibilities without a separate supervisor daemon. The executable names in §2 are target renames; evidence links here intentionally retain inspected v1 names.
 
 V1's environment preparation is intentionally restricted. Its reviewed runtime-switch list does not currently include the connection-specific auth-context variables shown in the upload. See [reviewed switches](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/runtime.rs#L137) and [explicit environment construction](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-supervise/src/environment.rs#L52). Auth isolation needs an adapter/environment-contract extension; arbitrary environment maps must not bypass that boundary.
