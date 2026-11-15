@@ -80,9 +80,15 @@ jobs:
   # platform-specific, so they run on Linux only, on purpose. Node comes from the runner image
   # (svelte-check, vite and playwright run under it); pin it with actions/setup-node if image updates bite.
   ui:
-    name: ui
+    name: ui (${{ matrix.shard }}/4)
     runs-on: ubuntu-26.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The full browser suite exceeds one runner's 30-minute budget. fullyParallel in
+        # playwright.config.ts balances individual tests across all four shards.
+        shard: [1, 2, 3, 4]
     env:
       UI_DIR: apps/agentic-org-ui
     steps:
@@ -119,13 +125,13 @@ jobs:
         working-directory: ${{ env.UI_DIR }}
         env:
           PLAYWRIGHT_HTML_OPEN: never
-        run: bun run test:e2e --reporter=line,html
+        run: bun run test:e2e --shard=${{ matrix.shard }}/4 --reporter=line,html
 
       - name: Upload the Playwright report
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report-${{ github.run_attempt }}
+          name: playwright-report-${{ matrix.shard }}-${{ github.run_attempt }}
           path: |
             ${{ env.UI_DIR }}/playwright-report/
             ${{ env.UI_DIR }}/test-results/
