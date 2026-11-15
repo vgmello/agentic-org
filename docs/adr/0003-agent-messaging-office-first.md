@@ -1,5 +1,14 @@
 # ADR-0003 · Agent messaging: office-first, high-volume storage, directory, presence, triage, and cross-office routing
 
+## Selected data-model amendment
+
+Document 15 is the selected messaging data contract; document 16 owns recovery evidence. Retain the implemented directed-message substrate, its original hash algorithm and per-recipient triage. A directed thread with several participants does not authorize all participants to read every message; imported history retains the source visibility. Channel/group-DM data in the target is distinct from old thread summaries. Use typed T- task links and agent-os in current tooling; historical wire examples, signing identifiers and the live Phase A cutover below remain intact. Optional bridge requirements are not implemented or newly selected by this amendment.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Standalone-v1 amendment (2026-11-09):**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop application's human
 authorization and packaging. References below to app-only human actions now mean

@@ -13,6 +13,15 @@ builds_on: [work-items-ux, our-org-in-the-app]
 
 # Spec · Decisions, evaluations, designs and tech debt (UX)
 
+## Selected data-model amendment
+
+Supporting knowledge uses the organization-Git project/feature/release/deployment document scopes and stable IDs defined by documents 02/08/09. Task shortcut provenance preserves tagged debt-reference IDs under document 03; it does not create or approve a new debt workflow. Old project-code-repository paths and B-/REQ- references below are earlier UX examples requiring explicit mapping. Keep decisions as knowledge records without selecting deferred Undo, area or process engines.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Extends `work-items-ux.md` rev 5 (Docs, work items) and `our-org-in-the-app.md` (our own project in the app).
 
 ## The request (the user, 2026-11-08)

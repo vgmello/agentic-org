@@ -13,6 +13,15 @@ builds_on: [feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
 
 # Spec · Features: a project's capabilities, defined in the repository (UX)
 
+## Selected data-model amendment
+
+Feature identity, F- reference, project-prefixed slug, owner, lifecycle facts and canonical file sources follow documents 02/03/06. The definition is `projects/<project-id>/features/<feature-id>/feature.md` in organization Git; supporting designs/decisions are separate scoped documents. Shared architecture stays at project scope. Preserve delivered_at, retired_reason and replaced_by_feature_id; task counts are derived. A database-only status or automatic “all tasks done” transition below is earlier workflow behavior, not a replacement authority or newly selected engine. Retrospectives remain deferred.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Extends `feature-requests-ux.md` (requests), `work-items-ux.md` (project page, tasks), `decisions-and-tech-debt-ux.md` (repo docs, templates) and `retrospectives-ux.md` (retros run on delivered features).
 
 ## The request (the user, 2026-11-08)

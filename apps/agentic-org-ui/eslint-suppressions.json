@@ -1,0 +1,297 @@
+{
+  "e2e/fakes/capabilities.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "e2e/offices.spec.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "e2e/org-chart-responsive.spec.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "src/lib/components/HeroIcon.svelte": {
+    "svelte/require-each-key": {
+      "count": 1
+    }
+  },
+  "src/lib/components/NewRequestDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/components/NewTaskDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/components/ReportBugDialog.svelte": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/components/Sidebar.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 3
+    }
+  },
+  "src/lib/components/TaskSheet.svelte": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 1
+    },
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/components/testing/focus-primitives.svelte": {
+    "svelte/require-each-key": {
+      "count": 1
+    }
+  },
+  "src/lib/components/testing/office-status.svelte": {
+    "svelte/require-each-key": {
+      "count": 1
+    }
+  },
+  "src/lib/components/ui/button/button.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/copilot/features/draft-text/DraftableText.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/employees/AgentsTabs.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/employees/AgentsTabs.test.ts": {
+    "@typescript-eslint/no-empty-object-type": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/components/Rich.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/answer-ask/AskCard.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/manage-channel/MembersPanel.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/open-dm/ChatSidebar.svelte": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/run-command/CommandDialog.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/features/send-message/Composer.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/modules/messaging/markdown.ts": {
+    "no-irregular-whitespace": {
+      "count": 2
+    }
+  },
+  "src/lib/modules/messaging/row-activity.svelte.ts": {
+    "svelte/prefer-svelte-reactivity": {
+      "count": 12
+    }
+  },
+  "src/lib/modules/processes/features/inspect-effective/ProcessSheet.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 3
+    }
+  },
+  "src/lib/office/mock.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    }
+  },
+  "src/lib/offices/OfficeRepairLocation.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/lib/org/reducer.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/lib/org/reporting.ts": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 2
+    }
+  },
+  "src/lib/platform/auth/session-controller.test.ts": {
+    "@typescript-eslint/no-empty-object-type": {
+      "count": 8
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 7
+    }
+  },
+  "src/lib/platform/auth/session-controller.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/lib/platform/http/client.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 4
+    }
+  },
+  "src/lib/platform/http/json-http.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/lib/platform/http/wire.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/lib/platform/shell/MobileNavigation.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/lib/platform/shell/Unavailable.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 2
+    }
+  },
+  "src/lib/platform/shell/capabilities.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/lib/platform/tooling/production-import-guard.test.ts": {
+    "no-useless-escape": {
+      "count": 2
+    }
+  },
+  "src/lib/platform/tooling/ui-gate.test.ts": {
+    "no-useless-escape": {
+      "count": 2
+    }
+  },
+  "src/lib/work/engine.ts": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 19
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 2
+    }
+  },
+  "src/lib/work/requests-view.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/lib/work/support.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/routes/(onboarding)/create/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 2
+    }
+  },
+  "src/routes/(onboarding)/welcome/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 2
+    }
+  },
+  "src/routes/(shell)/agents/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 3
+    }
+  },
+  "src/routes/(shell)/chat/+page.svelte": {
+    "no-undef": {
+      "count": 2
+    },
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    },
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/offices/+page.svelte": {
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/org-chart/+page.svelte": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 7
+    }
+  },
+  "src/routes/(shell)/processes/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    },
+    "svelte/no-useless-mustaches": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/projects/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  },
+  "src/routes/(shell)/projects/[id]/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 2
+    }
+  },
+  "src/routes/(shell)/work/+page.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    },
+    "svelte/prefer-svelte-reactivity": {
+      "count": 1
+    }
+  },
+  "src/routes/+error.svelte": {
+    "svelte/no-navigation-without-resolve": {
+      "count": 1
+    }
+  }
+}

@@ -1,5 +1,14 @@
 # Design: processes (how agents work, written down and inherited)
 
+## Selected data-model amendment
+
+Only process/standard content, recursive scope paths and explicit overridable flags are selected by document 01. Team references now use TEAM- keys; canonical nested paths use stable team IDs. Files are overridable by default unless explicitly sealed; team/project overrides cannot defeat a sealed ancestor. The “teams have no key” and flat/linked-team examples below are earlier design assumptions. Effective-set resolution, approvals, timers and process execution remain unselected; this amendment does not activate that engine.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Status: **proposed, rev 3** 2026-11-08. Owner: ada. It implements Eden's spec [`processes-ux.md`](../specs/processes-ux.md) rev 3 (PROC-1 to PROC-19) without redefining its UX, except decision 13, which spec rev 3 adopts, and builds on [`tasks-projects-docs.md`](tasks-projects-docs.md) (W7), [`agent-sessions.md`](agent-sessions.md), [`projects-git-github.md`](projects-git-github.md) and [`teams-and-org-chart.md`](teams-and-org-chart.md). The first process, [`branch-and-merge.md`](../processes/branch-and-merge.md), is the reference shape.
 
 **Proposed amendment, rev 4 (2026-11-09, owner request):** §3.5 extends delivery for
@@ -17,7 +26,7 @@ A new pure library, **`org-process`**, holds the parsing, the resolution and the
 
 ## Decisions
 All decided 2026-11-08, except A55's docs-branch limit, which waits on the user (U28).
-1. **A51 Storage.** Everything persistent lives in repositories. Project processes go in the project repo's `docs/processes/`. Organization and team processes go in the organization's handbook repo (`processes/`, `teams/<team key>/processes/`), created with the organization and changed through the same branch-and-merge flow. HQ keeps only an **index** (process key, level, scope, version, path, commit sha, status, overridable or sealed, overrides), rebuilt from the repos and never holding the text. *Teams have no key, so this design writes `teams/<team id>/` (A60).*
+1. **A51 Storage.** Everything persistent lives in repositories. Project processes go in the project repo's `docs/processes/`. Organization and team processes go in the organization's handbook repo (`processes/`, `teams/<team key>/processes/`), created with the organization and changed through the same branch-and-merge flow. HQ keeps only an **index** (process key, level, scope, version, path, commit sha, status, overridable or sealed, overrides), rebuilt from the repos and never holding the text. *Historical A60 assumed teams had no key. Selected document 06 now supplies TEAM- references; document 01 still uses stable IDs, with recursive team paths, for canonical storage.*
 2. **A52 Private processes** live in the handbook at `agents/<member id>/processes/`. The organization owns them and the owner can see them. They survive offboarding as history. The agent changes them through the merge flow, and the owner approves.
 3. **A53 Resolution.** The office computes the effective set per (agent, project) from default or integration branches only, never a working branch. Order: organization → team(s) → project → agent. Processes match on the `process:` key, the lowest level wins, and a sealed process can't be overridden. The result is cached, keyed by the commit shas involved, and pushed at session start and wake. `process why <key>` reads the same result and shows each layer.
 4. **Multi-team conflict.** If two teams both override the same key for one shared project, and the project doesn't resolve it, the agent follows the organization's version. If the organization has none, neither override applies. The conflict shows in Needs you for the project's lead and the owner. Work isn't blocked.

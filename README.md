@@ -16,7 +16,7 @@ belongs to the offices; the browser accesses it through HQ.
 
 ## Proposed v1 layout
 
-The [organization data documentation](docs/design/organization-data/README.md) defines the proposed durable organization/project/agent data model. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
+The [organization data documentation](docs/design/organization-data/README.md) defines the selected organization/project/employee data model, including messaging, recovery and budget records. The [documentation authority map](docs/design/documentation-authority.md) distinguishes target contracts from current implementation and deferred engines. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
 
 
 Application directories, Cargo packages and executable names now match:
@@ -43,6 +43,9 @@ in both ordinary development and release; test fakes require explicit test compo
 The historical shell commands below no longer run against this tree.
 
 Run the UI checks from `apps/agentic-org-ui`:
+
+See [development tooling](DEVELOPMENT.md) for pinned runtimes, security checks,
+linting, browser security suites, and Codex skills.
 
 ```sh
 cd apps/agentic-org-ui

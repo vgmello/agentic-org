@@ -13,6 +13,15 @@ builds_on: []
 
 # Spec · Offices, organizations and teams (UX)
 
+## Selected data-model amendment
+
+The target UI must show one home team per employee, recursive child teams, optional direct-member leads with subtree responsibility, separate reporting lines, and one accountable owner team per project with optional contributors. “No team”, multiple membership and unassigned-project UI rules below are earlier requirements pending replacement for this target. An owner may display above the chart, but an owner employee record still has a home team; authenticated account authority is separate. Offices show agent placement and freshness, not ownership of teams/projects. Documents 01/02/04 own the fields and import boundaries.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Revision 12 (2026-11-09): standalone server pivot.**
 [server-installation-and-access-ux.md](server-installation-and-access-ux.md) supplies
 the v1 installation/access requirements. The browser's machine is not an office.

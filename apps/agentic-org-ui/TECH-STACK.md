@@ -13,20 +13,20 @@ Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 
 ## Current implementation
 
-| Concern | Choice | Notes |
-| --- | --- | --- |
-| UI framework | SvelteKit 2 + Svelte 5 runes | Static SPA, adapter-static, ssr=false, index.html fallback. |
-| Language | Strict TypeScript | Runtime wire readers and feature adapters land separately. |
-| Styling | Tailwind CSS v4 | CSS-first configuration and tokens in src/app.css; dark theme. |
-| Look | Tailwind Plus application UI, ported to Svelte | Licensed inside apps/agentic-org-ui, never as a separate UI kit. |
-| Components | shadcn-svelte on Bits UI | Shared primitives under src/lib/components/ui. |
-| Icons and font | Lucide/Heroicons; bundled Inter Variable | No remote font dependency. |
-| Package manager | Bun | Frozen install, check, test and build scripts. |
-| Unit tests | Vitest | Domain behavior, test fakes, canonical vectors and platform boundaries. |
-| Browser tests | Playwright Chromium | Retained flows use explicit test-owned dev composition; a second project checks the static production release. |
-| Rust | Server, CLI and domain workspace members | No UI Rust workspace member remains. |
-| Contracts | org-proto; legacy TypeScript mirrored in src/lib/proto.ts | Independent office/wire-shapes.test.ts remains. Shared org/work vectors live in crates/org-office/test-vectors and crates/org-work/test-vectors. |
-| Production availability | Shell capability gate and unavailable APIs | No native global, query parameter or remembered sample data enables production fakes. |
+| Concern                 | Choice                                                    | Notes                                                                                                                                            |
+| ----------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| UI framework            | SvelteKit 2 + Svelte 5 runes                              | Static SPA, adapter-static, ssr=false, index.html fallback.                                                                                      |
+| Language                | Strict TypeScript                                         | Runtime wire readers and feature adapters land separately.                                                                                       |
+| Styling                 | Tailwind CSS v4                                           | CSS-first configuration and tokens in src/app.css; dark theme.                                                                                   |
+| Look                    | Tailwind Plus application UI, ported to Svelte            | Licensed inside apps/agentic-org-ui, never as a separate UI kit.                                                                                 |
+| Components              | shadcn-svelte on Bits UI                                  | Shared primitives under src/lib/components/ui.                                                                                                   |
+| Icons and font          | Lucide/Heroicons; bundled Inter Variable                  | No remote font dependency.                                                                                                                       |
+| Package manager         | Bun                                                       | Frozen install, check, test and build scripts.                                                                                                   |
+| Unit tests              | Vitest                                                    | Domain behavior, test fakes, canonical vectors and platform boundaries.                                                                          |
+| Browser tests           | Playwright Chromium                                       | Retained flows use explicit test-owned dev composition; a second project checks the static production release.                                   |
+| Rust                    | Server, CLI and domain workspace members                  | No UI Rust workspace member remains.                                                                                                             |
+| Contracts               | org-proto; legacy TypeScript mirrored in src/lib/proto.ts | Independent office/wire-shapes.test.ts remains. Shared org/work vectors live in crates/org-office/test-vectors and crates/org-work/test-vectors. |
+| Production availability | Shell capability gate and unavailable APIs                | No native global, query parameter or remembered sample data enables production fakes.                                                            |
 
 Real HTTP feature adapters are separate deliveries. The shell defaults every product
 route to unavailable until its adapter is explicitly composed. Framework 404s retain
@@ -71,6 +71,6 @@ never a user's organization workspace.
 ## Follow-ups
 
 - Gateway routes, wire readers and per-feature factories follow the approved contracts.
-- TypeScript/Svelte lint and formatting tools are not configured; current checks use Svelte and TypeScript diagnostics.
+- TypeScript/Svelte lint and formatting run through `bun run lint` and `bun run format:check`; see [development tooling](../../DEVELOPMENT.md) for the reviewed legacy baselines, dependency audits, browser security suites and AI setup.
 - Browser security headers and server authorization belong to the gateway delivery; removed Tauri capabilities do not provide browser protection.
 - English copy remains inline; keyboard and screen-reader behavior is covered by UI primitives and browser tests.

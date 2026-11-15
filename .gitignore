@@ -9,3 +9,10 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Browser-agent snapshots and local session state
+.playwright-cli/
+.playwright/
+
+# Generated Claude skill links; canonical skills live in .agents/skills.
+/.claude/skills/

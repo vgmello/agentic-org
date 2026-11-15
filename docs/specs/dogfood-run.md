@@ -13,6 +13,20 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
 
+## Selected-model acceptance follow-up (pending)
+
+The [documentation authority map](../design/documentation-authority.md) distinguishes selected data requirements from existing runtime behavior. These are future migration/release checks, not results established by this documentation PR:
+
+- Preserve old stable IDs and explicit legacy reference mappings; typed task numbering follows document 06 rather than separate B-/REQ- counters.
+- Retain required home team, accountable project/task owner team, independent assignment, typed task details and feature lifecycle metadata without dropping unmatched source fields.
+- Rebuild selected projections from Git plus authorized protected sources; verify incomplete source coverage fails explicitly instead of fabricating receipts, usage, budget capacity or authority.
+- Import mixed-recipient directed threads without widening visibility, and verify original message hash codecs/envelopes separately from normalized hashes.
+- Preserve budget policy revisions, used extensions, notices and independent holds across restart/rebuild; a pending stop is not a worker acknowledgement, and releasing a budget hold does not resume another pause.
+- Verify target worktree permissions, Git metadata/credential isolation and safe cleanup before treating the runtime path migration as complete.
+
+Areas, Undo, memory/scheduling and process-engine acceptance are not newly selected here. Keep historical tooling, signing identities and the live spool cutover evidence; a documentation rename does not migrate them.
+
+
 **Revision 10 (2026-11-15):** HQ-only one-command initial setup, automatic service registration, separate HQ-issued satellite onboarding and target executable names. Adds coverage for SRV-33/34; preserves existing recovery and identity checks.
 
 **Revision 9 (2026-11-10):** follows `server-installation-and-access-ux.md` rev 5
