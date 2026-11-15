@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 11
+revision: 12
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -12,6 +12,10 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
+
+**Revision 12 (2026-11-15):** adds the product-validation matrix and evidence
+rules from Eden's validation playbook. It does not mark any unimplemented
+capability as shipped or replace the real-service prerequisites below.
 
 **Revision 11 (2026-11-15):** selected-data acceptance replaces multi-membership,
 teamless, Always-on and Undo pass conditions. Adds concrete §6a source/recovery
@@ -81,6 +85,41 @@ See [SRV criteria](server-installation-and-access-ux.md#6-acceptance-criteria).
 For every row record its result (§7), timestamp, exact release and evidence.
 Retain failure diagnostics with credentials redacted. A docs review is not evidence
 that any of these checks ran.
+
+### Product validation for a delivered UI slice
+
+In addition to the real-service walkthrough, compare each merged UI slice with
+its first parent in isolated throwaway worktrees. Record the exact commits and
+the cumulative capabilities delivered in each build. Apply a requirement only
+when its capability is in that build; a deliberately unavailable feature is
+**not applicable** to that comparison, with the reason, rather than a regression.
+This does not waive a Required row of the release run (§7).
+
+Use Chromium, Firefox and WebKit, one browser and one Playwright worker at a time.
+Check 1280×800, 800×600, 390×844 and 320×640, at normal and 200% text, with both a
+new organization and representative populated data. Verify the computed root
+font size for the enlarged-text run and that content text actually scales;
+resizing the viewport alone does not test text enlargement. Check production
+unavailable routes against the production build as well as supported mock flows.
+Never use a user's organization or credentials as fixtures.
+
+For each criterion record **met / partly met / not met**, before and after, with
+screenshots of every judged screen/state. Keep counts per build and per engine;
+do not pool them. Report a finding's severity, type, whether it predates the
+merge, reproduction steps, expected behavior and requirement, actual behavior,
+and evidence paths. Recompute summary counts from the raw results. A clean
+screenshot or a passing criterion does not by itself establish product fit.
+
+Walk the owner jobs in [the shell requirements](app-shell-ux.md) end to end as
+far as the delivered capabilities allow: identify what needs a decision, respond,
+assign or capture work, see who owns it, and inspect its result. Check that names,
+navigation, counts and resolution agree across screens, and that operational
+setup stays out of everyday work. Try long names, many rows, invalid/duplicate
+input, rapid repeat actions, back/forward, reload during a flow and resizing.
+Include empty, loading, error, success and disconnected states, keyboard/focus,
+contrast, target size, reduced motion and text reflow from the shared shell rules.
+Record product-fit and information-architecture failures even when the individual
+screen's older acceptance criteria pass. Recheck affected cases after a fix.
 
 ## 1. Install and access HQ
 

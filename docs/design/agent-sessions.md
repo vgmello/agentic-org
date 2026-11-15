@@ -1,6 +1,6 @@
 # Design: agent sessions (the office runs the agents)
 
-Status: **selected execution integration requirements, rev 4** (2026-11-15).
+Status: **selected execution integration requirements, rev 5** (2026-11-15).
 Documentation only: the complete runner, pool routing and production composition
 are not implemented by this design. [Execution](organization-data/11-model-profiles-and-agent-execution.md)
 owns the selected turn/process contract; [employees](organization-data/04-agent-structure.md),
@@ -429,6 +429,20 @@ the selected entity-numbering model by these illustrative labels.
 - **An office-run agent that a person starts by hand** (`bin/agent`, a terminal) has no session token, so it can't bind to messaging as that agent. To work with an office-run agent, a person uses take-over. That's documented for the owner.
 
 ## Messaging (ADR-0003) with office-run sessions
+
+**Target delivery policy (rev 5).** Apply [Chat's noninterrupting delivery
+requirements](../specs/chat-ux.md#42-system-notices-and-delivery). Message urgency
+orders delivery and badges; it never authorizes urgent steering, cancellation or
+injection into a busy turn. Queue messages for the next permitted boundary;
+paused agents remain paused and hand-run agents read through their own message
+checks. A reply can satisfy an existing wait without creating a second turn.
+The earlier `Session::Send` urgent/NeedsInterrupt behavior below is runtime-port
+compatibility evidence and remains available only through an explicitly
+admitted control path, not automatically from message priority. Explicit owner
+Interrupt/Stop and mandatory security, offboarding, fencing and recovery stops
+retain their selected authority. A queued message does not admit an automatic
+wake or bypass an independent hold/permit.
+
 - For a session the office runs, the office **is** the wake path. It sends "you have messages" as a turn, at a natural break, using the same urgent/normal triage rules. The inbox hooks (codex-dev's adapters) stay for sessions a person started interactively, such as ours today.
 - **Session token.** An agent with a `run_mode` is office-run. `msg.bind` as it requires **both**:
   - the live run's `ORG_SESSION_TOKEN` (ADR-0003 M-A, amended). `agent-os` reads it from its environment.
