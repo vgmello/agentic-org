@@ -1,61 +1,69 @@
 ---
-process: branch-and-merge     # the match key for overrides, unique per level and scope (a selected organization record receives a stable UUIDv7 ID; existing IDs are preserved)
-name: Branch, review and merge
+process: branch-and-merge
+name: Branch, review and integration
 kind: process
-level: organization          # repository seed metadata; selected structural scopes are organization | team | project
-version: 1
-owner: ada (Staff Engineer)
+level: organization
+version: 2
+owner: Codex lead
 status: active
-summary: One open branch per agent; build, check, your own review, the reviewer's READY, the lead's go, merge into the release branch, clean up.
-applies_to: every agent that changes a repository
-overridable: true             # a team or project may override this process, or add its own
+summary: Implement, verify and review locally, then integrate all v1 features into v1-integration.
+applies_to: every agent that changes this repository
+overridable: true
 ---
 
-> Kept in this repository (`docs/processes/`) as repository contributor instructions; selected organization process records belong in the remote organization repository (Processes, `docs/specs/processes-ux.md`). Here the release branch is `v1` and the lead is ada.
+# Branch, review and integration
 
-# Branch, review and merge
+The owner selected solo Codex development with local subagents. Codex is the lead
+and owns implementation and integration across all repository areas. Named team
+ownership, external messaging, external reviewer waits and Ada approval are
+superseded for current work. Follow [AGENTS.md](../../AGENTS.md) and the installed
+[kit workflow](../../.agent-kit/WORKFLOW.md); no PR is required.
 
-These instructions govern work on this software repository. Their legacy seed
-front matter is not an accepted organization-data payload. When materializing a
-selected process record, use the stable-ID path, `key`, `schema_version`, `revision`,
-`kind`, `title`, scope IDs, lifecycle and attribution fields in
-[organization structure](../design/organization-data/01-organization-structure.md).
-Preserve the explicit `overridable` value. That structural mapping neither
-activates a process engine nor changes this repository's review requirements.
+These are software-repository contributor instructions; their legacy seed front
+matter is not an accepted organization-data payload. Materialized process records
+use the selected stable-ID path, key, schema_version, revision, kind, title, scope,
+lifecycle and attribution fields and preserve the explicit overridable value.
+Selected organization process records remain governed by [organization structure](../design/organization-data/01-organization-structure.md)
+and [Processes UX](../specs/processes-ux.md); changing this workflow does not
+activate a product process engine or migrate organization data.
 
-How every change reaches the release branch. Follow it from the moment you start work.
+## 1. Branch and scope
 
-## 1. One branch at a time
-- You have exactly **one open working branch**. Don't start new work, open another branch or stack branches until that branch is merged into the release branch.
-- Start every branch **from the release branch**: `git fetch origin && git switch -c <you>/<topic> origin/<release>`, in your own worktree when the repository's rules say so (`git worktree add ../<repo>-<you> -b <you>/<topic> origin/<release>`). Never branch in a checkout another agent uses.
-- Keep it **small**: one reviewable piece. Merge often; don't let work pile up.
+Start a small feature branch from `origin/v1-integration`. Keep one active
+implementation branch; preserve blocked branches and their checkpoints, then move
+to independent work. Use separate worktrees for concurrent writers. Never delete
+unmerged work or overwrite another local worker's changes.
 
-## 2. Build and check
-- Commit in small steps; every commit builds.
-- Keep the branch current: merge `origin/<release>` into it regularly (at least daily).
-- Before asking for review, all of the project's checks pass (format, lint, tests; for UI work also the UI checks and end-to-end tests).
+## 2. Implement and verify
 
-## 3. Your own review
-- Run a **fresh, independent review** of the whole branch diff (a reviewer that gets the diff and the requirements, not your conclusions).
-- Verify each finding yourself; fix the confirmed ones; note anything you deliberately leave.
+The lead owns the complete vertical feature, including applicable UI, backend,
+database, contracts and integration. Use kit task-routing and skill-routing;
+delegate bounded implementation work when useful within the kit's writer limit.
+Keep shared interfaces explicit and update affected implementations together.
 
-## 4. Independent review
-- Send the **exact commit** to the team's reviewer with: the repository, the branch, the base, the commit, and the design or spec it implements.
-- The reviewer answers **READY** or **CHANGES NEEDED** for that exact commit. Fix, then ask again. Any later commit needs a new verdict.
-- **If the reviewer doesn't respond within 30 minutes**, tell your lead; the lead spins up another reviewer so work never stalls.
+Run current source-bound kit checks and the affected repository checks from
+AGENTS.md. Rust changes require formatting, workspace Clippy and workspace tests;
+app changes require type checks, tests, build and relevant browser verification.
+Documentation-only changes require relevant instruction/catalog checks and review.
+Tests use disposable roots, never user organization workspaces.
 
-## 5. The lead's go
-- Ask your lead for the go with: the branch, the commit, the reviewer's READY, and the last lines of every check.
-- The lead checks that the change fits the design and the contracts.
+## 3. Review locally
 
-## 6. Merge
-- After the go: `git merge --no-ff` into the release branch and push it (or the lead merges and pushes for you, if your session can't push).
-- Contract changes (shared protocol crates) go through their owner, as small additive changes.
+Use the kit review-cycle: fresh independent local review, confirmed fixes and
+rechecks, original-author intent validation, then the separate fresh final local
+review. Keep the author context and provide the exact branch, base, commit,
+contract and relevant UI evidence. A later source change needs current review and
+check evidence. Diagnose failed tools or repeated findings locally; do not wait
+for offline developers or send them coordination messages.
 
-## 7. Clean up
-- After the merge, the merged branch and its worktree are deleted. Your lead confirms the branch is fully in the release branch before anything is deleted; nothing unmerged is ever deleted (closed unmerged work is archived as a tag first).
-- Then start your next branch from the release branch (back to step 1).
+## 4. Integrate and continue
 
-## When things go wrong
-- **The pipeline stalls** (the reviewer or the messaging relay is down): tell your lead at once.
-- **The release branch is far behind:** the lead may integrate pending branches centrally (an interim rule), with reviews following as fix-ups.
+After local acceptance and required checks, the Codex lead merges with
+`git merge --no-ff` into `v1-integration` and pushes that branch. No external
+reviewer READY or Ada go is required. Verify the remote commit and integrated
+source. `v1-integration` is the shared branch for all v1 features; release `v1`
+and `main` are not integration targets without an explicit release instruction.
+
+Verify a completed branch is fully integrated before cleanup; preserve blocked
+and unmerged work. Continue the next feature from the updated integration branch.
+A partial feature or successful merge does not establish that v1 is complete.
