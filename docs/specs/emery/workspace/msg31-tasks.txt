@@ -1,0 +1,28 @@
+The owner asked for this today: Tasks rev 1. The PRD is projects/ac/agents/ac-product-manager-emery/knowledge/prds/tasks-v1.md (committed). It's also recorded in the IA as D38, and AC-IA04-1 is amended (ID unchanged).
+
+What it decides:
+- T1, Following: a new sidebar item under Inbox, plus a Home card between Needs you and Projects. It lists the tasks you asked for, created or follow, with a neutral "updated since you last looked" badge. The Inbox stays "needs you now".
+- T2, Asked by: derived on the server from a message addressed to the agent (`--from-message`).
+- T3, six statuses: To do, In progress, Blocked (waiting on whom), In review (a reviewer other than the assignee, and the outcome), Done (needs the outcome) and Cancelled.
+- T4, review as a status on the same task. Once TK-5 ships, it supersedes D26's "real review state after v1.0".
+- T5, one assignee at a time. Reassignment is recorded and returns the task to To do.
+- T6, three kinds of text:
+  - the brief, versioned, with a reason required for edits after To do;
+  - shared comments, with edit and soft delete;
+  - private notes, visible only to the author and the owner, enforced on the server across every read path, with note-event text redacted.
+- T7, one level: a subtask can have steps but no subtasks.
+- T8, figures derived from events. Agents never type times.
+- T9, `org-agent tasks` (the owner's noun). It keeps the verbs from tasks-projects-docs §5 and adds review, the outcome, block --on, and comment and note CRUD.
+
+Asks:
+- Rowan: §6 items 1-14, the technical design. Note §6.13: the work "Blocked on you" row and a task hand-off row have to ship with task statuses and reassignment, so D26's "blocked work always has an Inbox item" holds. In particular: verifying Asked by; notes privacy across every read path; "last seen"; a work.list read for followed and Asked by; the wire's CommentKind `note` clashing with private notes; and the nav freeze rev 5 change.
+- Eden: the Following page and the Home card, the two composers and the private-note styling, the status icons, the "New since you last looked" divider, and the reviewer controls.
+- ada: sequencing (§8). My recommendation for v1.0:
+  - TK-2 and TK-3;
+  - TK-10a, a minimal CLI, without which Following stays empty;
+  - TK-6 and TK-8, whose rules TK-10a's assign and --parent need;
+  - TK-4;
+  - TK-1, including "last seen";
+  - TK-9's derived figures and outcome;
+  - TK-5, if it fits.
+  TK-7 (private notes) is next. It's Tier A, and it depends on a decision about ADR-0003 risk M-A, because hand-run agents can impersonate each other.

@@ -1,0 +1,93 @@
+diff --git a/projects/ac/agents/ac-product-designer-eden/journal/2026-11-12.md b/projects/ac/agents/ac-product-designer-eden/journal/2026-11-12.md
+index 9bbb757..70eb8af 100644
+--- a/projects/ac/agents/ac-product-designer-eden/journal/2026-11-12.md
++++ b/projects/ac/agents/ac-product-designer-eden/journal/2026-11-12.md
+@@ -37,3 +37,26 @@
+   - `/` isn't shipped yet, so it ships with N and the switch.
+   - 4 review rounds; the last one is READY.
+   - Told Rowan, and asked Emery to amend AC-IA03-3 and the `/` line in AC-IA19-4.
++- 04:30 BUG-94: pinned the Chat sidebar row layout with Jules.
++  - The row is the icon followed by a content column. Labels wrap only between words, and the count wraps under the label.
++  - The icon cap is 32 CSS px (`max-w-[32px] max-h-[32px]`).
++  - This covers channels, groups and DMs.
++  - My earlier `break-words` fix split words mid-word, so I withdrew it. N1 in validation-chat-no-emoji.md is corrected.
++  - Jules's real-20px run (960/200) matches the pin, and I approved the product side.
++- 04:45 BUG-95: Jules measured the Announcement unit at 320/200%. It is 8.4 px wider than its column, even on a line of its own.
++  - My pinned order: keep the word and icon in one nowrap unit, and let the meta line wrap.
++  - If that isn't enough, the header row goes full-width under the avatar, below 640 only (superseded at 05:20: decided by the available width, not the viewport).
++  - Both pins are now rules in DS §22.
++- 05:00 #73 part 1 done: non-Chat pseudo-icons (08db0992 vs 0a87472f) are met, with no regressions.
++  - x-mark and chevron-right are byte-equal to Heroicons, names are unchanged, 80/80 removes work, and targets went from 16×20 to 24×24.
++  - New S4s: the breadcrumb chevron is gray-500 and sits low; mini artwork is drawn at 16 px.
++  - Pre-existing: the fitted chart shrinks remove buttons to 18–19.6 px, and focus drops to `<body>` after a remove.
++  - Sent 10 rows to ada (01M76T4C), including details added to BUG-112, BUG-89 and BUG-70. Catalog v11.
++  - Part 2 (A-OF1) waits for its merge.
++- 05:20 The review of my §22 rules and the #73 report was CHANGES NEEDED, and I verified every point.
++  - My "never scale mini to 16" rule contradicted the DS's own mini `size-4` uses, so I dropped it, and the N2 row with it.
++  - §5 already forbids text breadcrumbs, so BUG-113's fix is now the "← Projects" back link, and BUG-116 is superseded. BUG-115 goes to S4, because Tab continues in place.
++  - The overflow-wrap rule is unified as ids, paths and typed names (§14, §22).
++  - The breadcrumb S4 in the 05:00 entry is reclassified as pre-existing (§5).
++  - Corrected ada's rows (01M76TAJ).
++- 05:20 BUG-95 has a single pin with Jules, Rowan and ada (01M76TA8): ada's wrap-by-flex, which covers both 320/200 and 960/200. Final technical pin: Rowan's 01M76TK6. A container query on MessageRow in em, CSS only, with DOM order kept. That is now in §22. The word is never broken, and I allowed a 24 px icon cap only as a sub-pixel last resort. Rowan's final pin withdraws the cap, so §22 has no exception. Jules is applying ada's rem container-query fallback (a threshold of 10.77 rem, local to MessageRow), because a max-content wrapper would also measure the message body.
+diff --git a/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md b/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
+index 86d6af8..cc0bcbd 100644
+--- a/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
++++ b/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
+@@ -216,7 +216,7 @@ Source: P-home agent list and feed. App: `lib/components/DividedRow.svelte` (own
+ | Hover | Linked rows only, subtle. (Addition: the prototype has none; Tailwind Plus uses this.) | `hover:bg-white/[0.025]` — meta stays ≥ 4.86:1 |
+ | Row actions | Not inline buttons in every row. Use a trailing `DropdownMenu` kebab (mini `ellipsis-vertical`, `size-5 text-gray-400`, 36 px target, `max-[639px]:size-11` below 640) or the detail page. | |
+ | Empty list | One `<li>` centred: `px-4 py-12 text-center text-sm text-gray-400 sm:px-6 lg:px-8`, e.g. "No members match “sam”." | |
+-| Paths and ids | Home folders, file paths and ids in rows, meta lines and detail lists wrap anywhere instead of pushing the page sideways (M3). | `[overflow-wrap:anywhere]` (plus `min-w-0` on the flex child) |
++| Paths and ids | Home folders, file paths and ids in rows, meta lines and detail lists wrap anywhere instead of pushing the page sideways (M3). Names people typed may too (§22); fixed labels never do. | `[overflow-wrap:anywhere]` (plus `min-w-0` on the flex child) |
+ 
+ **Feed row** (Activity, Home Recent activity, profile and team Activity tabs): `px-4 py-4 sm:px-6 lg:px-8`; line 1 `flex items-center gap-x-3`: avatar `size-6` (no presence dot on Home's Recent activity, keeping Home's only amber in section 1, §2; elsewhere the dense-place rule of §7 applies), actor `flex-auto truncate text-sm/6 font-semibold text-white` (link `hover:underline` to the member profile), time `<time class="flex-none text-xs text-gray-400">5m</time>` (**Fix**: prototype gray-600 is 1.9:1); line 2 `mt-3 truncate text-sm text-gray-400` with a `title` holding the full text. A run entry expands in place (a disclosure button, `aria-expanded`) to show its log summary: trigger, duration, outcome (AC-IA12-2).
+ 
+@@ -473,7 +473,7 @@ Inter Variable (`@fontsource-variable/inter`, already in `app.css`). Mono: the s
+ | `text-2xl` / `text-4xl` | 24 / 32 · 36 / 40 | 600, `tracking-tight` | Stat numbers only (P-agent stats) |
+ | `text-3xl` | 30 / 36 | 600, `tracking-tight` | Full-screen error and onboarding titles only (P-error) |
+ 
+-Rules: text inputs `text-base` below 640 px (no iOS zoom), `sm:text-sm/6` above. Nothing smaller than 12 px except decorative initials. Truncate single-line titles with `truncate` + `title`; never break words mid-letter (`[overflow-wrap:anywhere]` only on ids/paths). Sentence case everywhere. Numbers that change use `tabular-nums`.
++Rules: text inputs `text-base` below 640 px (no iOS zoom), `sm:text-sm/6` above. Nothing smaller than 12 px except decorative initials. Truncate single-line titles with `truncate` + `title`; never break words mid-letter (`[overflow-wrap:anywhere]` only on ids, paths and names people typed, §22). Sentence case everywhere. Numbers that change use `tabular-nums`.
+ 
+ ---
+ 
+@@ -672,6 +672,14 @@ Also: 200% text zoom must not clip or overlap (rows wrap, pills keep whole words
+ | List / Board | `list-bullet` / `view-columns` | Work layout toggle |
+ | Runtime contexts | `cpu-chip` | Only for runtime and machine contexts (Agent setup, Runtime field). **Never as an agent's avatar** or a marker that a member is an agent: the kind is a word (§8). |
+ 
++- **Icon and words wrap together (Eden, 2026-11-12; BUG-94, BUG-95).** At 200% text and narrow widths, an icon never sits alone on a line.
++  - **Nav rows with an icon** (Chat sidebar channels, groups, DMs, Needs you, Mentions, Threads) are laid out as the icon followed by a content column (`flex items-start gap-x-3`; the icon gets `shrink-0`; the column gets `min-w-0 flex-1`).
++    - The label wraps only between words. Never use `break-words` or `overflow-wrap:anywhere` on fixed labels. `overflow-wrap:anywhere` is only for ids, paths (§6) and names people typed.
++    - The count follows the label and wraps below it, aligned to the start.
++    - Chat sidebar nav icons are capped at 32 CSS px (`max-w-[32px] max-h-[32px]`; a rem cap would grow with the text). The app sidebar (§3) is unchanged.
++  - **An inline icon and its word** (a kind badge such as Announcement) form one `inline-flex items-center whitespace-nowrap` unit, and the line around it wraps (`flex flex-wrap gap-x-2 gap-y-1`).
++    - If the unit is still wider than its column on a line of its own, the metadata group (name, kind, time) moves to a full-width row under the avatar. This is decided by the message row's own width, not by a viewport breakpoint. It's a container query local to the message row (MessageRow), with its threshold in em: the avatar, the gap and the kind group's intrinsic width, plus 0.5em. The query is CSS only, and the DOM order stays the same (WCAG 1.3.2). The threshold therefore follows the text size and covers 320 and 960 at 200%. The body stays in its column, and wide rows are unchanged.
++    - Never shrink the text or the icon, and never break the word.
+ - **No emoji anywhere** in the UI: labels, buttons, statuses, empty states, notices, sample and mock data, seeded content (PRD §8, E1–E3); pseudo-icons (×, ↳, ›, @, ✓, ★) become Heroicons. **Agent-authored text** (messages, summaries, journal and memory excerpts) is rendered with emoji sequences removed, at render only, never in storage (D7, D19, AC-IA16-1). **Text a person typed** is shown exactly as typed, emoji included.
+ 
+ ---
+diff --git a/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md b/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
+index cd324e8..bc6ad14 100644
+--- a/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
++++ b/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
+@@ -83,8 +83,8 @@ Requested by ada (01M76EH3). Jules, 14 Chat emoji and Chat pseudo-icons → Hero
+ 
+ | Id | Sev | Where | What I saw | Fix |
+ | --- | --- | --- | --- | --- |
+-| N1 | S3, regression | Chat sidebar, Needs you and Mentions, 200% text, every width, both engines | The row gained `flex-wrap`, and with the 24 px icon (48 at 200%) "Mentions" wraps under its icon and the Needs you count badge drops to its own line. Row height grows 72→120 px (Mentions) and 120→160 px (Needs you). Before, "@ Mentions" stayed on one line. §20: 200% must not reflow a label away from its icon. `shots/sidebar-1280-200-chromium-after.png` vs `-before.png` | Drop `flex-wrap` on these rows. Use `flex items-start gap-x-3`; the icon gets `shrink-0` and the label `min-w-0 flex-1 break-words`, so the label wraps its own text beside the icon. The count gets `shrink-0 ml-auto`. |
+-| N2 | S4, regression | Message kind badge (Announcement), 960/200% in both engines | The megaphone sits alone on a line above "Announcement". §22 says the icon stays with its word. `shots/kindbadge-960-200-chromium-after.png` | Wrap the icon and the kind word in one `inline-flex items-center gap-x-1 whitespace-nowrap` span; the rest of the meta line can still wrap. |
++| N1 | S3, regression | Chat sidebar, Needs you and Mentions, 200% text, every width, both engines | The row gained `flex-wrap`, and with the 24 px icon (48 at 200%) "Mentions" wraps under its icon and the Needs you count badge drops to its own line. Row height grows 72→120 px (Mentions) and 120→160 px (Needs you). Before, "@ Mentions" stayed on one line. §20: 200% must not reflow a label away from its icon. `shots/sidebar-1280-200-chromium-after.png` vs `-before.png` | **Superseded 12 Nov (BUG-94 pin with Jules; design-system §22):** the original fix here, `break-words` on the label, split words in the middle at 200%, so I withdrew it. The row is now the icon (`shrink-0`, capped at `max-w-[32px] max-h-[32px]`) followed by a content column (`min-w-0 flex-1`). The label wraps only between words, and the count wraps under the label, aligned to the start. This applies to channels, groups and DMs too. |
++| N2 | S4, regression | Message kind badge (Announcement), 960/200% in both engines | The megaphone sits alone on a line above "Announcement". §22 says the icon stays with its word. `shots/kindbadge-960-200-chromium-after.png` | Wrap the icon and the kind word in one `inline-flex items-center gap-x-1 whitespace-nowrap` span; the rest of the meta line can still wrap. **Update 12 Nov (BUG-95):** at 320/200% the unit is 8.4 px wider than its column even on a line of its own. It also overflows at 960/200%. So the metadata group wraps by available width onto a full-width row under the avatar (design-system §22). |
+ | N3 | S4, regression | Attachment chip on a sent message: 320/100%, and 320/640/960 at 200% | `inline-flex items-center` centres the clip on the whole wrapped filename (10–60 px low). Before, it sat on the first line. `shots/sentchip-320-100-chromium-after.png` | `items-start` on the chip, with the icon nudged to the first line's centre (`mt-0.5` at micro 16 on `text-xs/5`). |
+ | N4 | S4 | Icon colour (§22: the icon takes the control's colour, `text-white` when current or pressed) | The `HeroIcon` default `text-gray-400` wins over the context colour. On the current Needs you row the icon is gray beside white text. On a pressed reaction chip the icon is gray beside the indigo count. In the kind badge it's gray-400 beside gray-300 text. `shots/after-webkit-announcement-pinned-reacted.png` | Let the icon inherit (`text-current`, or no colour class on the component) and colour the control. |
+ | P1 | S3, pre-existing | Reaction chips ("Seen, 1") and the hover toolbar (React Seen, React Looking, Reply, More), both builds | Keyboard focus on a chip shows no change: the static `outline-1 outline-white/10` stays. The toolbar shows the faint shadcn `ring-ring/50` (about 2:1). §17 asks for the indigo-400 2 px outline. `out/after-webkit-1280-100/focus-seen-chip.png` | Apply the §17 focus classes (`focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400`) to both. |
+diff --git a/projects/ac/agents/ac-product-designer-eden/tasks/BACKLOG.md b/projects/ac/agents/ac-product-designer-eden/tasks/BACKLOG.md
+index 84f34b4..834405f 100644
+--- a/projects/ac/agents/ac-product-designer-eden/tasks/BACKLOG.md
++++ b/projects/ac/agents/ac-product-designer-eden/tasks/BACKLOG.md
+@@ -76,4 +76,4 @@ Status values: `todo` · `in-progress` · `blocked` · `done`
+ | 70 | Validate Chat no-emoji (Jules; 14 Chat emoji → Heroicons, guards), merged at v1 ef0ce00b, against my mapping (bell for Needs you, micro 16 for chips/badges/reactions, aria-labels, keep "Ask"): Chat nav/asks/attachments/reactions at 320/640/960/1280, 100/200% text, WebKit and Chromium, at least 3 parallel checks; findings as BUG rows to ada (ada, 11 Nov, msg 01M76EH3) | done | ac-staff-engineer-ada | DoD: validation report in knowledge/research/, BUG rows to ada, catalog updated. | DoD (goal): validation report knowledge/research/validation-chat-no-emoji.md with verdict, requirement table and findings I verified myself; at least 3 parallel checks across 320/640/960/1280, 100/200% text, WebKit and Chromium, before cd1c2ce8 vs after ef0ce00b; BUG rows sent to ada; catalog updated; backlog and journal updated; committed locally. Done 12 Nov: met; report knowledge/research/validation-chat-no-emoji.md (3 parallel checks, 64 layout runs, WebKit+Chromium, findings verified on screenshots); 1 S3 + 3 S4 new, 2 pre-existing, sent to ada (01M76H4N); catalog v9 (9 Chat screens). |
+ | 71 | Design-system v2.2 for Emery's IA v2 rev 4.1 decisions (msg 01M76FYH): New ▾ single key N with a Single-key shortcuts switch (WCAG 2.1.4), refinement labels removed, Sign out only with owner sign-in, Review requested Approval, short-window tight step | done | ac-product-manager-emery | DoD: design-system.md amended, diff reviewed by me, fresh independent whole-diff review READY, committed locally, Emery replied and 01M76FYH done. Done 12 Nov: committed a2d9a3e after 7 independent review rounds (final READY). Added: N guards (no Ctrl/Alt/⌘, KeyN fallback, IME), N ships only with the switch, Request changes asks inline, stable tight-step undo. Emery replied (01M76HK9), 01M76FYH done; open to her: an AC for the switch, Approve's reply text. |
+ | 72 | Remote workers: design a two-way, auditable lead ↔ remote-worker message channel, a visible 'remote' presence state and how work and results come back (gaps seen by Dakota: local→cloud send missing, cloud sees only pushed files, cloud reports only by send_message or push). Read Dakota's requirements note under ac-support-engineer-dakota/knowledge/ when it lands; tell ada what the design needs from engineering | todo | ac-staff-engineer-ada | FYI, not urgent, owner hasn't scoped it (01M76K23). |
+-| 73 | Next validation batch (at least 3 parallel checks): Jules's non-Chat pseudo-icons and Avery's A-OF1 (Offices; copy "This Mac (you're here)" as agreed with Rowan), as soon as ada reports each merged | todo | ac-staff-engineer-ada | ada 01M76KPC; A-OC1 rows filed as BUG-101..108 (+BUG-109 Chromium timeout, being diagnosed). Set the goal when the first merge lands. |
++| 73 | Next validation batch (at least 3 parallel checks): Jules's non-Chat pseudo-icons and Avery's A-OF1 (Offices; copy "This Mac (you're here)" as agreed with Rowan), as soon as ada reports each merged | in-progress | ac-staff-engineer-ada | ada 01M76KPC; A-OC1 rows filed as BUG-101..108 (+BUG-109 Chromium timeout, being diagnosed). Set the goal when the first merge lands. Pseudo-icons merged at v1 08db0992 (ada 01M76QKH). **Part 1 done 12 Nov:** goal "validation report knowledge/research/validation-non-chat-icons.md (08db0992 vs 0a87472f) with verdict, requirement table, findings verified by me; 3 parallel checks incl. 320/200% and WebKit+Chromium; BUG rows to ada; catalog updated and republished; backlog and journal; committed locally". Met, no regressions; rows to ada (01M76T4C), filed BUG-113..118, corrected after review (01M76TAJ): BUG-113 = §5 back link replaces the breadcrumb, BUG-116 superseded, BUG-115 S4; catalog v11 (project-beacon, org-chart). Part 2: A-OF1 when ada reports it merged. |

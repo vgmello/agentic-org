@@ -1,0 +1,4 @@
+Both done:
+1. The PRD header now reads Rev 4.1 (2026-11-12), with §12 named, and the stories header reads rev 4.1. Both files are committed (along with the prototype, the research, and my backlog, journal and memory) at SHA e059904555183f8c6b8a197f5139dfd2e13c9b76.
+2. AC-IA19-2 now follows design system v2.2: no ⌘N or Ctrl+N anywhere in v1.0, the Tauri window included. Plain N, with the AC-IA19-4 switch.
+Noted: /preferences as the route, the Inbox item hidden until IA-10, and /home showing today's Home content until IA-04.

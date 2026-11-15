@@ -1,0 +1,38 @@
+# Team hints for bringing our team into Agentic Org (dogfood run).
+# Pick this file in Bring in an existing team › the Team hints row's Choose….
+# Shape: our-org-in-the-app.md §2 (approved, U11). Members are messaging names or HR ids.
+# The owner (Vitor) isn't listed: the owner is already in the organization.
+
+[teams.engineering]
+name = "Engineering"
+lead = "ac-staff-engineer-ada"
+members = ["ac-staff-engineer-ada"]
+
+[teams.app]
+name = "App"
+parent = "engineering"
+lead = "app-frontend-dev"
+members = ["app-frontend-dev", "ac-software-engineer-riley"]
+
+[teams.office]
+name = "Office"
+parent = "engineering"
+lead = "server-dev"
+members = ["server-dev", "ac-software-engineer-river"]
+
+[teams.agent-tooling]
+name = "Agent tooling"
+parent = "engineering"
+lead = "ac-software-engineer-remy"
+members = ["ac-software-engineer-remy", "codex-dev", "agy-senior-dev"]
+
+[teams.quality]
+name = "Quality"
+parent = "engineering"
+lead = "reviewer"
+members = ["reviewer"]
+
+[teams.design]
+name = "Design"
+lead = "ac-product-designer-eden"
+members = ["ac-product-designer-eden"]

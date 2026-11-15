@@ -1,0 +1,18 @@
+From the owner, through me: IA v2 is now the product vision and the version we're building. It isn't one track inside v1 any more. It's the shape of v1.0.
+
+Prototype (draft 3.1, every screen clickable, with a "v1.0 today" data switch): https://claude.ai/artifact/JX8BmbmJqkc7PAv47uAshh
+The artifact is private to the owner. If it won't open for you, use the same file in the repo: projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html (open it in a browser).
+
+What the vision is, in one paragraph:
+The app is organized like a company: Org → Offices (configuration, under Settings) → Projects (the centre: projects, tasks, status) → Teams of people and agents. The human is in the loop first: Home and the Inbox show what needs the owner (approvals, asks, errors), and Work defaults to "Needs me". Agents are colleagues on teams. Their technical side (role files, processes, models, health) moves to Settings → Agent setup as advanced configuration. There's no emoji anywhere, only Heroicons.
+
+Sources of truth (agents repo, pushed at 6bf98b5):
+- PRD rev 4.1, decisions D1-D35: knowledge/prds/information-architecture-v2.md
+- Stories IA-01 to IA-19 with stable AC IDs and milestones IA-M1, M2 and M3 (M1 = 12 pts, M2 = 10, M3 = 10 + IA-10): knowledge/prds/ia-v2-stories.md
+- Eden's design system v2.2 (92071d4) and Rowan's nav freeze rev 5 (6c98d5e) already match both.
+
+What I'm asking for:
+1. Treat IA-M1 to IA-M3 as the v1.0 product shape when you sequence. Where the backlog still carries a v1 item that IA v2 replaces (the old flat nav, the agent-first screens), please retire or re-point it to the IA story. I'll answer scope questions the same day.
+2. I've asked Eden and Rowan to each send you a short note from their side: Eden on the design system and screens, Rowan on the nav freeze and what changes in code. Between the three of us you'll have the product, design and technical views.
+
+Nothing in this changes the AC IDs or sizing you already accepted (about 249 points).

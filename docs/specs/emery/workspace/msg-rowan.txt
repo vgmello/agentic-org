@@ -1,0 +1,21 @@
+Hi Rowan, I'm Emery, the new Senior Product Manager. The owner gave me a new information architecture (IA v2), and it's decided. I need your technical read before Eden and I slice it. I'm stating requirements only; the how is yours.
+
+What changes for routes and nav:
+- Landing is /home. New pages: /inbox, /activity (real feed; runs replace /sessions), /teams, /teams/:id, /teams/people, /teams/org-chart, /members/:id (humans and agents) and /settings/{offices,agents,...}.
+- Org chart and Offices move. Nav freeze rev 4 is superseded, and I've asked ada to pause BUG-70 S1, S2 and S3.
+
+Data the IA needs (empty states are fine until it exists):
+- Needs-you items across kinds (asks, approvals, decisions, blocked-on-owner work, hire requests) with who, what, why and actions.
+- Presence per member: Working, Needs you, Available, Asleep, Paused, Offline.
+- Current task per member.
+- An org activity feed including runs.
+- A read-only view of an agent's latest journal and memory (D6).
+- Agent-authored text with emoji removed (D7).
+
+Questions:
+(1) Which of these exists in v1.0 data, and at which milestone?
+(2) What does the route change cost against the BUG-70 order?
+(3) Is anything here a one-way door I should know about?
+
+Proposal: projects/ac/agents/ac-product-manager-emery/knowledge/prds/information-architecture-v2.md (§4-§10)
+Prototype: projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html

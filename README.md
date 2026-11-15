@@ -1,5 +1,7 @@
 # Agentic Org
 
+See the [project documentation](docs/README.md) for requirements, UX specs, architecture decisions and supporting knowledge.
+
 **V1 direction changed 2026-11-09:** the target is a standalone Rust server
 on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
 See the [server design](docs/design/standalone-server.md) and [deletion inventory](docs/design/standalone-server-removal-inventory.md).

@@ -1,0 +1,1071 @@
+{
+ "screens": [
+  {
+   "id": "welcome",
+   "history": [],
+   "kind": "app",
+   "area": "Onboarding",
+   "title": "Welcome",
+   "route": "/welcome",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/welcome-desktop.jpg",
+    "hash": "f3b2fc0a1d"
+   },
+   "phone": {
+    "src": "img/welcome-phone.jpg",
+    "hash": "17d8ddfb2f"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "create",
+   "history": [],
+   "kind": "app",
+   "area": "Onboarding",
+   "title": "Create organization",
+   "route": "/create",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/create-desktop.jpg",
+    "hash": "f1313f4846"
+   },
+   "phone": {
+    "src": "img/create-phone.jpg",
+    "hash": "a15e09b907"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "not-found",
+   "history": [],
+   "kind": "app",
+   "area": "Shell",
+   "title": "Page not found",
+   "route": "/nope",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/not-found-desktop.jpg",
+    "hash": "622e88c481"
+   },
+   "phone": {
+    "src": "img/not-found-phone.jpg",
+    "hash": "4885b879b1"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "menu-drawer",
+   "history": [],
+   "kind": "app",
+   "area": "Shell",
+   "title": "Menu drawer (phone)",
+   "route": "any page, Menu",
+   "state": "implemented",
+   "note": "",
+   "phone": {
+    "src": "img/menu-drawer-phone.jpg",
+    "hash": "562f6b4659"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "chat",
+   "history": [
+    {
+     "commit": "053702e",
+     "updated": "2026-11-12T08:10Z"
+    },
+    {
+     "commit": "ef0ce00",
+     "updated": "2026-11-12T00:04Z"
+    },
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Chat home",
+   "route": "/chat",
+   "state": "validated",
+   "note": "Chat BUG-134/135/136 validated (6072bf08): the header reflows with no sideways scroll at 320 px and any text size, long titles wrap at word or hyphen breaks, + New message and + Add channel keep the icon on the first text line. Open (pre-existing): the drawer heading breaks mid-word at large text. See validation-bug-129-chat-134-136.md.",
+   "desktop": {
+    "src": "img/chat-desktop.jpg",
+    "hash": "6c8d69707b"
+   },
+   "phone": {
+    "src": "img/chat-phone.jpg",
+    "hash": "0846574a3c"
+   },
+   "commit": "6072bf0",
+   "updated": "2026-11-12T12:58Z"
+  },
+  {
+   "id": "chat-channel",
+   "history": [
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Channel",
+   "route": "/chat?c=c-general",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-channel-desktop.jpg",
+    "hash": "0eb5e20d48"
+   },
+   "phone": {
+    "src": "img/chat-channel-phone.jpg",
+    "hash": "21f8aa013a"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-thread",
+   "history": [
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Thread",
+   "route": "/chat?c=c-general&thread=m-2",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-thread-desktop.jpg",
+    "hash": "238dda1528"
+   },
+   "phone": {
+    "src": "img/chat-thread-phone.jpg",
+    "hash": "4e58bcc1a4"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-search",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Search",
+   "route": "/chat?q=",
+   "state": "validated",
+   "note": "",
+   "desktop": {
+    "src": "img/chat-search-desktop.jpg",
+    "hash": "4f3b0810d3"
+   },
+   "phone": {
+    "src": "img/chat-search-phone.jpg",
+    "hash": "861a8dc32a"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "agents",
+   "history": [
+    {
+     "commit": "2efce5d",
+     "updated": "2026-11-11T19:36Z"
+    },
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Agents roster",
+   "route": "/agents",
+   "state": "validated",
+   "note": "S2 validated: Agents | Org chart view links on top. The table scrolls sideways at 960 px and below until the S4 row layout lands; content gutter is px-8 at every width (follow-up).",
+   "desktop": {
+    "src": "img/agents-desktop.jpg",
+    "hash": "bc79408788"
+   },
+   "phone": {
+    "src": "img/agents-phone.jpg",
+    "hash": "044b475338"
+   },
+   "commit": "673e1cb",
+   "updated": "2026-11-11T20:46Z"
+  },
+  {
+   "id": "agent-sheet",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Agent details",
+   "route": "/agents (agent open)",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/agent-sheet-desktop.jpg",
+    "hash": "6abb51e4ff"
+   },
+   "phone": {
+    "src": "img/agent-sheet-phone.jpg",
+    "hash": "55a2e4659e"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "org-chart",
+   "history": [
+    {
+     "commit": "92ca950",
+     "updated": "2026-11-12T00:44Z"
+    },
+    {
+     "commit": "673e1cb",
+     "updated": "2026-11-11T20:46Z"
+    },
+    {
+     "commit": "034628d",
+     "updated": "2026-11-11T17:32Z"
+    },
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Org chart · Teams",
+   "route": "/org-chart",
+   "state": "validated",
+   "note": "A-OC1 validated (92ca950e); remove buttons now Heroicons x-mark (08db0992, validation-non-chat-icons.md). Phone opens in List.",
+   "desktop": {
+    "src": "img/org-chart-desktop.jpg",
+    "hash": "708c63743e"
+   },
+   "phone": {
+    "src": "img/org-chart-phone.jpg",
+    "hash": "e10eb27e8c"
+   },
+   "commit": "08db099",
+   "updated": "2026-11-12T02:41Z"
+  },
+  {
+   "id": "org-chart-selected",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Org chart, team selected",
+   "route": "/org-chart",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/org-chart-selected-desktop.jpg",
+    "hash": "299ef9667b"
+   },
+   "phone": {
+    "src": "img/org-chart-selected-phone.jpg",
+    "hash": "92409eda8f"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "pause-agent",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Pause agent dialog",
+   "route": "/org-chart, Pause",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/pause-agent-desktop.jpg",
+    "hash": "d9fd1816cf"
+   },
+   "phone": {
+    "src": "img/pause-agent-phone.jpg",
+    "hash": "436a3684f1"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "projects",
+   "history": [],
+   "kind": "app",
+   "area": "Projects",
+   "title": "Projects list",
+   "route": "/projects",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/projects-desktop.jpg",
+    "hash": "a580aaba8f"
+   },
+   "phone": {
+    "src": "img/projects-phone.jpg",
+    "hash": "4b50a696a4"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "project-atlas",
+   "history": [],
+   "kind": "app",
+   "area": "Projects",
+   "title": "Project detail",
+   "route": "/projects/atlas",
+   "state": "validated",
+   "note": "",
+   "desktop": {
+    "src": "img/project-atlas-desktop.jpg",
+    "hash": "f660a099c0"
+   },
+   "phone": {
+    "src": "img/project-atlas-phone.jpg",
+    "hash": "0a7712492c"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "project-tasks",
+   "history": [],
+   "kind": "app",
+   "area": "Projects",
+   "title": "Project tasks tab",
+   "route": "/projects/atlas, Tasks",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/project-tasks-desktop.jpg",
+    "hash": "33809f25fb"
+   },
+   "phone": {
+    "src": "img/project-tasks-phone.jpg",
+    "hash": "b5c6c075b2"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "project-empty",
+   "history": [],
+   "kind": "app",
+   "area": "Projects",
+   "title": "Project with no team",
+   "route": "/projects/scratchpad",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/project-empty-desktop.jpg",
+    "hash": "3c9720f66b"
+   },
+   "phone": {
+    "src": "img/project-empty-phone.jpg",
+    "hash": "45241500e8"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "work",
+   "history": [],
+   "kind": "app",
+   "area": "Work",
+   "title": "Work",
+   "route": "/work",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/work-desktop.jpg",
+    "hash": "e3c9326884"
+   },
+   "phone": {
+    "src": "img/work-phone.jpg",
+    "hash": "96c27ff835"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "work-empty",
+   "history": [],
+   "kind": "app",
+   "area": "Work",
+   "title": "Work, empty list",
+   "route": "/work, All",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/work-empty-desktop.jpg",
+    "hash": "e3c9326884"
+   },
+   "phone": {
+    "src": "img/work-empty-phone.jpg",
+    "hash": "96c27ff835"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "new-task",
+   "history": [],
+   "kind": "app",
+   "area": "Work",
+   "title": "New task dialog",
+   "route": "/work, New task",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/new-task-desktop.jpg",
+    "hash": "b0c16895ca"
+   },
+   "phone": {
+    "src": "img/new-task-phone.jpg",
+    "hash": "f9927a1e0d"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "sessions",
+   "history": [],
+   "kind": "app",
+   "area": "Sessions",
+   "title": "Sessions",
+   "route": "/sessions",
+   "state": "implemented",
+   "note": "Not built yet: unavailable page",
+   "desktop": {
+    "src": "img/sessions-desktop.jpg",
+    "hash": "9a73c7e58f"
+   },
+   "phone": {
+    "src": "img/sessions-phone.jpg",
+    "hash": "c4087737cf"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "activity",
+   "history": [],
+   "kind": "app",
+   "area": "Activity",
+   "title": "Activity",
+   "route": "/activity",
+   "state": "implemented",
+   "note": "Not built yet: unavailable page",
+   "desktop": {
+    "src": "img/activity-desktop.jpg",
+    "hash": "0be3e9e15e"
+   },
+   "phone": {
+    "src": "img/activity-phone.jpg",
+    "hash": "7bb57f6eb7"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "processes",
+   "history": [],
+   "kind": "app",
+   "area": "Processes",
+   "title": "Processes",
+   "route": "/processes",
+   "state": "implemented",
+   "note": "Not in v1.0: unavailable page",
+   "desktop": {
+    "src": "img/processes-desktop.jpg",
+    "hash": "d7099b1a51"
+   },
+   "phone": {
+    "src": "img/processes-phone.jpg",
+    "hash": "91d46782eb"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "offices",
+   "history": [
+    {
+     "commit": "29530a9",
+     "updated": "2026-11-12T10:57Z"
+    },
+    {
+     "commit": "64a6881",
+     "updated": "2026-11-12T06:57Z"
+    },
+    {
+     "commit": "2efce5d",
+     "updated": "2026-11-11T19:36Z"
+    },
+    {
+     "commit": "c1da489",
+     "updated": "2026-11-11T16:30Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Offices",
+   "title": "Offices",
+   "route": "/offices?mock=unreachable",
+   "state": "validated",
+   "note": "BUG-150 validated (34ed1b29): pill, Retry and chevron wrap as one end-aligned flow; the chevron shares Retry's line when it fits on that line (Rowan confirmed the reading), centred, original gap kept; 100% pixel-identical inside the rows. BUG-126/127/128 kept. Open (pre-existing): in WebKit a pointer click on Retry drops focus to body (BUG-166); at 320/200% in the error state a focused row hides under the sticky top bar (follow-up P3, not re-checked); the intro scrolls sideways at 320 with a 40 px root (follow-up P2, S3, BUG-112 family). See validation-bug-150.md.",
+   "desktop": {
+    "src": "img/offices-desktop.jpg",
+    "hash": "1c1fba8f2c"
+   },
+   "phone": {
+    "src": "img/offices-phone.jpg",
+    "hash": "30d3f0ac17"
+   },
+   "commit": "34ed1b2",
+   "updated": "2026-11-12T14:31Z"
+  },
+  {
+   "id": "settings",
+   "history": [],
+   "kind": "app",
+   "area": "Settings",
+   "title": "Settings",
+   "route": "/settings",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/settings-desktop.jpg",
+    "hash": "0802c8f851"
+   },
+   "phone": {
+    "src": "img/settings-phone.jpg",
+    "hash": "3f8e5bc3f0"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "report-bug",
+   "history": [],
+   "kind": "app",
+   "area": "Shell",
+   "title": "Report a bug dialog",
+   "route": "any page, Report a bug",
+   "state": "implemented",
+   "note": "",
+   "desktop": {
+    "src": "img/report-bug-desktop.jpg",
+    "hash": "1155827c11"
+   },
+   "phone": {
+    "src": "img/report-bug-phone.jpg",
+    "hash": "73f6ce29e9"
+   },
+   "commit": "c1da489",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "proto-home",
+   "history": [],
+   "kind": "reference",
+   "area": "Old prototype",
+   "title": "Agents home (dashboard)",
+   "route": "prototype-agency",
+   "state": "reference",
+   "note": "",
+   "desktop": {
+    "src": "img/proto-home-desktop.jpg",
+    "hash": "8f5941acf0"
+   },
+   "phone": {
+    "src": "img/proto-home-phone.jpg",
+    "hash": "3b44574ab2"
+   },
+   "commit": "191ee8f",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "proto-agent",
+   "history": [],
+   "kind": "reference",
+   "area": "Old prototype",
+   "title": "Agent profile",
+   "route": "prototype-agency",
+   "state": "reference",
+   "note": "",
+   "desktop": {
+    "src": "img/proto-agent-desktop.jpg",
+    "hash": "abf5f06415"
+   },
+   "phone": {
+    "src": "img/proto-agent-phone.jpg",
+    "hash": "40f8e9b676"
+   },
+   "commit": "191ee8f",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "proto-tasks",
+   "history": [],
+   "kind": "reference",
+   "area": "Old prototype",
+   "title": "Tasks",
+   "route": "prototype-agency",
+   "state": "reference",
+   "note": "",
+   "desktop": {
+    "src": "img/proto-tasks-desktop.jpg",
+    "hash": "92fa829cc4"
+   },
+   "phone": {
+    "src": "img/proto-tasks-phone.jpg",
+    "hash": "031f279e8e"
+   },
+   "commit": "191ee8f",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "proto-sort",
+   "history": [],
+   "kind": "reference",
+   "area": "Old prototype",
+   "title": "Sort menu",
+   "route": "prototype-agency",
+   "state": "reference",
+   "note": "",
+   "desktop": {
+    "src": "img/proto-sort-desktop.jpg",
+    "hash": "7b7b4c2db0"
+   },
+   "phone": {
+    "src": "img/proto-sort-phone.jpg",
+    "hash": "4b456d450d"
+   },
+   "commit": "191ee8f",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "proto-toast",
+   "history": [],
+   "kind": "reference",
+   "area": "Old prototype",
+   "title": "Toast",
+   "route": "prototype-agency",
+   "state": "reference",
+   "note": "",
+   "desktop": {
+    "src": "img/proto-toast-desktop.jpg",
+    "hash": "cb1a988411"
+   },
+   "phone": {
+    "src": "img/proto-toast-phone.jpg",
+    "hash": "a2a8a9868b"
+   },
+   "commit": "191ee8f",
+   "updated": "2026-11-11T16:30Z"
+  },
+  {
+   "id": "org-chart-people",
+   "history": [
+    {
+     "commit": "034628d",
+     "updated": "2026-11-11T17:32Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Org chart · People",
+   "route": "/org-chart (People tab)",
+   "state": "validated",
+   "note": "A-OC1 validated (92ca950e): owner row, View menu, own scrolling frame, List by default below 640; see validation-a-oc1.md. Phone: Fit blocked at the 12 px floor; the frame scrolls.",
+   "desktop": {
+    "src": "img/org-chart-people-desktop.jpg",
+    "hash": "452d4d3672"
+   },
+   "phone": {
+    "src": "img/org-chart-people-phone.jpg",
+    "hash": "e1bd5a3982"
+   },
+   "commit": "92ca950",
+   "updated": "2026-11-12T00:44Z"
+  },
+  {
+   "id": "org-chart-reporting",
+   "history": [
+    {
+     "commit": "034628d",
+     "updated": "2026-11-11T17:32Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Org chart · Reporting lines",
+   "route": "/org-chart (Reporting lines tab)",
+   "state": "validated",
+   "note": "A-OC1 validated (92ca950e): owner row, View menu, own scrolling frame, List by default below 640; see validation-a-oc1.md.",
+   "desktop": {
+    "src": "img/org-chart-reporting-desktop.jpg",
+    "hash": "7f307e931b"
+   },
+   "phone": {
+    "src": "img/org-chart-reporting-phone.jpg",
+    "hash": "eb89028aaf"
+   },
+   "commit": "92ca950",
+   "updated": "2026-11-12T00:44Z"
+  },
+  {
+   "id": "agents-search",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Agents · search",
+   "route": "/agents?q=no",
+   "state": "validated",
+   "note": "Filters by name or role title, any case. The tab counts still show all agents.",
+   "desktop": {
+    "src": "img/agents-search-desktop.jpg",
+    "hash": "0c296b3ade"
+   },
+   "phone": {
+    "src": "img/agents-search-phone.jpg",
+    "hash": "4604067b00"
+   },
+   "commit": "aaa82b8",
+   "updated": "2026-11-11T20:14Z"
+  },
+  {
+   "id": "agents-empty-search",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Agents · no search results",
+   "route": "/agents?q=zzzz",
+   "state": "validated",
+   "note": "Missing: a clear-search action, the query in the message, and a live announcement (reported 11 Nov).",
+   "desktop": {
+    "src": "img/agents-empty-search-desktop.jpg",
+    "hash": "69d2b5a5c4"
+   },
+   "phone": {
+    "src": "img/agents-empty-search-phone.jpg",
+    "hash": "b347e0fc42"
+   },
+   "commit": "aaa82b8",
+   "updated": "2026-11-11T20:14Z"
+  },
+  {
+   "id": "add-agent",
+   "history": [],
+   "kind": "app",
+   "area": "Agents",
+   "title": "Add agent",
+   "route": "/agents?add=1",
+   "state": "validated",
+   "note": "Opens from the button or the URL; ?add is removed from the URL once open.",
+   "desktop": {
+    "src": "img/add-agent-desktop.jpg",
+    "hash": "88c1d35edc"
+   },
+   "phone": {
+    "src": "img/add-agent-phone.jpg",
+    "hash": "5f2d8762df"
+   },
+   "commit": "aaa82b8",
+   "updated": "2026-11-11T20:14Z"
+  },
+  {
+   "id": "chat-threads",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Threads",
+   "route": "/chat?v=threads",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-threads-desktop.jpg",
+    "hash": "63f710a104"
+   },
+   "phone": {
+    "src": "img/chat-threads-phone.jpg",
+    "hash": "5e68499171"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-mentions",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Mentions",
+   "route": "/chat?v=mentions",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-mentions-desktop.jpg",
+    "hash": "1e803e5d71"
+   },
+   "phone": {
+    "src": "img/chat-mentions-phone.jpg",
+    "hash": "c1efdc1248"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-handoff",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Hand-off card",
+   "route": "/chat?c=c-release-v1",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-handoff-desktop.jpg",
+    "hash": "b1b3993fa5"
+   },
+   "phone": {
+    "src": "img/chat-handoff-phone.jpg",
+    "hash": "d4315d6289"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-composer-attachment",
+   "history": [
+    {
+     "commit": "ef0ce00",
+     "updated": "2026-11-12T00:04Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Composer with attachments",
+   "route": "/chat?c=c-general (2 files attached)",
+   "state": "validated",
+   "note": "Chat BUG-96/99 validated (053702ef): clip on the first filename line; Remove returns focus to the next Remove, else Attach; §17 outlines. See validation-chat-bug94-99.md.",
+   "desktop": {
+    "src": "img/chat-composer-attachment-desktop.jpg",
+    "hash": "c44997c751"
+   },
+   "commit": "053702e",
+   "updated": "2026-11-12T08:10Z"
+  },
+  {
+   "id": "chat-offline",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Office stopped",
+   "route": "/chat?chat=offline",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-offline-desktop.jpg",
+    "hash": "107c1229f8"
+   },
+   "phone": {
+    "src": "img/chat-offline-phone.jpg",
+    "hash": "b50e607cb4"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "chat-conversations",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Conversations list",
+   "route": "/chat (Conversations)",
+   "state": "validated",
+   "note": "Chat no-emoji validated (ef0ce00b): Heroicons replace the 14 emoji; see validation-chat-no-emoji.md.",
+   "desktop": {
+    "src": "img/chat-conversations-desktop.jpg",
+    "hash": "fcd74cc8ab"
+   },
+   "phone": {
+    "src": "img/chat-conversations-phone.jpg",
+    "hash": "bd39c01ae6"
+   },
+   "commit": "ef0ce00",
+   "updated": "2026-11-12T00:04Z"
+  },
+  {
+   "id": "org-chart-view-menu",
+   "history": [
+    {
+     "commit": "62efec1",
+     "updated": "2026-11-12T10:02Z"
+    },
+    {
+     "commit": "d49446c",
+     "updated": "2026-11-12T08:10Z"
+    },
+    {
+     "commit": "92ca950",
+     "updated": "2026-11-12T00:44Z"
+    }
+   ],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Org chart · View menu",
+   "route": "/org-chart (View ▾ opened by keyboard)",
+   "state": "validated",
+   "note": "BUG-129 validated (5ba5d947): Escape and selecting return focus to View on every tab in both engines; the closed content is inert. BUG-101 outline and BUG-123 unchanged. Open (pre-existing): focus to body after pointer dismissal, last-team delete and Delete team; a tab click is swallowed while the menu is open; BUG-137/138. See validation-bug-129-chat-134-136.md.",
+   "desktop": {
+    "src": "img/org-chart-view-menu-desktop.jpg",
+    "hash": "89e328099c"
+   },
+   "phone": {
+    "src": "img/org-chart-view-menu-phone.jpg",
+    "hash": "cd79c9ee0d"
+   },
+   "commit": "5ba5d94",
+   "updated": "2026-11-12T12:58Z"
+  },
+  {
+   "id": "org-chart-list",
+   "history": [],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Org chart · Teams list",
+   "route": "/org-chart (View → List)",
+   "state": "validated",
+   "note": "A-OC1 validated (92ca950e): owner row, View menu, own scrolling frame, List by default below 640; see validation-a-oc1.md.",
+   "desktop": {
+    "src": "img/org-chart-list-desktop.jpg",
+    "hash": "273efc2b72"
+   },
+   "phone": {
+    "src": "img/org-chart-list-phone.jpg",
+    "hash": "e10eb27e8c"
+   },
+   "commit": "92ca950",
+   "updated": "2026-11-12T00:44Z"
+  },
+  {
+   "id": "project-beacon",
+   "history": [],
+   "kind": "app",
+   "area": "Projects",
+   "title": "Project · shared (Beacon)",
+   "route": "/projects/beacon",
+   "state": "validated",
+   "note": "Non-Chat pseudo-icons validated (08db0992): Heroicons x-mark on team chips. The text breadcrumb breaks §5 and will become a back link (N1, BUG-113); see validation-non-chat-icons.md.",
+   "desktop": {
+    "src": "img/project-beacon-desktop.jpg",
+    "hash": "b17bd10cb6"
+   },
+   "phone": {
+    "src": "img/project-beacon-phone.jpg",
+    "hash": "b6c7e8934b"
+   },
+   "commit": "08db099",
+   "updated": "2026-11-12T02:41Z"
+  },
+  {
+   "id": "org-chart-delete-team",
+   "history": [],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Delete team confirm",
+   "route": "/org-chart › Actions for People › Delete… (Cancel focused by keyboard)",
+   "state": "validated",
+   "note": "BUG-102 validated (62efec1): footer Cancel shows the §17 indigo-400 2 px outline, offset 2. Open (pre-existing): at 320/200% the footer buttons overflow the dialog and the outline's right side is covered. See validation-focus-101-102.md.",
+   "desktop": {
+    "src": "img/org-chart-delete-team-desktop.jpg",
+    "hash": "a90f427fef"
+   },
+   "phone": {
+    "src": "img/org-chart-delete-team-phone.jpg",
+    "hash": "c52fa012d7"
+   },
+   "commit": "62efec1",
+   "updated": "2026-11-12T10:02Z"
+  },
+  {
+   "id": "chat-ask",
+   "history": [],
+   "kind": "app",
+   "area": "Chat",
+   "title": "Ask and Approval cards",
+   "route": "/chat?c=c-project-atlas",
+   "state": "validated",
+   "note": "BUG-135 validated (6072bf08): options wrap inside the card with full labels and uncut outlines. New S4: option buttons 34 px / 8 px / left vs Reply… 32 px / 10 px / centred. Open: focused option partly hidden by the short message list at 320 large text (pre-existing, slightly worse: 55–58% visible vs 62–63%); outline border 1.37:1 (pre-existing). See validation-bug-129-chat-134-136.md.",
+   "desktop": {
+    "src": "img/chat-ask-desktop.jpg",
+    "hash": "948fd37d39"
+   },
+   "phone": {
+    "src": "img/chat-ask-phone.jpg",
+    "hash": "bdf7b02d9d"
+   },
+   "commit": "6072bf0",
+   "updated": "2026-11-12T12:58Z"
+  },
+  {
+   "id": "offices-wrap",
+   "history": [],
+   "kind": "app",
+   "area": "Offices",
+   "title": "Offices · large text",
+   "route": "/offices?mock=unreachable (1100 and 390 with a 40 px root)",
+   "state": "validated",
+   "note": "BUG-150: at large text the Unreachable pill ends at the row's end, and Retry and the chevron share the next line, end-aligned and centred. Known: BUG-119 sideways scroll at 960 and 1100 with a 40 px root. Open: the intro scrolls sideways 66 px at 320 with a 40 px root (follow-up P2, S3, BUG-112 family). See validation-bug-150.md.",
+   "desktop": {
+    "src": "img/offices-wrap-desktop.jpg",
+    "hash": "f7f6783495"
+   },
+   "phone": {
+    "src": "img/offices-wrap-phone.jpg",
+    "hash": "ac45065b3c"
+   },
+   "commit": "34ed1b2",
+   "updated": "2026-11-12T14:31Z"
+  },
+  {
+   "id": "org-chart-fit-remove",
+   "history": [],
+   "kind": "app",
+   "area": "Org chart",
+   "title": "Teams chart, Fit (24 px project Remove)",
+   "route": "/org-chart (Teams, Chart, Fit)",
+   "state": "validated",
+   "note": "Chart A validated (2b86877b): the project Remove stays 24 px at every Fit scale (BUG-114), ring offset 2 (BUG-117), focus after removal follows the pinned order with the keyboard in both engines and the pointer in Chromium (BUG-115). Open (S4): in WebKit a pointer removal still leaves focus on the chart region, or on body after a confirmed last unlink on the project page, as before; in Fit the ring draws at about 1.5 px (the rest of BUG-117); the larger target wraps Design's Shared badge onto its own line (accepted). See validation-chart-a.md.",
+   "desktop": {
+    "src": "img/org-chart-fit-remove-desktop.jpg",
+    "hash": "0b54a96219"
+   },
+   "phone": {
+    "src": "img/org-chart-fit-remove-phone.jpg",
+    "hash": "6d614d8dec"
+   },
+   "commit": "2b86877",
+   "updated": "2026-11-12T16:37Z"
+  }
+ ],
+ "generated": "2026-11-12T16:37Z"
+}

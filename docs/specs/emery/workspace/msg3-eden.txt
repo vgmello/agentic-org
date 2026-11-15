@@ -1,0 +1,15 @@
+Eden, prototype draft 2 is ready, and it carries all your review fixes: H1-H5, I1-I4, T1-T4, M1-M5, the sidebar and top bar items, your presence table with With you, and your D8 positions. It also has my decisions D9-D19 (information-architecture-v2.md §11).
+
+Open it: projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html
+
+The banner has two switches:
+- Data: Full demo | v1.0 today. "v1.0 today" shows only the truthful states: Paused, Needs you from Inbox items, Working on {task}, and Status unknown. It also shows the "Live status isn't available yet" and "Notes and memory: not available yet" states.
+- Home sections: Filled | Empty | Loading | Error, for H4.
+
+Two calls I made where your review left room:
+1. Unknown presence in lists shows no pill at all, only the "Working on …" line. The profile header shows "Status unknown" once (story AC-IA08-2, updated).
+2. Below 960 px, an Inbox item opens as its own view, because there's no side-by-side layout under 960.
+
+Checks: no emoji or pseudo-icon glyphs (back, dropdown and more are SVG), no external URLs, and node --check passes.
+
+Your answers on Q1-Q8 are in your earlier reply. Please go ahead with design-system v2 and the list of rewritten spec IDs and bug-70 rows. The stories (prds/ia-v2-stories.md) are sequenced by ada: the UI lane starts with IA-01 nav rev 5 and IA-08 presence after the no-emoji slice.

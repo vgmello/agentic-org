@@ -1,0 +1,46 @@
+== 26
+**v2 (11 Nov 2026): information architecture v2.** This amendment folds in IA v2: Emery's PRD rev 3 (`ac-product-manager-emery/knowledge/prds/information-architecture-v2.md`, decisions D9–D19), my review (`knowledge/research/review-ia-v2.md`, page fixes H, I, T, M, the presence table, the D8 positions and the addendum) and the stories (`ia-v2-stories.md`, AC ids `AC-IA01-…` to `AC-IA16-…`). **IA v2 supersedes the nav freeze rev 4** (Agents as landing, Org chart as a tab of Agents, `/settings` holding only Offices); Rowan's nav freeze rev 5 carries the routes. Sections changed: §1 (two clauses), §2 frame and Home, §3 sidebar, §4 top bar, §5 page headers (profile and team variants), §6 list rows, §7 presence and project health, §8 avatars, §9 decision card, §10 and §13 examples, §12 tabs, §15 and §16 one line each, §17 one exception (focused headings), §18 one contrast line, §20 narrow widths, §21 states, §22 icons, §23 vocabulary, §25, §26 and the product decisions. Untouched sections keep their v1.0 text. Prototype for the new pages: `ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html` (draft 2), cited as P2.
+== 112
+**Footer: owner, org switcher and office.** Bottom of the panel (`-mx-6`, under Organization settings), in the prototype's "You · Owner" style. The owner is never a team member (D17); this footer is one of the three places the owner appears. Two sibling links, never nested (decided with Rowan, 2026-11-11):
+== 113
+
+== 114
+| Part | Rule and classes |
+== 115
+| --- | --- |
+== 136
+| New menu | **New ▾** as an **outline** button (§10), so a page's own primary stays the only primary on screen. Opens a `DropdownMenu`: Task, Project, Message, separator, Hire an agent, Invite a person (mini icons `clipboard-document-list`, `folder`, `chat-bubble-left-right`, `user-plus`, `user-plus`). Hire an agent opens the existing Describe → Suggestion → Review → Hiring flow (D14). Below 640 px it becomes a 44 px icon button with `aria-label="New"` and a tooltip. Items whose flow doesn't exist yet are shown disabled with their reason (§10). | `Button variant="outline"` + `gap-x-1.5`, mini `plus` `-ml-0.5 size-5`, label, mini `chevron-down` `size-4 text-gray-400`; `aria-haspopup="menu"` |
+== 190
+
+== 191
+**Team header** (`/teams/{id}`; T-fixes, AC-IA05-2). The standard header (§5) with:
+== 192
+- Title: the team name.
+== 193
+- Count line: "{N} members · {N} people · {N} agents" (real counts, plural-correct).
+== 194
+- Description line under the strip (`pt-4 text-sm/6 text-gray-400 max-w-3xl`): the purpose, then "Lead: {name, linked} ({Agent|Person})".
+== 196
+---
+== 286
+**Project health (D15, D8 position).** Shown only when health is set on the project; otherwise the card or row shows its open and blocked counts and no health pill. Used on Home project cards, the Projects list and the project header.
+== 364
+| Container | Home: an outlined card, `relative flex flex-col gap-2.5 rounded-lg p-4 outline-1 -outline-offset-1 outline-white/10` (neutral). **Never a tinted border, top stripe or amber fill** (H1); the amber pill is the only signal. `<article aria-label="{kind} from {name}">`. In the Inbox list the item is a compact row (avatar 24, who · kind, time; the "what" line; meta), and the full card is the detail pane. |
+== 365
+| 1 · Who, kind, age | `flex flex-wrap items-center gap-2`: 24 px avatar (no dot), name (link to the profile, `text-sm/6 font-semibold text-white`), `· {kind} · {age}` in `text-xs/5 text-gray-400` (kind = the source kind: Hire request, Run approval, Permission request, Question, Escalation, Goal paused, Blocked on you, Run error, Crash), then the trailing pill **Needs you** (amber, micro `bell`), or **Handled** (gray, micro `check-circle`) once acted on. Detail pane: 40 px avatar, name · role · kind word, and the member's presence inline (no word when it's unknown, as in lists, §7). |
+== 382
+| `outline` (secondary) | Other actions next to a primary, toolbar actions, the top bar's New ▾, Hire or invite ▾, Assign task, decision-card actions on Home. | `bg-white/5 text-white ring-1 ring-inset ring-white/10 hover:bg-white/10` (no shadow) | 12.65 |
+== 614
+| Team page · Members | "No members yet" + the header's Hire or invite ▾ | `user-group` |
+== 660
+| Hire an agent, Invite a person, Hire or invite | `user-plus` | New menu, team header Same icon for both on purpose: the words tell them apart. |
+== 688
+| Hire / Offboard | Bring an agent into the organization (Hire an agent) / remove it (its records are kept) (D14). For humans: **Invite a person** | Add agent, Create / delete agent |
+== 692
+| Organization settings | Everything about how the organization is set up (General, Offices, Agent setup, Roles, Processes, Members and access, Updates) | Settings (alone), Admin, Preferences |
+== 774
+- Sidebar: Home, Inbox (amber count), Projects with 5 "Recent", Work, Chat, Activity; group "Organization" with Teams (5 + "View all"); Organization settings at the bottom; footer You · Owner, org switcher, "This Mac · HQ office · Online". No group label repeats an item's name. [D2, D8 position, review "Other pages", §3]
+== 785
+- Decision card: neutral outline, amber pill as the signal, D9 actions, outline-only on Home, Dismiss only for run error and crash. [H1, H2, D9, D11, §9]
+== 793
+- "Hire" everywhere (Hire an agent, Hire / Offboard); "Invite a person" for humans. [D14, §23]

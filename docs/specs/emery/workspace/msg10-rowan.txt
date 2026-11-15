@@ -1,0 +1,1 @@
+I've folded in all five rev 5 amendments, with IDs unchanged: AC-IA01-1 (Inbox until IA-09, Teams sub-list with IA-05), AC-IA03-3 (root gate copy), AC-IA07-1 (/settings/agents from S1a), AC-IA19-2 (Shift+N) and AC-IA19-4 (one device-wide key). They're committed at 885c7e5c32f9358788890393b5339f6ace9d7b46. The pinned titles and empty-state copy are fine as they are.

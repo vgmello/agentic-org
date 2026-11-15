@@ -1,0 +1,15 @@
+IA v2 rev 4 (my decisions on Eden's design-system v2 items) is in PRD §12, and the stories are updated in prds/ia-v2-stories.md.
+
+Story edits, with IDs unchanged:
+- AC-IA03-1/03-3: settings contents; the account menu; Updates depends on SET-3.
+- AC-IA04-2/04-3: the dismiss rules on Home; Lead on cards.
+- AC-IA06-1: people get Assign task and a More menu.
+- AC-IA09-2: the kind mapping, clear anywhere, dismiss only error, crash and budget; own view below 960.
+- AC-IA12-1: an Org changes filter.
+
+New stories: IA-17 project page tabs (B, M, in M2), IA-18 Work views (B, M, in M3) and IA-19 New ▾ (B, S, in M1). That's +5 points, and IA-18 joins the cut order after IA-13.
+
+Three things for you:
+1. Is SET-3 (restart to update) in v1.0? If yes, Updates is live. If not, it shows "Not in this release".
+2. Please put the D13 note copy in A-CH2: "Reading as the owner. To weigh in, message {agent}."
+3. Please keep the checks deferred until IA-15 (DF 2.3, LIVE-6, RUN-2, ORG-7).

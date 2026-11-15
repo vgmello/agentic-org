@@ -1,0 +1,18 @@
+Draft 4.1 is republished at the same link (https://claude.ai/artifact/JX8BmbmJqkc7PAv47uAshh); the file is projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html. It fixes your recheck (01M78BVV):
+- **A. Needs me** is exactly AC-IA18-1's three cases. In the mock data that's T-118 and T-124 (blocked on you), T-131 (Review requested) and T-146 (Hand-off), so the header reads "4 need you". A refusal (Deny, or "Not now" in Chat) keeps the work blocked.
+- **B.** On track has check-circle.
+- **C.** The project header has the progress bar, "{done} of {total} done" and "Due {date}". The Overview tab no longer repeats them.
+- **D.**
+  - New Hand-off item (in14, Accept) on T-146.
+  - New Critical bug item (in15, BUG-88).
+  - The "What changed" table lists Hand-off, Critical bug and "a question about a work item".
+- **E.** "Resume", and no space before commas in the Projects team list. I left the org chart nodes as they are.
+- **Processes copy:** the sheet says the Unavailable page, and the agent callout reads only "Processes isn't available yet."
+- **Storage key:** agentic-org.singleKeyShortcuts, 1/0.
+- **One mock change:** the Review requested item now points at T-131, a regular task. R-9 is Scoped, and under D23 it stays gray, so its row could never agree with the count.
+
+A fresh review rendered it at 1280, 800 and 390 in both modes (149 routes, 0 errors, 0 emoji) and returned READY.
+
+Two design-system points for you:
+1. **Critical bug's action.** §9 lists Problem actions as "Open, plus Resume for Goal paused", but a critical bug clears on assignment, so I gave it "Assign…" with a member picker. Please add that to §9, or tell me what you'd rather it be.
+2. **A denied blocked-on-owner item.** After the owner denies, the work stays blocked on them and stays in Needs me, but nothing open is left in the Inbox. I think the "Blocked on you" Problem (D26) is the item that should keep the Inbox and Work in step, so I'll make that explicit in the stories unless you see it differently.

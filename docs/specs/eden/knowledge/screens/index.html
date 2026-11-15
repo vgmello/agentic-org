@@ -1,0 +1,207 @@
+<meta charset="utf-8">
+<title>Agentic Org Screens</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a contact sheet. Sticky filter bar, then one section per product area with a grid of frames;
+   a frame opens a viewer with the desktop and phone shots side by side and the screen's history. */
+:root {
+  --bg: #11131a; --panel: #191c26; --line: #2a2e3c; --fg: #e8e9f0; --muted: #9a9fb3;
+  --accent: #8b7bff; --on-accent: #11131a; --ctl: #666c82; --ok: #4ade80; --ok-bg: rgb(74 222 128 / .12); --ref: #fbbf24; --ref-bg: rgb(251 191 36 / .12); --on-ref: #11131a;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f6f6f9; --panel: #ffffff; --line: #dfe0e8; --fg: #171923; --muted: #5b6075;
+  --accent: #5b45e0; --on-accent: #ffffff; --ctl: #80869a; --ok: #15803d; --ok-bg: rgb(21 128 61 / .1); --ref: #a15c00; --ref-bg: rgb(161 92 0 / .1); --on-ref: #ffffff; color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #f6f6f9; --panel: #ffffff; --line: #dfe0e8; --fg: #171923; --muted: #5b6075;
+  --accent: #5b45e0; --on-accent: #ffffff; --ctl: #80869a; --ok: #15803d; --ok-bg: rgb(21 128 61 / .1); --ref: #a15c00; --ref-bg: rgb(161 92 0 / .1); --on-ref: #ffffff; color-scheme: light }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-sans); }
+.wrap { max-width: 1440px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+header h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+header p { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+.meta { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px; margin-top: 18px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 420px; min-width: 0; }
+button, input { font: inherit; color: inherit; }
+.chip { border: 1px solid var(--ctl); background: var(--panel); border-radius: 999px; padding: 4px 11px; cursor: pointer; font-size: 13px; }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.chip[aria-pressed="true"]::before { content: "✓ "; }
+.seg { display: inline-flex; border: 1px solid var(--ctl); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--panel); border: 0; padding: 5px 12px; cursor: pointer; font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.seg button[aria-pressed="true"]::before { content: "✓ "; }
+#q::placeholder { color: var(--muted); opacity: 1; }
+#q { background: var(--panel); border: 1px solid var(--ctl); border-radius: 8px; padding: 5px 10px; width: 200px; max-width: 100%; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 30px 0 12px; }
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.grid.phone { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; display: flex; flex-direction: column; min-width: 0; }
+.card:hover { border-color: var(--accent); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.shot.fb { object-fit: contain; }
+.grid:not(.phone) .shot.fb { aspect-ratio: 16 / 10; }
+.phone .shot.fb { aspect-ratio: 16 / 10; }
+.shot { aspect-ratio: 16 / 10; background: #0b0d12; display: block; width: 100%; object-fit: cover; object-position: top; border-bottom: 1px solid var(--line); }
+.phone .shot { aspect-ratio: 390 / 844; }
+.info { padding: 10px 12px 12px; display: grid; width: 100%; gap: 4px; min-width: 0; }
+.info > span { display: block; }
+.t { font-weight: 600; display: flex !important; gap: 8px; align-items: center; justify-content: space-between; }
+.t span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.route { font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill { font-size: 11px; font-weight: 500; border-radius: 999px; padding: 1px 8px; white-space: nowrap; border: 1px solid transparent; }
+.pill.implemented { color: var(--muted); border-color: var(--line); }
+.pill.validated { color: var(--ok); background: var(--ok-bg); }
+.pill.reference { color: var(--ref); background: var(--ref-bg); }
+.card.old { border: 2px dashed var(--ref); position: relative; }
+.card.old:hover { border-color: var(--ref); border-style: solid; }
+.card.old .shot { filter: saturate(.6); }
+.tag { position: absolute; z-index: 1; top: 8px; left: 8px; background: var(--ref); color: var(--on-ref); font-size: 11px; font-weight: 700; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; }
+section.old { margin-top: 40px; border-top: 2px dashed var(--ref); }
+section.old h2 { color: var(--ref); }
+.oldnote, .oldbanner { border: 1px solid var(--ref); background: var(--ref-bg); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+.oldbanner { margin: 16px 16px 0; font-weight: 500; }
+.empty { color: var(--muted); padding: 40px 0; }
+dialog { border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 12px; padding: 0; width: min(1500px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
+dialog::backdrop { background: rgb(0 0 0 / .7); }
+.dhead { display: flex; gap: 12px; align-items: start; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.dhead h3 { margin: 0; font-size: 16px; }
+.close { background: none; border: 1px solid var(--ctl); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+.views { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; align-items: flex-start; }
+.views figure { margin: 0; min-width: 0; }
+.views figure.d { flex: 1 1 640px; } .views figure.p { flex: 0 1 300px; }
+.views img { width: 100%; border: 1px solid var(--line); border-radius: 8px; display: block; }
+figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.hist { padding: 0 16px 16px; font-size: 13px; color: var(--muted); }
+.hist code, .meta code { font-family: var(--font-mono); }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .15s } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Agentic Org screens</h1>
+    <p>Every screen of the app as it is on the <code>v1</code> branch, one entry per screen. When a screen changes, its picture here is replaced. The Tauri prototype is kept at the end as the look-and-feel reference.</p>
+    <div class="meta" id="meta">Loading…</div>
+  </header>
+  <div class="bar" role="group" aria-label="Filters">
+    <div class="chips" id="areas"></div>
+    <input id="q" type="search" placeholder="Find a screen or route" aria-label="Find a screen or route">
+    <div class="seg" role="group" aria-label="Width">
+      <button type="button" id="v-desktop" aria-pressed="true">Desktop</button>
+      <button type="button" id="v-phone" aria-pressed="false">Phone</button>
+    </div>
+  </div>
+  <p class="sr" id="count" aria-live="polite"></p>
+  <main id="list"><p class="empty">Loading screens…</p></main>
+</div>
+
+<dialog id="viewer" aria-labelledby="vt">
+  <div class="dhead">
+    <div><h3 id="vt"></h3><div class="route" id="vr"></div></div>
+    <button type="button" class="close" id="vclose">Close</button>
+  </div>
+  <p class="oldbanner" id="vbanner" hidden>Old Tauri prototype, not the current app. Shown as the look-and-feel reference only.</p>
+  <div class="views" id="vviews"></div>
+  <div class="hist" id="vhist"></div>
+</dialog>
+
+<script>
+(() => {
+  const state = { area: 'All', view: 'desktop', q: '', data: [] };
+  const el = (tag, attrs = {}, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') n.className = v; else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) n.append(k);
+    return n;
+  };
+  const fmt = (iso) => { if (!iso) return ''; const d = new Date(iso.replace(/Z$/, ':00Z')); return isNaN(d) ? iso : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  const ver = (s, v) => s[v] ? `${s[v].src}?v=${s[v].hash}` : null;
+  const areasOrder = (list) => [...new Set(list.map(s => s.area))];
+
+  function renderAreas() {
+    const box = document.getElementById('areas'); box.replaceChildren();
+    for (const a of ['All', ...areasOrder(state.data)]) {
+      box.append(el('button', { type: 'button', class: 'chip', 'aria-pressed': String(state.area === a), onclick: (e) => {
+        state.area = a; for (const b of box.children) b.setAttribute('aria-pressed', String(b === e.currentTarget)); render();
+      } }, a));
+    }
+  }
+  function card(s) {
+    const other = state.view === 'desktop' ? 'phone' : 'desktop';
+    const shown = s[state.view] ? state.view : other;
+    const src = ver(s, shown);
+    const old = s.kind === 'reference';
+    return el('button', { type: 'button', class: 'card' + (old ? ' old' : ''), onclick: () => open(s.id) },
+      old ? el('span', { class: 'tag' }, 'Old prototype') : null,
+      src ? el('img', { class: 'shot' + (shown !== state.view ? ' fb' : ''), src, alt: '', loading: 'lazy' }) : null,
+      el('span', { class: 'info' },
+        el('span', { class: 't' }, el('span', {}, s.title), el('span', { class: 'pill ' + s.state }, old ? 'not the app' : s.state)),
+        el('span', { class: 'route' }, s.route),
+        el('span', { class: 'when' }, `Updated ${fmt(s.updated)} · ${s.commit}` + (shown !== state.view ? ` · ${shown} only` : '')),
+        s.note ? el('span', { class: 'when' }, s.note) : null));
+  }
+  function render() {
+    const q = state.q.trim().toLowerCase();
+    const rows = state.data.filter(s => (state.area === 'All' || s.area === state.area) && (!q || (s.title + ' ' + s.route + ' ' + s.area + (s.kind === 'reference' ? ' old tauri prototype' : '')).toLowerCase().includes(q)));
+    const main = document.getElementById('list'); main.replaceChildren();
+    document.getElementById('count').textContent = rows.length === 1 ? '1 screen' : `${rows.length} screens`;
+    if (!rows.length) { main.append(el('p', { class: 'empty' }, 'No screen matches. Clear the search or pick All.')); return; }
+    for (const a of areasOrder(rows)) {
+      const g = el('div', { class: 'grid' + (state.view === 'phone' ? ' phone' : '') });
+      const list = rows.filter(s => s.area === a); list.forEach(s => g.append(card(s)));
+      const old = list.every(s => s.kind === 'reference');
+      main.append(old
+        ? el('section', { class: 'old' }, el('h2', {}, 'Old Tauri prototype · not the current app'),
+            el('p', { class: 'oldnote' }, `These come from the earlier Tauri prototype (prototype-agency at ${list[0].commit}), not from v1. They are kept only as the look-and-feel target the app is being restyled to (BUG-70).`), g)
+        : el('section', {}, el('h2', {}, a), g));
+    }
+  }
+  const dlg = document.getElementById('viewer');
+  function open(id) {
+    const s = state.data.find(x => x.id === id); if (!s) return;
+    document.getElementById('vt').textContent = `${s.area} · ${s.title}`;
+    document.getElementById('vr').textContent = `${s.route} · ${s.state} · ${s.commit} · updated ${fmt(s.updated)}`;
+    const v = document.getElementById('vviews'); v.replaceChildren();
+    document.getElementById('vbanner').hidden = s.kind !== 'reference';
+    if (s.desktop) v.append(el('figure', { class: 'd' }, el('img', { src: ver(s, 'desktop'), alt: `${s.title}, desktop 1440 by 900` }), el('figcaption', {}, 'Desktop, 1440 × 900')));
+    if (s.phone) v.append(el('figure', { class: 'p' }, el('img', { src: ver(s, 'phone'), alt: `${s.title}, phone 390 by 844` }), el('figcaption', {}, 'Phone, 390 × 844')));
+    const h = document.getElementById('vhist');
+    h.textContent = s.history && s.history.length ? 'Earlier versions (in git history): ' + s.history.map(x => x.updated ? `${x.commit} (${fmt(x.updated)})` : x.commit).join(', ') : 'No earlier version.';
+    if (hashId() !== id) history.replaceState(null, '', '#' + encodeURIComponent(id));
+    if (!dlg.open) dlg.showModal();
+  }
+  function closeViewer() { if (dlg.open) dlg.close(); }
+  dlg.addEventListener('close', () => { if (location.hash) history.replaceState(null, '', location.pathname + location.search); });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeViewer(); });
+  document.getElementById('vclose').addEventListener('click', closeViewer);
+  for (const v of ['desktop', 'phone']) document.getElementById('v-' + v).addEventListener('click', () => {
+    state.view = v; for (const w of ['desktop', 'phone']) document.getElementById('v-' + w).setAttribute('aria-pressed', String(w === v)); render();
+  });
+  document.getElementById('q').addEventListener('input', (e) => { state.q = e.target.value; render(); });
+  const hashId = () => { try { return decodeURIComponent(location.hash.slice(1)); } catch { return ''; } };
+  window.addEventListener('hashchange', () => { const id = hashId(); if (id) open(id); else closeViewer(); });
+
+  fetch('screens.json', { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    const app = d.screens.filter(s => s.kind !== 'reference'), ref = d.screens.filter(s => s.kind === 'reference');
+    state.data = [...app, ...ref];
+    const commits = [...new Set(app.map(s => s.commit))].join(', ');
+    document.getElementById('meta').replaceChildren(
+      el('span', {}, `${app.length} screens`), el('span', {}, `${ref.length} prototype references`),
+      el('span', {}, `Last change ${fmt(d.generated)}`), el('span', {}, 'v1 at ', el('code', {}, commits)));
+    renderAreas(); render();
+    const id = hashId(); if (id) open(id);
+  }).catch(() => {
+    document.getElementById('list').replaceChildren(el('p', { class: 'empty' }, 'The screen list did not load. Reload the page to try again.'));
+    document.getElementById('meta').textContent = '';
+  });
+})();
+</script>

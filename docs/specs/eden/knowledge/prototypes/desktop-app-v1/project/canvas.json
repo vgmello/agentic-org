@@ -1,0 +1,138 @@
+{
+ "v": 3,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-11-07T15:30:00Z"
+ },
+ "title": "Agency desktop app · v1 screens",
+ "launch": {
+  "view": "canvas"
+ },
+ "pages": [],
+ "boards": {
+  "Main.dc.html": {
+   "x": 0,
+   "y": 0,
+   "w": 1440,
+   "h": 1240,
+   "title": "Home",
+   "expand": "fill"
+  },
+  "OrgChart.dc.html": {
+   "x": 1520,
+   "y": 0,
+   "w": 1440,
+   "h": 1080,
+   "title": "Org chart",
+   "expand": "fill"
+  },
+  "Agent.dc.html": {
+   "x": 3040,
+   "y": 0,
+   "w": 1440,
+   "h": 1380,
+   "title": "Agent profile · Eden",
+   "expand": "fill"
+  },
+  "Projects.dc.html": {
+   "x": 4560,
+   "y": 0,
+   "w": 1440,
+   "h": 1400,
+   "title": "Project · agentic-consulting",
+   "expand": "fill"
+  },
+  "Tasks.dc.html": {
+   "x": 6080,
+   "y": 0,
+   "w": 1440,
+   "h": 1080,
+   "title": "Tasks",
+   "expand": "fill"
+  },
+  "Hire.dc.html": {
+   "x": 0,
+   "y": 1880,
+   "w": 1440,
+   "h": 1180,
+   "title": "Hire flow",
+   "expand": "fill",
+   "is_interactive": true
+  },
+  "Session.dc.html": {
+   "x": 1520,
+   "y": 1880,
+   "w": 1440,
+   "h": 1560,
+   "title": "Session panel · ada",
+   "expand": "fill"
+  },
+  "FirstRun.dc.html": {
+   "x": 3040,
+   "y": 1880,
+   "w": 1440,
+   "h": 1180,
+   "title": "First run",
+   "expand": "fill"
+  },
+  "States.dc.html": {
+   "x": 0,
+   "y": 3920,
+   "w": 1440,
+   "h": 1900,
+   "title": "States",
+   "expand": "fill"
+  },
+  "Machines.dc.html": {
+   "x": 0,
+   "y": 6300,
+   "w": 1440,
+   "h": 1680,
+   "title": "Machines · v2 concept",
+   "expand": "fill"
+  }
+ },
+ "order": [
+  "Main.dc.html",
+  "OrgChart.dc.html",
+  "Agent.dc.html",
+  "Projects.dc.html",
+  "Tasks.dc.html",
+  "Hire.dc.html",
+  "Session.dc.html",
+  "FirstRun.dc.html",
+  "States.dc.html",
+  "Machines.dc.html"
+ ],
+ "notes": {
+  "row-core": {
+   "x": 0,
+   "y": -320,
+   "text": "v1 core",
+   "kind": "title1",
+   "maxW": 7520
+  },
+  "row-flows": {
+   "x": 0,
+   "y": 1560,
+   "text": "v1 flows",
+   "kind": "title1",
+   "maxW": 4480
+  },
+  "row-states": {
+   "x": 0,
+   "y": 3600,
+   "text": "v1 states",
+   "kind": "title1",
+   "maxW": 1440
+  },
+  "row-v2": {
+   "x": 0,
+   "y": 5980,
+   "text": "v2 concept",
+   "kind": "title1",
+   "maxW": 1440
+  }
+ },
+ "designSystems": []
+}

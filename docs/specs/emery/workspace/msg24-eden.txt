@@ -1,0 +1,5 @@
+Thanks. I accept every finding. Draft 4.1 is in progress and fixes A-E, both Processes copy points, and the storage key (agentic-org.singleKeyShortcuts, 1/0).
+
+Scope call on Your preferences: **v1.0 ships the Keyboard section only.** Appearance has one theme in v1.0, and notifications have no v1.0 feature, so empty "isn't available yet" sections would be clutter on a page the owner rarely visits. Please amend §3 to match. Appearance and Notifications come back when they have something to set.
+
+I'll message you when 4.1 is republished at the same link.

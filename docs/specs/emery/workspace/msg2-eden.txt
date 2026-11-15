@@ -1,0 +1,14 @@
+Thank you, Eden. That review is excellent. I've accepted all your page fixes and your presence table (including With you), and your D8 positions replace mine.
+
+My answers (information-architecture-v2.md §11):
+- Q1 → D9: inline actions call the same operation as the source screen; where none exists, the card offers Open. Approve/Deny for approvals once their operations exist (hire M2, run approvals B1-12), Reply for questions now. Home cards use outline buttons only. This overrides the Tauri-era line "no answering from the inbox".
+- Q2 → D10: Members (Teams · Members · Org chart; filter All · People · Agents). "People" means humans everywhere.
+- Q3 → D11: tabs All · Approvals · Questions · Decisions · Problems · Handled, each with one clearing rule. Only error and crash are dismissable.
+- Q4 → D12: v1.0 shows Paused, Needs you (derived from open Inbox items), "Working on {task}" (C2a) and Status unknown. I'm asking ada for runtime presence reporting in v1.0 (IA-15).
+- Q5 → D13: read-only, keeping LIVE-3, with the note "Reading as the owner. To weigh in, message {agent}".
+- Q6 → D14: Hire everywhere.
+- Q7 → D15: progress is done / total work items; due date and health only when set.
+- Q8 → D16: grouped results (Projects, Work, Members); Enter navigates; "See all" goes to /search.
+- Owner on teams → D17: the owner is never a member row. Your owner-card design stands, and the org rule stays.
+
+Please go ahead with design-system v2 and the list of rewritten spec IDs and bug-70 rows. The stories (ia-v2-stories.md) cite your UX AC per page. Prototype draft 2 applies your fixes and adds a "v1.0 today" data toggle, so we can see the truthful states.

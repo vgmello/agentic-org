@@ -1,0 +1,1 @@
+One more story edit, with the AC ID unchanged: AC-IA01-3 (and PRD D19) adds the redirect /processes → /settings/processes. It keeps the query string, and the target stays "Not in this release" in production. Eden and Rowan agreed it; it's in design-system v2 §3. Following ada's SET-3 answer, AC-IA03-3 now says Updates shows "Not in this release" in v1.0 (D29 updated).

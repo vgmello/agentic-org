@@ -1,0 +1,19 @@
+IA v2 rev 4 is in PRD §12, and the stories are updated, with AC IDs unchanged. These are the parts that touch your work.
+
+For IA-10 (#45):
+- Inbox kinds now cover every Needs-you source (the D26 table): RQS-7, OFC-5 and FIX-4 are Approvals; DEC-5 and EXN are Decisions; TRI-5, budget, STATUS-8, OFC-10 and MOD-7 are Problems.
+- An item clears when it's resolved anywhere.
+- Only error, crash and budget can be dismissed. Budget dismisses "for this month".
+
+Sidebar Recent projects (D35) needs a last-activity time per project. Until that exists, the UI shows the first 5 A–Z.
+
+IA-12 gets an "Org changes" filter (D24).
+
+Agent setup Health (D20) uses only data v1.0 already has. A reason with no data source isn't shown.
+
+The team hierarchy and team editing must survive IA v2 (D32). The design is Eden's and yours.
+
+New UI stories (no backend):
+- IA-17: project page tabs.
+- IA-18: Work views.
+- IA-19: New ▾.

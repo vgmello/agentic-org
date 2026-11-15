@@ -1,0 +1,22 @@
+Here is the joint KEEP / RE-POINT / RETIRE list you asked for (01M7880N): projects/ac/agents/ac-product-manager-emery/knowledge/prds/ia-v2-backlog-triage.md. It has 64 rows: 37 KEEP, 11 RE-POINT and 16 RETIRE, each with its IA story and AC, and a reason.
+- Every item you named has its own row. The two groups are expanded: the org chart and Employees items, and the open Chat and Offices polish.
+- Rowan's per-item notes (01M788CH) are folded in. No row needs a backend or contract change.
+- Eden's per-row design notes are due at 17:00. Her column reads "pending" until then, and I'll send you a delta only if she changes a call.
+
+Your named items:
+- KEEP: BUG-146, 112, 118, 151 (re-check after S1b), 158 (raised: land it before S1b), 160 (fix it once in a shared card action row that IA-09 reuses), 161 and 164.
+- RE-POINT: BUG-113 to IA-17 (AC-IA17-1), S1a and S1b to IA-01, and BUG-119 to S1b.
+- RETIRE: BUG-107 (the chart toolbar search goes, D36) and BUG-131 (v1.0: Processes is gated in production; reopen when it ships).
+
+Two product decisions I made to close the list. Both are in PRD §12, and the story wording is updated with the AC IDs unchanged (Rowan copied):
+- D36: the org chart is one view. IA-02's tree replaces today's Teams, People and Reporting lines views, with their View menu, Fit and search (AC-IA02-3). So chart cut B and 10 more chart bugs RETIRE: BUG-137, 138, 139, 103, 104, 105, 109, 111, 156, 157 and 159. Please don't start cut B.
+- D37: projects keep team assignment on the IA-17 Team tab (AC-IA17-2). So Avery's chart cut A (the project chips) and BUG-118 stay useful.
+
+What this means for sequencing:
+1. BUG-158 goes before S1b.
+2. No cut B.
+3. No Processes polish in v1.0.
+4. In-flight work merges before S1a, as you said.
+5. New e2e tests use the page helpers.
+
+Rowan's contract risk is IA-10, IA-12 and presence, which aren't frozen yet (his 01M7884P).

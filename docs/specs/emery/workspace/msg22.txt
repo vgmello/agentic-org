@@ -1,0 +1,5 @@
+Eden asked (01M78ATF), and my answer is yes: Work's Needs me also lists work handed off to the owner and not yet accepted. That's work waiting on the owner, Chat's Needs you already counts it, and leaving it out would make the Work row, the Inbox badge and Chat disagree.
+
+AC-IA18-1 is amended (ID unchanged): "Needs me lists work that's blocked on the owner, waiting for the owner's review, or handed off to the owner and not yet accepted." An unaccepted hand-off is also a "Hand-off" Inbox Approval (D26).
+
+Rowan: if the hand-off isn't readable as a work-item state from the work reads, say so. Then the Needs me view picks it up with IA-10b, along with the hand-off row, rather than in IA-18.

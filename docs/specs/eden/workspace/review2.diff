@@ -1,0 +1,43 @@
+diff --git a/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md b/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
+index 86d6af8..95dcc15 100644
+--- a/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
++++ b/projects/ac/agents/ac-product-designer-eden/knowledge/design-system.md
+@@ -473,7 +473,7 @@ Inter Variable (`@fontsource-variable/inter`, already in `app.css`). Mono: the s
+ | `text-2xl` / `text-4xl` | 24 / 32 · 36 / 40 | 600, `tracking-tight` | Stat numbers only (P-agent stats) |
+ | `text-3xl` | 30 / 36 | 600, `tracking-tight` | Full-screen error and onboarding titles only (P-error) |
+ 
+-Rules: text inputs `text-base` below 640 px (no iOS zoom), `sm:text-sm/6` above. Nothing smaller than 12 px except decorative initials. Truncate single-line titles with `truncate` + `title`; never break words mid-letter (`[overflow-wrap:anywhere]` only on ids/paths). Sentence case everywhere. Numbers that change use `tabular-nums`.
++Rules: text inputs `text-base` below 640 px (no iOS zoom), `sm:text-sm/6` above. Nothing smaller than 12 px except decorative initials. Truncate single-line titles with `truncate` + `title`; never break words mid-letter (`[overflow-wrap:anywhere]` only on ids, paths and names people typed, §22). Sentence case everywhere. Numbers that change use `tabular-nums`.
+ 
+ ---
+ 
+@@ -672,6 +672,14 @@ Also: 200% text zoom must not clip or overlap (rows wrap, pills keep whole words
+ | List / Board | `list-bullet` / `view-columns` | Work layout toggle |
+ | Runtime contexts | `cpu-chip` | Only for runtime and machine contexts (Agent setup, Runtime field). **Never as an agent's avatar** or a marker that a member is an agent: the kind is a word (§8). |
+ 
++- **Icon and words wrap together (Eden, 2026-11-12; BUG-94, BUG-95).** At 200% text and narrow widths, an icon never sits alone on a line.
++  - **Nav rows with an icon** (Chat sidebar channels, groups, DMs, Needs you, Mentions, Threads) are laid out as the icon followed by a content column (`flex items-start gap-x-3`; the icon gets `shrink-0`; the column gets `min-w-0 flex-1`).
++    - The label wraps only between words. Never use `break-words` or `overflow-wrap:anywhere` on fixed labels. `overflow-wrap:anywhere` is only for ids, paths (§6) and names people typed.
++    - The count follows the label and wraps below it, aligned to the start.
++    - Chat sidebar nav icons are capped at 32 CSS px (`max-w-[32px] max-h-[32px]`; a rem cap would grow with the text). The app sidebar (§3) is unchanged.
++  - **An inline icon and its word** (a kind badge such as Announcement) form one `inline-flex items-center whitespace-nowrap` unit, and the line around it wraps (`flex flex-wrap gap-x-2 gap-y-1`).
++    - If the unit is still wider than its column on a line of its own, the header row (name, kind, time) moves to a full-width row under the avatar. This is decided by the real available width, not by the viewport or a threshold: the metadata group is `flex-basis: max-content` in a wrapping row, so it drops when it doesn't fit. A rem container query is the fallback. The body stays in its column, and wide rows are unchanged.
++    - Never shrink the text or the icon, and never break the word.
+ - **No emoji anywhere** in the UI: labels, buttons, statuses, empty states, notices, sample and mock data, seeded content (PRD §8, E1–E3); pseudo-icons (×, ↳, ›, @, ✓, ★) become Heroicons. **Agent-authored text** (messages, summaries, journal and memory excerpts) is rendered with emoji sequences removed, at render only, never in storage (D7, D19, AC-IA16-1). **Text a person typed** is shown exactly as typed, emoji included.
+ 
+ ---
+diff --git a/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md b/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
+index cd324e8..bc6ad14 100644
+--- a/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
++++ b/projects/ac/agents/ac-product-designer-eden/knowledge/research/validation-chat-no-emoji.md
+@@ -83,8 +83,8 @@ Requested by ada (01M76EH3). Jules, 14 Chat emoji and Chat pseudo-icons → Hero
+ 
+ | Id | Sev | Where | What I saw | Fix |
+ | --- | --- | --- | --- | --- |
+-| N1 | S3, regression | Chat sidebar, Needs you and Mentions, 200% text, every width, both engines | The row gained `flex-wrap`, and with the 24 px icon (48 at 200%) "Mentions" wraps under its icon and the Needs you count badge drops to its own line. Row height grows 72→120 px (Mentions) and 120→160 px (Needs you). Before, "@ Mentions" stayed on one line. §20: 200% must not reflow a label away from its icon. `shots/sidebar-1280-200-chromium-after.png` vs `-before.png` | Drop `flex-wrap` on these rows. Use `flex items-start gap-x-3`; the icon gets `shrink-0` and the label `min-w-0 flex-1 break-words`, so the label wraps its own text beside the icon. The count gets `shrink-0 ml-auto`. |
+-| N2 | S4, regression | Message kind badge (Announcement), 960/200% in both engines | The megaphone sits alone on a line above "Announcement". §22 says the icon stays with its word. `shots/kindbadge-960-200-chromium-after.png` | Wrap the icon and the kind word in one `inline-flex items-center gap-x-1 whitespace-nowrap` span; the rest of the meta line can still wrap. |
++| N1 | S3, regression | Chat sidebar, Needs you and Mentions, 200% text, every width, both engines | The row gained `flex-wrap`, and with the 24 px icon (48 at 200%) "Mentions" wraps under its icon and the Needs you count badge drops to its own line. Row height grows 72→120 px (Mentions) and 120→160 px (Needs you). Before, "@ Mentions" stayed on one line. §20: 200% must not reflow a label away from its icon. `shots/sidebar-1280-200-chromium-after.png` vs `-before.png` | **Superseded 12 Nov (BUG-94 pin with Jules; design-system §22):** the original fix here, `break-words` on the label, split words in the middle at 200%, so I withdrew it. The row is now the icon (`shrink-0`, capped at `max-w-[32px] max-h-[32px]`) followed by a content column (`min-w-0 flex-1`). The label wraps only between words, and the count wraps under the label, aligned to the start. This applies to channels, groups and DMs too. |
++| N2 | S4, regression | Message kind badge (Announcement), 960/200% in both engines | The megaphone sits alone on a line above "Announcement". §22 says the icon stays with its word. `shots/kindbadge-960-200-chromium-after.png` | Wrap the icon and the kind word in one `inline-flex items-center gap-x-1 whitespace-nowrap` span; the rest of the meta line can still wrap. **Update 12 Nov (BUG-95):** at 320/200% the unit is 8.4 px wider than its column even on a line of its own. It also overflows at 960/200%. So the metadata group wraps by available width onto a full-width row under the avatar (design-system §22). |
+ | N3 | S4, regression | Attachment chip on a sent message: 320/100%, and 320/640/960 at 200% | `inline-flex items-center` centres the clip on the whole wrapped filename (10–60 px low). Before, it sat on the first line. `shots/sentchip-320-100-chromium-after.png` | `items-start` on the chip, with the icon nudged to the first line's centre (`mt-0.5` at micro 16 on `text-xs/5`). |
+ | N4 | S4 | Icon colour (§22: the icon takes the control's colour, `text-white` when current or pressed) | The `HeroIcon` default `text-gray-400` wins over the context colour. On the current Needs you row the icon is gray beside white text. On a pressed reaction chip the icon is gray beside the indigo count. In the kind badge it's gray-400 beside gray-300 text. `shots/after-webkit-announcement-pinned-reacted.png` | Let the icon inherit (`text-current`, or no colour class on the component) and colour the control. |
+ | P1 | S3, pre-existing | Reaction chips ("Seen, 1") and the hover toolbar (React Seen, React Looking, Reply, More), both builds | Keyboard focus on a chip shows no change: the static `outline-1 outline-white/10` stays. The toolbar shows the faint shadcn `ring-ring/50` (about 2:1). §17 asks for the indigo-400 2 px outline. `out/after-webkit-1280-100/focus-seen-chip.png` | Apply the §17 focus classes (`focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400`) to both. |

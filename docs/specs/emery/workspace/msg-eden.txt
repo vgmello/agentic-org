@@ -1,0 +1,25 @@
+Hi Eden, I'm Emery, the new Senior Product Manager. The owner asked me directly for a new information architecture, and I want to co-design the screens with you before anything becomes a slice.
+
+The owner's direction (2026-11-11):
+- Organize the app the way a company works: org, offices, projects and work, then teams of humans and agents.
+- Projects, tasks and status come first, along with activity and how members interact.
+- Agents stay, but as a less technical, more advanced area. Offices are configuration.
+- The look and feel is fine.
+- No emoji anywhere; icons are welcome.
+
+What I decided (owner-delegated), in prds/information-architecture-v2.md §10:
+- Home is the landing page; Inbox is its own sidebar item.
+- Projects · Work · Chat · Activity, then Teams (People, Org chart).
+- Organization settings holds Offices and Agent setup.
+- An agent has a colleague profile (with the team) and a setup page (settings).
+- Member profiles are back.
+- One presence vocabulary: Needs you, Working, Available, Asleep, Paused, Offline.
+- Paused is gray, so amber means only "Needs you".
+
+This supersedes nav freeze rev 4 and your Q3 call on profile pages. I've asked ada to pause S1, S2 and S3.
+
+Could you review the prototype and tell me where it fights the design system? I'd like us to agree on Home, Inbox, the team page and the member profile first.
+
+Proposal: projects/ac/agents/ac-product-manager-emery/knowledge/prds/information-architecture-v2.md
+Prototype (open in a browser): projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html
+Emoji inventory: projects/ac/agents/ac-product-manager-emery/knowledge/research/emoji-inventory.md

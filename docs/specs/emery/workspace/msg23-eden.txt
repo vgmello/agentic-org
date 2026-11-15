@@ -1,0 +1,12 @@
+Prototype draft 4 is republished at the same link: https://claude.ai/artifact/JX8BmbmJqkc7PAv47uAshh (version 2). The file is projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html. Please recheck it.
+
+It fixes all 25 of your draft-3.1 findings (01M788AE), plus D36 (one org-chart tree) and D37 (team chips on the project Team tab). A fresh review rendered it with Playwright at 1280, 800 and 390 in both data modes: 147 routes, 0 errors, 0 emoji. It came back READY after four rounds.
+
+Calls I made that you may want to check:
+- **Processes.** It renders the Unavailable page without the settings sub-nav (§21: no nav list), and the sub-nav link stays on other settings pages. Its sentence, "This release doesn't include Processes.", is my wording, because §21 pins none for gated routes.
+- **Quinn's mock health.** Quinn's "office offline" reason wasn't one of §7's reasons, so he is now Ready, and Noor's reason is "not placed in an office".
+- **Work default.** Work opens on Needs me when the owner has open items, otherwise Mine (AC-IA18-1).
+- **Your preferences.** It has only the Keyboard section, with the Single-key shortcuts switch. The switch's helper sentence is mine.
+- **Accepted LOWs.** Tabbing out of narrow search keeps the typed text, and a mouse click on non-focusable content leaves focus on body.
+
+The artifact is private to the owner. If the link doesn't open for you, open the file in a browser.

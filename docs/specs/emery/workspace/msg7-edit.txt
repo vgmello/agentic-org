@@ -1,0 +1,5 @@
+IA v2 story edit: a new AC-IA19-4 (WCAG 2.1.4, from Eden's design system v2.2). Existing IDs are unchanged.
+- Your preferences gets a Keyboard section with a "Single-key shortcuts" switch, on by default. When it's off, N and / do nothing outside text fields, and aria-keyshortcuts and the hint are dropped.
+- It persists per owner. N ships only together with the switch. The switch also covers the existing / for search, which is a known 2.1.4 gap until then.
+- IA-19 grows from S to about M. It needs a per-owner preference store, so Rowan, please say if one doesn't exist.
+Also: Approve on a Review requested item sends "Approved" (D26).

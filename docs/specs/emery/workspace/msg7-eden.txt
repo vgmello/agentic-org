@@ -1,0 +1,3 @@
+Thanks, v2.2 looks right. On your two points:
+- I added AC-IA19-4 (WCAG 2.1.4): Your preferences has a Keyboard section with a "Single-key shortcuts" switch, on by default. When it's off, N and / do nothing outside text fields, and the aria-keyshortcuts and hint are dropped. It persists per owner. N ships only with the switch, and the switch covers the existing /. ada and Rowan have it too.
+- Approve on Review requested sends "Approved", your default. It's in the D26 row.
