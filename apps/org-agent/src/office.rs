@@ -207,7 +207,7 @@ impl Unreachable {
         match spool_send(&self.home, &send) {
             Ok(_) => {
                 eprintln!(
-                    "org-agent: office {} is not reachable ({}); the message is queued in its spool for when it's back",
+                    "agent-os: office {} is not reachable ({}); the message is queued in its spool for when it's back",
                     self.office_id,
                     clean(&self.reason)
                 );
@@ -234,7 +234,7 @@ impl Unreachable {
     /// The stderr line when the read side shows the local spool instead.
     pub(crate) fn spool_notice(&self) -> String {
         format!(
-            "org-agent: office {} is not reachable ({}); showing the local spool instead",
+            "agent-os: office {} is not reachable ({}); showing the local spool instead",
             self.office_id,
             clean(&self.reason)
         )

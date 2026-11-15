@@ -1,11 +1,11 @@
-//! # org-office-host: the login service
+//! agentic-org serve: the service host
 //!
 //! A thin binary: reads its arguments, finds the office home, starts the [`Host`] and stops it
 //! on SIGTERM or SIGINT. All logic lives in the library.
 //!
 //! ```text
-//! org-office-host [--version]
-//! org-office-host [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]   (debug builds)
+//! agentic-org serve [--version]
+//! agentic-org serve [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]   (debug builds)
 //! ```
 //! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
 //! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
@@ -15,7 +15,7 @@
 //!
 //! A debug build takes them for development and tests: `--home` overrides the office home
 //! (otherwise `org_proto::location`'s rule), `--server-bin` the office server program (otherwise
-//! `org-server` next to this one), and `--app-team-id` the team id it was built with.
+//! `agentic-org-office` next to this one), and `--app-team-id` the team id it was built with.
 //! It may also accept one unsigned development app for the app-only calls: the path of its
 //! executable (`Contents/MacOS/<exe>`) is the build-time constant `ORG_DEV_APP_PATH` (set when
 //! the host is compiled), never read from the command line, a config file or the environment at
@@ -26,12 +26,11 @@
 //! variable. The host never passes the variable on to its servers.
 
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 use org_office_host::signals::ShutdownSignals;
 use org_office_host::{Config, Host};
 
-const USAGE: &str = "usage: org-office-host [--version] | (debug builds only) [--home <absolute \
+const USAGE: &str = "usage: agentic-org serve [--version] | (debug builds only) [--home <absolute \
                      path>] [--server-bin <path>] [--app-team-id <team id>]";
 
 /// Which kind of build this is: a release build refuses the arguments that change what it
@@ -61,36 +60,12 @@ struct Args {
     app_team_id: Option<String>,
 }
 
-fn main() -> ExitCode {
-    // Before startup concurrency or key material: inherited by all threads and children.
-    let limits = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: RLIMIT_CORE accepts this valid limits structure.
-    if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) } != 0 {
-        eprintln!(
-            "cannot disable core dumps: {}",
-            std::io::Error::last_os_error()
-        );
-        return ExitCode::FAILURE;
-    }
-
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            eprintln!("org-office-host: {message}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn run() -> Result<(), String> {
+pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
     // First, before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
-    let args = parse_args(std::env::args().skip(1), Build::CURRENT)?;
+    let args = parse_args(arguments, Build::CURRENT)?;
     if args.version {
-        println!("org-office-host {}", env!("CARGO_PKG_VERSION"));
+        println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let host = Host::start(config(args)?).map_err(|e| e.to_string())?;

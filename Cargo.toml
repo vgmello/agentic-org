@@ -18,7 +18,8 @@ members = [
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/org-server",
-  "apps/org-office-host",
+  "crates/org-office-host",
+  "apps/org-setup",
   "apps/org-agent",
   "apps/org-gateway",
 ]
@@ -41,7 +42,8 @@ default-members = [
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/org-server",
-  "apps/org-office-host",
+  "crates/org-office-host",
+  "apps/org-setup",
   "apps/org-agent",
   "apps/org-gateway",
 ]

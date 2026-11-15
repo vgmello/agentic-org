@@ -54,7 +54,7 @@ impl World {
     }
 
     fn spawn(&self, args: &[&str]) -> Run {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_org-server"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_agentic-org-office"))
             .args(args)
             .env("ORG_OFFICE_HOME", &self.home)
             .stdin(Stdio::piped())
@@ -814,7 +814,7 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
     let long = dir.path().join("x".repeat(90));
     std::fs::create_dir_all(long.join("offices")).unwrap();
     std::fs::create_dir_all(long.join("run")).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_org-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agentic-org-office"))
         .arg("--create")
         .env("ORG_OFFICE_HOME", &long)
         .stdin(Stdio::piped())

@@ -990,7 +990,7 @@ fn notify_strips_tag_characters_hidden_in_a_subject() {
     assert!(report["text"].as_str().unwrap().contains("\"Hi\""));
 }
 
-/// Run `org-agent` in the background and wait at most `limit` for it (killing it if it hangs).
+/// Run `agent-os` in the background and wait at most `limit` for it (killing it if it hangs).
 fn run_with_timeout(env: &TempOrgHome, args: &[&str], limit: Duration) -> common::Run {
     let mut child = TempOrgHome::command(&env.root, ME, args)
         .stdout(Stdio::piped())
@@ -1002,7 +1002,7 @@ fn run_with_timeout(env: &TempOrgHome, args: &[&str], limit: Duration) -> common
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("org-agent {args:?} hung for {limit:?}");
+            panic!("agent-os {args:?} hung for {limit:?}");
         }
         thread::sleep(Duration::from_millis(10));
     }

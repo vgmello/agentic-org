@@ -38,7 +38,7 @@
 
 /// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
 /// only to a server signed with it by the app's team (`server_check`). The bundle must sign
-/// `Contents/MacOS/org-server` with it.
+/// agentic-org-office with it. The signing identifier is stable across filename changes.
 pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-server";
 
 use crate::peer::AuditToken;

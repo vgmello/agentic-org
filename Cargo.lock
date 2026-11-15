@@ -562,7 +562,6 @@ dependencies = [
  "core-foundation",
  "libc",
  "org-host-control",
- "org-office-host",
  "org-office-launch",
  "org-proto",
  "org-socket",
@@ -629,6 +628,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "org-setup"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-host-control",
+ "org-office-host",
+ "org-office-launch",
+ "org-proto",
+ "org-setup",
+ "org-socket",
+ "serde",
+ "serde_json",
  "syn 2.0.119",
  "tempfile",
 ]

@@ -1,4 +1,4 @@
-//! # org-server: the office daemon
+//! # agentic-org-office: the office daemon
 //!
 //! A thin binary: it moves its control pipe out of the way, installs a panic hook, and runs
 //! `org_server::run`. All logic is in the library.
@@ -22,7 +22,7 @@ fn main() {
     let control = match org_server::fdswap::take_control_pipe() {
         Ok(control) => control,
         Err(error) => {
-            eprintln!("org-server: cannot set up its descriptors: {error}");
+            eprintln!("agentic-org-office: cannot set up its descriptors: {error}");
             std::process::exit(1);
         }
     };

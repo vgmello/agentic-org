@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "org-server"
+name = "agentic-org-office"
 path = "src/main.rs"
 
 [[test]]

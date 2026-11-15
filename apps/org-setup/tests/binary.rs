@@ -69,7 +69,8 @@ impl Drop for HostProcess {
 fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
     let stderr = File::create(home.path().join(stderr_to)).unwrap();
     HostProcess(
-        Command::new(env!("CARGO_BIN_EXE_org-office-host"))
+        Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+            .arg("serve")
             .arg("--home")
             .arg(home.path())
             .arg("--server-bin")
@@ -250,13 +251,15 @@ fn a_second_host_binary_on_the_same_home_exits_at_once() {
 
 #[test]
 fn bad_arguments_are_refused() {
-    let status = Command::new(env!("CARGO_BIN_EXE_org-office-host"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+        .arg("serve")
         .arg("--frobnicate")
         .stderr(Stdio::null())
         .status()
         .unwrap();
     assert!(!status.success());
-    let status = Command::new(env!("CARGO_BIN_EXE_org-office-host"))
+    let status = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+        .arg("serve")
         .args(["--home", "relative/home", "--server-bin", "/nonexistent"])
         .stderr(Stdio::null())
         .status()
@@ -271,7 +274,8 @@ fn bad_arguments_are_refused() {
 fn a_release_host_refuses_the_arguments_that_change_what_it_trusts() {
     let home = TestHome::new();
     for flag in ["--home", "--server-bin", "--app-team-id"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_org-office-host"))
+        let out = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+            .arg("serve")
             .args([flag, home.path().to_str().unwrap()])
             .stdin(Stdio::null())
             .output()
@@ -321,7 +325,7 @@ fn the_host_never_logs_a_token() {
     assert!(host.stop().success());
     let log = fs::read_to_string(home.path().join("host.err")).unwrap();
     assert!(
-        log.contains("org-office-host:"),
+        log.contains("agentic-org:"),
         "the host logged nothing: {log}"
     );
     assert!(

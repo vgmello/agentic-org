@@ -16,23 +16,21 @@ belongs to the offices; the browser accesses it through HQ.
 
 ## Proposed v1 layout
 
-The browser application is **org-ui** at `apps/org-ui/`. The Rust server
-application, Cargo package and worker executable are **org-server** at
-`apps/org-server/`. The host still supervises one worker per office.
+The browser application is org-ui at apps/org-ui. Existing source/package names stay org-server, org-gateway and org-agent; their executable targets are agentic-org-office, agentic-org-web and agent-os. The new org-setup package builds agentic-org. Host lifecycle/key-custody implementation is a library at crates/org-office-host; the standalone org-office-host executable is removed.
 
 ```text
 apps/
-  org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
-  org-server/         Per-office worker composition and local transport
-  org-gateway/        Planned instance browser HTTP/TLS helper
-  org-setup/          Planned setup/lifecycle CLI (binary agentic-org)
-  org-office-host/    Instance and office-process supervision
-  org-agent/          Small employee CLI
-crates/               Cohesive libraries; domain modules contain feature slices
-docs/
-  architecture-rules.md
-  design/project-structure.md
+  org-setup/          agentic-org: human CLI and serve host composition
+  org-server/         agentic-org-office: one office worker
+  org-gateway/        agentic-org-web: browser entry point and existing HTTP library
+  org-agent/          agent-os: small employee CLI
+  org-ui/             Static browser assets
+crates/
+  org-office-host/    Extracted host lifecycle/key-custody library
+  ...                 Domain and protocol libraries
 ```
+
+agentic-org serve runs the existing host lifecycle. **HQ setup/service registration and production web handoff remain unavailable:** their protected bootstrap/authentication integration has not landed in v1. setup returns an error without creating state; agentic-org-web refuses to open a listener without its unfinished production composition. Help/version commands are available. The existing test-only CSP harness remains a test example, not a production bypass. See [executable migration](docs/design/executable-migration.md) for migration scope and checks. This code change does not install services, update running agents or reset data.
 
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature

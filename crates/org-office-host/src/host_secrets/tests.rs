@@ -824,7 +824,7 @@ mod development {
             assert_eq!(
                 stderr,
                 if warns {
-                    "org-office-host: could not clean up a temporary host secret\n"
+                    "agentic-org: could not clean up a temporary host secret\n"
                 } else {
                     ""
                 },

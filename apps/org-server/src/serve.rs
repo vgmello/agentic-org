@@ -361,7 +361,7 @@ impl Shared {
                 self.hello.capabilities.push("inbox.list".into());
             }
             Ok(false) => {}
-            Err(_) => eprintln!("org-server: inbox disabled (authority read unavailable)"),
+            Err(_) => eprintln!("agentic-org-office: inbox disabled (authority read unavailable)"),
         }
     }
 
@@ -546,7 +546,7 @@ fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
                 // A lookup could not answer: look again on the next tick.
                 Ok(true) => {}
                 Err(_) => {
-                    eprintln!("org-server: the member watcher failed once; it carries on");
+                    eprintln!("agentic-org-office: the member watcher failed once; it carries on");
                 }
             }
         }

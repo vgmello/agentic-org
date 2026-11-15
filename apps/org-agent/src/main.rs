@@ -1,10 +1,10 @@
-//! `org-agent`: Fast CLI for agent messaging, directory (`who`), status (`status`),
+//! `agent-os`: Fast CLI for agent messaging, directory (`who`), status (`status`),
 //! and message triage (`defer`, `done`, `notify`, `due`) over `org-spool`.
 //!
 //! `msg send | inbox | read | wait` and `who` go through the agent's office when this Mac has
 //! one and it answers (see [`office`]); the spool stays the offline fallback.
 //!
-//! Also supports `org-agent relay <run|status>` and `argv[0]` dispatch when invoked as `org-relay`.
+//! Also supports `agent-os relay <run|status>` and `argv[0]` dispatch when invoked as `org-relay`.
 
 mod office;
 
@@ -121,7 +121,7 @@ fn run_relay_status(spool: &Spool, json: bool) -> Result<u8, CliError> {
 fn run_relay_subcommand(spool: &Spool, args: &[String], json_flag: bool) -> Result<u8, CliError> {
     let Some(sub) = args.first().map(|s| s.as_str()) else {
         return Err(CliError::Usage(
-            "usage: org-agent relay <run [--once] | status [--json]>".into(),
+            "usage: agent-os relay <run [--once] | status [--json]>".into(),
         ));
     };
     match sub {
@@ -504,23 +504,23 @@ fn print_usage() {
     eprintln!(
         "\
 Usage:
-  org-agent whoami [--as <agent>] [--json]
-  org-agent who    [<member>] [--team <team>] [--kind agent|person|owner] [--office <id>] [--json]
-  org-agent status [<text> | --clear] [--ttl 8h] [--as <agent>] [--json]
-  org-agent profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--role <r>] [--team <id[:name[:title]]>] [--reports-to <id[:name]>] [--office <id[:name]>] [--as <agent>] [--json]
-  org-agent msg register [<agent>] [--name <n>] [--kind agent|person] [--role <r>] [--team <t>] [--reports-to <r>] [--as <agent>] [--json]
-  org-agent msg deregister <agent> [--json]
-  org-agent msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--office <id>] [--as <agent>] [--json] <body | ->
-  org-agent msg ask    --to <agent> [--timeout 120s] [--subject <s>] [--priority high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
-  org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] [--body <body> | <body | ->]
-  org-agent msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--as <agent>] [--json]
-  org-agent msg done   <id> [--note <text>] [--as <agent>] [--json]
-  org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <agent>]
-  org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>]   (JSON, exit 0)
-  org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--office <id>] [--as <agent>] [--json]
-  org-agent msg read   <id> | --next [--office <id>] [--as <agent>] [--json]
-  org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--office <id>] [--as <agent>] [--json]
-  org-agent relay <run [--once] | status [--json]>
+  agent-os whoami [--as <agent>] [--json]
+  agent-os who    [<member>] [--team <team>] [--kind agent|person|owner] [--office <id>] [--json]
+  agent-os status [<text> | --clear] [--ttl 8h] [--as <agent>] [--json]
+  agent-os profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--role <r>] [--team <id[:name[:title]]>] [--reports-to <id[:name]>] [--office <id[:name]>] [--as <agent>] [--json]
+  agent-os msg register [<agent>] [--name <n>] [--kind agent|person] [--role <r>] [--team <t>] [--reports-to <r>] [--as <agent>] [--json]
+  agent-os msg deregister <agent> [--json]
+  agent-os msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--office <id>] [--as <agent>] [--json] <body | ->
+  agent-os msg ask    --to <agent> [--timeout 120s] [--subject <s>] [--priority high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
+  agent-os msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] [--body <body> | <body | ->]
+  agent-os msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--as <agent>] [--json]
+  agent-os msg done   <id> [--note <text>] [--as <agent>] [--json]
+  agent-os msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <agent>]
+  agent-os msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>]   (JSON, exit 0)
+  agent-os msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--office <id>] [--as <agent>] [--json]
+  agent-os msg read   <id> | --next [--office <id>] [--as <agent>] [--json]
+  agent-os msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--office <id>] [--as <agent>] [--json]
+  agent-os relay <run [--once] | status [--json]>
 
 Office (cutover, opt-in): --office <id> or $ORG_OFFICE sends msg send, inbox, read, wait and who
 through that office; without either, everything uses the local spool. Don't set ORG_OFFICE on a
@@ -669,7 +669,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             Ok(EXIT_OK)
         }
         "-V" | "--version" | "version" => {
-            println!("org-agent {}", env!("CARGO_PKG_VERSION"));
+            println!("agent-os {}", env!("CARGO_PKG_VERSION"));
             Ok(EXIT_OK)
         }
         "whoami" => {
@@ -799,7 +799,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
         "profile" => {
             let Some(sub) = filtered.get(1).map(|s| s.as_str()) else {
                 return Err(CliError::Usage(
-                    "usage: org-agent profile set [<id>] [options]".into(),
+                    "usage: agent-os profile set [<id>] [options]".into(),
                 ));
             };
             if sub != "set" {
@@ -983,7 +983,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             // delete the caller's own inbox.
             let [id] = sub_args else {
                 return Err(CliError::Usage(
-                    "usage: org-agent msg deregister <agent>".into(),
+                    "usage: agent-os msg deregister <agent>".into(),
                 ));
             };
             let id = &member_id_arg(id, "deregister").map_err(CliError::Usage)?;
@@ -1021,7 +1021,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             let parsed = parse_outgoing(sub_args, OutgoingKind::Reply)?;
             let Some(orig_id) = parsed.positional.first().cloned() else {
                 return Err(CliError::Usage(
-                    "usage: org-agent msg reply <id> [--body <body> | <body | ->]".into(),
+                    "usage: agent-os msg reply <id> [--body <body> | <body | ->]".into(),
                 ));
             };
             let msg = parsed.outgoing(1)?;
@@ -1082,7 +1082,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
 
             let id = id.ok_or_else(|| {
                 CliError::Usage(
-                    "usage: org-agent msg defer <id> --until <30m|2h|after-task|ISO> [--note <text>]"
+                    "usage: agent-os msg defer <id> --until <30m|2h|after-task|ISO> [--note <text>]"
                         .into(),
                 )
             })?;
@@ -1141,7 +1141,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             }
 
             let id = id.ok_or_else(|| {
-                CliError::Usage("usage: org-agent msg done <id> [--note <text>]".into())
+                CliError::Usage("usage: agent-os msg done <id> [--note <text>]".into())
             })?;
             let outcome = spool.done_message(&me, &id, note)?;
             if json_flag {
@@ -1544,7 +1544,7 @@ fn msg_wait(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
 fn main() -> ExitCode {
     install_signal_handlers();
     let mut argv = env::args();
-    let argv0 = argv.next().unwrap_or_else(|| "org-agent".to_string());
+    let argv0 = argv.next().unwrap_or_else(|| "agent-os".to_string());
     let args: Vec<String> = argv.collect();
     if Path::new(&argv0).file_name().and_then(|n| n.to_str()) == Some("org-relay") {
         return run_org_relay(&args);
@@ -1552,34 +1552,34 @@ fn main() -> ExitCode {
     match run(args) {
         Ok(code) => ExitCode::from(code),
         Err(CliError::Usage(msg)) => {
-            eprintln!("org-agent: {msg}");
+            eprintln!("agent-os: {msg}");
             ExitCode::from(EXIT_USAGE)
         }
         Err(CliError::Spool(SpoolError::InvalidInput(msg))) => {
-            eprintln!("org-agent: {msg}");
+            eprintln!("agent-os: {msg}");
             ExitCode::from(EXIT_USAGE)
         }
         Err(CliError::Spool(SpoolError::NotFound(msg))) => {
-            eprintln!("org-agent: {msg}");
+            eprintln!("agent-os: {msg}");
             ExitCode::from(EXIT_USAGE)
         }
         Err(CliError::Spool(SpoolError::Timeout(msg))) => {
-            eprintln!("org-agent: {msg}");
+            eprintln!("agent-os: {msg}");
             ExitCode::from(EXIT_TIMEOUT)
         }
         Err(CliError::Spool(err @ SpoolError::UnknownRecipient(_))) => {
             // SpoolError's text: never suggests registering a reserved name.
-            eprintln!("org-agent: {err}");
+            eprintln!("agent-os: {err}");
             ExitCode::from(EXIT_UNKNOWN_RECIPIENT)
         }
         Err(CliError::Spool(SpoolError::Io(err))) => {
-            eprintln!("org-agent: {err}");
+            eprintln!("agent-os: {err}");
             ExitCode::from(EXIT_IO)
         }
         Err(CliError::Spool(SpoolError::Interrupted)) => ExitCode::from(EXIT_INTERRUPTED),
         Err(CliError::Failed(failure)) => {
             if let Some(message) = failure.message {
-                eprintln!("org-agent: {message}");
+                eprintln!("agent-os: {message}");
             }
             ExitCode::from(failure.code)
         }

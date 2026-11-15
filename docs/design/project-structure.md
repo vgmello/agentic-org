@@ -13,6 +13,8 @@ Read the language-agnostic [architecture rules](../architecture-rules.md) first.
 [removal inventory](standalone-server-removal-inventory.md) retain authority over
 product scope, process/security boundaries, and deletion acceptance.
 
+**Executable migration implementation:** [executable-migration.md](executable-migration.md) records the current source-to-binary mapping: agentic-org, agentic-org-office, agentic-org-web and agent-os. Host behavior has moved to crates/org-office-host and is composed by agentic-org serve. Tables below describing earlier org-server/org-office-host source states are historical where they conflict with that implementation map; this change does not claim pending bootstrap/HTTP authentication is complete.
+
 ## 1. Names and process boundaries
 
 | Source / current name | V1 target | Meaning |

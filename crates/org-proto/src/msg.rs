@@ -104,7 +104,7 @@
 //!
 //! ## Unknown values
 //! Enum values this build doesn't know decode as `Unknown` and re-serialize as `"unknown"`.
-//! So a client that prints a result re-serialized (e.g. `org-agent msg notify --format json`)
+//! So a client that prints a result re-serialized (e.g. `agent-os msg notify --format json`)
 //! may show `unknown` for a value from a newer server.
 
 use std::collections::BTreeMap;
@@ -762,7 +762,7 @@ pub struct MsgNotifyParams {
 
 /// `msg.notify`'s result.
 ///
-/// **A locked contract**: `org-agent msg notify --format json` prints it as-is, re-serialized
+/// **A locked contract**: `agent-os msg notify --format json` prints it as-is, re-serialized
 /// from this struct, so its keys come out in this order:
 /// `{"v","agent","urgent","count","urgent_count","items","more","text"}`. (On the socket it
 /// travels inside a response, whose key order isn't guaranteed.) Add fields only at the end.
@@ -2452,10 +2452,10 @@ mod tests {
                 i.from_name, i.from, i.subject, i.kind, i.id
             ));
         }
-        lines.push("…and 4294967295 more (org-agent msg inbox)".into());
+        lines.push("…and 4294967295 more (agent-os msg inbox)".into());
         lines.push(
-            "Triage each: answer now, `org-agent msg defer <id> --until \
-             30m|2h|after-task|<time>`, or `org-agent msg done <id>`."
+            "Triage each: answer now, `agent-os msg defer <id> --until \
+             30m|2h|after-task|<time>`, or `agent-os msg done <id>`."
                 .into(),
         );
         let result = NotifyResult {

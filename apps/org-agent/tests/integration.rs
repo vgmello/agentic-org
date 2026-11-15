@@ -1,4 +1,4 @@
-//! End-to-end tests of `org-agent` (relay, send/ask/reply/read/inbox/wait, who, status,
+//! End-to-end tests of `agent-os` (relay, send/ask/reply/read/inbox/wait, who, status,
 //! defer, done, notify, due) on a temporary `$ORG_HOME`.
 
 mod common;

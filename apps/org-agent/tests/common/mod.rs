@@ -1,4 +1,4 @@
-//! Shared harness: runs the real `org-agent` binary against a temporary `$ORG_HOME` under
+//! Shared harness: runs the real `agent-os` binary against a temporary `$ORG_HOME` under
 //! `/tmp` (short enough for macOS socket paths). `HOME` is pointed there too, so nothing a test
 //! runs can ever fall back to the live `~/.agency` spool.
 #![allow(dead_code)]
@@ -13,7 +13,7 @@ use std::time::Duration;
 use org_spool::generate_ulid;
 
 pub fn org_agent_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_org-agent"))
+    PathBuf::from(env!("CARGO_BIN_EXE_agent-os"))
 }
 
 pub struct Run {
@@ -75,7 +75,7 @@ impl TempOrgHome {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("spawn org-agent relay run");
+            .expect("spawn agent-os relay run");
         self.relay = Some(child);
         for _ in 0..200 {
             if self.root.join("spool/relay.sock").exists() {

@@ -364,7 +364,7 @@ fn shut_down(stream: &UnixStream) {
     for half in [std::net::Shutdown::Write, std::net::Shutdown::Read] {
         if let Err(error) = stream.shutdown(half) {
             if worth_logging(&error) {
-                eprintln!("org-server: rendezvous shutdown ({half:?}) failed: {error}");
+                eprintln!("agentic-org-office: rendezvous shutdown ({half:?}) failed: {error}");
             }
         }
     }

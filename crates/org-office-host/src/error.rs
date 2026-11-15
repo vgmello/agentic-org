@@ -64,7 +64,7 @@ impl fmt::Display for HostError {
             ),
             HostError::AlreadyRunning { home } => write!(
                 f,
-                "another org-office-host is already running for {}",
+                "another agentic-org service host is already running for {}",
                 home.display()
             ),
             HostError::SocketInTheWay { path } => write!(

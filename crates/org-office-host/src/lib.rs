@@ -1,4 +1,4 @@
-//! # org-office-host: the login service, as a library
+//! # agentic-org: the login service, as a library
 //!
 //! The one per-user login service on a Mac (see `docs/design/offices-hq-and-satellites.md`,
 //! "Processes on one Mac", and the host/server boundary design). It:
@@ -17,7 +17,7 @@
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
-//! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
+//! The agentic-org serve composition parses arguments, waits for shutdown and calls [`Host`].
 
 // A release-profile build (or any build for the app bundle, `ORG_BUNDLE=1`) with debug
 // assertions on would ship every development path (see build.rs): refuse it, whatever turned
@@ -32,7 +32,7 @@
     not(doctest)
 ))]
 compile_error!(
-    "org-office-host: refusing a release or app-bundle build with debug assertions on: it would \
+    "agentic-org: refusing a release or app-bundle build with debug assertions on: it would \
      ship the host's development paths (dev keys, no server signature check, the unsigned \
      development app, the trust-changing arguments). Build it without debug assertions."
 );
@@ -95,14 +95,15 @@ pub use crate::app_auth::APP_BUNDLE_ID;
 pub use crate::server_check::SERVER_SIGNING_ID;
 
 /// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
-/// `Contents/MacOS/org-office-host`.
+/// the agentic-org executable in host mode. The signing identifier remains stable
+/// across the executable migration; agent-os must never receive this entitlement.
 pub const HOST_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
 
 /// The office server's program name, looked for next to the host's own executable.
-pub const SERVER_PROGRAM_NAME: &str = "org-server";
+pub const SERVER_PROGRAM_NAME: &str = "agentic-org-office";
 
 /// Requests one connection may have running at once.
 const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;

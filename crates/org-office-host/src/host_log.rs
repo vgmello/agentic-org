@@ -5,7 +5,7 @@ const MAX_UNTRUSTED_BYTES: usize = 2048;
 
 /// Logs one line. Never pass it secrets; pass text a server sent through [`untrusted`].
 pub(crate) fn log(message: &str) {
-    eprintln!("org-office-host: {message}");
+    eprintln!("agentic-org: {message}");
 }
 
 /// Text a server sent (e.g. a `failed` message), made safe for one log line: control characters,

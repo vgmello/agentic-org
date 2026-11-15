@@ -199,7 +199,7 @@ fn duplicated_queries(files: &[PathBuf]) -> Vec<(PathBuf, BTreeSet<String>)> {
 fn host_peer_uid_checks_have_one_owner() {
     let mut files = Vec::new();
     rust_sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/org-office-host/src"),
         &mut files,
     );
     assert!(!files.is_empty(), "host source inventory is absent");

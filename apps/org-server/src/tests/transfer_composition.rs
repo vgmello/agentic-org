@@ -43,7 +43,7 @@ fn isolated(case: &str, test: &str) {
     if case == "failure" {
         assert!(
             String::from_utf8_lossy(&output.stderr)
-                .contains("org-server: cannot start transfer service\n"),
+                .contains("agentic-org-office: cannot start transfer service\n"),
             "Service::start failure returned without the fixed diagnostic: {}",
             String::from_utf8_lossy(&output.stderr)
         );

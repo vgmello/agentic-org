@@ -47,7 +47,7 @@ impl Hint {
         if let Ok(upto) = feed.head() {
             while state.org < upto {
                 let Ok(batch) = feed.changes_after(state.org, 100) else {
-                    eprintln!("org-server: inbox organization feed unavailable");
+                    eprintln!("agentic-org-office: inbox organization feed unavailable");
                     break;
                 };
                 let mut advanced = false;

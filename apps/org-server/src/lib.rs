@@ -1,4 +1,4 @@
-//! # org-server: one process per office
+//! # agentic-org-office: one process per office
 //!
 //! Started by the host on the launch protocol (`org-office-launch`):
 //! ```text
@@ -55,7 +55,7 @@ pub fn install_panic_hook() {
         let place = info
             .location()
             .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
-        eprintln!("org-server: internal error{place}");
+        eprintln!("agentic-org-office: internal error{place}");
     }));
 }
 
@@ -72,7 +72,7 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
         [flag] if flag == CREATE_FLAG => Ok(Mode::Create),
         [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
         [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
-        _ => Err("usage: org-server --create | --office <id> | --discard <id>"),
+        _ => Err("usage: agentic-org-office --create | --office <id> | --discard <id>"),
     }
 }
 
@@ -304,7 +304,7 @@ fn serve_office(
     let listener = match serve::bind(&socket) {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("org-server: bind failed: {error}");
+            eprintln!("agentic-org-office: bind failed: {error}");
             return fail(
                 &mut control,
                 FailCode::StorageError,
@@ -327,7 +327,7 @@ fn serve_office(
     let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
         Ok(inbox) => inbox,
         Err(error) => {
-            eprintln!("org-server: inbox clock initialization failed: {error}");
+            eprintln!("agentic-org-office: inbox clock initialization failed: {error}");
             log_causes(&error);
             let _ = std::fs::remove_file(&socket);
             return fail(
@@ -460,7 +460,7 @@ fn serve_office(
         Ok(service) => service,
         Err(_) => {
             let _ = std::fs::remove_file(&socket);
-            eprintln!("org-server: cannot start transfer service");
+            eprintln!("agentic-org-office: cannot start transfer service");
             return 1;
         }
     };
@@ -480,7 +480,7 @@ fn serve_office(
 /// Optional live hints cannot prevent the worker's Ready acknowledgement.
 fn announce_ready(control: &mut Control, socket: &Path, shared: &mut serve::Shared) {
     if shared.enable_inbox_hints().is_err() {
-        eprintln!("org-server: inbox hints disabled (cursor unavailable)");
+        eprintln!("agentic-org-office: inbox hints disabled (cursor unavailable)");
     }
     emit(
         control,
@@ -504,7 +504,7 @@ fn snapshot_failure(error: &OfficeError) -> serve::SnapshotFailure {
 /// path, SQL or secret in it) and returns it for the connection, which tells the client only a
 /// fixed text.
 fn logged(what: &str, error: &OfficeError) -> String {
-    eprintln!("org-server: {what} failed: {error}");
+    eprintln!("agentic-org-office: {what} failed: {error}");
     log_causes(error);
     error.to_string()
 }
@@ -520,7 +520,7 @@ fn work_answer(
         Ok(org_work::TxnOutput::Refused(error)) => Ok(Err(error)),
         Ok(org_work::TxnOutput::Replayed(answer)) => Ok(answer),
         Err(error) => {
-            eprintln!("org-server: {method} failed: {error}");
+            eprintln!("agentic-org-office: {method} failed: {error}");
             log_causes(&error);
             Err(error.to_string())
         }
@@ -532,7 +532,7 @@ fn work_answer(
 fn log_causes(error: &dyn std::error::Error) {
     let mut cause = std::error::Error::source(error);
     while let Some(inner) = cause {
-        eprintln!("org-server:   caused by: {inner}");
+        eprintln!("agentic-org-office:   caused by: {inner}");
         cause = inner.source();
     }
 }
@@ -607,7 +607,7 @@ fn emit(control: &mut Control, event: &ServerEvent) {
 
 fn fail(control: &mut Control, code: FailCode, message: &str) -> i32 {
     // The host's log is this process's stderr: say what failed (a fixed text, never a secret).
-    eprintln!("org-server: {message}");
+    eprintln!("agentic-org-office: {message}");
     emit(
         control,
         &ServerEvent::Failed {

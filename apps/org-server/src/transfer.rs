@@ -51,7 +51,7 @@ impl Service {
 #[allow(unsafe_code)]
 fn fatal() -> ! {
     use std::io::Write;
-    let _ = io::stderr().write_all(b"org-server: fatal transfer failure\n");
+    let _ = io::stderr().write_all(b"agentic-org-office: fatal transfer failure\n");
     // Fatal receipt may leave unreported macOS rights. Terminate immediately,
     // with no ACK or C/atexit cleanup racing the live SQLite/OpenSSL threads.
     // SQLite's crash recovery rolls back open transactions on the next open.

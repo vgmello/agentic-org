@@ -1,4 +1,4 @@
-//! `org-agent` against a real office server: `msg send | inbox | read | wait` and `who` go
+//! `agent-os` against a real office server: `msg send | inbox | read | wait` and `who` go
 //! through the office, and `send` falls back to the local spool when the office is down.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
@@ -285,10 +285,10 @@ impl World {
         server
     }
 
-    /// `org-agent <args>` as `agent`, with every home in this world and the office named
+    /// `agent-os <args>` as `agent`, with every home in this world and the office named
     /// (`ORG_OFFICE`: during the cutover the office is used only when named).
     fn agent(&self, agent: &str, args: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_org-agent"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_agent-os"));
         command
             .args(args)
             .env("ORG_OFFICE_HOME", &self.home)
@@ -305,7 +305,7 @@ impl World {
         self.agent(agent, args).output().unwrap().into()
     }
 
-    /// `org-agent <args>` as `agent` with no office named.
+    /// `agent-os <args>` as `agent` with no office named.
     fn run_unnamed(&self, agent: &str, args: &[&str]) -> Run {
         self.agent(agent, args)
             .env_remove("ORG_OFFICE")
@@ -733,7 +733,7 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
 
     // The held wait ends no later than its timeout. Today the office re-checks a binding only
     // when the next call arrives, so it times out (2); if it ends held waits on offboarding, it
-    // answers not_bound, org-agent binds again, is refused, and says so (1).
+    // answers not_bound, agent-os binds again, is refused, and says so (1).
     let started = Instant::now();
     let ended = waiting.wait_with_output().unwrap();
     assert!(started.elapsed() < Duration::from_secs(10));

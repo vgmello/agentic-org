@@ -5,7 +5,10 @@ fn assert_transfer_fatal(run: &mut Run, case: &str) {
     let status = run.wait();
     let stderr = run.stderr();
     assert_eq!(status.code(), Some(1), "{case}: {status:?}: {stderr}");
-    assert_eq!(stderr, "org-server: fatal transfer failure\n", "{case}");
+    assert_eq!(
+        stderr, "agentic-org-office: fatal transfer failure\n",
+        "{case}"
+    );
 }
 fn send_record(socket: &UnixDatagram, payload: &[u8], fds: &[RawFd]) {
     send_until(
