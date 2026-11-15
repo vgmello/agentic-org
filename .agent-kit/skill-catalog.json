@@ -2,11 +2,11 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "01a1dd82-ffe6-7363-af94-6072c75de2d1",
-  "rationale": "Actual Rust 1.99.1/Svelte 5 static monorepo, maintained UI skills, existing ownership/merge process and sensitive host/storage/protocol boundaries. New briefs add only missing project-specific procedures. No application changes or speculative skill pack. Owner-requested local embed daemon and Codex native memory are documented in the maintenance skill; existing product ownership remains unchanged.",
+  "rationale": "Actual Rust 1.99.1/Svelte 5 static monorepo, maintained UI skills and sensitive host/storage/protocol boundaries. Reassessed after explicit owner solo-Codex instruction on 2026-11-15: removed offline developer ownership/messaging/approval from baseline process and affected role/skill guidance, retained local kit review gates, interface compatibility, full-stack responsibility, technical/data/security checks and local embed memory adaptation. No model policy, executable runtime or application behavior changes; unchanged capability rules/evidence remain applicable.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
-      "sha256": "5aacb9dbc6183affd9fae6e956391e5eb4afcc90d377873a4087a05fa360c7ea"
+      "sha256": "3dffb0f0f5049d132c93883a578474af1bdcc8cf29e7cea47083cddf2e63face"
     },
     {
       "path": ".agent-kit/project-roles/codebase-scout.md",
@@ -14,23 +14,23 @@
     },
     {
       "path": ".agent-kit/project-roles/fullstack-engineer.md",
-      "sha256": "a6b935c57906ae10655a4680ee7e3e5be7c8518d3d971e85a639cbeb9329a950"
+      "sha256": "c8b08462ddc1aa384be8b53b3060a526782195a05c05987fb83dffbb870b15d5"
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "57eb9af5ef20b7c1a1c9dfd840f171622a44bf2cf921d0acadfc0aaa364dcfba"
+      "sha256": "29b7e909566da850e33b49d55eb567373ffdb65480144abee8459ccb5d032c29"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "a04eea1920dca5518c9a41390028fe4ee77a371f1b3dfcdaeb3571244da90fab"
+      "sha256": "d64c7f7190fb9c24567d530475ea8ded4840d24159ee206ebbed2c416f3a0186"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "34b74996eb8c441136490163ce3521ce7c43b7c0e8d641af1545e98ed0c55eaa"
+      "sha256": "81f015f00facd62575b961b5d0275d49d97e2f0e48dda11cbbd350a868d64a91"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "c21e731d48e2b57f60c17dd3c326fb91ad239f348c84f508091b391fc030167f"
+      "sha256": "22607aff3f219c179223713ce5fd342b1f7d289f3a36d0d539b5f55eaabafc6c"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19"
+      "sha256": "76f252483e2613feb87e363526e15670870e1deb80acb8cb3e4a77cae3712f56"
     },
     {
       "path": "Cargo.toml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "91a460fcead6a524729d10ef6fd377bcf1019248bd556515b9f0b6ce08ebfbc3"
+      "sha256": "ff38b0feb582d04f94e059a703c1bf98855c8f65199da480690d20945cd6f6db"
     },
     {
       "path": "rust-toolchain.toml",
@@ -114,7 +114,7 @@
   "skills": [
     {
       "id": "project-conventions",
-      "description": "Ownership, architecture and release process",
+      "description": "Solo Codex workflow, architecture and local integration process",
       "paths": [
         "."
       ],
@@ -189,7 +189,7 @@
     },
     {
       "id": "public-contracts",
-      "description": "Protocol/runtime owner and compatibility review",
+      "description": "Protocol/runtime compatibility and local contract review",
       "paths": [
         "crates/org-proto",
         "crates/org-sync-proto",

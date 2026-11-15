@@ -8,11 +8,20 @@ Integration target: `v1-integration` for all v1 features, per the owner's latest
 instruction. Review locally before integration; do not wait for a PR. Release
 `v1` remains separate. Preserve existing live messaging and user organization data.
 
-Current integration baseline: `4dd45f5ccd616cb5c54900196bd88b56ebe30011`.
+Current integration baseline: `1ded3a88a6c1d843bb1ceab206a0e791b07bf1cb`.
 
-## Current delivery
+## Current working instruction
 
-- User directed moving to another feature when blocked. Current branch:
+Codex owns all repository areas and uses local kit subagents as needed. Do not
+message or wait for offline developers, Ada or an external reviewer. Preserve local
+review/check gates and integrate all accepted features into `v1-integration`. Keep
+working on the full goal; preserve genuinely blocked work and continue independent
+features. Former owner-agreement blockers require local contract reassessment, not
+an external response.
+
+## Previous delivery checkpoint
+
+- User directed moving to another feature when blocked. Completed domain branch:
   `codex/v1-task-assignment`; stable contract
   [v1-task-assignment-contract.md](v1-task-assignment-contract.md).
 - Implement the Codex-owned selected complete-pair assignment domain behavior:
@@ -26,17 +35,20 @@ Current integration baseline: `4dd45f5ccd616cb5c54900196bd88b56ebe30011`.
   and 18 public-API tests; all 225 org-work tests, targeted Clippy and formatting
   pass. Child-sandbox sccache failures were resolved with process-local wrapper
   bypasses, with no repository configuration change. Full workspace formatting,
-  Clippy with denied warnings and tests also pass. Exact-source local review and
-  configured kit checks remain the acceptance steps; this is a checkpoint, not a
-  receipt or a claim that task assignment is available through the product.
+  Clippy with denied warnings and tests also pass. Both fresh local reviews were
+  clean, original-author validation accepted, and all configured kit checks passed
+  for feature `339d01a0`. Merged and pushed at `1ded3a88`; journal
+  `081df96c0d874a85914acd41a2fb55bd` is accepted. This domain result does not claim
+  task assignment is available through the product.
 
 ## Parked work and previous delivery
 
 - Native runtime work is preserved on `codex/v1-codex-runtime`; its uncommitted
   task/decision records are in stash `3d07327070a89a20004b5dd242e3c871e863369e`.
   Private evidence remains in `.agent-kit/logs/v1-codex-runtime/`. Do not drop the
-  stash or claim the adapter implemented. Ada/River's selected authentication/
-  environment boundary remains a prerequisite. This does not block assignment.
+  stash or claim the adapter implemented. The selected authentication/environment
+  boundary still needs implementation review; the solo lead can now change the
+  affected contracts and host code. Offline owner agreement is not a prerequisite.
 - Task-history metadata coverage was reviewed and integrated at `4dd45f5c`
   (feature `43604eb3`); Rust workspace and kit/UI checks passed, both local reviews
   were clean and original-author validation accepted. Journal

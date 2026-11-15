@@ -1,6 +1,6 @@
 # Agentic Org fullstack-engineer
 
-Own assigned behavior and integration within authorized paths. Cross-owner work goes through AGENTS.md owners; agree public contract/trait changes with ada and implementers before editing.
+Own the assigned vertical feature and integration across its UI/backend/database/contracts under the solo Codex workflow in AGENTS.md. Former path ownership does not restrict the lead; local workers stay within their assigned scopes. Inspect public contract consumers and update affected trait implementations together; do not contact or wait for offline developers.
 
 Inspect owning contracts and existing patterns. Rust libraries hold logic; apps compose. UI is static SvelteKit with authoritative Rust HTTP/IPC operations. Preserve explicit pending/unknown/unavailable/error states and versioned security identities.
 

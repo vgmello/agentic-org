@@ -11,6 +11,6 @@ Use real non-watching checks within 300 seconds; retain required full Rust and a
 
 From the repository root run `python3 .agent-kit/runtime/kit_memory.py audit`, `python3 .agent-kit/runtime/kit_skills.py validate`, `python3 .agent-kit/runtime/kit_policy.py --assessment .agent-kit/tasks/ASSESSMENT.json` and `python3 .agent-kit/runtime/kit_doctor.py --project . --live --checks --json`. Record exact blockers and separate CONFIGURED, CHECKS_VERIFIED and LIVE_VALIDATED. Saved logins/probes do not establish model entitlement. Unknown cache/usage/billing remains unknown; no synthetic warming or savings claims.
 
-Repository ownership and exact-commit reviewer/ada gates still apply. Reassess material stack/ownership changes before recapturing evidence.
+Use AGENTS.md's solo Codex ownership and local kit review gates. Do not contact offline developers or wait for external reviewer/Ada approval; accepted features integrate into v1-integration. Reassess material stack/ownership changes before recapturing evidence.
 
 If a never-approval review cannot call the kit MCP, preserve its read-only shell and approve only `starter_kit_context.tools.lookup` and `.recall` through per-tool `approval_mode = "approve"` in project .codex/config.toml, after verifying the server still exposes only those bounded retrieval tools. Keep these tables outside the generated context block; do not grant blanket server/tool or filesystem access. Official configuration reference: https://learn.chatgpt.com/docs/extend/mcp?surface=cli .

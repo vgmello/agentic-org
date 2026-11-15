@@ -1,3 +1,9 @@
+> Current workflow update (2026-11-15): the owner replaced named-developer
+> coordination with solo Codex development and local kit subagents. AGENTS.md and
+> docs/processes/branch-and-merge.md govern current work; old ownership/approval
+> statements below describe adoption history, not active gates. All accepted v1
+> features integrate into v1-integration after local checks and reviews.
+
 # Agentic Org Codex-only adoption
 
 Installed on 2026-11-15 directly in `/Users/vgmello/projects/agentic-org`, branch **codex/install-agent-kit**, from origin/v1 at b1256c9771b15c0b47198828164e5efe78db2e96, as explicitly requested by the user.

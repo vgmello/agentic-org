@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "solo-workflow",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": false,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": true,
+    "no_prior_failure": true,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Existing instructions implement the old named team workflow; the explicit solo override needs coordinated prose changes."
+    ],
+    "precise_scope": [
+      "User explicitly removes offline ownership/messages/approvals; contract limits edits to instructions and capability evidence."
+    ],
+    "localized_change": [
+      "AGENTS.md, branch process, active decision index and affected kit project guidance/catalog only; no app/runtime/model policy edit."
+    ],
+    "deterministic_checks": [
+      "kit_skills validate/resolve/preflight, kit_hooks check and diff review verify changed guidance and freshness."
+    ],
+    "low_risk": [
+      "Instruction-only alignment to explicit user direction; preserve all local review gates, technical/security/data constraints and configured model policy. No executable process configuration or auth change."
+    ],
+    "no_prior_failure": [
+      "No repair attempt or unexplained implementation failure on this instruction correction."
+    ],
+    "ambiguity_resolved": [
+      "Latest user confirms Codex works alone with local kit subagents; prior explicit integration target is v1-integration."
+    ]
+  }
+}

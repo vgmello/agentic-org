@@ -3,7 +3,7 @@ name: rust-workspace
 description: Implement or review Agentic Org Rust changes with pinned checks, crate ownership and library composition boundaries.
 ---
 
-Cargo.toml, rust-toolchain.toml and CI pin Rust 1.99.1, edition 2021 and exact shared dependencies. Read the affected crate's manifest/public API before adding edges. Apps compose libraries; policy contracts stay with their owner. AGENTS.md owns paths; trait changes require implementer agreement; public protocol/runtime contracts go through ada.
+Cargo.toml, rust-toolchain.toml and CI pin Rust 1.99.1, edition 2021 and exact shared dependencies. Read the affected crate's manifest/public API before adding edges. Apps compose libraries; policy contracts stay with their owner. AGENTS.md assigns current repository ownership to the Codex lead. Review public protocol/runtime consumers and update affected trait implementations together; use local kit review rather than offline developer agreement.
 
 For semantic Rust navigation use the existing rust-lsp skill/tool. Report missing access and use compiler/source evidence without claiming typed parity. Repowise is structural discovery; do not install another index.
 
