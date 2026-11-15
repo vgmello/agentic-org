@@ -43,7 +43,7 @@ for (const file of [...new Set(files)].sort()) {
 	});
 	if (info.ignored || !info.inferredParser) continue;
 	const source = await readFile(absolute, 'utf8');
-	const hash = createHash('sha256').update(source).digest('hex');
+	const hash = `sha256:${createHash('sha256').update(source).digest('hex')}`;
 	if (!recording && baseline[file] === hash) {
 		skipped++;
 		continue;

@@ -126,3 +126,16 @@ bcc9e20d89078f421b38075e7dc79ceb7b96a15e:crates/org-office-launch/src/tests.rs:g
 7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:7
 7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:8
 7d07b66162b37f2bb20ed523dd36cbb5663c7d8f:spikes/claude/fixtures/interrupt-during-tool.jsonl:generic-api-key:9
+
+# Initial formatting-baseline SHA-256 values (now explicitly prefixed sha256:).
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:211
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:229
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:230
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:249
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:292
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:293
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:342
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:343
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:347
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:37
+f1bab57763f0cc41f29f88299f2920995fd27b7a:apps/agentic-org-ui/scripts/format-baseline.json:generic-api-key:39
