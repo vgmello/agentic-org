@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "v1-codex-runtime",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": false,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": null,
+    "low_risk": false,
+    "no_prior_failure": true,
+    "ambiguity_resolved": false
+  },
+  "evidence": {
+    "familiar_pattern": ["No native runtime adapter exists in this checkout; spikes/codex is incomplete S0 evidence."],
+    "precise_scope": [".agent-kit/tasks/v1-codex-runtime-contract.md: stable acceptance requirements, including fail-closed prerequisites."],
+    "localized_change": ["New native protocol/session implementation and security-critical launch mapping; existing org-runtime port is owned by Ada."],
+    "deterministic_checks": ["org-runtime has a shared testkit; installed-version model-driven isolation fixtures remain unverified per spikes/codex/README.md."],
+    "low_risk": ["docs/design/organization-data/11-model-profiles-and-agent-execution.md and 14-model-providers-and-connection-pools.md require credential isolation, fixed policy, lifecycle and version conformance."],
+    "no_prior_failure": ["No code implementation or failed repair for this registered adapter task; prior S0 lists known open capability checks."],
+    "ambiguity_resolved": ["Compatibility between the existing port, selected isolated bindings and installed Codex 0.169.0 still requires essential feasibility evidence."]
+  }
+}
