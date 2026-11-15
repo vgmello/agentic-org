@@ -19,7 +19,7 @@ Existing v1 designs remain the implementation reference until a migration is app
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 | [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or agent setup |
 | [Agent execution addendum](11-agent-execution-pools-addendum.md) | Execution configuration, connection pools, supervision, durable placement generations and setup/runtime contracts | Automatic scheduling, private memory consolidation or task lifecycle |
-| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter, immutable task activity and verified private task-note gap | Private task-note implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
+| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter, immutable task activity and required private task notes with acceptance criteria | Private task-note storage schema/implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 
 The structural documents contain their own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines documents 01–10 and 12 with indexes and invariant checks. Document 11 is a separately applied execution extension: load its SQL after `schema.sql` when validating that contract. It extends document 04's placement projection with durable fencing evidence and takes precedence for that execution behavior. Cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
 
@@ -87,7 +87,7 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
 | Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |
-| Private task notes | V1's `note` is a shared comment; private task-note storage and access controls remain unimplemented, as documented in document 12 |
+| Private task notes | Required: author-private notes attached to tasks, separate from shared comments, with acceptance criteria PN-01–06 in document 12. Missing from v1 and current SQL; storage/schema, access controls and UI are outstanding implementation work |
 | Readable references | `TEAM-`, `P-`, `T-`, `F-`, `R-`, `M-`; slugs/handles for selected identities |
 | Single home team, nested teams, lead authority | Include the agreed structure |
 | Offices | Durable organization records; support multiple offices |

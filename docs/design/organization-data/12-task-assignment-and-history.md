@@ -1,6 +1,6 @@
 # Task ownership, assignment, reporter and activity history
 
-Structural draft for v1. Document revision 1. This selects task activity history and separate team/individual assignment for the proposed data model, and checks the implementation status of private task notes. It changes documentation and draft SQL only; the application migration, command handlers and UI remain implementation work. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Structural draft for v1. Document revision 2. This selects task activity history, separate team/individual assignment and private notes attached to tasks as requirements for the proposed data model. It changes documentation and draft SQL only; the application migration, command handlers and UI remain implementation work. The private-note requirement is not yet represented in the draft SQL or implemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
 ## Ownership and current responsibility
 
@@ -81,11 +81,30 @@ Where only a snapshot survives, retain it with an explicit `history_baseline` ev
 
 ## Private notes attached to tasks
 
+**Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** This is part of the selected requirements. Its absence from v1 and the current SQL draft is a tracked design/implementation gap, not a reason to defer the capability out of scope.
+
 Private task notes are **not implemented in the inspected v1 source**. Its [`CommentKind::Note`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L287) is an ordinary shared comment. [`work.comment` parameters](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L1514) have no note visibility or private owner field. The [comment handler](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/items.rs#L25) stores its body in a regular `WorkEventKind::Comment`; the [change feed](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/feed.rs#L15) emits that event. The [activity read contract](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/ports.rs#L177) has no per-note reader restriction.
 
 Consequently `note` must never be presented as private, and hiding it in the UI would not provide privacy. Existing note comments remain shared in migration; do not relabel them as private retrospectively.
 
-A private task-note feature needs an explicit note owner and visibility policy, including any organization-owner/admin access; enforcement on reads, writes, search, feeds and exports; and durable storage, backup, retention and deletion rules outside the shared task-history/Git path. Reassigning the task must not implicitly expose someone else's private notes. Publishing a note as a shared comment must be an explicit action. These requirements remain implementation/design work; neither this task-history projection nor an agent-memory folder implements private task notes.
+Each private note must have stable identity, organization/task references, an immutable author/owner derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. The author is the default exclusive reader/editor; task ownership, assignment, team leadership and organization-owner/admin roles do not implicitly grant access. Any exceptional administrative access requires an explicit policy decision before implementation, rather than inheriting ordinary task permissions.
+
+Enforce privacy on reads, writes, search, feeds, notifications and exports. Store and back up notes outside the shared task-history/Git path. Private note bodies and identifying metadata must not leak into shared activity, indexes or provenance. Reassignment must not expose another author's notes or transfer their ownership. Explicitly publishing a note creates a shared comment after the author confirms the intended audience; it does not silently change the private original's visibility.
+
+Private notes must survive restart and task closure/archive with their access restrictions intact. Define authorized recovery, retention, note deletion and task deletion behavior in the private storage contract before implementation. Deletion must include a documented policy for backups and retained versions; immutable shared task history must not prevent private-note deletion. Neither the shared history projection nor an agent-memory folder satisfies this requirement.
+
+Acceptance criteria for the required capability:
+
+| ID | Required evidence |
+| --- | --- |
+| PN-01 | A bound person or agent can create multiple private notes on a task and read/edit/delete their own notes; forged author IDs and stale edit revisions are rejected. |
+| PN-02 | Another task reader, assignee, team lead or administrator cannot obtain or mutate a private note through direct IDs, task responses, search, feeds, notifications or exports under the default author-only policy. |
+| PN-03 | Task reassignment and ownership changes preserve the note's author and privacy; no note is copied to the new team or assignee. |
+| PN-04 | Restart, authorized recovery and task closure/archive retain the note and enforce the same access restrictions. Shared organization Git and task history contain no private-note body or identifying metadata. |
+| PN-05 | Only an explicit author action publishes a shared comment; ordinary note saves never publish, and the private original retains its visibility. |
+| PN-06 | Note deletion and task deletion follow the documented private retention/backup policy without exposing note content through shared history. |
+
+Completion remains blocked on the private storage/schema, authorization/API and UI implementation and these acceptance checks. The existing draft-schema tests do not validate this feature. V1's shared `note` comments alone cannot count as satisfying it.
 
 ## Relationships
 
