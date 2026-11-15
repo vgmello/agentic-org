@@ -1,5 +1,7 @@
 # org-office-host ↔ org-server: the boundary (phase 1, HQ only)
 
+**Current target amendment (2026-11-15):** the host role below is composed by agentic-org serve; current org-office-host source is reusable implementation input, not an additional target daemon. org-server becomes executable agentic-org-office, org-agent becomes agent-os, and the planned org-gateway becomes agentic-org-web. Source paths, protocol identifiers and historical implementation claims below intentionally retain inspected names. Preserve host key custody/private launch and one office writer/recovery owner. Initial agentic-org setup creates HQ only and registers the service automatically; satellites use a separate HQ-initiated flow. [Standalone setup](standalone-server.md#4-setup-and-service-lifecycle) is authoritative for the current installation flow.
+
 **Browser HTTP separation (standalone-v1 review):** planned `org-gateway` is a
 separate supervised child for the instance browser listener. The host retains key
 custody and admits only typed, scoped local operations; it does not parse browser

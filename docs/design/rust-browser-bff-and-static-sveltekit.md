@@ -2,6 +2,8 @@
 
 Accepted by Victor on 2026-11-14. Recorded by Ines for implementation and future API design.
 
+Owner executable amendment (2026-11-15): agentic-org-web is the browser BFF executable previously called org-gateway; agentic-org-office is the office worker. agentic-org serve hosts their lifecycle. Existing source packages and protocol namespaces keep their names until explicit implementation changes. This preserves the BFF/host/office privilege boundaries below.
+
 The architecture uses a static SvelteKit browser application with a Rust browser API/BFF. Reusable Rust application and domain modules support the browser BFF and future integration API adapters. Browser APIs are the current delivery priority; integration APIs are a future extension.
 
 ## Backend boundaries
@@ -21,7 +23,7 @@ A module does not need an HTTP endpoint now to be reusable later. Export only th
 
 ## Frontend runtime and deployment
 
-Use `@sveltejs/adapter-static` with a navigation fallback (`index.html`), `ssr = false`, and `prerender = false` for the authenticated browser SPA. The build produces HTML, JavaScript, CSS, and other assets; the Rust gateway serves those files and the browser APIs from the same origin. API, asset, and event failures must retain their own responses instead of receiving the SPA fallback.
+Use `@sveltejs/adapter-static` with a navigation fallback (`index.html`), `ssr = false`, and `prerender = false` for the authenticated browser SPA. The build produces HTML, JavaScript, CSS, and other assets; agentic-org-web serves those files and the browser APIs from the same origin. API, asset, and event failures must retain their own responses instead of receiving the SPA fallback.
 
 The static build does not freeze application data. Browser JavaScript fetches current data from the Rust BFF and consumes the existing live-event transport. SvelteKit provides browser routing and route loading without a SvelteKit server process. Request-time server routes, server load functions, and SvelteKit server actions are not part of this deployment profile.
 

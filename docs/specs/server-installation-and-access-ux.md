@@ -2,10 +2,10 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-09"
-updated: "2026-11-10"
+updated: "2026-11-15"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy]
 builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, processes-ux, chat-ux]
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 # Spec · Standalone server: installation, instances and browser access
 
 ## Changelog
+
+**Revision 7 (2026-11-15): owner-approved HQ-only initial setup and executable names.** agentic-org setup downloads/verifies components, creates HQ and registers/starts its service without separate install commands. Satellite invitations/enrollment are initiated later from HQ, never offered by the initial wizard or setup automation. The host entry point is agentic-org serve; worker/web/agent executables are agentic-org-office, agentic-org-web and agent-os. Source/package and wire names remain unchanged until implementation. Updates retain explicit activation policy and offline bundles use the same verifier. SRV-5/7/9/22 are clarified; SRV-33/34 are added.
 
 **Revision 6 (2026-11-10): "You no longer own" after Not now, and the
 unavailable pages.** From the Principal Product Designer's decision of
@@ -130,25 +132,19 @@ the decision is [ADR-0005](../adr/0005-standalone-server-v1.md), and the
 existing code to delete, retain or replace. CLI spelling below is proposed,
 not a claim that these commands exist on the inspected branch.
 
-The owner's naming amendment uses `org-ui` / `apps/org-ui/` for the browser
-application and `org-server` / `apps/org-server/` for the Rust worker app, package,
-and binary. See [project structure](../design/project-structure.md) for the proposed
-folder layout and reorganization guidelines. The setup/release command remains
-provisionally `agentic-org`; office roles and the per-office process model remain.
-These source renames are implementation acceptance, not changes performed by this PR.
+The current target names are agentic-org (human CLI/service host), agentic-org-web (browser server), agentic-org-office (one office worker), and agent-os (agent CLI). org-ui remains static browser assets. Current source/package names and historical evidence are mapped in [project structure](../design/project-structure.md); this specification does not claim source renames have landed.
 
 ## 1. Install once; select an instance
 
 A small bootstrap command selects the platform release, downloads and verifies
 one release executable, then hands off to that executable's setup command.
-The executable contains the server payload, frontend assets and Agentic Org
-helpers; setup may unpack them locally. Users do not build the application or
+Setup obtains/verifies the matching worker, web assets and agent helper through downloads or a complete local bundle. Embedded payloads may be unpacked through the same verifier. Users do not build the application or
 install a JavaScript server to run it.
 
 | Invocation | New instance | Existing instance |
 | --- | --- | --- |
-| `agentic-org setup` | Configure `default`, then start it | Reuse `default`; start if stopped; otherwise show status and URL |
-| `agentic-org setup --name lab` | Configure and start `lab` | Reuse `lab` with the same identity, configuration and data |
+| `agentic-org setup` | Create HQ on `default`, register/start its service | Reuse `default`; start if stopped; otherwise show status and URL |
+| `agentic-org setup --name lab` | Create HQ on `lab`, register/start its service | Reuse `lab` with the same identity, configuration and data |
 | Either, with `--non-interactive --config <file>` | Validate explicit inputs and perform the same setup | Reconcile the same inputs; incompatible changes fail with an actionable error |
 
 The bootstrap forwards the instance selector and automation options. Running it
@@ -170,31 +166,22 @@ cannot create competing identities.
 For a new instance the wizard establishes, in order:
 
 1. Instance name and data location, using platform defaults unless explicitly set.
-2. **Create an organization (HQ)** or **Join an organization (satellite)** for its
-   first office. An instance may later host more than one office. Each office's
-   role is persisted independently.
+2. **Create an organization and its HQ** as the first office. No create-or-join selector, invitation input, satellite role or --hq join option is present. Additional satellite offices are initiated later from HQ, not initial setup.
 3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
    CA escrow/recovery-code provisioning (setup offers the code once the HQ is
    created, before step 5 starts the service, as in X-02 §6.2; collecting it and
-   acknowledging its off-HQ retention can be deferred: §4a.2, A94); or the
-   satellite invitation, destination identity and enrollment confirmation.
+   acknowledging its off-HQ retention can be deferred: §4a.2, A94).
 4. Runtime selection, dependency checks and authentication readiness.
-5. Service registration, start and a summary with separate readiness states.
+5. Automatic service registration/start and an HQ URL/readiness summary. No separate install or service install command is needed. Missing service-manager support reports foreground agentic-org serve instructions without discarding completed setup.
 
 Automation uses the same validation and state transitions, with one stated
 exception *(rev 5, X-02 Q8)*: noninteractive setup, and setup over SSH on a Mac,
 finish with the HQ created and its recovery code waiting, because showing the
-code needs someone at the HQ machine (§4a.2, §4a.6). This also departs from
-`standalone-server.md` §6 ("CA escrow and the explicit recovery gate"), which
-says "Automation uses separate protected outputs": there is no protected output
-for the code, and automation never receives it. Updating the design to match is
-A104. Missing mandatory
+code needs someone at the HQ machine (§4a.2, §4a.6). The standalone design §6 now follows these existing recovery-collection states: automation receives no code or protected code output, and the administrator collects it later at the HQ machine. This reconciles the documentation discrepancy previously tracked as A104 without changing recovery readiness or REC-1. Missing mandatory
 input causes a structured failure instead of waiting for stdin. Secrets enter
 through a protected descriptor/file or a dedicated stdin option, not arguments
 or ordinary configuration fields. Machine-readable output contains stable error
-codes and status fields, never credentials. An unattended enrollment can remain
-`awaiting_approval`; setup must distinguish that from an active satellite. Owner
-approval is still required by the enrollment policy, even without a wizard.
+codes and status fields, never credentials. Initial automation accepts HQ configuration only; satellite/enrollment input is rejected before provisioning with instructions to use HQ's Add office flow. The separate HQ-issued enrollment flow can report awaiting_approval under the existing approval policy.
 
 The default service runs as its configured user, not root. macOS uses a per-user
 launchd service; Linux uses an appropriate systemd user service, with foreground
@@ -219,7 +206,7 @@ part of an agent's writable configuration. The [employee supervision requirement
 including bounded delegates and process-driven behavior, apply at the owning office;
 moving access to HTTP does not turn those into browser responsibilities.
 
-Setup installs `org-agent` from the same release. It locates or installs only the
+Setup installs `agent-os` from the same release. It locates or installs only the
 selected supported harnesses, checks their versions and reports their sign-in
 state. Git is a prerequisite for coding workflows. GitHub CLI is conditional on
 the GitHub feature, which remains v2 in the existing project design. The old
@@ -248,7 +235,7 @@ Only a durable server response warrants **Saved**. Unsaved browser text may rema
 in the open tab, with an honest unsaved label; v1 provides no background browser
 outbox or guarantee that closing the tab preserves drafts.
 
-Satellite enrollment reuses the invitation, HQ identity verification, owner
+Satellite onboarding starts from HQ's authenticated UI or an HQ-issued command, separately from initial setup. It reuses the invitation, HQ identity verification, owner
 approval and certificate model in the offices design. Restart uses the enrolled
 identity and resumes streams. A satellite opens no public application listener.
 The local agent CLI and local administration remain available on its machine.
@@ -330,10 +317,7 @@ lines that matter here; `…` stands for the other steps.
 $ agentic-org setup
 Setting up instance "default".
 …
-Create or join an organization?
-  1) Create an organization. This machine becomes its HQ.
-  2) Join an organization with an invitation.
-Choose 1 or 2: 1
+Create your organization. This machine becomes its HQ.
 Organization name: Lumen Labs
 
 Your account
@@ -670,10 +654,10 @@ sam is revoked. Every session of sam has ended, and sam can't sign in.
 | `reset-password`: unknown username | "There's no account called sam on instance default." | Error |
 | Password too short (any command) | "Use at least 12 characters." Asks again. | — |
 | The two password entries differ | "The passwords don't match. Enter them again." Asks for both again. | — |
-| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org start --name lab, then run this command again." Under `sudo`: "Instance default of Linux user ops isn't running. As ops, start it with agentic-org start, then run this command again." | Error |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org service start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org service start --name lab, then run this command again." Under `sudo`: "Instance default of Linux user ops isn't running. As ops, start it with agentic-org service start, then run this command again." | Error |
 | Not an interactive terminal, and no protected password input given | "Run this in a terminal, or pass the password through the protected input (§2)." | Error |
 
-`agentic-org start` is §5's. A86 (the admin grant) and A85 (sessions after a
+`agentic-org service start` is §5's. A86 (the admin grant) and A85 (sessions after a
 password change) are resolved by X-02 (§4a.9).
 
 ### 4a.3 Sign in
@@ -731,7 +715,7 @@ they sign in. It shows no organization data.
 | Wrong username or password | "That username and password don't match. Try again." The same words for both cases. Password is cleared, Username kept, focus moves to Password. |
 | Too many attempts, with a retry time | "Too many sign-in attempts. Try again in <n> minutes." ("1 minute" when one is left.) **Sign in** stays disabled until then. The minutes round up and update once a minute. |
 | Too many attempts, no retry time | "Too many sign-in attempts. Wait a few minutes, then try again." Limits are A82. |
-| HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org status --name <instance>`), then try again." **Try again**. Both fields are kept. |
+| HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org service status --name <instance>`), then try again." **Try again**. Both fields are kept. |
 | HQ error | "HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run `agentic-org doctor --name <instance>` there." **Try again**. |
 | Page out of date | "This page is out of date. Reload to get the current version." **Reload**. (API and page versions differ, standalone design §5.) |
 | Signed in | Opens what §4a.5 says. |
@@ -927,7 +911,7 @@ is visible only with `agentic-org recovery status` on the HQ machine (below).
 **Every message that reports the code's state** (collected, waiting, shown but
 not confirmed, being prepared, couldn't be prepared, not recorded), wherever it appears (the
 notice, the Recovery row, Needs you items, setup's recovery block, a repeated
-setup's reminder, `agentic-org status`, `agentic-org recovery release` and
+setup's reminder, `agentic-org service status`, `agentic-org recovery release` and
 `agentic-org recovery status`), ends with this
 sentence: "Recovering an organization after losing the HQ machine isn't supported
 yet." (REC-1, §7.) The tables below leave it out for space. Input errors (no
@@ -1097,9 +1081,9 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
 | Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
 | Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. Automation never gets the code: noninteractive setup ends with it waiting (§4a.2, X-02 Q8). | Error |
-| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org start --name lab, then run this command again." No code. | Error |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org service start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org service start --name lab, then run this command again." No code. | Error |
 
-- `agentic-org status` lists each organization's recovery state in the same
+- `agentic-org service status` lists each organization's recovery state in the same
   words as the Settings row, never the code.
 - An organization created in the browser starts as **Being prepared**, then
   **Waiting to be collected**. An instance admin collects it with the same
@@ -1267,8 +1251,7 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
 
 ## 5. Lifecycle, updates and removal
 
-All instance operations accept `--name`, defaulting to `default`: `start`, `stop`,
-`status`, `logs`, `doctor`, `upgrade` and `uninstall`. `serve` runs the selected
+All instance operations accept --name, defaulting to default: service start/stop/status, logs, doctor, upgrade and uninstall. Service registration is performed by setup automatically. `serve` runs the selected
 instance in the foreground. These are local control operations; starting a
 stopped daemon cannot require an HTTP response from that daemon.
 
@@ -1297,11 +1280,11 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-2 · A first setup without a name creates `default`; a repeated setup reuses its identity, data and port and starts at most one daemon.
 - SRV-3 · A named setup creates or selects that name. Two instances have disjoint data, credential authority, sockets, services and listening endpoints. Browser cookies may be delivered across same-host ports; instance/origin-bound session proofs isolate authority as required by SRV-23.
 - SRV-4 · Concurrent setup/start operations and aliased paths cannot open the same instance storage twice; conflicting ports produce an actionable error without changing saved addresses.
-- SRV-5 · *(rev 5)* Interactive and noninteractive setup reach the same configuration, except the recovery code, which noninteractive setup leaves waiting (RCV-20). Missing inputs fail predictably; pending approval is not reported as enrollment success; secrets do not appear in logs or command arguments.
+- SRV-5 · *(rev 5)* Interactive and noninteractive setup reach the same configuration, except the recovery code, which noninteractive setup leaves waiting (RCV-20). Missing inputs fail predictably; satellite configuration is refused before initial HQ provisioning; secrets do not appear in logs or command arguments.
 - SRV-6 · Repeating setup cannot silently upgrade, re-enroll, rotate identity, reset configuration or restart a healthy daemon. Interrupted setup resumes without duplicate offices.
-- SRV-7 · HQ setup establishes owner authentication. Unauthenticated or unauthorized requests, including requests from another website to loopback, cannot perform administration.
+- SRV-7 · Initial setup creates HQ only and establishes owner authentication, with no satellite choice. Unauthenticated or unauthorized requests, including requests from another website to loopback, cannot perform administration.
 - SRV-8 · Any authorized browser can use HQ without installing software or becoming a satellite; quitting it leaves offices and agents running.
-- SRV-9 · A satellite enrolls through a verified invitation and approval, reconnects using its stored identity and opens no public application listener.
+- SRV-9 · A satellite is initiated later from HQ UI or an HQ-issued command and enrolls through a verified invitation and approval, reconnects using its stored identity and opens no public application listener.
 - SRV-10 · Organization changes remain HQ-authoritative; locally owned work commits locally and synchronizes with deduplication and resumable positions.
 - SRV-11 · HQ shows last-known data and freshness accurately. Live control of an unreachable satellite is unavailable or explicitly queued by that operation's contract, never falsely completed.
 - SRV-12 · Browser reconnection recovers missed updates without duplicates or a snapshot/event gap; an expired cursor refreshes and a lost mutation response can be resolved by operation ID.
@@ -1315,7 +1298,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-20 · The implementation deletes superseded paths without preserving old desktop contracts or importing undeployed app data. Domain rules, storage durability, office identity and supervision invariants remain covered.
 - SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.
 
-- SRV-22 · The retained browser application's source/package is `apps/org-ui` / `org-ui`; the server application's source/Cargo package/worker executable is `apps/org-server` / `org-server`. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
+- SRV-22 · The retained browser application's source/package is `apps/org-ui` / `org-ui`; current worker source/package remain apps/org-server / org-server and target worker executable is agentic-org-office. Planned org-gateway becomes executable agentic-org-web; org-agent becomes agent-os; host lifecycle is composed by agentic-org serve. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
 - SRV-23 · Default/lab and a hostile same-host port cannot authenticate, read, mutate, stream, refresh, recover a proof or logout another origin using a copied/overwritten cookie alone. Every protected path requires the valid instance/origin-bound cookie+proof pair; proofs never enter URLs/logs/redirects.
 - SRV-24 · Two HQ organizations share one instance gateway listener. The gateway has no office DB key/key entitlement; the host retains provisioning/private launch. Instance-admin creation succeeds; organization-owner-only, employee and office-certificate callers cannot create organizations.
@@ -1328,6 +1311,9 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-31 · A fixture-based live Phase A cutover preserves unresolved asks/replies, deadlines and read/triage state across interruption/retry. Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Fresh organizations need no spool import.
 - SRV-32 · The first standalone local API negotiates version 2 and rejects unsupported peers before dispatch; version-1 statements remain historical/additive. HTTP/launch/sync version spaces are independent. New setup Cargo package org-setup is distinct, and the retired Tauri member cannot overwrite the staged agentic-org CLI artifact.
 
+- SRV-33 · Initial HQ setup automatically verifies components and registers/starts one service. No install/service-install prerequisite or create-or-join question appears. Repeating/resuming setup preserves the same HQ and service. Satellite input in unattended initial configuration is refused before provisioning; an existing satellite is never converted into HQ.
+- SRV-34 · setup --bundle <path> --offline verifies a complete local HQ release without external requests or enrollment. Background jobs honor offline policy. Untrusted/incomplete bundles and missing platform prerequisites fail explicitly without fetching. Missing service-manager support reports foreground serve instructions.
+
 **Sign in, session and first access (SIGN)** *(new, rev 4, §4a)*
 - SIGN-1 · Opening any HQ page without a session shows the sign-in page, with Username, Password and Sign in. The page and its responses contain no organization data.
 - SIGN-2 · *(rev 5)* The sign-in page has no "forgot password" link, reset form or sign-up form. It shows `agentic-org account reset-password --name <instance> <username>`, its Linux form with `sudo` in front, and `agentic-org account create --name <instance>`.
@@ -1335,7 +1321,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-4 · A wrong password for an existing username and any password for an unknown username show the same message, "That username and password don't match. Try again.", and HQ answers both with the same status and body. Password is cleared and Username kept.
 - SIGN-5 · A name that matches a person record (offices §7.4) but no account, with any password, is refused with SIGN-4's message.
 - SIGN-6 · A rate-limited sign-in shows "Too many sign-in attempts." with the retry time when HQ gives one, and keeps Sign in disabled until then; without a time it shows "Wait a few minutes, then try again."
-- SIGN-7 · When the loaded sign-in page can't reach HQ, it shows "Can't reach HQ…" with `agentic-org status --name <instance>` and Try again, and keeps both fields.
+- SIGN-7 · When the loaded sign-in page can't reach HQ, it shows "Can't reach HQ…" with `agentic-org service status --name <instance>` and Try again, and keeps both fields.
 - SIGN-8 · *(rev 5)* A correct sign-in opens the page the user was trying to open, if it is a page of this HQ that the account can open. A return target outside this HQ is ignored, and the last organization or the organization list opens (OPEN-1); a page of an organization the account can't open is ignored too, and the organization list opens.
 - SIGN-9 · *(rev 5)* After sign-in, an account with no organizations sees "No organizations yet." with Create organization if it is an instance admin, and "This account doesn't own any organizations on this HQ. Ask an instance admin of this HQ to link it to one." with Sign out if not.
 - SIGN-10 · When a session ends while a page is open, the next refused request or stream opens the "Sign in again" dialog over that page; the page doesn't navigate away.
@@ -1389,7 +1375,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-13 · *(rev 5)* Interactive setup at the HQ machine (or over SSH on Linux) offers to collect the code once the HQ is created and before it starts the service; answering n leaves it waiting and prints `agentic-org recovery release --org '<organization>'`.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · *(rev 5)* `agentic-org recovery release` run without an interactive terminal prints no code.
-- RCV-16 · *(rev 5)* Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org status`, `agentic-org recovery release` and `agentic-org recovery status`) says that recovering after losing the HQ machine isn't supported yet.
+- RCV-16 · *(rev 5)* Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org service status`, `agentic-org recovery release` and `agentic-org recovery status`) says that recovering after losing the HQ machine isn't supported yet.
 - RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 - RCV-18 · *(new, rev 5)* After the code is shown and before it's confirmed, the owner sees the Shown, not confirmed row, notice and Needs you item, each with `agentic-org recovery release --redeliver --org '<organization>'`.
 - RCV-19 · *(new, rev 5)* `agentic-org recovery release --redeliver` before the acknowledgement shows the same code as the first showing, then asks for the same confirmation (last group, then `yes`).

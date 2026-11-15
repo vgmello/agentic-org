@@ -1,5 +1,7 @@
 # Design: offices, HQ and satellites
 
+**Current executable/setup amendment (2026-11-15):** initial agentic-org setup creates HQ only and automatically registers/starts agentic-org serve. Satellite onboarding is initiated later from authenticated HQ UI or an HQ-issued command; it is not a setup role choice. Target workers are agentic-org-office, the browser process is agentic-org-web, and the separate agent CLI is agent-os. The host role is inside agentic-org serve, preserving key custody and child ownership. Source/protocol references below retain their historical names; see [standalone setup](standalone-server.md#4-setup-and-service-lifecycle).
+
 **Naming amendment (2026-11-10):** the worker app/package/binary is now
 `apps/org-server` / `org-server`;
 the retained browser application becomes `apps/org-ui` / `org-ui`. See
@@ -33,7 +35,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **Work data** (tasks and messages, which change constantly) is **office-first**. See the next section.
 - **Runtime summaries** (e.g. "3 agents running") are not logged. Each office sends HQ passing status updates over its connection. HQ keeps the latest one per office in memory and forwards them to the other offices, so the app can show the whole organization without growing the log or forcing a full flush per status change.
 - **Office runtime** is owned by each office and never copied: running sessions, live status, the scheduler's run queue, caches. (Tasks themselves are work data and do sync.)
-- **The browser talks to HQ over authenticated HTTP.** It needs no local office. Setup provisions an HQ or enrolls a satellite through the CLI; opening an organization in a browser does not enroll its machine.
+- **The browser talks to HQ over authenticated HTTP.** It needs no local office. Initial setup provisions HQ only; a separate HQ-issued flow enrolls satellites; opening an organization in a browser does not enroll its machine.
 
 ## Processes in one instance
 The boundary between the host and an office server (who writes what on disk, the pipe protocol, what the host does with each failure) is in [`office-host-boundary.md`](office-host-boundary.md).

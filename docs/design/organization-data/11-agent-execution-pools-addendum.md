@@ -1,6 +1,6 @@
 # Agent execution and subscription pools: implementation contract
 
-Status: **implementation specification, revision 3**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **implementation specification, revision 4**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 Only this addendum is being revised. The existing organization documents and `schema.sql` remain unchanged. The SQL extension in §12 is the exact integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
 
@@ -63,51 +63,29 @@ The worker has one SQLite writer and one agent recovery owner. Its internal supe
 
 The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or database keys. Moving host behavior into agentic-org serve must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
 
-### 2.1 Initial setup and office onboarding
-
-The default onboarding flow has one command after obtaining the platform's agentic-org executable:
+### 2.1 Initial setup creates HQ only
 
 ```bash
 agentic-org setup
 ```
 
-The online bootstrap downloads and verifies that executable, then invokes setup; direct-download users invoke it themselves. A bootstrap script must not implement another provisioning workflow. No Rust toolchain or source build is required on the target machine. Provider CLI dependencies, operating-system prerequisites and provider authentication are checked separately; successful framework setup alone does not mark every agent runtime ready.
+After the verified platform executable is obtained, this single command selects/reserves the named installation, prepares a complete verified release, creates HQ and its administrator/organization through protected bootstrap operations, registers/starts the per-user service and probes readiness. Show the HQ browser URL and separate provider-runtime readiness. Preserve the recovery-code delivery/deferred-collection rules in the [installation UX](../../specs/server-installation-and-access-ux.md). No separate install or service-install command is required. The service manager runs agentic-org serve; foreground serve uses the same host behavior.
 
-Setup runs a single resumable workflow:
-
-1. Select/create the named local installation; reuse its saved identity, data root, locks and release pin when it already exists. If selection is ambiguous, ask rather than creating an unrelated installation.
-2. Download and verify missing platform components into a complete versioned release, or load the supplied local bundle. On an existing installation, setup does not silently upgrade its release.
-3. Collect the first-office configuration through the shared office-setup workflow: create HQ with the existing protected administrator/identity bootstrap, or join an existing HQ as a satellite using the invitation/authentication flow. Prompt for sensitive enrollment material through protected input, not command-line arguments or logs.
-4. Register the per-user background service and start it using agentic-org serve with the selected installation's saved identity/root/release; complete office creation/enrollment through its protected setup operations. Reuse a matching registered service; do not create a second host or replace an unrelated service registration. The running host/office performs privileged provisioning, with no public administrative access before bootstrap authority is established.
-5. Probe the host and office readiness. Show the HQ web address, or the satellite's connection/enrollment status and local service status. Report incomplete stages explicitly rather than declaring an unenrolled office ready.
-
-Service registration is part of setup, not a separate user prerequisite. Where a supported service manager is unavailable, retain completed setup, explain that background registration is unavailable and offer the foreground serve command. The service manager owns host restart; serve does not daemonize itself or perform first-install downloads at every startup.
-
-Additional offices use the same office-setup workflow without repeating completed installation/service steps:
-
-```bash
-agentic-org office setup
-agentic-org office setup --hq https://hq.example.com
-```
-
-The first command prompts to create HQ or join as a satellite. Providing --hq selects satellite enrollment. On an uninitialized installation, office setup first ensures the shared installation foundation; users never need to run setup, install or service install as a prerequisite. These are alternative entry points into one workflow, not separate implementations or nested shell invocations.
-
-| Command | User-facing meaning |
-| --- | --- |
-| `agentic-org setup` | Complete initial setup, including service registration/start and first-office onboarding. |
-| `agentic-org office setup` | Configure an office, ensuring any missing installation prerequisites automatically. |
-| `agentic-org serve` | Run the configured service host in the foreground; also the OS service entry point. |
-| `agentic-org service start`, `stop`, `status` | Operate or inspect an already configured installation. No separate service-install step is required. |
-
-For an offline framework install, use the same setup entry point:
+The initial wizard, config schema and automation accept HQ creation only. No satellite choice, invitation or --hq join option appears. Reject satellite requests before provisioning; never reinterpret initial setup as enrollment or convert an existing satellite-only installation into HQ. Satellites are added later from authenticated HQ UI or an HQ-issued onboarding command, as a separate flow. That flow may reuse installation/service internals; it is not a mode or prerequisite of initial setup. Its public command spelling is outside this setup contract.
 
 ```bash
 agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
 ```
 
-Offline mode forbids external network requests during setup, including update checks and enrollment, and records a network-disabled policy for background processes until explicitly enabled for online operation. Setup children must honor that policy; private local control channels remain available. It verifies the local release and can configure a local HQ where all platform requirements are present. A requested remote satellite enrollment remains pending until an explicit online office setup can reach HQ; an offline bundle cannot complete that handshake. Existing enrolled satellites can reuse installed identity/configuration without reenrolling, subject to normal connectivity and permit rules.
+Offline setup verifies a complete local bundle, provisions local HQ where platform requirements are present and performs no external requests. Background processes inherit an offline policy until online operation is explicitly enabled; private local control remains available. Missing prerequisites produce actionable errors, not downloads. Satellite enrollment is outside initial setup in both online and offline modes.
 
-Every irreversible setup stage has a stable operation ID and durable completion marker. Repeating setup resumes pending work and reuses completed stages, offices, identities and service registration; it does not reset data, reenroll a completed office, silently add another office or activate an upgrade. On a completed installation, office setup explicitly creates/selects another office; retrying the same operation resumes its existing office. Serialize concurrent setup attempts for the selected installation. No service credentials, invitation secrets or recovery material enter diagnostics or completion markers.
+| Command | User-facing meaning |
+| --- | --- |
+| agentic-org setup | Complete initial HQ setup, including service registration/start. |
+| agentic-org serve | Run the configured host in the foreground; also the OS service entry point. |
+| agentic-org service start / stop / status | Maintain an already configured installation; registration is automatic during setup. |
+
+Use one shared implementation for release verification and service provisioning, not nested shell commands. Every irreversible setup stage has a stable operation ID and durable marker. Repeating/interruption/concurrency resumes existing HQ identity/configuration/data/service without duplicates, implicit upgrades or role changes. A missing service manager leaves completed configuration intact and reports foreground serve instructions. Credentials/recovery material never enter diagnostic output. [Standalone setup](../standalone-server.md#4-setup-and-service-lifecycle) and its UX are the shared installation contract, rather than a separate installer defined by this addendum.
 
 ## 3. Storage authority and exact paths
 
@@ -343,8 +321,8 @@ Provider/model and price_id describe the actual route used, not the first pool m
 | AE-13 | Cached candidate selection for up to 64 members has p95 below 5 ms over 10,000 warmed lookups on recorded CI hardware. Report quota/network/probe/startup time separately; no performance claim without the result. |
 | AE-14 | Every production adapter has pinned-version auth/model/tool/checkpoint/stop/usage fixtures. Unsupported capability returns its defined error, never a permissive fallback. |
 | AE-15 | The office worker's supervisor is its single agent recovery owner; host recovery cannot race that live owner. No new placement starts until old ownership is fenced/reconciled. |
-| AE-16 | Fresh setup downloads/verifies one complete release, configures one office and registers/starts one service. Interrupted/repeated/concurrent setup reuses durable steps and creates no duplicate service, identity or office. office setup uses the same foundation. |
-| AE-17 | Offline setup performs zero network requests, rejects untrusted/incomplete bundles, and leaves remote enrollment pending. Missing service-manager support reports foreground instructions; serve starts installed releases without a download prerequisite. |
+| AE-16 | Fresh setup downloads/verifies one complete release, creates HQ only and registers/starts one service. No satellite option is offered; satellite requests are rejected before provisioning. Interrupted/repeated/concurrent setup reuses durable steps and creates no duplicate service, identity or office. HQ-initiated satellite onboarding is a separate flow. |
+| AE-17 | Offline HQ setup performs zero external requests, rejects untrusted/incomplete bundles, and never starts satellite enrollment. Missing service-manager support reports foreground instructions; serve starts installed releases without a download prerequisite. |
 
 ## 11. Implementation sequence and integration boundaries
 

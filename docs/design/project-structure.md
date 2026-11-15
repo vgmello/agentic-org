@@ -15,21 +15,16 @@ product scope, process/security boundaries, and deletion acceptance.
 
 ## 1. Names and process boundaries
 
-| Source / current name | V1 target | Meaning |
+| Current source/package | Target executable or asset | Meaning |
 | --- | --- | --- |
-| `apps/desktop/` | `apps/org-ui/` | Retained Svelte 5/TypeScript browser application, built with SvelteKit 2's static adapter |
-| Frontend package name | `org-ui` | UI build/package identity; product display name remains Agentic Org |
-| `apps/org-server/` | `apps/org-server/` | Rust server application/composition |
-| Cargo package and executable `org-server` | `org-server` | One office worker per process, including HQ or satellite role |
-| Rust application-library import `org_server` | `org_server` | Updated test harnesses and authorized callers |
-| New browser HTTP helper | `apps/org-gateway/`, package/binary `org-gateway` (planned) | One instance-scoped browser listener, no office-key custody |
-| Setup command implementation | `apps/org-setup/`, package `org-setup`, binary `agentic-org` (planned) | Distinct package ID from the old Tauri shell; remove that workspace member before staging the new same-named binary |
+| apps/org-ui, package org-ui | Static org-ui assets | Browser application; no Node server |
+| apps/org-setup, package org-setup (planned) | agentic-org | Human CLI; setup is HQ-only; serve is the long-running host/service entry point |
+| apps/org-office-host (implemented host) | Host behavior composed inside agentic-org serve | Extract shared lifecycle/key-custody code into a library, preserving private launch/signing boundaries; retire the separate host executable from the target release |
+| apps/org-server, package org-server, library org_server | agentic-org-office | One HQ or satellite worker with internal agent supervision |
+| apps/org-gateway, package org-gateway (planned) | agentic-org-web | Instance browser HTTPS, assets, APIs and events; no office keys |
+| apps/org-agent, package org-agent | agent-os | Small employee-facing CLI, separate from the human CLI |
 
-The release/setup executable remains provisionally `agentic-org`, as described in
-the standalone design. It is distinct from the renamed `org-server` worker.
-`org-office-host`, `org-office`, `org-office-launch`, office identities, and the
-HQ/satellite model retain their responsibilities. The server rename does not merge
-the host, workers, and agent CLI into one privileged process.
+**Owner amendment (2026-11-15):** these are target executable names, not a blanket source/package rename or completed implementation. Retain existing org-* contracts/library identities. The current org-server rename and org-ui/Tauri moves below are historical facts. agentic-org setup performs initial HQ provisioning and automatic service registration/start; satellite onboarding is a separate HQ-initiated flow. The OS service runs agentic-org serve. Follow standalone-server.md for setup, update and offline-bundle behavior. One office worker owns each agent tree; no additional supervisor or updater daemon is required.
 
 Delete desktop-only Tauri code according to the inventory and move the retained
 browser application to `apps/org-ui`. Keep licensed UI inside that application;
@@ -142,11 +137,11 @@ crates/
   org-github/
 
 apps/
-  org-server/                        # Per-office worker: domain/IPC/runtime composition
-  org-gateway/                       # Planned instance browser HTTP/TLS helper
-  org-setup/                         # Planned setup CLI; binary agentic-org adapters
-  org-office-host/                   # Instance/worker supervision composition
-  org-agent/                         # Small employee CLI
+  org-server/                        # Binary agentic-org-office; per-office composition
+  org-gateway/                       # Planned binary agentic-org-web
+  org-setup/                         # Binary agentic-org: setup/serve/human management
+  org-office-host/                   # Current host; extract behavior into shared library
+  org-agent/                         # Binary agent-os; small employee CLI
   org-ui/                            # Static browser application; see below
 ```
 
@@ -173,9 +168,9 @@ session coordinator -> employee policy + runtime contracts
 harness adapters -> runtime contracts
 ```
 
-The standalone design chooses one `org-gateway` process per instance for browser
+The standalone design chooses one `agentic-org-web` process per instance for browser
 HTTP/TLS, routing all authorized HQ organizations on the same listener. The host
-keeps office keys/catalog provisioning; each `org-server` remains one office worker.
+keeps office keys/catalog provisioning; each `agentic-org-office` remains one office worker.
 Create organization requires instance-admin authority, not just organization
 ownership. Keep gateway endpoint code focused on principal authorization, decoding,
 typed public operations and result mapping; never return an office key to it. A small HTTP adapter crate remains an option
@@ -223,7 +218,7 @@ A feature can contain its component, interaction state, API integration, validat
 feedback, and tests. Place shared domain UI types/state beside that domain's
 features. A simple route may remain self-contained when extraction adds no value.
 
-Retain the static SvelteKit adapter: the instance's Rust `org-gateway` serves assets, commands,
+Retain the static SvelteKit adapter: the instance's Rust `agentic-org-web` serves assets, commands,
 queries, authentication, and live events. Implement browser forms against that API;
 this profile does not introduce a Node backend or SvelteKit server actions. Browser
 state is a view of server authority, with loading/unavailable/error/freshness states.
@@ -297,7 +292,7 @@ stop pending until acknowledged, as the employee and session designs require; re
 | Step | Source-to-target work | Verification |
 | --- | --- | --- |
 | 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
-| 2. Application naming | Rename retained browser sources to `apps/org-ui`; rename server app/package/binary to `apps/org-server` / `org-server`; use distinct `org-setup` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
+| 2. Application naming | Rename retained browser sources to `apps/org-ui`; retain current apps/org-server/package org-server and target binary agentic-org-office; map org-gateway to agentic-org-web and org-agent to agent-os; compose shared host behavior into agentic-org serve; use distinct `org-setup` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
 | 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve public compatibility where retained, visibility, transactions, invariants, and acyclic source direction |
 | 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
 | 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |

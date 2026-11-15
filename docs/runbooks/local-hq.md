@@ -1,5 +1,7 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
+**Target install amendment (2026-11-15):** current planned onboarding is agentic-org setup, which creates HQ only, verifies components and registers/starts its service automatically. Satellite onboarding is initiated later from HQ. The service entry point is agentic-org serve; helpers are agentic-org-web, agentic-org-office and agent-os. These commands are requirements, not verified instructions for the historical debug build below. See [current standalone setup](../design/standalone-server.md#4-setup-and-service-lifecycle).
+
 **Naming amendment (2026-11-10):** the server app/package/binary is now
 `apps/org-server` / `org-server`; the browser UI rename to `apps/org-ui` / `org-ui`
 is complete. The Tauri shell is removed; its legacy debug commands below are historical

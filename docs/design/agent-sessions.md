@@ -1,5 +1,7 @@
 # Design: agent sessions (the office runs the agents)
 
+**Current executable amendment (2026-11-15):** target office executable agentic-org-office contains the supervisor/router/session runner; no separate agent-supervisor daemon is required. agent-os is the separate agent CLI and agentic-org serve owns host lifecycle. Existing org-runtime, org-supervise, source paths and wire names remain unchanged. The [execution contract](organization-data/11-agent-execution-pools-addendum.md) defines connection pools and safe failover; the [standalone design](standalone-server.md) defines current HQ-only setup and process boundaries. Historical implementation observations below retain inspected names.
+
 **Standalone-v1 amendment (2026-11-09):**
 [standalone-server.md](standalone-server.md) changes deployment and access, not
 employee ownership or process supervision. All office/home/runtime paths resolve

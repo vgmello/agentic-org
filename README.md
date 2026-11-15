@@ -14,20 +14,28 @@ The same proposal includes [employee supervision and native delegates](docs/spec
 [channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
 belongs to the offices; the browser accesses it through HQ.
 
+## Initial setup (target CLI)
+
+After obtaining the verified platform executable, run:
+
+```bash
+agentic-org setup
+```
+
+This creates HQ, prepares its matching release components and automatically registers/starts the background service. There is no separate install/service-install step and no initial satellite choice. Add satellites later from HQ's UI or an HQ-issued command. Repeating setup safely resumes/reuses the same HQ and service. Offline HQ setup accepts setup --bundle <path> --offline. These commands are the implementation target, not functionality claimed to exist in the inspected checkout; [the installation design](docs/design/standalone-server.md#4-setup-and-service-lifecycle) and [UX contract](docs/specs/server-installation-and-access-ux.md) define readiness and recovery behavior.
+
 ## Proposed v1 layout
 
-The browser application is **org-ui** at `apps/org-ui/`. The Rust server
-application, Cargo package and worker executable are **org-server** at
-`apps/org-server/`. The host still supervises one worker per office.
+The browser application is **org-ui** at `apps/org-ui/`. Current worker source/package remain org-server at apps/org-server; its target executable is **agentic-org-office**. The target browser executable is **agentic-org-web**, and the separate agent CLI is **agent-os**. **agentic-org serve** composes existing host lifecycle/key-custody behavior and supervises one worker per office. These executable changes remain implementation work.
 
 ```text
 apps/
   org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
-  org-server/         Per-office worker composition and local transport
-  org-gateway/        Planned instance browser HTTP/TLS helper
-  org-setup/          Planned setup/lifecycle CLI (binary agentic-org)
-  org-office-host/    Instance and office-process supervision
-  org-agent/          Small employee CLI
+  org-server/         Target executable agentic-org-office
+  org-gateway/        Planned executable agentic-org-web
+  org-setup/          Planned agentic-org: human CLI, setup and serve
+  org-office-host/    Current host; extract shared behavior for agentic-org serve
+  org-agent/          Target executable agent-os
 crates/               Cohesive libraries; domain modules contain feature slices
 docs/
   architecture-rules.md
@@ -37,7 +45,7 @@ docs/
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature
 organization, shared code ownership, and the source-to-target implementation plan.
-The UI and worker renames and Tauri-shell removal are implemented. The remaining
+The earlier org-ui/org-server source renames and Tauri-shell removal are implemented; the executable names above remain pending. The remaining
 target layout is planned. Browser areas without a gateway adapter show unavailable
 in both ordinary development and release; test fakes require explicit test composition.
 The historical shell commands below no longer run against this tree.

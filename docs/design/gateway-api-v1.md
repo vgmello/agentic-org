@@ -1,4 +1,6 @@
-# Gateway HTTP API v1
+# Web HTTP API v1
+
+Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. gateway in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
 
 Wire `api_version: 1`, `contract_revision: 2`. The core follows design revision 2;
 the organization mutation codec in §9 follows Rowan's approved design revision 3.

@@ -1,5 +1,7 @@
 # Design: employee supervision, native identity and internal work
 
+**Current process amendment (2026-11-15):** the logical employee supervisor runs inside agentic-org-office alongside the connection router/session runner; it is not another daemon. agentic-org serve supervises office workers and the optional agentic-org-web child. agent-os remains a separate agent-facing CLI. The [execution addendum](organization-data/11-agent-execution-pools-addendum.md) fixes pool/environment/failover behavior; [standalone setup](standalone-server.md#4-setup-and-service-lifecycle) creates HQ only. Existing source/contract names below remain historical where applicable.
+
 Status: **proposed, rev 1** 2026-11-09. Requested by the owner. Reviewers: ada,
 Eden, River, server-dev, Remy and codex-dev for their existing boundaries.
 Implements [`employee-supervision-ux.md`](../specs/employee-supervision-ux.md)

@@ -10,7 +10,7 @@ and [server setup requirements](../specs/server-installation-and-access-ux.md).
 Standalone setup selects `default` or an explicitly named instance. A new HQ setup
 establishes an instance administrator before exposing administration. It can create the
 first organization using the same domain operation as the authenticated HTTP API.
-A satellite setup instead enrolls an office in an existing organization. Opening
+Initial agentic-org setup creates HQ only and registers/starts the service automatically. It offers no satellite choice. Satellite onboarding is initiated separately from HQ's UI or an HQ-issued command. Opening
 HQ in a browser performs neither installation nor enrollment.
 
 ## Create flow
@@ -18,11 +18,11 @@ HQ in a browser performs neither installation nor enrollment.
 1. An authenticated instance administrator chooses **Create organization** and enters the name. Organization ownership alone is insufficient. The
    browser shows which HQ instance will store it. No local path picker appears.
 2. The request carries an operation ID and the proposed organization details.
-   The instance browser gateway (`org-gateway`) authenticates and authorizes the request before invoking a typed, restricted host operation. The host validates its admitted gateway capability, administrator grant and instance scope before provisioning; no browser HTTP parser runs in the key-custody host or office worker.
+   The instance browser gateway (`agentic-org-web`) authenticates and authorizes the request before invoking a typed, restricted host operation. The host validates its admitted gateway capability, administrator grant and instance scope before provisioning; no browser HTTP parser runs in the key-custody host or office worker.
 3. The instance reserves the normalized name and IDs under its catalog lock, then
    performs slow provisioning outside that lock. Creation is idempotent by
    operation ID; concurrent requests cannot create duplicate names or identities.
-4. The host creates the office key and starts its HQ worker through the private
+4. The host inside agentic-org serve creates the office key and starts its agentic-org-office HQ worker through the private
    launch contract. The worker owns its folder, databases and durable `office.json`
    marker. Preserve the existing adopt-versus-discard rules after a crash.
    Creating the organization also provisions its versioned encrypted CA escrow and
