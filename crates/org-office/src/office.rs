@@ -65,8 +65,10 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// gets the tables it lacks when it is opened. Version 4 closed after B1-11 A1.3.
 /// Version 5 adds change results, number counters and a clock, and is closed.
 /// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
-/// reads (B1-12); it stays open until B1-11's final slice.
+/// reads (B1-12). Work number keys are unique; pre-final v6 files are admitted atomically.
+/// Version 6 stays open until B1-11's final slice.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
+    admit: Some(work::admit_v6),
     version: 6,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;

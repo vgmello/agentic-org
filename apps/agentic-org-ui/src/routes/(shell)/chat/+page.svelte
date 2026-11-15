@@ -32,6 +32,8 @@
 		dayLabel,
 		locate,
 		nameOf,
+		messageRows,
+		RowActivity,
 		parseChatLocation,
 		parseSearch,
 		parseSlash,
@@ -60,12 +62,22 @@
 	let now = $state(new Date().toISOString());
 	const ctx = $derived(chatContext(snapshot, { now }));
 	const chatState = $derived(chat?.state);
+	const rows = $derived(chatState ? messageRows(chatState, ctx) : undefined);
 	const bar = $derived(chatState ? sidebar(chatState, ctx) : undefined);
 	const officeRunning = $derived(chat?.office_running ?? true);
 
 	let view = $state<ChatView>({ type: 'needs' });
 	let threadRoot = $state<string | undefined>();
 	let threadOpener: HTMLElement | undefined;
+	const rowActivity = new RowActivity();
+	const rowIsActive = (message: ChatMessage) => rowActivity.active(message.id);
+	function menuChanged(message: ChatMessage, open: boolean, opener: HTMLElement) {
+		if (open) rowActivity.hold(message.id, opener, 'menu');
+		else {
+			rowActivity.closeMenu(opener);
+			void tick().then(() => rowActivity.focused(document.activeElement));
+		}
+	}
 	let showMembers = $state(false);
 	let membersOpener: HTMLElement | undefined;
 	let compactPanels = $state(false);
@@ -119,6 +131,7 @@
 	}
 	function revealChatFocus(event: FocusEvent) {
 		const target = event.target;
+		rowActivity.focused(target);
 		if (!(target instanceof HTMLElement) || !(conversationEl?.contains(target) || target.closest('[data-chat-panel]'))) return;
 		// Native Tab can scroll after focusin; inspect the final position without changing focus.
 		requestAnimationFrame(() => {
@@ -278,6 +291,7 @@
 		view = next;
 		threadRoot = undefined;
 		threadOpener = undefined;
+		rowActivity.clear();
 		showMembers = false;
 		membersOpener = undefined;
 		showMuted = false;
@@ -337,11 +351,19 @@
 	}
 	function closeThread(restore = true) {
 		const wasOpen = !!threadRoot;
+		const opener = threadOpener;
+		rowActivity.returning(opener, 'thread');
 		threadRoot = undefined;
 		highlight = undefined;
 		writePlace();
 		const target = threadOpener?.isConnected ? threadOpener : listEl;
-		if (wasOpen && restore) void tick().then(() => focusVisible(target));
+		if (wasOpen && restore) void tick().then(() => {
+			if (threadRoot || threadOpener !== opener) { rowActivity.focused(opener); return; }
+			focusVisible(target);
+			rowActivity.focused(opener);
+			threadOpener = undefined;
+		});
+		else { rowActivity.release(opener, 'thread'); threadOpener = undefined; }
 	}
 	function closeMembers() {
 		showMembers = false;
@@ -409,6 +431,17 @@
 	const env = $derived<CommandEnv>({ projects: (snapshot.projects ?? []).map((p) => ({ id: p.id, name: p.name })), members: ctx.members, conversationTitle: conversation && chatState ? titleOf(conversation, ctx, ctx.owner) : 'this conversation' });
 	let command = $state<CommandForm | undefined>();
 	let commandOpen = $state(false);
+	let commandOpener = $state<HTMLElement | undefined>();
+	function returnCommandFocus() {
+		const opener = commandOpener;
+		rowActivity.returning(opener, 'dialog');
+		void tick().then(() => {
+			if (commandOpen || commandOpener !== opener) { rowActivity.focused(opener); return; }
+			focusVisible(opener?.isConnected ? opener : listEl);
+			rowActivity.focused(opener);
+			commandOpener = undefined;
+		});
+	}
 	function openForm(form: CommandForm | { error: string }) {
 		if ('error' in form) {
 			toast.error(form.error);
@@ -458,7 +491,9 @@
 	const pin = (m: ChatMessage) => { if (officeRunning) void act({ method: 'chat.pin', message_id: m.id }); };
 	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => { if (officeRunning) void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`); };
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
-	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
+	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => {
+		if (openForm(turnForm(into, m, env))) { rowActivity.hold(m.id, opener, 'dialog'); commandOpener = opener; }
+	};
 	// Restore only focus lost by this update; never pull it from a control the owner moved to.
 	const focusPlace = () => `${view.type}:${viewId ?? ''}:${threadRoot ?? ''}`;
 	async function restoreFocus(origin: Element | null, place: string, target: () => HTMLElement | null) {
@@ -497,7 +532,9 @@
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
 		}
+		rowActivity.release(threadOpener, 'thread');
 		threadOpener = opener;
+		rowActivity.hold(m.id, opener, 'thread');
 		threadRoot = m.thread_root_id ?? m.id;
 		showMembers = false;
 		writePlace();
@@ -571,12 +608,13 @@
 <svelte:head><title>{documentPlace} · Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
-	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
+	<MessageRow message={m} {ctx} rowData={rows!.forMessage(m)} {now} readOnly={bridgePreview} {officeRunning} active={rowIsActive(m)} onmenu={menuChanged} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
 {/snippet}
 
 {#snippet undeliveredRows(items: Pending[], inThread = false)}
 	{#each items as p (p.key)}
-		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={(button) => void deliver(p, true, button)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+		{@const message = pendingMessage(p)}
+		<MessageRow {message} {ctx} rowData={rows!.forMessage(message)} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={(button) => void deliver(p, true, button)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
 	{/each}
 {/snippet}
 
@@ -714,7 +752,7 @@
 								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="digest-row">
 									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={openDigest === g.member_id} onclick={() => (openDigest = openDigest === g.member_id ? undefined : g.member_id)}>Daily digest · {nameOf(ctx, g.member_id)} · {g.messages.length} {g.messages.length === 1 ? 'update' : 'updates'}</button>
 									{#if openDigest === g.member_id}
-										<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} {chatState} {now} readOnly /></div>{/each}</div>
+										<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} rowData={rows!.forMessage(m)} {now} readOnly /></div>{/each}</div>
 									{/if}
 								</div>
 							{/each}
@@ -722,7 +760,7 @@
 								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="muted-row">
 									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={showMuted} onclick={() => (showMuted = !showMuted)}>{convView.muted.length} muted {convView.muted.length === 1 ? 'message' : 'messages'} · {showMuted ? 'Hide' : 'Show'}</button>
 									<span class="text-xs/5 text-gray-400"> They still reach Activity.</span>
-									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} {chatState} {now} readOnly /></div>{/each}</div>{/if}
+									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<div aria-live={channelRowLive(m)}><MessageRow message={m} {ctx} rowData={rows!.forMessage(m)} {now} readOnly /></div>{/each}</div>{/if}
 								</div>
 							{/if}
 						</div>
@@ -738,7 +776,7 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {sidebarInline} bind:this={panel} {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
+			<ThreadPanel active={rowIsActive} onmenu={menuChanged} rows={rows!} {sidebarInline} bind:this={panel} {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
@@ -749,7 +787,7 @@
 
 <ChannelDialog bind:this={channelDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
 <NewMessageDialog bind:this={dmDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
-<CommandDialog bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />
+<CommandDialog returnFocus={commandOpener ? returnCommandFocus : undefined} bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />
 
 <style>
 	.chat-frame {

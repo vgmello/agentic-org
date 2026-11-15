@@ -1,4 +1,5 @@
 //! Registry-only journal transactions. Callers do all non-SQLite work between lookup/write.
+use super::clock::{advance_clock, now};
 use super::{Error, HostDb};
 use org_host_control::{journal::Journaled, HostOpResult};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -23,21 +24,7 @@ impl<'a> Attempt<'a> {
     }
 }
 
-/// Opaque account PHC string. Only 2b.3's bounded Argon2 path may inspect it.
-pub(crate) struct Verifier(String);
-impl Verifier {
-    pub(crate) fn new(phc: String) -> Self {
-        Self(phc)
-    }
-    pub(crate) fn expose(&self) -> &str {
-        &self.0
-    }
-}
-impl Drop for Verifier {
-    fn drop(&mut self) {
-        crate::secrets::zero(&mut std::mem::take(&mut self.0).into_bytes());
-    }
-}
+pub(crate) use super::verifier::Verifier;
 pub(crate) enum Lookup {
     Vacant,
     Replay(Stored),
@@ -155,26 +142,6 @@ fn immediate(db: &mut Connection) -> Result<Transaction<'_>, Error> {
     tests::after_begin();
     Ok(tx)
 }
-fn now(db: &Connection, wall_ms: i64) -> Result<i64, Error> {
-    let high: String = db.query_row(
-        "SELECT value FROM meta WHERE key='clock_high_ms'",
-        [],
-        |r| r.get(0),
-    )?;
-    let high: i64 = high.parse().map_err(|_| Error::Unsafe)?;
-    if wall_ms < 0 || high < 0 {
-        return Err(Error::Unsafe);
-    }
-    Ok(wall_ms.max(high))
-}
-/// Commit the served maximum with the decision; unchanged clocks produce no UPDATE.
-fn advance_clock(tx: &Transaction<'_>, now: i64) -> Result<(), Error> {
-    tx.execute(
-        "UPDATE meta SET value=?1 WHERE key='clock_high_ms' AND CAST(value AS INTEGER)<?1",
-        [now],
-    )?;
-    Ok(())
-}
 fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
     advance_clock(tx, now)?;
     Ok(tx.execute(
@@ -226,7 +193,7 @@ fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> 
                 .optional()?
                 .ok_or(Error::OperationReused)?;
             return Ok(Lookup::NeedsVerification {
-                verifier: Verifier::new(verifier),
+                verifier: Verifier::new(verifier)?,
                 stored,
             });
         }

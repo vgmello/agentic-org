@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { Plugin } from 'vite';
+import { sessionTestMiddleware } from './fakes/session-server.ts';
 
 /** Resolve test APIs after SvelteKit expands $lib, without shipping a runtime fake toggle. */
 export function testComposition(): Plugin {
@@ -13,6 +14,8 @@ export function testComposition(): Plugin {
 	return {
 		name: 'org-test-owned-composition',
 		enforce: 'pre',
+		config: () => ({ server: { fs: { allow: [resolve(app, 'e2e/session-browser-harness.ts')] } } }),
+		configureServer(server) { server.middlewares.use(sessionTestMiddleware()); },
 		resolveId(source, importer) {
 			// Test modules explicitly import real factories/types by relative path. Their $lib API
 			// imports still compose the other test APIs, rather than creating separate instances.

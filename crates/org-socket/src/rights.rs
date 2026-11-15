@@ -6,8 +6,10 @@
 //! it covers `recvmsg` through every `FD_CLOEXEC` update. Linux sets CLOEXEC atomically
 //! with `MSG_CMSG_CLOEXEC` and does not acquire the fence.
 
+mod send;
 mod stream;
-pub use stream::connected_unix_stream;
+pub use send::{send, set_buffer_sizes, SendError};
+pub use stream::{connected_unix_stream, tcp_listener, unix_datagram};
 
 use std::fmt;
 use std::io;

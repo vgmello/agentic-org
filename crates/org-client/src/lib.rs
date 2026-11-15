@@ -36,7 +36,9 @@
 
 pub mod agent;
 mod error;
+mod helper;
 
+use helper::Helper;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Write};
 use std::ops::Deref;
@@ -46,7 +48,6 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use org_proto::frame;
@@ -217,7 +218,9 @@ pub struct Client {
     shared: Arc<Shared>,
     /// `None` only while dropping.
     outbound: Option<SyncSender<Outgoing>>,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<Helper>,
+    // Kept for explicit test teardown; normal Drop still detaches it.
+    _writer: Option<Helper>,
 }
 
 /// The socket of this machine's host: `<office home>/host.sock`, with the office home found
@@ -353,30 +356,55 @@ impl Client {
         let (outbound, queue) = mpsc::sync_channel(WRITE_QUEUE);
         let reader = {
             let shared = Arc::clone(&shared);
-            std::thread::Builder::new()
-                .name("org-client-reader".into())
-                .spawn(move || read_loop(&shared, reader_stream))
-                .map_err(ClientError::Io)?
+            Helper::spawn("org-client-reader", move || {
+                read_loop(&shared, reader_stream)
+            })
+            .map_err(ClientError::Io)?
         };
         let writer = {
             let shared = Arc::clone(&shared);
-            std::thread::Builder::new()
-                .name("org-client-writer".into())
-                .spawn(move || write_loop(&shared, writer_stream, queue))
+            Helper::spawn("org-client-writer", move || {
+                write_loop(&shared, writer_stream, queue)
+            })
         };
         // Not joined on drop: the writer ends once the socket is shut down and its queue is
         // gone, and `drop` must not wait on a write.
-        if let Err(error) = writer {
-            // The reader is already running and would never end: stop it.
-            shared.close();
-            let _ = reader.join();
-            return Err(ClientError::Io(error));
-        }
+        let writer = match writer {
+            Ok(writer) => writer,
+            Err(error) => {
+                // The reader is already running and would never end: stop it.
+                shared.close();
+                let _ = reader.join();
+                return Err(ClientError::Io(error));
+            }
+        };
         Ok(Self {
             shared,
             outbound: Some(outbound),
             reader: Some(reader),
+            _writer: Some(writer),
         })
+    }
+
+    /// Closes the connection and joins its helpers before a test releases its fd fence.
+    /// A timeout names the unfinished helper and keeps its handle for a later attempt.
+    /// Both helpers are attempted against the same deadline; the first error is reported.
+    /// If a writer error leaves the reader unjoined, its diagnostic states that explicitly.
+    /// Normal Drop remains bounded and may detach helpers in every build.
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn close_and_join(&mut self, deadline: Instant) -> std::io::Result<()> {
+        self.shared.close();
+        self.outbound.take();
+        let writer = Helper::join_before(&mut self._writer, deadline);
+        let reader = Helper::join_before(&mut self.reader, deadline);
+        match writer {
+            Err(error) if self.reader.is_some() => Err(std::io::Error::new(
+                error.kind(),
+                format!("{error}; org-client-reader not joined"),
+            )),
+            Err(error) => Err(error),
+            Ok(()) => reader,
+        }
     }
 
     /// Calls `C` and waits for the answer up to [`default_timeout`] for its method
@@ -1019,6 +1047,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+#[cfg(test)]
+mod lifetime_tests;
 
 #[cfg(test)]
 mod tests {

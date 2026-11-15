@@ -8,7 +8,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 
 	/** What a slash command or Turn into… opens (CHAT-9). UI only: it fills the form and says what it would do. */
-	let { open = $bindable(false), form, ondone }: { open: boolean; form: CommandForm | undefined; ondone: (message: string) => void } = $props();
+	let { open = $bindable(false), form, ondone, returnFocus }: { returnFocus?: () => void; open: boolean; form: CommandForm | undefined; ondone: (message: string) => void } = $props();
 
 	let values = $state<Record<string, string>>({});
 	let touched = $state(false);
@@ -33,7 +33,7 @@
 </script>
 
 <Dialog bind:open>
-	<DialogContent class="sm:max-w-lg max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto">
+	<DialogContent onCloseAutoFocus={(event) => { if (returnFocus) { event.preventDefault(); returnFocus(); } }} class="sm:max-w-lg max-[640px]:max-h-[100dvh] max-[640px]:max-w-none max-[640px]:overflow-y-auto">
 		{#if form}
 			<DialogHeader>
 				<DialogTitle text={form.title} />

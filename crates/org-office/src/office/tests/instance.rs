@@ -41,6 +41,7 @@ fn legacy_instance_office(version: i64, bound: Option<&str>) -> (TempDir, Key, P
     drop(office);
     fs::remove_file(folder.join(OFFICE_DB)).unwrap();
     let schema = Schema {
+        admit: None,
         version,
         create: match version {
             1 => |tx| {
@@ -152,6 +153,7 @@ fn v3_mismatch_on_v1_through_v6_changes_neither_database() {
         }
         // Version1 is still version1, including no new work/status/message tables.
         let schema = Schema {
+            admit: None,
             version,
             create: |_| unreachable!(),
             upgrade: |_, _| unreachable!(),
@@ -174,6 +176,7 @@ fn v3_mismatch_on_v1_through_v6_changes_neither_database() {
 fn v3_adoption_rolls_back_with_failed_upgrade_and_retry_can_adopt_another_instance() {
     let (_dir, key, folder) = legacy_instance_office(1, None);
     let corrupt = Schema {
+        admit: None,
         version: 1,
         create: |tx| {
             tx.execute_batch("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;")
@@ -246,6 +249,7 @@ fn v3_refuses_wrong_local_or_org_identity_before_adopting_instance() {
             "local-office" => (
                 OFFICE_DB,
                 Schema {
+                    admit: None,
                     version: 1,
                     create: |_| unreachable!(),
                     upgrade: |_, _| unreachable!(),
@@ -339,6 +343,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
     ));
     assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), before);
     let future = Schema {
+        admit: None,
         version: 7,
         create: |_| unreachable!(),
         upgrade: |_, _| unreachable!(),
@@ -352,6 +357,7 @@ fn v3_instance_mismatch_precedes_any_legacy_org_migration() {
     let (_dir, key, folder) = legacy_instance_office(1, Some(INSTANCE));
     fs::remove_file(folder.join(ORG_DB)).unwrap();
     let schema = Schema {
+        admit: None,
         version: 1,
         create: |tx| tx.execute_batch(include_str!("../../store/org/fixtures/schema-v1.sql")),
         upgrade: |_, _| unreachable!(),

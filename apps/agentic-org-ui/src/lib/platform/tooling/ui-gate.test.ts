@@ -158,6 +158,14 @@ const repoWebkitCoverage = (): WebkitCoverage => {
 };
 
 describe('gate manifest guard', () => {
+	it.each([
+		'src/lib/platform/auth/session-controller.ts', 'src/lib/platform/auth/session-gateway.ts',
+		'src/lib/platform/auth/session-record.ts', 'src/lib/platform/auth/session-store.ts',
+		'e2e/session-browser-harness.ts', 'e2e/session-foundation.spec.ts'
+	])('preserves the FULL gate for auth foundation %s', path => {
+		expect(plan([ui(path)], manifest)).toMatchObject({ all: true, cspFull: true, gateway: true });
+	});
+
 	it('assigns every e2e spec file to exactly one category', () => {
 		for (const spec of specs) {
 			const owners = Object.entries(manifest.categories).filter(([, category]) => category.specs.some((glob) => matches(glob, spec))).map(([name]) => name);
@@ -536,9 +544,9 @@ describe('selector', () => {
 		const pw = ['bun', 'x', 'playwright', 'test'];
 		const webkitProjects = ['--project=chromium', '--project=production', '--project=webkit'];
 		const chat = specs.filter((spec) => spec === 'chat.spec.ts' || spec.startsWith('chat-')).map((spec) => `e2e/${spec.replace(/\./g, '\\.')}$`);
-		expect(chat).toHaveLength(13);
+		expect(chat).toHaveLength(14);
 		const cspChat = chat.filter((file) => !file.includes('chat-followups-default-font'));
-		expect(cspChat).toHaveLength(12);
+		expect(cspChat).toHaveLength(13);
 		const csp = [...pw, '--config', 'playwright.csp.config.ts'];
 		expect(list).toEqual([
 			{ name: 'ordinary: journeys', env: { PW_WEBKIT: '1' }, cmd: [...pw, '--grep', '@journey', ...webkitProjects] },

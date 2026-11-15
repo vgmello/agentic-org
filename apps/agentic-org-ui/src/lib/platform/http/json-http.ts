@@ -1,9 +1,14 @@
 import { NotDispatchedError } from './errors';
+import { readSignIn } from './wire';
 
-export type JsonHttpRequest = { path: string; proof: string; signal?: AbortSignal } & (
+type JsonRequest = { path: string; signal?: AbortSignal } & (
 	| { method: 'GET'; body?: never }
 	| { method: 'POST'; body: unknown }
 );
+export type JsonHttpRequest = JsonRequest & { proof: string };
+type JsonHttpOptions = {
+	origin: string; fetch?: typeof fetch; timeoutMs: number; maxRequestBytes: number; maxResponseBytes: number;
+};
 
 function validApiTarget(path: string): boolean {
 	if (typeof path !== 'string' || !path.startsWith('/api/v1/') || /[\x00-\x20\x7f]/.test(path) || path.includes('#')) return false;
@@ -21,8 +26,8 @@ function confined(path: string, url: URL, origin: string): boolean {
 		url.pathname.startsWith('/api/v1/') && !/%(?:2f|5c)/i.test(url.pathname) &&
 		!url.hash && !url.username && !url.password;
 }
-function assertHeaderProof(proof: string) {
-	// Validate header-safe opaque text without guessing B1-02's eventual wire proof format.
+function assertHeaderProof(proof: unknown): asserts proof is string {
+	// Transport accepts header-safe opaque text; session decoding enforces the wire proof format.
 	if (typeof proof !== 'string' || !/^[\x21-\x7e]{1,1024}$/.test(proof))
 		throw new NotDispatchedError('Invalid session proof');
 }
@@ -31,10 +36,7 @@ function assertNoProof(url: URL, proof: string) {
 		throw new NotDispatchedError('Session proof must be supplied only in the header');
 }
 
-/** Same-origin JSON boundary. B1-02 adapters supply concrete routes and decode the returned body. */
-export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeoutMs, maxRequestBytes, maxResponseBytes }: {
-	origin: string; fetch?: typeof fetch; timeoutMs: number; maxRequestBytes: number; maxResponseBytes: number;
-}) {
+function createBoundedJsonHttp({ origin, fetch: send = globalThis.fetch, timeoutMs, maxRequestBytes, maxResponseBytes }: JsonHttpOptions, authenticated: boolean) {
 	let base: URL;
 	try { base = new URL(origin); } catch { throw new NotDispatchedError('Invalid browser origin'); }
 	if (base.origin !== origin || !['http:', 'https:'].includes(base.protocol)) throw new NotDispatchedError('Invalid browser origin');
@@ -42,25 +44,27 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 		throw new NotDispatchedError('The API must use this browser origin');
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1 || !Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0 || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0)
 		throw new NotDispatchedError('HTTP requests require finite time and body limits');
-	return async (request: JsonHttpRequest): Promise<{ status: number; body: unknown }> => {
+	return async (request: JsonRequest & { proof?: string }): Promise<{ status: number; body: unknown }> => {
 		let url: URL;
 		let headers: Headers;
 		let encoded: string | undefined;
 		let method: JsonHttpRequest['method'];
 		let signal: AbortSignal | undefined;
+		let sessionProof: string | undefined;
 		try {
 			const { path, body, proof } = request;
 			method = request.method;
 			signal = request.signal;
-			assertHeaderProof(proof);
+			if (authenticated) { assertHeaderProof(proof); sessionProof = proof; }
 			url = new URL(path, base);
 			if (!confined(path, url, origin)) throw new NotDispatchedError('Only same-origin API paths are allowed');
-			assertNoProof(url, proof);
+			if (sessionProof !== undefined) assertNoProof(url, sessionProof);
 			if (method !== 'GET' && method !== 'POST') throw new NotDispatchedError('Unsupported HTTP method');
 			if (method === 'GET' && body !== undefined) throw new NotDispatchedError('GET requests cannot have a body');
-			headers = new Headers({ Accept: 'application/json', 'X-Org-Session-Proof': proof });
+			headers = new Headers({ Accept: 'application/json' });
+			if (sessionProof !== undefined) headers.set('X-Org-Session-Proof', sessionProof);
 			encoded = body === undefined ? undefined : JSON.stringify(body, (key, value: unknown) => {
-				if (key.includes(proof) || (typeof value === 'string' && value.includes(proof)))
+				if (sessionProof !== undefined && (key.includes(sessionProof) || (typeof value === 'string' && value.includes(sessionProof))))
 					throw new NotDispatchedError('Session proof must be supplied only in the header');
 				return value;
 			});
@@ -128,4 +132,23 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 			controller.abort();
 		}
 	};
+}
+
+/** Protected calls always require a proof, including calls to a public route through this API. */
+export function createJsonHttp(options: JsonHttpOptions): (request: JsonHttpRequest) => Promise<{ status: number; body: unknown }> {
+	return createBoundedJsonHttp(options, true);
+}
+
+/** The only public gateway operations; callers cannot choose an unauthenticated request target. */
+export function createGatewayPublicHttp(options: JsonHttpOptions) {
+	const send = createBoundedJsonHttp(options, false);
+	return Object.freeze({
+		version: (signal?: AbortSignal) => send({ path: '/api/v1/version', method: 'GET', signal }),
+		async signIn(credentials: unknown, signal?: AbortSignal) {
+			let body;
+			try { body = readSignIn(credentials); }
+			catch { throw new NotDispatchedError('Invalid sign-in request'); }
+			return send({ path: '/api/v1/session/sign-in', method: 'POST', body, signal });
+		}
+	});
 }

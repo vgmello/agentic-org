@@ -1,5 +1,7 @@
 #![allow(unsafe_code)]
 
+use crate::test_teardown::teardown_failed;
+
 use super::*;
 use org_office_launch::v3::{CreateLine, HandoffFd, OfficeLine};
 use org_office_launch::{CreateOffice, DiscardOffice, StartOffice};
@@ -55,24 +57,44 @@ fn handoff(op: FirstLine) -> Handoff {
     }
 }
 
-fn control(bytes: &[u8]) -> (Control, File) {
+struct TestControl(Control);
+impl std::ops::Deref for TestControl {
+    type Target = Control;
+    fn deref(&self) -> &Control {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TestControl {
+    fn deref_mut(&mut self) -> &mut Control {
+        &mut self.0
+    }
+}
+impl Drop for TestControl {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.close_and_join(std::time::Instant::now() + WAIT) {
+            teardown_failed(error);
+        }
+    }
+}
+
+fn control(bytes: &[u8]) -> (TestControl, File) {
     control_with_fence(bytes, Arc::new(Mutex::new(())))
 }
 
-fn control_with_fence(bytes: &[u8], fence: Arc<Mutex<()>>) -> (Control, File) {
+fn control_with_fence(bytes: &[u8], fence: Arc<Mutex<()>>) -> (TestControl, File) {
     crate::zeroed::take_secret_wipes();
     let mut from_host = tempfile::tempfile().unwrap();
     from_host.write_all(bytes).unwrap();
     from_host.rewind().unwrap();
     let output = tempfile::tempfile().unwrap();
     (
-        Control::new(
+        TestControl(Control::new(
             ControlPipe {
                 from_host,
                 to_host: output.try_clone().unwrap(),
             },
             fence,
-        ),
+        )),
         output,
     )
 }
@@ -89,11 +111,11 @@ fn assert_header_wiped(had_data: bool) {
     );
 }
 
-fn launch(line: &HostFirstLine) -> (Control, File) {
+fn launch(line: &HostFirstLine) -> (TestControl, File) {
     launch_with_fence(line, Arc::new(Mutex::new(())))
 }
 
-fn launch_with_fence(line: &HostFirstLine, fence: Arc<Mutex<()>>) -> (Control, File) {
+fn launch_with_fence(line: &HostFirstLine, fence: Arc<Mutex<()>>) -> (TestControl, File) {
     let mut bytes = vec![];
     v3::write_first_line(&mut bytes, line).unwrap();
     // Subsequent pipe lines are never decoded, even if they look like secret commands.
@@ -987,7 +1009,7 @@ fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
 #[test]
 fn rendezvous_writer_poison_refuses_without_writing_an_event() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let (socket, peer) = UnixStream::pair().unwrap();
+    let (socket, mut peer) = UnixStream::pair().unwrap();
     let writer = Arc::new(Mutex::new(socket));
     let poisoned = Arc::clone(&writer);
     assert!(std::thread::spawn(move || {
@@ -1004,6 +1026,21 @@ fn rendezvous_writer_poison_refuses_without_writing_an_event() {
         Err(LaunchError::Invalid("rendezvous writer poisoned"))
     ));
     assert!(!org_socket::poll_readable(peer.as_raw_fd(), Duration::from_millis(10)).unwrap());
+    // Exercise explicit teardown too: event refusal must not prevent socket shutdown.
+    // Use raw Control so a teardown panic still drops through the unchanged Drop policy.
+    let mut control = Control::new(
+        ControlPipe {
+            from_host: tempfile::tempfile().unwrap(),
+            to_host: tempfile::tempfile().unwrap(),
+        },
+        Arc::new(Mutex::new(())),
+    );
+    control.rendezvous = Some(writer);
+    control
+        .close_and_join(std::time::Instant::now() + WAIT)
+        .unwrap();
+    assert!(org_socket::poll_readable(peer.as_raw_fd(), WAIT).unwrap());
+    assert_eq!(peer.read(&mut [0]).unwrap(), 0);
 }
 #[test]
 fn concurrent_receipts_and_server_events_share_one_writer_and_never_interleave_frames() {
@@ -1307,6 +1344,85 @@ fn a_failed_handshake_ack_ends_the_rendezvous() {
     a_failed_handshake_write_ends_the_rendezvous(HandshakeWrite::FdsReceived);
 }
 
+#[test]
+fn explicit_drain_teardown_names_an_open_pipe_writer_and_joins_after_eof() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use std::os::fd::OwnedFd;
+    let (_dir, listener, path) = listener();
+    let (input, mut writer) = std::io::pipe().unwrap();
+    let mut header = Vec::new();
+    v3::write_first_line(&mut header, &first(&path, FirstLine::Discard)).unwrap();
+    writer.write_all(&header).unwrap();
+    let mut control = Control::new(
+        ControlPipe {
+            from_host: File::from(OwnedFd::from(input)),
+            to_host: tempfile::tempfile().unwrap(),
+        },
+        Arc::new(Mutex::new(())),
+    );
+    let host = std::thread::spawn(move || {
+        let (mut stream, _) = accept(listener);
+        stream
+            .write_all(&v3::encode_handoff(&handoff(FirstLine::Discard)).unwrap())
+            .unwrap();
+        // Keep the rendezvous until the worker has committed its handoff read.
+        let mut byte = [0];
+        let result = stream.read(&mut byte);
+        assert!(
+            matches!(result, Ok(0)),
+            "explicit teardown did not end rendezvous: {result:?}"
+        );
+    });
+    assert!(matches!(
+        control.read(FirstLine::Discard).unwrap(),
+        Some(Request::V3 { .. })
+    ));
+    let (release, released) = std::sync::mpsc::channel();
+    // Even an ignored-deadline counterfactual eventually gets real pipe EOF.
+    let pipe_owner = std::thread::spawn(move || {
+        let _ = released.recv_timeout(WAIT);
+        drop(writer);
+    });
+    let timeout = control.close_and_join(std::time::Instant::now());
+    let retained = control._drain.is_some();
+    let _ = release.send(());
+    pipe_owner.join().unwrap(); // Socket shutdown cannot release the File reader.
+    let retry = control.close_and_join(std::time::Instant::now() + WAIT);
+    let joined = control._drain.is_none();
+    // A join-omission counterfactual still cleans up before any assertion fails.
+    if let Some((helper, _)) = control._drain.take() {
+        helper.join().unwrap();
+    }
+    host.join().unwrap();
+    let error = timeout.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("stdin-drain"));
+    assert!(retained, "timeout discarded the live drain handle");
+    retry.unwrap();
+    assert!(joined, "drain helper survived the explicit fence");
+    control.close_and_join(std::time::Instant::now()).unwrap();
+}
+
+#[test]
+fn explicit_drain_teardown_reports_a_panicked_helper() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (mut control, _) = control(b"");
+    let (finished, exited) = std::sync::mpsc::channel();
+    control._drain = Some((
+        std::thread::spawn(move || {
+            drop(finished);
+            panic!("controlled drain panic");
+        }),
+        exited,
+    ));
+    let error = control
+        .close_and_join(std::time::Instant::now() + WAIT)
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert!(error.to_string().contains("stdin-drain") && error.to_string().contains("panicked"));
+    assert!(control._drain.is_none());
+}
+
 /// BUG-189: after the host half-closes (its write half shut, so the worker's read half is
 /// already shut), a failed write must still end the worker's write half. On macOS a single
 /// SHUT_RDWR would return ENOTCONN and leave it open. Asserted from the worker's own side only.
@@ -1334,11 +1450,34 @@ fn dropping_control_ends_the_write_half_after_the_host_half_closed() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let (socket, peer) = UnixStream::pair().unwrap();
     peer.shutdown(std::net::Shutdown::Write).unwrap();
-    let (mut control, _) = control(b"");
+    // Exercise production Drop itself, before any fixture teardown can shut the stream.
+    let mut control = Control::new(
+        ControlPipe {
+            from_host: tempfile::tempfile().unwrap(),
+            to_host: tempfile::tempfile().unwrap(),
+        },
+        Arc::new(Mutex::new(())),
+    );
     let ours = socket.try_clone().unwrap();
     control.rendezvous = Some(Arc::new(Mutex::new(socket)));
     drop(control);
     let late = (&ours).write_all(b"late");
     assert_eq!(late.map_err(|e| e.kind()), Err(io::ErrorKind::BrokenPipe));
     drop(peer);
+}
+
+#[test]
+fn explicit_teardown_ends_the_write_half_after_the_host_half_closed() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.shutdown(std::net::Shutdown::Write).unwrap();
+    assert_eq!((&socket).read(&mut [0; 1]).unwrap(), 0);
+    let (mut control, _) = control(b"");
+    let ours = socket.try_clone().unwrap();
+    control.rendezvous = Some(Arc::new(Mutex::new(socket)));
+    control
+        .close_and_join(std::time::Instant::now() + WAIT)
+        .unwrap();
+    let late = (&ours).write_all(b"late");
+    assert_eq!(late.map_err(|e| e.kind()), Err(io::ErrorKind::BrokenPipe));
 }

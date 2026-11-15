@@ -226,6 +226,9 @@ fn sql_queries_match_memtxn_for_sixty_items_and_never_duplicate_live_links() {
         } else {
             Some(format!("project{}", n % 2))
         };
+        if item.project_id.is_none() && matches!(item.kind, ItemKind::Task | ItemKind::Bug) {
+            item.number = None;
+        }
         item.checklist[0].removed = n % 2 == 0;
         item.links = (0..2)
             .map(|link| StoredLink {

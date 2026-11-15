@@ -107,6 +107,10 @@ pub fn reconcile_bugs(
             changed: vec![],
         });
     }
-    let (accepted, changed) = write(&mut ctx, Plan::of(drafts), None)?;
+    let plan = Plan::of(drafts);
+    if let Err(error) = plan.validate_number_scope() {
+        return Ok(TxnOutput::Refused(error));
+    }
+    let (accepted, changed) = write(&mut ctx, plan, None)?;
     Ok(TxnOutput::Committed { accepted, changed })
 }
