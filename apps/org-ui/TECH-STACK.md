@@ -8,7 +8,7 @@ The Tauri shell, adapters, packages, workspace member and native installation sc
 have been removed. Tauri is deferred to v2. The import feature remains retired.
 
 The application lives in `apps/org-ui` (package `org-ui`); the worker is
-`apps/org-server` (`org-server`). Licensed UI remains inside this product application.
+`apps/agentic-org-office` (`agentic-org-office`). Licensed UI remains inside this product application.
 Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 
 ## Current implementation

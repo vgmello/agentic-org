@@ -17,10 +17,11 @@ members = [
   "crates/org-socket",
   "crates/org-sync",
   "crates/org-sync-proto",
-  "apps/org-server",
-  "apps/org-office-host",
-  "apps/org-agent",
-  "apps/org-gateway",
+  "apps/agentic-org-office",
+  "crates/org-host",
+  "apps/agentic-org",
+  "apps/agent-os",
+  "apps/agentic-org-web",
 ]
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
@@ -40,10 +41,11 @@ default-members = [
   "crates/org-socket",
   "crates/org-sync",
   "crates/org-sync-proto",
-  "apps/org-server",
-  "apps/org-office-host",
-  "apps/org-agent",
-  "apps/org-gateway",
+  "apps/agentic-org-office",
+  "crates/org-host",
+  "apps/agentic-org",
+  "apps/agent-os",
+  "apps/agentic-org-web",
 ]
 
 [workspace.package]

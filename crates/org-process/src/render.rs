@@ -106,20 +106,20 @@ impl Rendered {
 ///    or project's name from `input.names`, else its team id or project key, or "private"),
 ///    version and summary, by level (organization, team, project, agent), then key; then each
 ///    turned-off key and each conflict, in the set's order: the longest run, from the first,
-///    that fits with "and N more: run `org-agent process list`" after it (none when all fit).
+///    that fits with "and N more: run `agent-os process list`" after it (none when all fit).
 ///    One long early line that doesn't fit leaves out every later one, though they would fit.
 /// 2. "Changed since you last read": in the same order, each applying winner whose blob in
 ///    `input.texts` isn't among `input.read`'s blobs for its key, or that has no text there.
 ///    The longest run of them, from the first, that fits in full (trailing whitespace trimmed,
-///    in a backtick fence, fence included in the size) with all the rest named after it ("Run `org-agent process show <key>`"); one with no
+///    in a backtick fence, fence included in the size) with all the rest named after it ("Run `agent-os process show <key>`"); one with no
 ///    text is always named. If not even every name fits, the longest run of names that fits
-///    with "and N more changed: run `org-agent process list`" after it.
+///    with "and N more changed: run `agent-os process list`" after it.
 /// 3. Each On moment, in [`Moment`] order: its guidance text (trailing whitespace trimmed, in a
 ///    backtick fence, as in part 2), then each applying winner's prompt for it (unfenced: one
 ///    validated line), in the same order. These are reminders, not
 ///    rules (processes-ux.md decision 9), so they come last. A moment is whole or left out:
 ///    the longest run that fits with "and N more moments: process context limit reached
-///    (`org-agent process list`)" after it.
+///    (`agent-os process list`)" after it.
 ///
 /// Only whole entries are emitted, never a cut one; an entry or count line that doesn't fit is
 /// left out, so the cap holds whatever the input (with a cap too small for the kept room, the
@@ -157,7 +157,7 @@ fn render_within(set: &EffectiveSet, input: &RenderInput, cap: usize) -> Rendere
         let lines = summaries(set, &winners, &input.names);
         out.reserved = for_changed + for_moments;
         out.fill(&lines, |n| {
-            format!("and {n} more: run `org-agent process list`\n")
+            format!("and {n} more: run `agent-os process list`\n")
         });
         out.reserved = for_moments;
         out.section(CHANGED, |out| changed(out, &changes));
@@ -173,11 +173,11 @@ fn render_within(set: &EffectiveSet, input: &RenderInput, cap: usize) -> Rendere
 const CHANGED: &str = "\n## Changed since you last read\n";
 
 fn more_changed(n: usize) -> String {
-    format!("\nand {n} more changed: run `org-agent process list`\n")
+    format!("\nand {n} more changed: run `agent-os process list`\n")
 }
 
 fn more_moments(n: usize) -> String {
-    format!("\nand {n} more moments: process context limit reached (`org-agent process list`)\n")
+    format!("\nand {n} more moments: process context limit reached (`agent-os process list`)\n")
 }
 
 /// The text so far, which never passes `cap`, the full texts in it, and the bytes kept for
@@ -358,7 +358,7 @@ fn changes<'a>(winners: &[&'a Winner], input: &'a RenderInput) -> Changes<'a> {
         let head = format!("\n### {} ({place} v{})\n\n", w.file.name, w.file.version);
         full.push(text.map(|t| (format!("{head}{}", fenced(&t.text)), key, &t.blob)));
         let show = format!(
-            "{head}Run `org-agent process show {}` to read it.\n",
+            "{head}Run `agent-os process show {}` to read it.\n",
             key.as_str()
         );
         named.push(show);

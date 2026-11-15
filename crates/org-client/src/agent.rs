@@ -1,4 +1,4 @@
-//! An agent's connection to its office, for the agents' CLI (`org-agent`): find the office on
+//! An agent's connection to its office, for the agents' CLI (`agent-os`): find the office on
 //! this Mac (ADR-0003 §2.1), then open a connection bound as the agent.
 //!
 //! - [`find_office`] picks the office deterministically: the one asked for (`--office` or

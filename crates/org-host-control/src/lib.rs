@@ -1,8 +1,8 @@
 //! # org-host-control: the host's private contract
 //!
-//! The contract between `org-office-host` and the two parties that talk to it directly
+//! The contract between `org-host` and the two parties that talk to it directly
 //! (X-02 §6, D9):
-//! - **`org-gateway`**, over its **control connection**: the rendezvous connection the host
+//! - **`agentic-org-web`**, over its **control connection**: the rendezvous connection the host
 //!   accepted after checking the gateway's image (§5.1). The gateway signs people in, gets grants
 //!   for the channels it opens, fetches its TLS pair and follows the host's events.
 //! - **`agentic-org`** (setup and the local CLI), over **`host.sock`**, which speaks only this

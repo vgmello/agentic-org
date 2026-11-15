@@ -385,7 +385,7 @@ pub struct SandboxSpec {
     /// Never readable: every office's whole folder (`<office home>/offices/*/**`, not just
     /// its databases), the office's run folder, runtime stores.
     pub deny_read: Vec<PathPattern>,
-    /// Unix sockets the agent may connect to: its own office socket, for `org-agent`.
+    /// Unix sockets the agent may connect to: its own office socket, for `agent-os`.
     pub allowed_unix_sockets: Vec<SpecPath>,
 }
 

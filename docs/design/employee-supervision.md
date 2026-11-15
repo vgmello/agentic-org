@@ -1,5 +1,8 @@
 # Design: employee supervision, native identity and internal work
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 Status: **proposed, rev 1** 2026-11-09. Requested by the owner. Reviewers: ada,
 Eden, River, server-dev, Remy and codex-dev for their existing boundaries.
 Implements [`employee-supervision-ux.md`](../specs/employee-supervision-ux.md)

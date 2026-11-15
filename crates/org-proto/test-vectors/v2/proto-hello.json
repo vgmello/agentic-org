@@ -118,7 +118,7 @@
                 "min": 1,
                 "max": 2
               },
-              "client": "org-agent 0.1.0"
+              "client": "agent-os 0.1.0"
             }
           },
           "expect": {
@@ -145,7 +145,7 @@
                 "min": 2,
                 "max": 2
               },
-              "client": "org-gateway 0.1.0"
+              "client": "agentic-org-web 0.1.0"
             }
           },
           "expect": {
@@ -419,7 +419,7 @@
                 "min": 1,
                 "max": 2
               },
-              "client": "org-agent 0.1.0"
+              "client": "agent-os 0.1.0"
             }
           },
           "expect": {
@@ -446,7 +446,7 @@
                 "min": 2,
                 "max": 2
               },
-              "client": "org-gateway 0.1.0"
+              "client": "agentic-org-web 0.1.0"
             }
           },
           "expect": {
@@ -559,7 +559,7 @@
                 "min": 1,
                 "max": 2
               },
-              "client": "org-agent 0.1.0"
+              "client": "agent-os 0.1.0"
             }
           },
           "expect": {
@@ -586,7 +586,7 @@
                 "min": 2,
                 "max": 2
               },
-              "client": "org-gateway 0.1.0"
+              "client": "agentic-org-web 0.1.0"
             }
           },
           "expect": {

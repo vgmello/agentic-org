@@ -6,7 +6,7 @@
 //! - Relative paths are ignored, for `ORG_OFFICE_HOME` and `HOME` alike. The server runs with
 //!   `/` as its working directory, so a relative path would point it at a different socket
 //!   from the client's.
-//! - The host (`org-office-host`, the login service) listens on `<office home>/host.sock`.
+//! - The host (`org-host`, the login service) listens on `<office home>/host.sock`.
 //! - Each office server listens on `<office home>/run/<handle>.sock`, where the handle is the
 //!   last 12 characters of the office id (its random part). The host checks handles are unique,
 //!   **ignoring case**, because macOS file systems usually are case-insensitive.

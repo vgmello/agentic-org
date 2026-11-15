@@ -47,7 +47,7 @@ if (import.meta.main) {
 			if (!executable) throw new Error('Run bun run test:e2e:csp-gateway to build the gateway first');
 			await execute(executable, ['--ui-build', `${app}build`, '--port', port], repository);
 		} else {
-			const output = await execute('cargo', ['build', '--locked', '-p', 'org-gateway', '--example', 'csp_harness', '--message-format=json'], repository, { ...process.env, CARGO_BUILD_JOBS: '2' }, true);
+			const output = await execute('cargo', ['build', '--locked', '-p', 'agentic-org-web', '--example', 'csp_harness', '--message-format=json'], repository, { ...process.env, CARGO_BUILD_JOBS: '2' }, true);
 			const executable = gatewayExecutable(output);
 			await execute(process.execPath, ['run', 'build'], app);
 			await execute(process.execPath, ['x', 'playwright', 'test', '--config', 'playwright.csp-gateway.config.ts', ...process.argv.slice(2)], app, { ...process.env, CSP_GW_PORT: port, CSP_GW_EXECUTABLE: executable });

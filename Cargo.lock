@@ -3,6 +3,78 @@
 version = 4
 
 [[package]]
+name = "agent-os"
+version = "0.0.0"
+dependencies = [
+ "agentic-org-office",
+ "org-client",
+ "org-office-launch",
+ "org-proto",
+ "org-spool",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "agentic-org"
+version = "0.0.0"
+dependencies = [
+ "agentic-org",
+ "libc",
+ "org-host",
+ "org-host-control",
+ "org-office-launch",
+ "org-proto",
+ "org-socket",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "agentic-org-office"
+version = "0.0.0"
+dependencies = [
+ "hmac",
+ "libc",
+ "org-client",
+ "org-mailbox",
+ "org-office",
+ "org-office-launch",
+ "org-proto",
+ "org-socket",
+ "org-supervise",
+ "org-sync",
+ "org-work",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "agentic-org-web"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "org-host-control",
+ "org-proto",
+ "scraper",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -484,20 +556,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "org-agent"
-version = "0.0.0"
-dependencies = [
- "org-client",
- "org-office-launch",
- "org-proto",
- "org-server",
- "org-spool",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "org-client"
 version = "0.0.0"
 dependencies = [
@@ -526,21 +584,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-gateway"
+name = "org-host"
 version = "0.0.0"
 dependencies = [
- "base64",
- "http-body-util",
- "hyper",
- "hyper-util",
+ "argon2",
+ "caseless",
+ "core-foundation",
+ "libc",
  "org-host-control",
+ "org-office-launch",
  "org-proto",
- "scraper",
+ "org-socket",
+ "rusqlite",
+ "security-framework",
+ "security-framework-sys",
+ "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
- "tokio",
- "tokio-rustls",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -582,30 +645,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-office-host"
-version = "0.0.0"
-dependencies = [
- "argon2",
- "caseless",
- "core-foundation",
- "libc",
- "org-host-control",
- "org-office-host",
- "org-office-launch",
- "org-proto",
- "org-socket",
- "rusqlite",
- "security-framework",
- "security-framework-sys",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "tempfile",
- "unicode-normalization",
-]
-
-[[package]]
 name = "org-office-launch"
 version = "0.0.0"
 dependencies = [
@@ -637,29 +676,6 @@ dependencies = [
  "org-runtime",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "org-server"
-version = "0.0.0"
-dependencies = [
- "hmac",
- "libc",
- "org-client",
- "org-mailbox",
- "org-office",
- "org-office-launch",
- "org-proto",
- "org-socket",
- "org-supervise",
- "org-sync",
- "org-work",
- "proc-macro2",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "tempfile",
 ]
 
 [[package]]

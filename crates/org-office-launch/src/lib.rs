@@ -1,9 +1,9 @@
 //! # org-office-launch: how the host starts an office server
 //!
-//! The private contract between `org-office-host` (the login service) and `org-server` (one
-//! process per office). The app never uses it. `org-agent` uses only [`OfficeFile`], to read
+//! The private contract between `org-host` (the login service) and `agentic-org-office` (one
+//! process per office). The app never uses it. `agent-os` uses only [`OfficeFile`], to read
 //! `office.json` (never by hand: the type checks the version, the ids, the names and `created_at`).
-//! The app and `org-agent` speak `org-proto` to the servers. See
+//! The app and `agent-os` speak `org-proto` to the servers. See
 //! `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the host/server boundary
 //! design (`docs/design/office-host-boundary.md`).
 //!
@@ -20,9 +20,9 @@
 //!
 //! ## Starting a server
 //! ```text
-//! org-server --create            # create a new office from the create message, then serve it
-//! org-server --office <id>       # serve an existing office
-//! org-server --discard <id>      # remove an unfinished office (no office.json), then exit
+//! agentic-org-office --create            # create a new office from the create message, then serve it
+//! agentic-org-office --office <id>       # serve an existing office
+//! agentic-org-office --discard <id>      # remove an unfinished office (no office.json), then exit
 //! ```
 //! - The host makes `<home>` and `<home>/offices/` (owner-only) and sets
 //!   `ORG_OFFICE_HOME` ([`org_proto::location::OFFICE_HOME_ENV`]) on the child, so both use the
@@ -289,7 +289,7 @@ impl OfficeFile {
     /// [`LaunchError::Invalid`]. A role this build doesn't know is kept as
     /// [`OfficeRole::Unknown`] and written back as it was.
     ///
-    /// **The reader's duties** (the host and `org-agent`, which read the file; this crate does
+    /// **The reader's duties** (the host and `agent-os`, which read the file; this crate does
     /// no I/O): check that `office_id` names the folder the file was read from, and read the file
     /// without following symlinks, only if it's a regular file owned by this user, capped at
     /// [`MAX_OFFICE_FILE_BYTES`]. The server writes it owner-only (0600), to a temp file that it

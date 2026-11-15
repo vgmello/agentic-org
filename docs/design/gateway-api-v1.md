@@ -1,5 +1,8 @@
 # Gateway HTTP API v1
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 Wire `api_version: 1`, `contract_revision: 2`. The core follows design revision 2;
 the organization mutation codec in §9 follows Rowan's approved design revision 3.
 Both were agreed 2026-11-10 by Rowan (technical lead) and ada. This publishes types and shared

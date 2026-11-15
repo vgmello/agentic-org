@@ -163,10 +163,10 @@ fn hello_params_default_to_v1_and_stay_compatible() {
     let v1: HelloParams = serde_json::from_value(json!({})).unwrap();
     assert_eq!(v1.api_range(), ApiRange::V1);
     assert_eq!(ApiRange::V1, ApiRange { min: 1, max: 1 });
-    let offer = HelloParams::offering(SUPPORTED_API, "org-gateway 0.1.0");
+    let offer = HelloParams::offering(SUPPORTED_API, "agentic-org-web 0.1.0");
     assert_eq!(
         serde_json::to_value(&offer).unwrap(),
-        json!({"api": {"min": 1, "max": 2}, "client": "org-gateway 0.1.0"})
+        json!({"api": {"min": 1, "max": 2}, "client": "agentic-org-web 0.1.0"})
     );
     assert_eq!(
         serde_json::from_value::<HelloParams>(json!({"api": {"min": 1, "max": 2}, "x": 1}))

@@ -1,4 +1,4 @@
-//! The relay (`org-agent relay run|status`, `org-relay`): one instance per spool, guarded by an
+//! The relay (`agent-os relay run|status`, `org-relay`): one instance per spool, guarded by an
 //! exclusive `flock` on `relay.lock`, moves `outbox/new` into the recipients' inboxes.
 
 use std::fs::{self, File, OpenOptions};

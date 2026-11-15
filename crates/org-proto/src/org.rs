@@ -387,7 +387,7 @@ pub struct AgentProfile {
     /// offices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
-    /// The handle this agent is addressed by (`--to <handle>` on `org-agent`). 1 to
+    /// The handle this agent is addressed by (`--to <handle>` on `agent-os`). 1 to
     /// [`AGENT_MESSAGING_NAME_MAX_CHARS`] ASCII letters, digits, `-`, `_` and `.`, starting
     /// with a letter or digit. Unique among the organization's agents **ignoring case**
     /// (`already_exists` on a clash). A removed agent frees its name; an offboarded one keeps

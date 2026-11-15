@@ -90,7 +90,7 @@ pub struct HelloParams {
     /// The versions the client speaks. Absent or `null` means [`ApiRange::V1`] (X-02 §3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api: Option<ApiRange>,
-    /// The client, for logs only, e.g. `"org-gateway 0.1.0"`. Never authority, and untrusted
+    /// The client, for logs only, e.g. `"agentic-org-web 0.1.0"`. Never authority, and untrusted
     /// text: a server escapes control characters and caps its length before logging it. A value
     /// that isn't a string, `null` included, is malformed.
     #[serde(

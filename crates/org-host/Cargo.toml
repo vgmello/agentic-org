@@ -1,0 +1,36 @@
+[package]
+name = "org-host"
+description = "The host: the per-user login service that supervises one agentic-org-office per office, creates organizations and tells clients where offices are."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes fixtures only to the agentic-org composition integration tests.
+test-support = []
+
+[dependencies]
+argon2.workspace = true
+org-host-control = { path = "../../crates/org-host-control" }
+org-socket = { path = "../../crates/org-socket" }
+org-proto = { path = "../../crates/org-proto" }
+org-office-launch = { path = "../../crates/org-office-launch" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+libc.workspace = true
+rusqlite.workspace = true
+caseless = "=0.2.2"
+unicode-normalization = "=0.1.26"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
+# workspace's `OSX_10_15` feature on both.
+security-framework.workspace = true
+security-framework-sys.workspace = true
+core-foundation.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }
