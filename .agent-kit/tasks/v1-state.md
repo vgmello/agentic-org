@@ -8,16 +8,58 @@ Integration target: `v1-integration` for all v1 features, per the owner's latest
 instruction. Review locally before integration; do not wait for a PR. Release
 `v1` remains separate. Preserve existing live messaging and user organization data.
 
-Baseline: `884856559b946ac17129088b2416e40d2d0c1bc4`.
+Current integration baseline: `4dd45f5ccd616cb5c54900196bd88b56ebe30011`.
+
+## Ownership blocker audit
+
+Three consecutive goal turns retain the same owner-controlled prerequisite.
+The latest audit fetched both release and integration refs, found no incoming
+release commits or prerequisite changes, and checked the installed coordination
+inbox twice with no replies. The remaining vertical slices require edits reserved
+by AGENTS.md to UI/server/shared-contract owners. The Codex adapter additionally
+requires the Ada/River-owned authentication/environment boundary. The bounded
+independent feasibility work above does not resolve either authorization or that
+contract. Resume after an explicit owner override or the affected owners' replies
+and prerequisite changes. Full v1 completion remains unproven and outstanding.
 
 ## Current delivery
 
+- Branch `codex/v1-codex-runtime`, stable contract
+  [v1-codex-runtime-contract.md](v1-codex-runtime-contract.md), metrics journal
+  `27b1c5f855bf4796a99c9f5e89351e3d`.
+- The missing Codex-owned native adapter is blocked before detailed planning.
+  [RT-01](../decisions/RT-01-codex-native-runtime.md) records the actual
+  Sol Xhigh architecture author's INCOMPLETE assessment. Document 11 explicitly
+  requires an unfinished adapter/environment-contract extension; current
+  launch/probe inputs and supervisor allowlists do not provide the selected
+  connection-auth mechanism. Ada/River own that boundary. No adapter code exists,
+  no independent architecture READY is claimed, and the full contract remains.
+- Re-ran the existing S0 no-auth/no-model probe on installed Codex 0.169.0:
+  sandbox, exact fixture socket, synthetic read/write deny and legacy Git checks
+  pass. Empty-thread resume is unavailable, as expected without a real turn.
+  Live model-tool isolation, isolated binding and full policy conformance remain
+  unverified. The private output is not an office-readiness receipt.
+- Additional bounded no-auth/no-model feasibility probes (RT-01 r2) ruled out
+  `mcp_servers={}` as a blanket reset and confirmed `:workspace` temporary-root
+  inheritance can permit an outside-root write. A controlled empty home plus
+  CLI untrusted-project selection removes the synthetic MCP/project layer from
+  effective config. A custom non-inheriting profile allows fixture workspace
+  and scratch writes and refuses the tested sibling write. These narrow results
+  guide the next architecture review; they do not resolve the owner-controlled
+  connection-auth boundary or prove live model-tool isolation.
+
+## Previous delivery
+
+- Task-history coverage was reviewed and integrated at `4dd45f5c`; the integration
+  tree equals the exact reviewed feature tree. Both local reviews were clean and
+  original-author validation accepted. The metrics journal below is accepted and
+  closed; the full selected task-history codec and vertical slice remain open.
 - Branch `codex/v1-task-history`, stable contract
   [v1-history-coverage-contract.md](v1-history-coverage-contract.md).
-- Active contract: [v1-history-coverage-contract.md](v1-history-coverage-contract.md),
+- Delivered contract: [v1-history-coverage-contract.md](v1-history-coverage-contract.md),
   Codex-owned `org-work` revision-coverage prerequisite. Existing event/store
   formats remain unchanged. Full vertical integration is still required.
-- Active metrics journal: `343bdbc564d7483aad95eb7b36fdc9f7`. Original full-codec
+- Accepted metrics journal: `343bdbc564d7483aad95eb7b36fdc9f7`. Original full-codec
   journal `65b3bc1bb55d47658be48f419fa908b4` closed abandoned before implementation:
   numeric hash semantics require a document-owner decision. Its full requirements
   remain outstanding; no narrower result is claimed to satisfy them.

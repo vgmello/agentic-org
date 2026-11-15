@@ -16,3 +16,7 @@ No new product architecture is selected. Read applicable full primary documents 
 Task-specific implementation premises: [TH-01](decisions/TH-01-task-history-validation.md)
 tracks selected task-history validation and its independent coverage prerequisite;
 it does not replace the product decisions in documents 05/12.
+
+[RT-01](decisions/RT-01-codex-native-runtime.md) records the native Codex adapter's
+missing connection-auth/environment prerequisite. It is PROPOSED/INCOMPLETE and
+does not authorize implementation or alter the selected execution contract.
