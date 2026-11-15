@@ -44,6 +44,9 @@ The historical shell commands below no longer run against this tree.
 
 Run the UI checks from `apps/agentic-org-ui`:
 
+See [development tooling](DEVELOPMENT.md) for pinned runtimes, security checks,
+linting, browser security suites, and Codex skills.
+
 ```sh
 cd apps/agentic-org-ui
 bun install --frozen-lockfile
