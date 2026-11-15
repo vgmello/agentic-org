@@ -1,5 +1,14 @@
 # Design: offices, HQ and satellites
 
+## Selected data-model amendment
+
+Offices place agents; teams/projects/repository registrations and counters are organization-wide. HQ creates teams/projects/releases/milestones; any office may durably save tasks/features with pending number allocation under document 06. Organization Git is the portable source for selected definitions/open work. Documents 15/16/17 add protected messaging, recovery and budget sources that are not disposable projections or shared Git. A replica is constrained by authorization: copying organization data does not grant every agent access to private notes, messages or amounts. Current executable is agentic-org-office, composed under agentic-org serve via org-host; legacy process names below describe the earlier baseline.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 

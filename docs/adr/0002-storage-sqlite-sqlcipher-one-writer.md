@@ -1,5 +1,14 @@
 # ADR-0002 · Storage: SQLite with SQLCipher, one writer
 
+## Selected data-model amendment
+
+Retain SQLCipher, one-writer, host key custody and platform flush requirements. The target distinguishes organization-Git records and indexed projections from protected durable messaging/recovery/budget sources (documents 15/16/17), the private-note database (05) and the accounting archive (10). The consolidated draft SQL is not a statement that all data is disposable or shares one visibility policy. Git alone cannot restore these protected stores; no automatic restore service or migration is claimed.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Amendment for standalone v1 (2026-11-09):**
 [ADR-0005](0005-standalone-server-v1.md) and
 [standalone-server.md](../design/standalone-server.md#6-authentication-keys-and-platform-gates)

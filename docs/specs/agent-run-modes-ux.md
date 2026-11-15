@@ -13,6 +13,15 @@ builds_on: [our-org-in-the-app, costs-and-insights-ux]
 
 # Spec · How agents run: always on, on call, scheduled, one-off (UX)
 
+## Selected data-model amendment
+
+Documents 04/11 own employee identity, placement and model/execution data; document 17 owns budget periods, extension decisions, notices and independent holds. Budget stop_pending is not proof an agent is paused. Releasing one budget hold must not resume a manual/security pause or another active budget hold. Preserve the own-agent CLI visibility exception without exposing other-project amounts. Run-mode/scheduling/memory behavior below remains earlier UX and is not newly selected by adding data records.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-and-insights-ux.md` (sessions and cost).
 
 ## The request (the user, 2026-11-08)

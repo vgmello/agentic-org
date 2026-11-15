@@ -15,6 +15,12 @@ product scope, process/security boundaries, and deletion acceptance.
 
 **Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve; pending bootstrap/HTTP authentication remains explicit.
 
+## Selected data and source ownership
+
+The [documentation authority map](documentation-authority.md) and [organization-data index](organization-data/README.md) own target entity/file relationships, including the messaging, recovery and budget contracts. The domain/vertical-slice layout here is code organization, not permission to infer a new database, public API or executable for every table. Earlier bug/request handler names can remain implementation details while target identities become typed tasks; public references follow document 06.
+
+Repository registrations/caches are organization-wide; project/repository associations own integration branches. Runtime task worktrees follow document 04's employee hierarchy. Protected operational sources and private data are separate from code repository checkouts. These are target ownership rules; actual module/storage migrations remain pending.
+
 ## 1. Names and process boundaries
 
 | Source / Cargo package | Executable / output | Responsibility |
