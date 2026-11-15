@@ -11,7 +11,7 @@ This document owns task operational records: comments, checklist steps, watchers
 | Task identity, ownership, current assignment and reporter | [Tasks](03-features-and-work.md), [assignment semantics](12-task-assignment-and-history.md) | Core task state; changes produce the activity events defined here |
 | Typed links and dependencies | [Record contracts](08-record-contracts.md) | Cross-entity relationships shared by tasks, projects, features and documents |
 | Token/cost observations and pricing | [Accounting](10-usage-and-cost-accounting.md) | Specialized immutable ledger with its own valuation and recovery contract |
-| Runs, attempts, permits, processes and execution receipts | [Execution](11-agent-execution-pools-addendum.md) | Supervisor/runtime coordination with its own lifecycle and durability contract |
+| Runs, attempts, permits, processes and execution receipts | [Execution](11-model-profiles-and-agent-execution.md) | Supervisor/runtime coordination with its own lifecycle and durability contract |
 | Providers, connections, pools and discovered models | [Provider/pool data structure](14-model-providers-and-connection-pools.md) | Execution configuration and office-specific discovery, separate from task operational records |
 | Employee placement and task workspaces | [Agent structure](04-agent-structure.md) | Execution placement/cache projections extended by document 11 |
 | Release/deployment outcomes and snapshots | [Deployments](07-release-deployments.md), [release content](09-release-content-and-flags.md) | Delivery-domain history tied to release/deployment identity |

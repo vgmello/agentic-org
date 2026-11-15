@@ -132,7 +132,7 @@ fn full(name: &str, place: &str, k: &str, pad: bool) -> String {
 }
 
 fn named(name: &str, place: &str, k: &str) -> String {
-    format!("\n### {name} ({place} v2)\n\nRun `org-agent process show {k}` to read it.\n")
+    format!("\n### {name} ({place} v2)\n\nRun `agent-os process show {k}` to read it.\n")
 }
 
 #[test]
@@ -373,8 +373,8 @@ fn the_cap_summaries_first_then_changed_texts_then_names() {
     let b = full("BBB", "org", "bbb", false);
     let na = named("AAA", "org", "aaa");
     let nb = named("BBB", "org", "bbb");
-    let more = "and 1 more: run `org-agent process list`\n";
-    let more_changed = "\nand 1 more changed: run `org-agent process list`\n";
+    let more = "and 1 more: run `agent-os process list`\n";
+    let more_changed = "\nand 1 more changed: run `agent-os process list`\n";
     let at = |parts: &[&str]| parts.concat().len();
     let three = || {
         set(
@@ -398,7 +398,7 @@ fn the_cap_summaries_first_then_changed_texts_then_names() {
         .moments
         .insert(Moment::WakingUp, "Wake well. ".repeat(10));
     let more_moments =
-        "\nand 1 more moments: process context limit reached (`org-agent process list`)\n";
+        "\nand 1 more moments: process context limit reached (`agent-os process list`)\n";
     let mut long_first = three();
     long_first.entries[0].winner.as_mut().unwrap().file.summary = "x".repeat(150);
     check(vec![
@@ -527,7 +527,7 @@ fn moment_prompts_follow_their_guidance_only_while_on_and_last() {
     let start = "\n## Starting a task\n\n```\nStart well.\n```\n\n- BBB: bbb at start\n- AAA: aaa at start\n";
     let wake = "\n## Waking up\n\n```\nWake well.\n```\n\n- AAA: aaa at wake\n";
     let finish = "\n## Finishing a task\n\n```\nFinish well.\n```\n";
-    let more = "\nand 1 more moments: process context limit reached (`org-agent process list`)\n";
+    let more = "\nand 1 more moments: process context limit reached (`agent-os process list`)\n";
     let b_long = full("BBB", "org", "bbb", true);
     let long_start = "Start well. ".repeat(10);
     let at = |parts: &[&str]| parts.concat().len();
@@ -640,7 +640,7 @@ fn the_real_cap_is_24_kib_of_utf8() {
     assert!(text.len() <= 24 * 1024, "{}", text.len());
     assert!(text.len() > 24 * 1024 - 300, "{}", text.len());
     assert!(
-        text.ends_with(" more: run `org-agent process list`\n"),
+        text.ends_with(" more: run `agent-os process list`\n"),
         "{text}"
     );
 }

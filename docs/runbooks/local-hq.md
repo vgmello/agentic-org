@@ -2,11 +2,13 @@
 
 **Target install amendment (2026-11-15):** current planned onboarding is agentic-org setup, which creates HQ only, verifies components and registers/starts its service automatically. Satellite onboarding is initiated later from HQ. The service entry point is agentic-org serve; helpers are agentic-org-web, agentic-org-office and agent-os. These commands are requirements, not verified instructions for the historical debug build below. See [current standalone setup](../design/standalone-server.md#4-setup-and-service-lifecycle).
 
-**Naming amendment (2026-11-10):** the server app/package/binary is now
-`apps/org-server` / `org-server`; the browser UI rename to `apps/org-ui` / `org-ui`
-is complete. The Tauri shell is removed; its legacy debug commands below are historical
-and cannot be run against the current tree. The worker remains renamed. See
-[project structure](../design/project-structure.md); process boundaries are unchanged.
+**Current source names (2026-11-15):** the worker is `apps/agentic-org-office` /
+`agentic-org-office`, the browser UI is `apps/agentic-org-ui` / `agentic-org-ui`,
+and the host is `crates/org-host`, composed by `agentic-org serve`. The Tauri shell
+is removed. All debug instructions below retain historical baseline names and
+cannot be run verbatim against the current tree. See
+[executable migration](../design/executable-migration.md) for working entry points;
+HQ setup/service registration and production web handoff remain unavailable.
 
 **V1 direction changed 2026-11-09:** the target is a standalone Rust server
 on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
@@ -93,7 +95,7 @@ The desktop app (Tauri 2 + SvelteKit, bun). `bun run tauri dev` starts Vite on `
 host starts:
 
 ```sh
-cd "$REPO/apps/org-ui" && bun install
+cd "$REPO/apps/agentic-org-ui" && bun install
 cd "$REPO" && cargo build -p agentic-org     # or: run `bun run tauri dev` once and quit it
 test -x "$ORG_DEV_APP_PATH" && echo "dev app: ok"
 ```
@@ -183,7 +185,7 @@ python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" hello
 **From the app (the real check):**
 
 ```sh
-cd "$REPO/apps/org-ui"
+cd "$REPO/apps/agentic-org-ui"
 AGENTIC_ORG_OFFICE=real bun run tauri dev     # ORG_OFFICE_HOME must be exported in this terminal
 ```
 

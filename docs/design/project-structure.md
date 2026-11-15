@@ -13,29 +13,20 @@ Read the language-agnostic [architecture rules](../architecture-rules.md) first.
 [removal inventory](standalone-server-removal-inventory.md) retain authority over
 product scope, process/security boundaries, and deletion acceptance.
 
+**Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve; pending bootstrap/HTTP authentication remains explicit.
+
 ## 1. Names and process boundaries
 
-| Current source/package | Target executable or asset | Meaning |
+| Source / Cargo package | Executable / output | Responsibility |
 | --- | --- | --- |
-| apps/org-ui, package org-ui | Static org-ui assets | Browser application; no Node server |
-| apps/org-setup, package org-setup (planned) | agentic-org | Human CLI; setup is HQ-only; serve is the long-running host/service entry point |
-| apps/org-office-host (implemented host) | Host behavior composed inside agentic-org serve | Extract shared lifecycle/key-custody code into a library, preserving private launch/signing boundaries; retire the separate host executable from the target release |
-| apps/org-server, package org-server, library org_server | agentic-org-office | One HQ or satellite worker with internal agent supervision |
-| apps/org-gateway, package org-gateway (planned) | agentic-org-web | Instance browser HTTPS, assets, APIs and events; no office keys |
-| apps/org-agent, package org-agent | agent-os | Small employee-facing CLI, separate from the human CLI |
+| apps/agentic-org / agentic-org | agentic-org | Human CLI and serve composition |
+| apps/agentic-org-office / agentic-org-office | agentic-org-office | One HQ/satellite office worker |
+| apps/agentic-org-web / agentic-org-web | agentic-org-web | Browser HTTP, assets and APIs |
+| apps/agent-os / agent-os | agent-os | Agent-facing CLI |
+| crates/org-host / org-host | Library only | Host lifecycle and key custody |
+| apps/agentic-org-ui / agentic-org-ui | Static assets | Browser application |
 
-**Owner amendment (2026-11-15):** these are target executable names, not a blanket source/package rename or completed implementation. Retain existing org-* contracts/library identities. The current org-server rename and org-ui/Tauri moves below are historical facts. agentic-org setup performs initial HQ provisioning and automatic service registration/start; satellite onboarding is a separate HQ-initiated flow. The OS service runs agentic-org serve. Follow standalone-server.md for setup, update and offline-bundle behavior. One office worker owns each agent tree; no additional supervisor or updater daemon is required.
-
-Delete desktop-only Tauri code according to the inventory and move the retained
-browser application to `apps/org-ui`. Keep licensed UI inside that application;
-update AGENTS.md's path references with the source move without relaxing its
-license restrictions. The worker path, Cargo package, binary, library imports and
-helper/signing references now use `org-server`. **Rename history (2026-11-10):**
-these were `apps/org-office-server`, `org-office-server` and `org_office_server`.
-The UI rename to `apps/org-ui` (package `org-ui`) is also implemented. Its
-`src-tauri` workspace member moved with it and was subsequently deleted in F1-03.
-The retained browser UI uses explicit unavailable states until gateway adapters land;
-remaining domain moves are separate work. The inspected names in the table above are historical source paths.
+Application source directories, package names and production executable names are aligned. Reusable org-* libraries retain domain/contract names. Existing signing identifiers, persisted data and wire fields remain stable; filenames do not define trust. HQ bootstrap/service registration and production web handoff are still unavailable as documented in executable-migration.md. The obsolete desktop/Tauri executable is removed; it must not overwrite the current agentic-org artifact.
 
 ## 2. Architecture to follow
 
@@ -72,6 +63,7 @@ test behavior need an explicit disposition before files move.
 
 ```text
 crates/
+  org-host/                         # Shared host lifecycle and key custody
   org-office/src/
     organization/
       mod.rs                         # Intentional module API
@@ -137,19 +129,18 @@ crates/
   org-github/
 
 apps/
-  org-server/                        # Binary agentic-org-office; per-office composition
-  org-gateway/                       # Planned binary agentic-org-web
-  org-setup/                         # Binary agentic-org: setup/serve/human management
-  org-office-host/                   # Current host; extract behavior into shared library
-  org-agent/                         # Binary agent-os; small employee CLI
-  org-ui/                            # Static browser application; see below
+  agentic-org-office/                        # Per-office worker: domain/IPC/runtime composition
+  agentic-org-web/                       # Planned instance browser HTTP/TLS helper
+  agentic-org/                         # Planned setup CLI; binary agentic-org adapters
+  # Host lifecycle is a library at crates/org-host, not a separate app.
+  agent-os/                         # Small employee CLI
+  agentic-org-ui/                            # Static browser application; see below
 ```
 
 The planned crate names record the existing designs' proposed responsibilities;
 they are not evidence of implemented runtime or replication behavior. Reassess
 physical extraction during implementation rather than creating empty packages.
-The release/setup command's code location follows its actual library callers and
-packaging needs; naming it `agentic-org` does not make another daemon necessary.
+The agentic-org application composes org-host. Its setup command and serve process share library behavior; there is no additional host/updater daemon.
 
 `org-office` currently deliberately combines domain behavior and storage. Keep its
 private store and single-writer invariant. Logical domain ownership does not require
@@ -180,7 +171,7 @@ one runnable application's library from another to assemble the service.
 ## 4. Proposed Svelte/TypeScript layout
 
 ```text
-apps/org-ui/
+apps/agentic-org-ui/
   src/
     routes/                          # SvelteKit navigation entry points
     lib/
@@ -224,7 +215,7 @@ this profile does not introduce a Node backend or SvelteKit server actions. Brow
 state is a view of server authority, with loading/unavailable/error/freshness states.
 Keep shared HTTP/event code free of unrelated business policy.
 
-Tailwind Plus components remain inside `apps/org-ui`, the renamed product UI home.
+Tailwind Plus components remain inside `apps/agentic-org-ui`, the renamed product UI home.
 They must not become a separately published kit, template, package, or crate.
 
 ## 5. Shared functionality: upload, validation, and hashes
@@ -246,7 +237,7 @@ office implementation/
   employees/features/upload_avatar.rs
   projects/features/attach_document.rs
 
-apps/org-ui/src/lib/
+apps/agentic-org-ui/src/lib/
   components/ui/FilePicker.svelte
   components/ui/UploadProgress.svelte
   modules/files/upload/UploadPanel.svelte
@@ -292,7 +283,7 @@ stop pending until acknowledged, as the employee and session designs require; re
 | Step | Source-to-target work | Verification |
 | --- | --- | --- |
 | 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
-| 2. Application naming | Rename retained browser sources to `apps/org-ui`; retain current apps/org-server/package org-server and target binary agentic-org-office; map org-gateway to agentic-org-web and org-agent to agent-os; compose shared host behavior into agentic-org serve; use distinct `org-setup` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
+| 2. Application naming | Rename retained browser sources to `apps/agentic-org-ui`; rename server app/package/binary to `apps/agentic-org-office` / `agentic-org-office`; use distinct `agentic-org` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
 | 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve public compatibility where retained, visibility, transactions, invariants, and acyclic source direction |
 | 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
 | 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |

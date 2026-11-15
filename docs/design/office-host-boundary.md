@@ -1,17 +1,18 @@
-# org-office-host ↔ org-server: the boundary (phase 1, HQ only)
+# Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
-**Current target amendment (2026-11-15):** the host role below is composed by agentic-org serve; current org-office-host source is reusable implementation input, not an additional target daemon. org-server becomes executable agentic-org-office, org-agent becomes agent-os, and the planned org-gateway becomes agentic-org-web. Source paths, protocol identifiers and historical implementation claims below intentionally retain inspected names. Preserve host key custody/private launch and one office writer/recovery owner. Initial agentic-org setup creates HQ only and registers the service automatically; satellites use a separate HQ-initiated flow. [Standalone setup](standalone-server.md#4-setup-and-service-lifecycle) is authoritative for the current installation flow.
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
-**Browser HTTP separation (standalone-v1 review):** planned `org-gateway` is a
+
+**Browser HTTP separation (standalone-v1 review):** `agentic-org-web` is a
 separate supervised child for the instance browser listener. The host retains key
 custody and admits only typed, scoped local operations; it does not parse browser
 HTTP. The gateway has no office-key entitlement or raw-key return operation, and
 organization creation requires an instance-admin grant. See
 [standalone-server.md](standalone-server.md#browser-listener-and-privilege-boundary).
 
-**Naming amendment (2026-11-10):** the worker app/package/binary is now
-`apps/org-server` / `org-server`;
-the retained browser application becomes `apps/org-ui` / `org-ui`. See
+**Naming amendment (2026-11-15):** the worker app/package/binary is
+`apps/agentic-org-office` / `agentic-org-office`;
+the retained browser application is `apps/agentic-org-ui` / `agentic-org-ui`. See
 [project structure](project-structure.md). Host custody, private launch and one worker
 per office remain. Executable/build references use the renamed worker without merging process roles.
 
@@ -379,7 +380,12 @@ first line is `invalid_request`.
   so the host checks `host.sock` and a sample `run/XXXXXXXXXXXX.sock` against the 103-byte limit **at
   startup** and refuses to start with a clear message. No per-create error code is needed.
 
-## 5. Library layout
+## 5. Historical phase-1 library layout
+
+The source layout below describes the inspected phase-1 baseline. The implemented
+extraction moves host modules to `crates/org-host`, CLI/serve composition and host
+integration tests to `apps/agentic-org`, and the worker to
+`apps/agentic-org-office`. See [executable migration](executable-migration.md).
 - `apps/org-office-host/`: `src/main.rs` (thin: args, location, signals, `Host::run`) and
   `src/lib.rs` with modules `catalog` (scan, office.json, name uniqueness, create), `supervisor`
   (spawn, the pipe protocol, status, backoff, shutdown), `service` (org-proto handlers: `hello`,

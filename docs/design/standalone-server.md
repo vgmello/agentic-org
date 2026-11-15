@@ -1,5 +1,8 @@
 # Design: standalone Agentic Org server (v1)
 
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
+
 Status: **proposed implementation design**, 2026-11-09. The product decisions were
 made by the owner in the architecture discussion; wire formats, platform adapters
 and release mechanics still require review and implementation. Owner: ada.
@@ -45,12 +48,15 @@ offices in one instance may share one browser listener, with explicit organizati
 routing and authorization. An instance containing only satellites has no public
 application listener. It does not automatically become HQ when the connection fails.
 
-The inspected branch already has a static SvelteKit adapter, a local host, per-office
-processes, SQLCipher storage, Unix-socket clients and runtime contracts. It does
-**not** have the proposed HTTP server or the `org-sync`, `org-sync-proto` and
-`org-pki` crates. `apps/org-office-host/src/sync.rs` is a mutex utility, not office
-replication. Browser mode currently selects mocks in office/org/work API factories;
-chat always selects its mock. Static asset serving alone cannot make these real.
+The inspected baseline had a static SvelteKit adapter, a local host, per-office
+processes, SQLCipher storage, Unix-socket clients and runtime contracts. The current
+source adds the renamed CLI and a guarded web executable with the existing
+HTTP/assets/TLS library. Production browser authentication/backend composition and
+remote replication remain incomplete; `org-sync`, `org-sync-proto` and `org-pki`
+are still planned. `crates/org-host/src/sync.rs` is a mutex utility, not office
+replication. Missing browser capabilities render unavailable; static asset serving
+alone cannot make them real. See [executable migration](executable-migration.md)
+for implemented entry points.
 
 ## 2. Release, install and runtime boundaries
 
@@ -69,7 +75,7 @@ activation, so re-running bootstrap cannot silently update every instance.
 | `agentic-org-office` | One HQ or satellite office worker, including its internal agent supervisor/router/session runner and one data writer. |
 | `agent-os` | Small agent-facing CLI, invoked on demand with employee-scoped authority. |
 
-The online bootstrap downloads/verifies agentic-org and invokes agentic-org setup. Setup downloads/verifies missing release components, or extracts a complete local bundle, into an immutable versioned release directory. Embedded payloads are an optional delivery optimization, not a required second installer. One release pin selects all matching binaries/assets together. Current source packages and historical evidence retain their names until implementation: apps/org-server and Cargo package org-server produce agentic-org-office; apps/org-agent produces agent-os; planned apps/org-gateway produces agentic-org-web. Reuse org-office-host lifecycle code through an extracted host/platform library composed by agentic-org; there is no additional permanent host or updater daemon. Preserve platform signing, key-custody and restricted launch identities during that integration. These are target executable changes, not completed code renames.
+The online bootstrap downloads/verifies agentic-org and invokes agentic-org setup. Setup downloads/verifies missing release components, or extracts a complete local bundle, into an immutable versioned release directory. Embedded payloads are an optional delivery optimization, not a required second installer. One release pin selects all matching binaries/assets together. Application directories, Cargo packages and executable names now agree: apps/agentic-org, apps/agentic-org-office, apps/agentic-org-web and apps/agent-os. Host/platform behavior lives in crates/org-host and is composed by agentic-org serve; there is no additional permanent host or updater daemon. Platform signing, key-custody and restricted launch identities remain stable. The source renames and host extraction are implemented; bootstrap downloads, verified release activation and service registration described here remain requirements.
 
 The service manager starts agentic-org serve for the selected instance. It supervises office workers and, when the instance hosts HQ, agentic-org-web. Each office worker owns its agents through an internal supervisor; do not add a sibling agent-supervisor daemon. Agent runtimes are child processes. An HTTP-agent worker is introduced only with its implemented backend. Serve starts installed releases without requiring a download; setup is a short-lived command, not another long-running supervisor. Avoid installing from an agent turn.
 
@@ -79,12 +85,12 @@ them. Do not link one app's library from another app to assemble the release.
 Extract shared behavior into a crate when a real second caller or a meaningful
 dependency/visibility boundary justifies it.
 Embedding a built executable as a release payload is packaging, not an app-to-app
-Rust dependency. Rename the retained browser application to `apps/org-ui/` with
-frontend package name `org-ui`, and the Rust server app to `apps/org-server/`
-with current Cargo package `org-server`, target executable `agentic-org-office` and retained Rust library import `org_server`.
-Delete the Tauri-only shell according to the inventory. Keep licensed Tailwind Plus
-sources inside the renamed product UI application and update AGENTS.md's path
-references with implementation; its license restrictions remain in force.
+Rust dependency. The retained browser application is `apps/agentic-org-ui/`, with
+frontend package name `agentic-org-ui`. The office worker is
+`apps/agentic-org-office/`, Cargo package/executable `agentic-org-office` and Rust
+library import `agentic_org_office`. The Tauri-only shell is removed. Keep licensed
+Tailwind Plus sources inside the product UI application; AGENTS.md's ownership and
+license restrictions apply at its renamed path.
 
 This renames the worker, not the office model: the host inside `agentic-org serve` supervises
 one worker per office with the existing private launch/key boundaries. The
@@ -103,8 +109,8 @@ key; a checksum downloaded from an unauthenticated source is not sufficient.
 
 The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) keeps browser-specific response mapping at the gateway and reusable use cases in their owning Rust modules, ready for future integration API adapters.
 
-**Chosen topology:** one new `agentic-org-web` helper (`apps/org-gateway/`, planned)
-per instance terminates browser HTTP/TLS, serves `org-ui` assets and manages browser
+**Chosen topology:** one `agentic-org-web` helper (`apps/agentic-org-web/`; executable present, production handoff pending)
+per instance terminates browser HTTP/TLS, serves `agentic-org-ui` assets and manages browser
 sessions/events for all authorized HQ organizations on that listener. It runs as
 a supervised child of `agentic-org serve`, separately from each `agentic-org-office` worker.
 An instance with no HQ has no public browser listener. Office enrollment/mTLS still
@@ -136,12 +142,11 @@ post-merge review question.)
 
 ### Setup executable package identity
 
-Use Cargo package `org-setup` (`apps/org-setup/`, planned) for the setup/lifecycle
-binary named `agentic-org`. The inspected Tauri shell already uses
-Cargo package `agentic-org`. Keep the new package ID distinct, and remove the old
-Tauri workspace member before building/staging the new binary of the same name.
-Do not build both into the same output path or package a stale Tauri executable.
-This is a buildable source-change ordering requirement, not a compatibility layer.
+Cargo package `agentic-org` at `apps/agentic-org/` owns the human CLI and serve
+composition. The retired same-named Tauri workspace member is removed; there is no
+separate setup package or executable. Release staging must select this CLI's
+artifact. `setup` is reserved and currently fails before provisioning; protected
+HQ bootstrap and service registration must land before it can perform onboarding.
 
 ## 3. Instance selection and storage
 
@@ -195,6 +200,9 @@ a security isolation boundary between instances; stronger isolation needs separa
 users/containers. The runtime sandbox/permission model must still enforce its denies.
 
 ## 4. Setup and service lifecycle
+
+**Implementation status at merged v1 700d5a37:** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
+
 
 Initial installation is HQ-only. After obtaining the platform executable, the user runs:
 

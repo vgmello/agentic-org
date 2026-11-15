@@ -1,6 +1,6 @@
 # Usage, token accounting and cost attribution
 
-Structural draft for v1. Document revision 2.6. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. Agent setup remains a separate pending specification.
+Structural draft for v1. Document revision 2.6. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
 
 ## v1 evidence and selected port
 

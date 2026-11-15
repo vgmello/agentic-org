@@ -1,6 +1,7 @@
 # Design: employee supervision, native identity and internal work
 
-**Current process amendment (2026-11-15):** the logical employee supervisor runs inside agentic-org-office alongside the connection router/session runner; it is not another daemon. agentic-org serve supervises office workers and the optional agentic-org-web child. agent-os remains a separate agent-facing CLI. The [execution addendum](organization-data/11-agent-execution-pools-addendum.md) fixes pool/environment/failover behavior; [standalone setup](standalone-server.md#4-setup-and-service-lifecycle) creates HQ only. Existing source/contract names below remain historical where applicable.
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+
 
 Status: **proposed, rev 1** 2026-11-09. Requested by the owner. Reviewers: ada,
 Eden, River, server-dev, Remy and codex-dev for their existing boundaries.
@@ -233,7 +234,7 @@ sealed autonomy processes and owner-only decisions still bind these defaults.
 
 Standards such as technology stacks and cloud conventions are indexed/referenced,
 not bulk injected. A process tells the agent when to retrieve the applicable standard
-and by what reference. Inject concise `org-agent` command/tool help separately from
+and by what reference. Inject concise `agent-os` command/tool help separately from
 behavioral process text, with progressive help for detailed arguments. No process
 edit invents commands or changes tool permissions.
 

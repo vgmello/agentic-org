@@ -35,7 +35,7 @@ pub enum MemberPresence {
     Online,
     /// Running a turn.
     Busy,
-    /// Between turns, or holding an `org-agent` wait.
+    /// Between turns, or holding an `agent-os` wait.
     Idle,
     /// Waiting for the owner: an approval or input.
     NeedsYou,

@@ -1,5 +1,5 @@
 //! `office.json`: the plaintext, secret-free file that marks an office as finished and tells the
-//! host (and `org-agent`) which office this folder is. The server writes it LAST on `--create`
+//! host (and `agent-os`) which office this folder is. The server writes it LAST on `--create`
 //! (temporary file, fsync, rename, fsync of the folder), so a folder without it is an
 //! unfinished create.
 //!

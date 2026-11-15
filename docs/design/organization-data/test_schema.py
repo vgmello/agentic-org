@@ -34,10 +34,6 @@ def database():
     return connection
 
 
-def apply_execution_extension(connection):
-    connection.executescript((ROOT / "execution-schema.sql").read_text())
-
-
 def seed_provider_connection(connection, identity="subscription-1", connection_id="connection-1",
                              auth_mode="subscription_cli"):
     insert(connection, "provider_connections", organization_id="org", id=connection_id,
@@ -111,8 +107,9 @@ class DraftSchemaTests(unittest.TestCase):
     def test_consolidated_tables_and_views_match_structural_documents(self):
         sections = []
         for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            if not path.name.startswith(("11-", "14-")):
-                sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
+            if path.name.startswith("14-"):
+                continue  # Field-level subset of document 11, verified independently below.
+            sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
         documented.executescript("\n".join(sections))
@@ -127,15 +124,90 @@ class DraftSchemaTests(unittest.TestCase):
 
         self.assertEqual(definitions(documented), definitions(self.db))
 
-    def test_execution_extension_applies_and_all_views_resolve(self):
-        apply_execution_extension(self.db)
+    def test_integrated_execution_schema_and_all_views_resolve(self):
         views = self.db.execute("SELECT name FROM sqlite_schema WHERE type='view'").fetchall()
         for (name,) in views:
             self.db.execute(f'SELECT * FROM "{name}" LIMIT 0')
         self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
+    def test_diagram_columns_match_their_owning_database(self):
+        private = sqlite3.connect(":memory:")
+        self.addCleanup(private.close)
+        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        for path in ROOT.glob("[0-9][0-9]-*.md"):
+            for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
+                for table, body in re.findall(r"^    (\w+) \{\n(.*?)^    \}", diagram, re.M | re.S):
+                    columns = re.findall(r"^        \w+ (\w+)", body, re.M)
+                    owner = private if table.startswith("private_") else self.db
+                    actual = [row[1] for row in owner.execute(f"PRAGMA table_xinfo({table})")]
+                    with self.subTest(document=path.name, table=table):
+                        self.assertEqual(columns, actual)
+
+    def test_placement_moves_require_a_new_generation(self):
+        for identity, role in (("hq", "hq"), ("satellite", "satellite")):
+            insert(self.db, "offices", organization_id="org", id=identity,
+                   slug=identity, schema_version=1, revision=1, name=identity, role=role)
+        insert(self.db, "agent_placements", organization_id="org", employee_id="ana", office_id="hq")
+        self.db.commit()
+        for statement in (
+            "UPDATE agent_placements SET office_id='satellite'",
+            "UPDATE agent_placements SET placement_generation=0",
+        ):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(statement)
+            self.db.rollback()
+        self.db.execute("UPDATE agent_placements SET office_id='satellite',placement_generation=2")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE agent_placements SET placement_generation=1")
+        self.db.rollback()
+        row = self.db.execute("SELECT employee_id,office_id,placement_generation FROM agent_placements").fetchone()
+        self.assertEqual(tuple(row), ("ana", "satellite", 2))
+
+    def seed_pool(self):
+        seed_provider_connection(self.db)
+        seed_provider_connection(self.db, identity="subscription-2", connection_id="connection-2")
+        insert(self.db, "model_profiles", organization_id="org", id="pool",
+               schema_version=1, revision=1, key="pool", name="Pool")
+        for connection, priority in (("connection-1", 1), ("connection-2", 2)):
+            insert(self.db, "model_profile_connections", organization_id="org",
+                   model_profile_id="pool", connection_id=connection, priority=priority)
+        self.db.commit()
+
+    def test_profile_membership_and_agent_configuration_relationships(self):
+        self.seed_pool()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE model_profile_connections SET priority=1 WHERE connection_id='connection-2'")
+        self.db.rollback()
+        config = dict(organization_id="org", schema_version=1, revision=1,
+                      model_profile_id="pool", model_id="target-model", system_prompt_markdown="Instructions")
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "agent_execution_configs", employee_id="reporter", **config)
+        self.db.rollback()
+        insert(self.db, "agent_execution_configs", employee_id="ana", **config)
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("DELETE FROM model_profiles WHERE id='pool'")
+        self.db.rollback()
+        self.assertEqual(self.db.execute("SELECT model_profile_id FROM agent_execution_configs WHERE employee_id='ana'").fetchone()[0], "pool")
+
+    def test_profile_catalog_is_the_union_of_confirmed_connection_models(self):
+        self.seed_pool()
+        insert(self.db, "offices", organization_id="org", id="hq", slug="hq",
+               schema_version=1, revision=1, name="HQ", role="hq")
+        for connection in ("connection-1", "connection-2"):
+            insert(self.db, "office_connection_bindings", organization_id="org", office_id="hq",
+                   connection_id=connection, revision=1, auth_context_ref="vault:reference",
+                   updated_at="2026-11-15T12:00:00Z")
+            for model, entitlement in (("shared-model", "confirmed"), ("denied-model", "denied")):
+                insert(self.db, "office_connection_models", organization_id="org", office_id="hq",
+                       connection_id=connection, model_id=model, driver_model_id=model,
+                       entitlement=entitlement, observed_at="2026-11-15T12:00:00Z",
+                       valid_until="2026-11-15T12:05:00Z")
+        rows = self.db.execute("SELECT model_id,supporting_connections,first_priority FROM model_profile_model_union").fetchall()
+        self.assertEqual([tuple(row) for row in rows], [("shared-model", 2, 1)])
+
     def test_same_subscription_cannot_be_registered_twice_or_relabelled(self):
-        apply_execution_extension(self.db)
         seed_provider_connection(self.db)
         self.db.commit()
         for enabled, archived in ((1, 0), (0, 0), (0, 1)):
@@ -157,7 +229,6 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT count(*) FROM provider_connections").fetchone()[0], 2)
 
     def test_registered_subscription_cannot_be_replaced_through_any_unique_key(self):
-        apply_execution_extension(self.db)
         seed_provider_connection(self.db)
         self.db.commit()
         for connection_id, key, identity, mode in (
@@ -180,7 +251,6 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(tuple(row), ("connection-1", "connection-1", "subscription-1"))
 
     def test_update_replace_cannot_displace_a_registered_subscription(self):
-        apply_execution_extension(self.db)
         seed_provider_connection(self.db)
         seed_provider_connection(self.db, identity=None, connection_id="api", auth_mode="api_key")
         self.db.commit()
@@ -197,7 +267,6 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT count(*) FROM provider_connections").fetchone()[0], 2)
 
     def test_subscription_identity_is_required_but_not_invented_for_api_connections(self):
-        apply_execution_extension(self.db)
         for missing in (None, "", "   "):
             with self.subTest(identity=missing):
                 with self.assertRaises(sqlite3.IntegrityError):
@@ -208,7 +277,6 @@ class DraftSchemaTests(unittest.TestCase):
         self.db.commit()
 
     def test_two_offices_bind_one_subscription_connection(self):
-        apply_execution_extension(self.db)
         seed_provider_connection(self.db)
         for office, role in (("hq", "hq"), ("east", "satellite")):
             insert(self.db, "offices", organization_id="org", id=office, slug=office,
@@ -405,13 +473,7 @@ class IntegrityAuditTests(unittest.TestCase):
                producer_id="producer", high_water_sequence=1, head_sha256="a"*64, state="sealed", checkpointed_at="2026-11-15T12:00:00Z")
         self.db.commit()
 
-    def test_execution_asset_matches_document_sql(self):
-        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-agent-execution-pools-addendum.md").read_text(), re.S))
-        asset = (ROOT / "execution-schema.sql").read_text().split("\n", 1)[1].strip()
-        self.assertEqual(asset, documented)
-
     def test_provider_pool_document_matches_executable_sql_subset(self):
-        apply_execution_extension(self.db)
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
         source = (ROOT / "14-model-providers-and-connection-pools.md").read_text()
@@ -424,22 +486,10 @@ class IntegrityAuditTests(unittest.TestCase):
             with self.subTest(entity=name):
                 self.assertEqual(re.sub(r"\s+", "", sql).lower(), re.sub(r"\s+", "", actual).lower())
 
-    def test_all_documented_diagram_fields_exist_in_their_database(self):
-        apply_execution_extension(self.db)
-        structural = database()
-        self.addCleanup(structural.close)
-        private = sqlite3.connect(":memory:")
-        self.addCleanup(private.close)
-        private.executescript((ROOT / "private-notes-schema.sql").read_text())
-        for path in ROOT.glob("[0-9][0-9]-*.md"):
-            for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
-                for table, body in re.findall(r"(\w+)\s*\{([^{}]*)\}", diagram, re.S):
-                    fields = re.findall(r"^\s*(?:TEXT|INTEGER|REAL|BLOB)\s+(\w+)", body, re.M)
-                    if fields:
-                        db = private if table.startswith("private_") else self.db if path.name.startswith(("11-", "14-")) else structural
-                        actual = {row[1] for row in db.execute(f'PRAGMA table_xinfo("{table}")')}
-                        with self.subTest(document=path.name, table=table):
-                            self.assertEqual(set(fields), actual)
+    def test_execution_definitions_are_in_the_consolidated_schema(self):
+        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-model-profiles-and-agent-execution.md").read_text(), re.S))
+        normalize = lambda value: re.sub(r"\s+", "", value).lower()
+        self.assertIn(normalize(documented), normalize((ROOT / "schema.sql").read_text()))
 
     def test_snapshot_history_survives_current_repository_detachment(self):
         self.delivery()
@@ -477,7 +527,6 @@ class IntegrityAuditTests(unittest.TestCase):
         self.db.rollback()
 
     def test_coverage_lists_every_table_and_view(self):
-        apply_execution_extension(self.db)
         private = sqlite3.connect(":memory:")
         self.addCleanup(private.close)
         private.executescript((ROOT / "private-notes-schema.sql").read_text())
@@ -546,7 +595,6 @@ class PrivateNoteSchemaTests(unittest.TestCase):
     def test_private_records_are_absent_from_shared_schema(self):
         shared=database()
         self.addCleanup(shared.close)
-        apply_execution_extension(shared)
         self.assertEqual(shared.execute("SELECT name FROM sqlite_schema WHERE name LIKE 'private_%'").fetchall(), [])
         self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 

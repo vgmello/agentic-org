@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The thirteen primary design documents define three SQL artifacts. Load `schema.sql` then `execution-schema.sql` into the shared office projection. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 55 tables and 8 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The thirteen primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 55 tables and 8 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -16,13 +16,13 @@ The thirteen primary design documents define three SQL artifacts. Load `schema.s
 | [08](08-record-contracts.md) | [schema.sql](schema.sql) | `links`, `entity_relationships` |
 | [09](09-release-content-and-flags.md) | [schema.sql](schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
 | [10](10-usage-and-cost-accounting.md) | [schema.sql](schema.sql) | `model_prices`, `usage_records`, `usage_stream_checkpoints`, `usage_stream_coverage`, `effective_usage_records`, `usage_task_totals`, `usage_agent_totals`, `usage_project_totals` |
-| [11](11-agent-execution-pools-addendum.md) | [execution-schema.sql](execution-schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts`, `model_profile_model_union` |
+| [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts`, `model_profile_model_union` |
 | [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
 
-[Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `execution-schema.sql`; it adds no tables.
+[Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
 
-Document 11 additionally extends `agent_placements` with `placement_generation`; the base and extended diagrams describe their respective schema stages. No private-note body, author association, receipt or note count belongs in the shared database.
+Document 04 owns `agent_placements`, including `placement_generation`; document 11 defines the execution relationships and fencing constraints against that same consolidated schema. No private-note body, author association, receipt or note count belongs in the shared database.
 
 ## Relationships and enforcement
 
@@ -47,7 +47,7 @@ Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, aut
 
 ## Verification and limits
 
-`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, the execution artifact's equality with document 11, every diagram field against its applicable schema stage, this inventory's coverage, FK integrity and regression cases for the relationships above. Private tests use in-memory SQLite to check structure; they do not implement SQLCipher or authenticated privacy.
+`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, document 11's execution definitions in the consolidated schema, every diagram field against its owning database, this inventory's coverage, FK integrity and regression cases for the relationships above. Private tests use in-memory SQLite to check structure; they do not implement SQLCipher or authenticated privacy.
 
 Required service behavior still includes actor binding/access control, active-record validation, atomic revisioned mutations and idempotency, historical import validation, allocation arbitration, generated-profile membership rules, permit capacity/freshness, durable journals and authorized backup recovery. These are specified contracts rather than facts established by passing DDL tests. The application is not implementation-complete.
 

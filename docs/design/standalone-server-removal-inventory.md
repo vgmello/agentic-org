@@ -6,8 +6,9 @@ Implements [ADR-0005](../adr/0005-standalone-server-v1.md), the
 [server design](standalone-server.md) and
 [SRV requirements](../specs/server-installation-and-access-ux.md).
 
-This change evaluates and documents removals. It does not claim that source files
-have already been deleted or the new server implemented. The application has not
+This inventory records the inspected baseline and required removals. Tauri removal,
+application renames and host extraction have since landed; protected HQ setup and
+production web handoff remain incomplete. See [executable migration](executable-migration.md). The application has not
 been deployed: delete superseded code directly, with no old-app compatibility or
 data-migration workstream. Keep commits buildable by updating affected callers in
 the same change. Git history is sufficient to recover the old shell for reference.
@@ -17,24 +18,24 @@ the same change. Git history is sufficient to recover the old shell for referenc
 The owner-requested [project structure](project-structure.md) and
 [architecture rules](../architecture-rules.md) define the target layout.
 Paths in the source-audit tables below include the completed worker rename.
-The UI is now at `apps/org-ui` (package `org-ui`), with the Tauri shell subsequently removed in F1-03. The `apps/desktop` paths below identify the historical audit
-baseline: resolve their suffixes under `apps/org-ui` for current source. The remaining gateway replacements are still pending. Production areas without adapters
+The UI is now at `apps/agentic-org-ui` (package `agentic-org-ui`), with the Tauri shell subsequently removed in F1-03. The `apps/desktop` paths below identify the historical audit
+baseline: resolve their suffixes under `apps/agentic-org-ui` for current source. The remaining gateway replacements are still pending. Production areas without adapters
 render unavailable; native/import wiring and the shell workspace member are removed.
 
 | Inspected name/path | Target and required follow-through |
 | --- | --- |
-| Retained browser application in `apps/desktop/` (historical) | Rename complete: `apps/org-ui/`, frontend package `org-ui`; static SvelteKit build, assets, licensed UI and retained tests preserved. F1-03 removes Tauri-only pieces under §1; the B1-03 canonical fixture/readers and independent wire gate remain. |
-| `apps/org-server/`, Cargo package/binary `org-server` | The current org-server source/package rename is complete. Target executable becomes agentic-org-office; package/library names need not change. Preserve one worker per office and host key custody. |
-| New gateway/setup helpers | Add planned apps/org-gateway with executable agentic-org-web, and apps/org-setup/package org-setup with executable agentic-org for HQ-only setup and serve. Extract current host behavior into a shared library rather than adding another host daemon; apps/org-agent targets executable agent-os. Remove the Tauri workspace member before building/staging the new `agentic-org` binary to avoid package/artifact collisions. |
+| Retained browser application in `apps/desktop/` (historical) | Rename complete: `apps/agentic-org-ui/`, frontend package `agentic-org-ui`; static SvelteKit build, assets, licensed UI and retained tests preserved. F1-03 removes Tauri-only pieces under §1; the B1-03 canonical fixture/readers and independent wire gate remain. |
+| Office worker (historically `apps/org-server/`) | Source/package/executable now use apps/agentic-org-office / agentic-org-office; Rust library import is agentic_org_office. Preserve one worker per office and host key custody. |
+| Web and human CLI applications | apps/agentic-org-web and apps/agentic-org use matching package/executable names. Host extraction to crates/org-host and agentic-org serve composition are implemented; apps/agent-os owns the agent CLI. Tauri is removed. HQ setup/service registration and production web handoff remain pending; no separate setup or host executable is added. |
 | Workspace and consumer references | Update Cargo members/paths/lockfile, frontend package/lockfile, test helper binary paths and environment references, build/release/signing checks, host helper resolution and documentation atomically with the source move. |
 | Ownership and licensing paths | Update AGENTS.md and links to the renamed applications. Keep the same owners and Tailwind Plus containment within the product UI; no standalone UI kit extraction. |
 | Managed home inputs | Retire `member.update_agent.home` / `clear_home` and other caller home overrides under API_VERSION 2; keep the response path read-only and derived from the launcher's managed instance/office/member path. Update callers and forged-path tests. |
 | Protocol transition | Advance local org-proto from 1 to 2 with host/worker/client/CLI consumers and fixtures; retained versions remain additive-only and unsupported peers fail before dispatch. |
 | Domain/feature organization | Group use cases inside their owning organization, work, messaging, employee and process modules; preserve public APIs, transaction boundaries and private SQL. See the project structure for the sequence. |
 
-The downloaded setup/release command remains provisionally `agentic-org`;
-`org-office-host`, `org-office-launch`, and office identities are not renamed
-by this decision. Worker and UI renames are implemented; setup changes remain pending.
+The human setup/release command is `agentic-org`. Host behavior is the `org-host`
+library; `org-office-launch`, persisted signing identities and office identities
+remain stable. Application renames are implemented; HQ setup remains unavailable.
 
 ## 1. Delete desktop-only implementation
 
@@ -68,17 +69,17 @@ frontend directory would discard the browser application we intend to keep.
 | `apps/desktop/src-tauri/src/stdio.rs` | Delete shell-only startup use. Preserve equivalent descriptor hygiene in host/office process spawning; do not delete the office's control-pipe fd protections. |
 | `apps/desktop/src/lib/office/api.ts`, `org/api.ts`, `work/index.ts` | Remove `inTauri()` selection and automatic browser mocks. Separate test factories from production HTTP exports and update every consumer. Remove login-item operations from the browser interface. |
 | `apps/desktop/src/lib/proto.ts`, `proto-work.ts` | Retain supported domain shapes; update HTTP envelope, authentication/error and command/event types. Delete app-specific `LoginState`/bridge-only fields once no caller remains. |
-| `apps/desktop/src/routes/`, `src/lib/components/`, `src/app.css`, `svelte.config.js`, `static/` | Retain and move the actual web application to `apps/org-ui/`, including its static adapter and styling. Change onboarding/navigation to HQ login and authorized organizations; remove desktop-only/import controls. Keep Tailwind Plus within this product directory. |
+| `apps/desktop/src/routes/`, `src/lib/components/`, `src/app.css`, `svelte.config.js`, `static/` | Retain and move the actual web application to `apps/agentic-org-ui/`, including its static adapter and styling. Change onboarding/navigation to HQ login and authorized organizations; remove desktop-only/import controls. Keep Tailwind Plus within this product directory. |
 | `apps/desktop/test-vectors/`, frontend unit/e2e tests | Retain domain and UI behavior tests. Replace Tauri/mock-only integration assumptions with real HTTP fixtures; delete tests for explicitly retired features. |
 
 ### 2.1 B1-03 shell audit and deletion handoff
 
 Audited against `v1` at `0a83d76` (2026-11-10), then integrated with F1-01 at
-`a0748a0`. Relative source paths below now live under `apps/org-ui`; historical
+`a0748a0`. Relative source paths below now live under `apps/agentic-org-ui`; historical
 `apps/desktop` references retain their audit provenance. This audit does not implement the gateway, projects/areas or runtime,
 and does not delete the shell. B1-10 remains the owner of project/area commands.
 
-**F1-03 (done, 2026-11-10).** `apps/org-ui/src-tauri` and its workspace
+**F1-03 (done, 2026-11-10).** `apps/agentic-org-ui/src-tauri` and its workspace
 membership are removed, including the shell implementation, Rust seed and legacy
 Rust vector runners. The desktop-wrapper `test-vectors/command-shapes.json` and
 `src/lib/office/shapes.test.ts` are retired. The rows below preserve the audit baseline
@@ -184,14 +185,17 @@ acceptance evidence; features deliberately deferred need an explicit spec change
 
 ## 4. Keep and adapt the server foundations
 
+Paths in the left column identify the historical audit baseline. The right column
+names current source locations and remaining work.
+
 | Existing area | Decision |
 | --- | --- |
-| `apps/org-office-host/` | Extract catalog, supervision, backoff, locks, key custody and crash recovery into reusable host/platform code composed by agentic-org serve; retire the separate host executable from the target release. Replace bundle-relative resolution, fixed home, global service name, app-only peer admission and account-wide key cleanup with instance-scoped equivalents. |
+| `apps/org-office-host/` | Catalog, supervision, backoff, locks, key custody and crash recovery now live in crates/org-host, composed by agentic-org serve; the separate host executable is removed. Replace bundle-relative resolution, fixed home, global service name, app-only peer admission and account-wide key cleanup with instance-scoped equivalents. |
 | `apps/org-office-host/src/app_auth.rs` and related code-signing checks | Retire signed-desktop authorization. Retain trusted helper admission and private key handoff. Standalone signed packaging and Linux credentials need real validation. |
-| `apps/org-server/` | Retain worker package org-server, targeting executable agentic-org-office and durable message/domain dispatch. Keep browser HTTP/TLS in the planned instance agentic-org-web; compose local IPC, runtime and replication at the explicit office boundary. |
+| `apps/org-server/` | Worker source/package/executable now use apps/agentic-org-office / agentic-org-office, retaining durable message/domain dispatch. Browser HTTP/TLS lives in apps/agentic-org-web, with production handoff pending; compose local IPC, runtime and replication at the explicit office boundary. |
 | `crates/org-office/` | Retain canonical rules, SQLCipher storage, one writer, transactional outbox/sequence allocation and private filesystem handling. |
 | `crates/org-client/`, `org-proto/`, `org-office-launch/` | Retain local agent/host/worker contracts where needed. Change instance discovery and browser principal authorization; remove unused app-only calls/types and tests in the same change. Versioning for the new release remains; old desktop callers need no bridge. |
-| `apps/org-agent/`, `crates/org-mailbox/` | Retain employee tooling and messaging semantics. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small agent-os executable from the pinned release; do not alias it to the human/key-custody CLI. |
+| `apps/org-agent/`, `crates/org-mailbox/` | Employee tooling and messaging semantics are retained in apps/agent-os / agent-os. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small agent-os executable from the pinned release; do not alias it to the human/key-custody CLI. |
 | `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases are not required; preserve live Phase A coordination through ADR-0003's conditional verified cutover before switching that team. |
 | `crates/org-runtime/`, `org-work/`, `org-copilot/` | Retain contracts/domain logic. Runtime adapters/session orchestration remain necessary; a static web server is not their implementation. |
 | Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates are absent on the inspected branch. No existing replication implementation can be merely moved. |
@@ -216,8 +220,8 @@ acceptance evidence; features deliberately deferred need an explicit spec change
 
 Before considering the implementation complete:
 
-- Retained browser sources/package use `apps/org-ui` / `org-ui`; server sources,
-  Cargo package and Rust imports retain apps/org-server, org-server and org_server; the target worker executable is agentic-org-office. Stage agentic-org-web and agent-os under their target names; agentic-org setup registers its serve service automatically and creates HQ only. Workspace, test, build and packaging references
+- Retained browser sources/package use `apps/agentic-org-ui` / `agentic-org-ui`; server sources,
+  Cargo package and Rust imports use apps/agentic-org-office, agentic-org-office and agentic_org_office. Stage agentic-org-web and agent-os under their matching names. The remaining agentic-org setup implementation must register its serve service automatically and create HQ only. Workspace, test, build and packaging references
   agree. Historical audit references are clearly labeled.
 - The domain-module/vertical-slice reorganization follows the public boundaries
   and shared-code rules in [project structure](project-structure.md).

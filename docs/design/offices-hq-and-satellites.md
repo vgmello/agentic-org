@@ -1,10 +1,11 @@
 # Design: offices, HQ and satellites
 
-**Current executable/setup amendment (2026-11-15):** initial agentic-org setup creates HQ only and automatically registers/starts agentic-org serve. Satellite onboarding is initiated later from authenticated HQ UI or an HQ-issued command; it is not a setup role choice. Target workers are agentic-org-office, the browser process is agentic-org-web, and the separate agent CLI is agent-os. The host role is inside agentic-org serve, preserving key custody and child ownership. Source/protocol references below retain their historical names; see [standalone setup](standalone-server.md#4-setup-and-service-lifecycle).
+**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
-**Naming amendment (2026-11-10):** the worker app/package/binary is now
-`apps/org-server` / `org-server`;
-the retained browser application becomes `apps/org-ui` / `org-ui`. See
+
+**Naming amendment (2026-11-15):** the worker app/package/binary is
+`apps/agentic-org-office` / `agentic-org-office`;
+the retained browser application is `apps/agentic-org-ui` / `agentic-org-ui`. See
 [project structure](project-structure.md). Host custody, private launch and one worker
 per office remain. Executable/build references use the renamed worker without merging process roles.
 

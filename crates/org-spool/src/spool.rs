@@ -160,7 +160,7 @@ impl fmt::Display for SpoolError {
             }
             Self::UnknownRecipient(agent) => write!(
                 f,
-                "unknown recipient {agent} (register it with: org-agent msg register {agent})"
+                "unknown recipient {agent} (register it with: agent-os msg register {agent})"
             ),
             Self::NotFound(msg) => write!(f, "{msg}"),
             Self::Timeout(msg) => write!(f, "{msg}"),
@@ -832,7 +832,7 @@ impl Spool {
     }
 
     /// Find a message in `inbox/<agent>/new/` or `cur/` without changing its read state
-    /// (used by `org-agent msg reply <id>`).
+    /// (used by `agent-os msg reply <id>`).
     pub fn find_for_reply(&self, agent: &str, id: &str) -> Result<Envelope, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
         if !is_valid_ulid(id) {

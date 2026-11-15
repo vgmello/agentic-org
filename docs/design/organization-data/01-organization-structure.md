@@ -128,6 +128,8 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── organization.yaml
 ├── repositories.yaml
 ├── pricing/models/<price-id>.yaml   # Immutable once used by accounting
+├── provider-connections/<connection-id>.yaml
+├── model-profiles/<profile-id>.yaml
 ├── offices/<office-id>.yaml
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
@@ -148,6 +150,8 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ```
 
 `team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder. Teams have `status: active | archived`; archiving preserves their IDs and historical references. Common creator/update attribution follows [record contracts](08-record-contracts.md).
+
+[Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns the connection/profile definitions in this same organization repository. Shared definitions contain references and policy, while office-local auth bindings/credentials stay outside Git.
 
 An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
 

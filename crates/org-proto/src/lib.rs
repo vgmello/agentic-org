@@ -1,14 +1,14 @@
 //! # org-proto: the contract
 //!
 //! The wire contract between this machine's servers and their clients (the desktop app
-//! through `org-client`, and the agent CLI `org-agent`). There are two kinds of server:
-//! - **The host** (`org-office-host`), the one login service on a machine. It supervises the
+//! through `org-client`, and the agent CLI `agent-os`). There are two kinds of server:
+//! - **The host** (`org-host`), the one login service on a machine. It supervises the
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
 //!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
 //!   Its `hello` lists in `capabilities` the optional calls and events it implements
 //!   ([`capability`]), so a client checks before relying on one.
-//! - **An office server** (`org-server`), one process per office. An organization's
+//! - **An office server** (`agentic-org-office`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, the organization's calls
 //!   ([`org`]: teams, members, projects and areas), the work calls ([`work`]: tasks and their
 //!   checklists, links, comments and activity), and later agent messaging.
@@ -42,7 +42,7 @@
 //! Each method is a type implementing [`Call`] (its name, params and result), and each event
 //! a type implementing [`EventKind`]. Clients and servers build and read envelopes through
 //! them, so method names and payload shapes live in one place. The app will keep a
-//! TypeScript mirror (`apps/org-ui/src/lib/proto.ts`) in step by hand for now.
+//! TypeScript mirror (`apps/agentic-org-ui/src/lib/proto.ts`) in step by hand for now.
 //!
 //! Agent messaging on an office server (ADR-0003) is in [`msg`]; the organization directory
 //! (`who`), status lines (`status.set`) and presence are in [`directory`].

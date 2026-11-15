@@ -1,6 +1,6 @@
 # Model providers, connections and pools
 
-Structural draft for v1. Document revision 1. This is the data-model view of the selected [execution contract](11-agent-execution-pools-addendum.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
+Structural draft for v1. Document revision 1. This is the data-model view of the selected [execution contract](11-model-profiles-and-agent-execution.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
 
 ## Concepts and boundaries
 
@@ -239,7 +239,7 @@ Model/deployment translation belongs to connection discovery, not a manual map s
 
 ## SQLite tables and derived view
 
-[execution-schema.sql](execution-schema.sql) is the executable integration artifact, applied once after [schema.sql](schema.sql). The definitions below are its provider/pool data subset, reproduced for this document's field-level review; **do not apply both the subset and the complete extension**. Document 11 contains the remaining runtime records and integration constraints/triggers. The schema checks compare this subset with the executable extension to prevent divergence.
+[schema.sql](schema.sql) is the executable shared draft, including provider/pool configuration and execution. Load it once; the definitions below reproduce its provider/pool subset for field-level review and must not be applied again. Document 11 contains the remaining runtime records and integration constraints/triggers. The schema checks compare this subset with the consolidated schema to prevent divergence.
 
 ```sql
 CREATE TABLE provider_connections (

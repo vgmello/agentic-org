@@ -2,7 +2,7 @@
 
 Accepted by Victor on 2026-11-14. Recorded by Ines for implementation and future API design.
 
-Owner executable amendment (2026-11-15): agentic-org-web is the browser BFF executable previously called org-gateway; agentic-org-office is the office worker. agentic-org serve hosts their lifecycle. Existing source packages and protocol namespaces keep their names until explicit implementation changes. This preserves the BFF/host/office privilege boundaries below.
+Owner executable amendment (2026-11-15): agentic-org-web is the browser BFF executable previously called org-gateway; agentic-org-office is the office worker. agentic-org serve hosts their lifecycle. Application source/packages now match these executable names; host behavior lives in crates/org-host. Persisted protocol and signing namespaces remain stable. This preserves the BFF/host/office privilege boundaries below.
 
 The architecture uses a static SvelteKit browser application with a Rust browser API/BFF. Reusable Rust application and domain modules support the browser BFF and future integration API adapters. Browser APIs are the current delivery priority; integration APIs are a future extension.
 
@@ -35,7 +35,7 @@ Static SPA deployment retains SvelteKit route-code and data preloading. For inte
 
 Automatic data preloading runs the destination route's required `load()` functions. In this SPA, universal `+page.ts` / `+layout.ts` load functions run in the browser and can fetch authorized read data from the Rust BFF. The prepared load result can be reused for the matching navigation. Fetches performed only after component mount are not automatically covered by route data preloading; integrate them with route loading or an explicit shared prefetch mechanism when that behavior is needed.
 
-Keep preloaded operations safe to run speculatively: reads must not perform commands or durable state changes. Choose hover, tap, or code-only preloading according to request cost and data freshness. At the time of this decision, `apps/org-ui/src/app.html` already enables hover data preloading globally; that setting alone does not prove that each screen's current fetching participates in it.
+Keep preloaded operations safe to run speculatively: reads must not perform commands or durable state changes. Choose hover, tap, or code-only preloading according to request cost and data freshness. At the time of this decision, `apps/agentic-org-ui/src/app.html` already enables hover data preloading globally; that setting alone does not prove that each screen's current fetching participates in it.
 
 ## Existing design alignment and references
 

@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.7. This proposal specifies the selected data relationships and storage, including task assignment and activity history. It does not change the application implementation or authorize a migration.
+Structural draft for v1. Document revision 2.8. This proposal specifies the selected data relationships and storage, including task assignment and activity history. It does not change the application implementation or authorize a migration.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -17,12 +17,12 @@ Existing v1 designs remain the implementation reference until a migration is app
 | [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
 | [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or organization-wide event history |
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
-| [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or agent setup |
-| [Agent execution addendum](11-agent-execution-pools-addendum.md) | Execution configuration, connection pools, supervision, durable placement generations and setup/runtime contracts | Automatic scheduling, private memory consolidation or task lifecycle |
+| [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or execution routing |
+| [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) | Provider/subscription connections, ordered model profiles, agent execution configuration, office bindings, permits, turns/attempts/processes and durable placement generations | Agent memory, automatic scheduling, installation implementation or task lifecycle |
 | [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics, v1 evidence and migration boundaries | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 | [Model providers, connections and pools](14-model-providers-and-connection-pools.md) | Provider/driver identity, connections, ordered pools, office bindings, discovered models and agent selection in the common data-structure format | A second provider system, additional tables or supervisor/failover implementation |
 
-The structural documents contain their own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines documents 01–10 with indexes and invariant checks. Document 11 is a separately applied execution extension: load [execution-schema.sql](execution-schema.sql) after `schema.sql`. Document 05 also defines [private-notes-schema.sql](private-notes-schema.sql), loaded into a separate durable private database; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps all records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers`, as the scripts do, so deferred references and replacement guards work. Document 11 extends document 04's placement projection with durable fencing evidence and takes precedence for that execution behavior. Cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
+Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, with document 14 repeating the provider/pool subset, including model profiles/execution and task assignment/history, into one shared draft containing 55 tables and 8 views plus indexes/triggers. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
@@ -39,7 +39,7 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |
-| Repository or role | Existing descriptive `key` | Organization, separately per entity type; no counter |
+| Repository, role, provider connection or model profile | Descriptive `key` | Organization, separately per entity type; no counter |
 
 Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created task/feature awaiting allocation, or an unresolved import and exposes no final readable reference. A record accepted by the organization authority must have a number and a durable allocation; local tasks/features can be used by stable ID while registration is pending. Separate scopes can both contain `T-42`: use `P-8/T-42` or `TEAM-12/T-42` outside an already selected scope. Changing task type never changes its ID or number.
 
@@ -102,9 +102,9 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Delivery | Release product changelog and content manifest; deployment technical changelogs, commit/flag snapshots; build artifacts remain out of scope |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
-| Agent setup/execution | Document 11 defines the execution extension; memory consolidation remains separate pending work |
+| Agent setup/execution | Document 11 defines model profiles, provider connections and execution data/behavior; memory consolidation and automatic scheduling remain separate pending work |
 | Subscription connections | One connection per provider subscription, reused by office-local bindings and profiles; shared quota remains attached to that connection |
 | Process engine | Out of scope for now; retain process/standard content and scope metadata only |
 | Areas, advanced checklist workflows, Undo, organization-wide event history, budgets, retrospectives | Still unselected; do not silently port or delete them |
 
-The SQL is a structural draft for the selected scope. Document 11 supplies its separate execution contract; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.
+The SQL is a structural draft for the selected scope. Document 11 owns model/execution behavior within this integrated document set; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.

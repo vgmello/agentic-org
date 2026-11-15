@@ -1,5 +1,5 @@
 //! `org-spool`: Versioned envelope contract, per-agent `flock` metadata (`profile.json`,
-//! `status.json`, `triage.json`), and Maildir-style spool operations for `org-agent`.
+//! `status.json`, `triage.json`), and Maildir-style spool operations for `agent-os`.
 //!
 //! Coupling metrics (per `docs/architecture-rules.md`):
 //! - Efferent coupling (`Ce`): 2 (`serde`, `serde_json`)

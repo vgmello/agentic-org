@@ -211,7 +211,7 @@ Verify SRV-29/30 with forged home/clear_home inputs and direct pre-approval agen
 creation: no external path or unapproved member/home/binding is provisioned. Confirm
 the profile displays the launcher's actual managed path. Verify SRV-32 with mixed
 local protocol versions and setup build/staging: unsupported versions fail before
-dispatch and the staged agentic-org is the org-setup CLI, never the retired shell.
+dispatch and the staged agentic-org is the CLI from apps/agentic-org, never the retired shell.
 
 Use disposable Phase A fixtures for SRV-31: unresolved asks/replies, expiry, read/
 defer/done state, interrupted import and repeated import. Preserve IDs and state,
@@ -220,8 +220,8 @@ spool/context fallback. Do not import, mutate or delete the team's actual live
 spool in this acceptance run. REC-1 remains separately gated recovery work; row
 1.7 verifies escrow material, not completed promotion/fencing.
 
-Verify SRV-22: retained browser code/package uses `apps/org-ui` / `org-ui`, and
-worker source/package remain apps/org-server / org-server, with target executable agentic-org-office. Verify agentic-org-web and agent-os helper names and agentic-org serve host composition.
+Verify SRV-22: retained browser code/package uses `apps/agentic-org-ui` / `agentic-org-ui`, and
+worker source/package/executable use apps/agentic-org-office / agentic-org-office. Verify agentic-org-web and agent-os helper names and agentic-org serve host composition.
 Check workspace, imports, test helpers, release/signing resolution and ownership
 references against the [project structure](../design/project-structure.md). Verify
 domain/feature moves preserve private SQL, transactions, public boundaries and

@@ -1,6 +1,6 @@
-# Agent and employee structure boundary
+# Agents and employees
 
-Structural draft for v1. Document revision 2.7. This document fixes employee identity relationships. [Document 11](11-agent-execution-pools-addendum.md) extends it with execution configuration, setup and durable placement/fencing requirements. Memory consolidation and scheduling remain separate pending work. [Document 05](05-operational-data.md#private-notes-attached-to-tasks) checks private task notes against v1.
+Structural draft for v1. Document revision 2.8. This document fixes employee identity relationships. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling remain separate pending work. [Document 05](05-operational-data.md#private-notes-attached-to-tasks) checks private task notes against v1.
 
 ## Confirmed relationships
 
@@ -10,6 +10,7 @@ erDiagram
     teams o|--o| employees : lead_employee_id
     roles o|--o{ employees : role_id
     employees o|--o{ employees : reports_to_employee_id
+    employees ||--o| agent_execution_configs : execution_settings
     employees ||--o| agent_placements : current_placement
     offices ||--o{ agent_placements : hosts
     employees ||--o{ task_workspaces : assigned_work
@@ -39,6 +40,7 @@ erDiagram
         TEXT organization_id PK, FK "required"
         TEXT employee_id PK, FK "required"
         TEXT office_id FK "required"
+        INTEGER placement_generation "required"
     }
     task_workspaces {
         TEXT organization_id PK, FK "required"
@@ -52,15 +54,17 @@ erDiagram
 
 Employees are agents or people, with `status: active | inactive` and common creator/update attribution. Inactive profiles retain their handles and stable IDs for historical references; new active task assignment or ownership must resolve to an active employee. [Record contracts](08-record-contracts.md) specifies lifecycle and attribution. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
 
-Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. The base table is a placement projection; with document 11 enabled, reconstruction requires the durable authority generation and verified cleanup/fencing before any replacement starts. Cache reconstruction alone cannot recreate launch authority.
+Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. The table is a placement projection; reconstruction requires the durable authority generation and verified cleanup/fencing before any replacement starts. Cache reconstruction alone cannot recreate launch authority.
 
-Agent token/cost totals are derived from [usage records](10-usage-and-cost-accounting.md) for that actual consumer, including task work and overhead across projects. The ledger references stable employee identity, not a live process; this does not decide the pending agent setup or run lifecycle.
+Agent token/cost totals are derived from [usage records](10-usage-and-cost-accounting.md) for that actual consumer, including task work and overhead across projects. The ledger references stable employee identity, not a live process; actual route/attempt context is supplied by document 11, while accounting remains the ledger authority.
 
 ## Durable identity files
 
 ```text
 teams/<team-id>/
-├── agents/<employee-id>/profile.md
+├── agents/<employee-id>/
+│   ├── profile.md
+│   └── execution.md      # Optional configuration; required before the agent is runnable
 ├── people/<employee-id>/profile.md
 └── teams/<child-team-id>/...
 ```
@@ -78,10 +82,10 @@ home_team_id: 01J00000000000000000000020
 role_id: null
 reports_to_employee_id: null
 ---
-Reservations team employee identity. Agent setup will be defined separately.
+Reservations team employee identity. Execution configuration is stored separately in execution.md, as defined in document 11.
 ```
 
-Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Preserve existing v1 handles on import where valid and resolve collisions explicitly. Agent provisioning and messaging transport remain pending specifications. No `runtime`, model, tools, run mode, permission policy or memory directory is made mandatory by this draft.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Preserve existing v1 handles on import where valid and resolve collisions explicitly. Agent provisioning and messaging transport remain pending specifications. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling remain outside this specification.
 
 ## Runtime location
 
@@ -101,12 +105,13 @@ The runtime team tree is the local office's projection of the organization-wide 
 | Table | Source |
 | --- | --- |
 | `employees` | `profile.md`: stable identity/revision fields, required `handle`, `kind`, `name`, `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, and body. File location and `kind` must agree. |
-| `agent_placements` | Current office-controller state; runtime-only. Only agent employees are eligible. No durable `office_id` is silently added to a profile. |
+| `agent_placements` | Current placement projection, rebuilt from HQ's durable execution placement/generation journal. Only agents are eligible. No office_id is silently added to an employee profile. |
+| `agent_execution_configs` | execution.md front matter/body; full table and routing contract are owned by document 11. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |
 
-### Remaining boundary
+### Execution and remaining boundaries
 
-Use document 11 for execution configuration, tools/models, supervision and setup. Memory storage/consolidation and automatic scheduling remain pending. Extensions must preserve stable employee IDs, home-team relationships and project references; the minimal identity tables below remain a projection, not the complete agent implementation.
+[Document 11](11-model-profiles-and-agent-execution.md) specifies the agent's model profile, target model, prompt/tools configuration, local credential bindings, supervision and turn/attempt lifecycle. This document retains employee/home-team/reporting/placement ownership; there is no competing agents identity. Provisioning workflows, private memory, proactive scheduling and a fully wired execution backend remain implementation or separately scoped work. [Task assignment](12-task-assignment-and-history.md) owns assignment/reporter semantics; [operational data](05-operational-data.md) owns task events/history and private notes. Execution owns processes.
 
 ## SQLite tables
 
@@ -150,6 +155,7 @@ CREATE TABLE agent_placements (
   organization_id TEXT NOT NULL,
   employee_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
+  placement_generation INTEGER NOT NULL DEFAULT 1 CHECK (placement_generation>=1),
   PRIMARY KEY (organization_id, employee_id),
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id),
   FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id)

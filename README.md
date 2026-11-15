@@ -14,46 +14,38 @@ The same proposal includes [employee supervision and native delegates](docs/spec
 [channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
 belongs to the offices; the browser accesses it through HQ.
 
-## Initial setup (target CLI)
-
-After obtaining the verified platform executable, run:
-
-```bash
-agentic-org setup
-```
-
-This creates HQ, prepares its matching release components and automatically registers/starts the background service. There is no separate install/service-install step and no initial satellite choice. Add satellites later from HQ's UI or an HQ-issued command. Repeating setup safely resumes/reuses the same HQ and service. Offline HQ setup accepts setup --bundle <path> --offline. These commands are the implementation target, not functionality claimed to exist in the inspected checkout; [the installation design](docs/design/standalone-server.md#4-setup-and-service-lifecycle) and [UX contract](docs/specs/server-installation-and-access-ux.md) define readiness and recovery behavior.
-
 ## Proposed v1 layout
 
-The browser application is **org-ui** at `apps/org-ui/`. Current worker source/package remain org-server at apps/org-server; its target executable is **agentic-org-office**. The target browser executable is **agentic-org-web**, and the separate agent CLI is **agent-os**. **agentic-org serve** composes existing host lifecycle/key-custody behavior and supervises one worker per office. These executable changes remain implementation work.
+The [organization data documentation](docs/design/organization-data/README.md) defines the proposed durable organization/project/agent data model. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
+
+
+Application directories, Cargo packages and executable names now match:
 
 ```text
 apps/
-  org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
-  org-server/         Target executable agentic-org-office
-  org-gateway/        Planned executable agentic-org-web
-  org-setup/          Planned agentic-org: human CLI, setup and serve
-  org-office-host/    Current host; extract shared behavior for agentic-org serve
-  org-agent/          Target executable agent-os
-crates/               Cohesive libraries; domain modules contain feature slices
-docs/
-  architecture-rules.md
-  design/project-structure.md
+  agentic-org/         Human CLI and serve host composition
+  agentic-org-office/  One office worker
+  agentic-org-web/     Browser entry point and HTTP library
+  agent-os/            Small employee CLI
+  agentic-org-ui/      Static browser assets
+crates/
+  org-host/            Host lifecycle/key-custody library
+  ...                  Domain and protocol libraries
 ```
+
+agentic-org serve runs the existing host lifecycle. **HQ setup/service registration and production web handoff remain unavailable:** their protected bootstrap/authentication integration has not landed in v1. setup returns an error without creating state; agentic-org-web refuses to open a listener without its unfinished production composition. Help/version commands are available. The existing test-only CSP harness remains a test example, not a production bypass. See [executable migration](docs/design/executable-migration.md) for migration scope and checks. This code change does not install services, update running agents or reset data.
 
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature
 organization, shared code ownership, and the source-to-target implementation plan.
-The earlier org-ui/org-server source renames and Tauri-shell removal are implemented; the executable names above remain pending. The remaining
-target layout is planned. Browser areas without a gateway adapter show unavailable
+The application/package naming migration and Tauri-shell removal are implemented. Remaining standalone deployment features are listed above. Browser areas without a gateway adapter show unavailable
 in both ordinary development and release; test fakes require explicit test composition.
 The historical shell commands below no longer run against this tree.
 
-Run the UI checks from `apps/org-ui`:
+Run the UI checks from `apps/agentic-org-ui`:
 
 ```sh
-cd apps/org-ui
+cd apps/agentic-org-ui
 bun install --frozen-lockfile
 bun run check
 bun run test
@@ -61,53 +53,6 @@ bun run build
 bun run test:e2e
 ```
 
-## Inspected source layout (pre-pivot)
+## Historical implementation
 
-A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
-
-### Historical layout
-
-```
-crates/                         libraries only
-  org-proto/                    the contract between app, agent CLI, host and office servers (types)
-  org-client/                   connects to the host and office servers (used by the app and org-agent)
-  org-office/                   the office's domain and storage (organizations, agents, SQLite, files)
-  org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
-apps/                           things you run or ship
-  desktop/                      Agentic Org, the app (Tauri 2 + SvelteKit)
-  org-server/                   one office's server (one process per office)
-  org-office-host/              the host: the one macOS login service, which runs the office servers (to come)
-  org-agent/                    the CLI agents use (messages now; tasks and queues later)
-docs/
-  architecture-rules.md         how we write code here
-  adr/                          decisions for this codebase
-  design/                       flow designs (start with create-organization.md)
-  specs/                        UX specs (Eden's, moving in)
-```
-
-Dependencies point one way, and apps depend on crates, never the reverse:
-
-```
-apps/desktop          ─▶ org-client ─▶ org-proto
-apps/org-server        ─▶ org-office ─▶ org-proto
-apps/org-agent        ─▶ org-spool
-apps/org-agent        ─▶ org-proto   (planned)
-```
-The office server is also the agents' message hub (ADR-0001, decision 4): `org-agent` will talk to it over the local socket in `org-proto`. A messaging ADR, to be written before that is built, sets the details, including what happens while the server is down.
-
-## Historical development commands
-
-```
-cargo check --workspace          # Rust crates and servers
-cd apps/desktop && npm i && npm run tauri dev   # the app, once scaffolded
-```
-
-## Working here
-
-Read [AGENTS.md](AGENTS.md) before changing anything. The code is MIT-licensed (see [LICENSE](LICENSE)). The app's UI uses licensed Tailwind Plus components *inside the app only*. See AGENTS.md.
-
-The [Google Rust Style Guide](docs/rust-style-guide.md) is adapted from the guide
-downloaded from [Google](https://google.github.io/styleguide/rustguide.md) on
-2026-11-14, with Chrome/Chromium-specific guidance removed. It is licensed separately under
-[Creative Commons Attribution 3.0 Unported](docs/rust-style-guide.LICENSE)
-([license URI](https://creativecommons.org/licenses/by/3.0/)).
+Superseded desktop layouts and shell commands are available in Git history. They are not current build or installation instructions. Current source ownership is in AGENTS.md; the executable migration document records the remaining production integration gaps.
