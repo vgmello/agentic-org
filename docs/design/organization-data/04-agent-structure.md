@@ -1,6 +1,6 @@
 # Agent and employee structure boundary
 
-Structural draft for v1. Document revision 2.6. **Agent setup requires a separate specification and remains pending.** This document only fixes identity relationships needed by the other documents. It is not a provisioning, harness, memory, model or scheduler specification.
+Structural draft for v1. Document revision 2.7. This document fixes employee identity relationships. [Document 11](11-agent-execution-pools-addendum.md) extends it with execution configuration, setup and durable placement/fencing requirements. Memory consolidation and scheduling remain separate pending work. [Document 12](12-task-assignment-and-history.md#private-notes-attached-to-tasks) checks private task notes against v1.
 
 ## Confirmed relationships
 
@@ -52,7 +52,7 @@ erDiagram
 
 Employees are agents or people, with `status: active | inactive` and common creator/update attribution. Inactive profiles retain their handles and stable IDs for historical references; new active task assignment or ownership must resolve to an active employee. [Record contracts](08-record-contracts.md) specifies lifecycle and attribution. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
 
-Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. On a fresh reconstruction, placements may be recreated at HQ; the other durable office definitions remain present.
+Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. The base table is a placement projection; with document 11 enabled, reconstruction requires the durable authority generation and verified cleanup/fencing before any replacement starts. Cache reconstruction alone cannot recreate launch authority.
 
 Agent token/cost totals are derived from [usage records](10-usage-and-cost-accounting.md) for that actual consumer, including task work and overhead across projects. The ledger references stable employee identity, not a live process; this does not decide the pending agent setup or run lifecycle.
 
@@ -104,9 +104,9 @@ The runtime team tree is the local office's projection of the organization-wide 
 | `agent_placements` | Current office-controller state; runtime-only. Only agent employees are eligible. No durable `office_id` is silently added to a profile. |
 | `task_workspaces` | Current workspace-controller state; runtime-only office/employee/task/repository IDs and `worktree_path`. |
 
-### Pending input
+### Remaining boundary
 
-The agent setup document must decide its configuration fields, identity/provisioning inputs, memory ownership, tools, models, scheduling and lifecycle. That work may extend this file, but cannot silently change stable IDs, home-team relationships or project references. No implementation agent should infer a complete setup from the minimal table below.
+Use document 11 for execution configuration, tools/models, supervision and setup. Memory storage/consolidation and automatic scheduling remain pending. Extensions must preserve stable employee IDs, home-team relationships and project references; the minimal identity tables below remain a projection, not the complete agent implementation.
 
 ## SQLite tables
 

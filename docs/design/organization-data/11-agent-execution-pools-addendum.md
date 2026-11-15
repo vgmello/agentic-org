@@ -1,8 +1,8 @@
 # Agent execution and subscription pools: implementation contract
 
-Status: **implementation specification, revision 4**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **implementation specification, revision 5**. This document defines the additive data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
-Only this addendum is being revised. The existing organization documents and `schema.sql` remain unchanged. The SQL extension in §12 is the exact integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
+The SQL extension in §12 applies after the structural `schema.sql`; it is integration input for the implementation team's migration, not a migration already applied to the application. Existing employee IDs and organization/team/project/task relationships are preserved.
 
 Requirements source: owner-supplied `requirements_design_document_subscription_pool_model_profile_architecture.md`, SHA-256 `c3189b7af897be77cc9e8d4214edcc71a66039f3c14a95f6d08d3da5678c43dc`. Provider commands/model names in that source are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
 
@@ -14,6 +14,7 @@ Requirements source: owner-supplied `requirements_design_document_subscription_p
 | Runtime topology | One `agentic-org-office` process per office. Its internal agent supervisor hosts a logical controller and one main-process slot per placed agent. There is no separate agent-supervisor daemon. |
 | Launch authority | The supervisor alone selects routes, prepares child environments, launches/drives/stops agent processes and recovers its children. |
 | Pool configuration | Agents select one model profile and canonical model ID. Profiles contain only an ordered list of connection IDs, never a manual model map. |
+| Subscription identity | One organization-wide connection per provider subscription. Offices bind that same connection locally; pools cannot manufacture additional quota by naming the same subscription twice. |
 | Connection capabilities | Discover/cache entitlement and model-ID translation per connection and office. Unknown or stale auth/model evidence cannot qualify a route. |
 | Shared quota | HQ's organization service coordinates turn permits across offices. Per-connection concurrency defaults to one and is explicitly configurable. |
 | Failover | Same target model, first eligible connection by priority. Each connection is tried at most once per dispatch cycle. Replay/resume requires the proof rules in §7. |
@@ -137,9 +138,13 @@ This explicitly extends document 04's runtime-only placement contract with a sma
 
 All IDs use the existing stable-ID contract. `workspace_id` from the upload maps to organization_id. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
 
+For `subscription_cli`, `subscription_identity` is required: the provider adapter's canonical, non-secret identity for the actual subscription entitlement/quota account, not a connection label, credential path, model name or office ID. HQ registers it once per `(organization_id, provider_type, subscription_identity)`. Two different connection IDs for that same subscription are rejected with `SUBSCRIPTION_ALREADY_REGISTERED`, returning the existing connection ID. Disabled/archived definitions also reserve their identity; reuse/re-enable the existing definition. One connection may appear in several profiles and have one local binding per office, while all those uses share its HQ permit/cooldown state. Multiple subscription connections in a pool represent distinct subscriptions.
+
+Identity normalization and registration happen before creating the default profile. Provider adapters use a canonical provider namespace and verified subscription identity; if the provider exposes no identity API, an explicit operator-attested mapping to the registered subscription is required. Unverified aliases cannot become runnable routes. SQL enforces uniqueness of the registered identity, but cannot prove that two credential sets reach the same external account. Bind/refresh must compare account evidence with the registered identity and return `SUBSCRIPTION_IDENTITY_MISMATCH` on a different subscription, or `SUBSCRIPTION_IDENTITY_UNVERIFIED` without evidence/attestation. These states are not ready. Credential rotation preserves identity; changing the subscription requires selecting/registering its own connection. API/cloud connections that do not represent a subscription leave this field null; this rule does not claim to identify all provider-wide API rate-limit groups.
+
 Connection creation is one idempotent organization transaction: create the connection, an auto-generated model profile, and its one membership. The profile records generated_for_connection_id. Exactly one generated default is allowed per connection. Auto-generated profiles contain exactly their source connection; converting one to a manual pool clears the generated designation in that same revisioned transaction. Profile membership is 1..64 connections in contiguous priority order. Reorder by replacing the membership set inside one transaction, then validate before commit; do not perform individually visible priority swaps.
 
-Archiving or deleting an assigned profile returns `PROFILE_IN_USE` with affected employee IDs. Referenced connections cannot be deleted through a membership cascade. Disable/retire definitions with history and explicitly reassign/detach before deletion. Changing provider/auth-mode/driver/endpoint is a revisioned configuration change; a supervisor never mutates a live child's environment to adopt it. Missing execution config means an employee is not runnable, not that the framework chooses a default model.
+Archiving or deleting an assigned profile returns `PROFILE_IN_USE` with affected employee IDs. Referenced connections cannot be deleted through a membership cascade. Disable/retire definitions with history and explicitly reassign/detach before deletion. A registered subscription's provider/identity pair is immutable. Other provider/auth-mode/driver/endpoint changes are revisioned and must preserve any registered subscription identity; a supervisor never mutates a live child's environment to adopt them. Missing execution config means an employee is not runnable, not that the framework chooses a default model.
 
 The supervisor probes at startup, after binding changes, on explicit RefreshConnection and every 60 seconds while a connection is in use. Auth/model observations are valid for at most 300 seconds. A changed binding revision invalidates all previous observations immediately. Driver preflight must prove the installed version and the intended account context; provider account identity evidence is retained in account_identity_ref, with explicit operator attestation required when a provider exposes no account identity API. A public `/models` list alone is not entitlement proof.
 
@@ -168,6 +173,7 @@ key: subscription-a
 name: Subscription A
 provider_type: example-provider
 auth_mode: subscription_cli
+subscription_identity: provider-canonical-subscription-a
 runtime_driver: verified-native-driver
 endpoint_url: null
 enabled: true
@@ -190,7 +196,7 @@ archived: false
 connection_ids: [subscription-a, subscription-b]
 ```
 
-subscription-b must have its own connection definition and office-local binding before it is eligible. This manually assembled pool coexists with each connection's generated single-member default profile. Boolean YAML values become SQLite 0/1; tools_config and connection_ids serialize arrays rather than JSON strings. File and record IDs must match; reject unknown fields or unsupported schema versions. Example IDs denote existing stable IDs, not a new ID format.
+subscription-b must represent a different verified subscription, with its own connection definition and office-local binding before it is eligible. Another office using subscription-a binds the existing subscription-a connection; it does not create subscription-c for that same subscription. This manually assembled pool coexists with each connection's generated single-member default profile. Boolean YAML values become SQLite 0/1; tools_config and connection_ids serialize arrays rather than JSON strings. File and record IDs must match; reject unknown fields or unsupported schema versions. Example IDs denote existing stable IDs, not a new ID format.
 
 For a concrete dispatch: an agent in the east office requests the canonical target model from primary-pool. Both connections have fresh confirmed entitlement. HQ grants the subscription-a permit; its first request returns 429 before any effect. The supervisor records cooldown/attempt usage, verifies cleanup, releases that permit, then requests subscription-b's permit and launches with its isolated binding. Success produces one logical turn, two attempts and route-specific usage. If the first attempt had an uncertain tool result, the same example stops at recovery_required instead of starting subscription-b.
 
@@ -323,11 +329,12 @@ Provider/model and price_id describe the actual route used, not the first pool m
 | AE-15 | The office worker's supervisor is its single agent recovery owner; host recovery cannot race that live owner. No new placement starts until old ownership is fenced/reconciled. |
 | AE-16 | Fresh setup downloads/verifies one complete release, creates HQ only and registers/starts one service. No satellite option is offered; satellite requests are rejected before provisioning. Interrupted/repeated/concurrent setup reuses durable steps and creates no duplicate service, identity or office. HQ-initiated satellite onboarding is a separate flow. |
 | AE-17 | Offline HQ setup performs zero external requests, rejects untrusted/incomplete bundles, and never starts satellite enrollment. Missing service-manager support reports foreground instructions; serve starts installed releases without a download prerequisite. |
+| AE-18 | Concurrent registration of the same subscription admits one connection/default profile. Disabled/archived duplicates are rejected; distinct subscriptions are accepted. Two office bindings reuse one connection and its quota/cooldown state. Mismatched or unverified binding identity never becomes ready; credential rotation cannot create fresh quota under another connection ID. |
 
 ## 11. Implementation sequence and integration boundaries
 
-1. Add the §12 migration and serializers/projectors with AE-01..03. Preserve employee identity; do not create a second agents table. Integrate document 04 and schema.sql in that implementation change, not in this addendum-only edit.
-2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06).
+1. Add the §12 migration and serializers/projectors with AE-01..03 and the identity uniqueness part of AE-18. Preserve employee identity; do not create a second agents table. Integrate document 04 and schema.sql in that implementation change.
+2. Add configuration/discovery handlers and typed local credential bindings, using fake driver fixtures first (AE-05..06, AE-18).
 3. Implement HQ permit coordinator and office command/receipt journal (AE-04, AE-07..08).
 4. Integrate supervisor/router/session-runner modules inside agentic-org-office, host startup/launch admission and the existing recovery adapter (AE-10..11, AE-15). Apply the executable names in §2 with existing signed-launch/credential tests; retain agent-os as the small separate CLI.
 5. Implement native adapters and, when its backend ships, the HTTP worker/agent loop behind the same port; gate each production backend on AE-09/14. Unsupported drivers can remain explicitly unavailable while supported backends ship.
@@ -355,6 +362,7 @@ erDiagram
         TEXT name "required"
         TEXT provider_type "required"
         TEXT auth_mode "required"
+        TEXT subscription_identity "required for subscription_cli"
         TEXT runtime_driver "required"
         TEXT endpoint_url "optional"
         INTEGER enabled "required"
@@ -583,6 +591,7 @@ key TEXT NOT NULL CHECK (length(key)>0),
   name TEXT NOT NULL,
   provider_type TEXT NOT NULL CHECK (length(provider_type)>0),
   auth_mode TEXT NOT NULL CHECK (auth_mode IN ('subscription_cli','api_key','cloud_iam')),
+  subscription_identity TEXT CHECK (subscription_identity IS NULL OR length(trim(subscription_identity))>0),
   runtime_driver TEXT NOT NULL,
   endpoint_url TEXT,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -596,11 +605,38 @@ key TEXT NOT NULL CHECK (length(key)>0),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,id),
 UNIQUE (organization_id,key),
+  UNIQUE (organization_id,provider_type,subscription_identity),
+  CHECK (auth_mode<>'subscription_cli' OR subscription_identity IS NOT NULL),
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
   FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER registered_subscription_cannot_be_replaced
+BEFORE INSERT ON provider_connections
+WHEN EXISTS (
+  SELECT 1 FROM provider_connections p
+  WHERE p.organization_id=NEW.organization_id AND p.subscription_identity IS NOT NULL
+    AND (p.id=NEW.id OR p.key=NEW.key OR
+      (p.provider_type=NEW.provider_type AND p.subscription_identity=NEW.subscription_identity)))
+BEGIN SELECT RAISE(ABORT,'registered subscription cannot be replaced; resolve existing connection'); END;
+
+CREATE TRIGGER registered_subscription_cannot_be_displaced
+BEFORE UPDATE ON provider_connections
+WHEN EXISTS (
+  SELECT 1 FROM provider_connections p
+  WHERE p.organization_id=NEW.organization_id AND p.subscription_identity IS NOT NULL
+    AND NOT (p.organization_id=OLD.organization_id AND p.id=OLD.id)
+    AND (p.id=NEW.id OR p.key=NEW.key OR
+      (p.provider_type=NEW.provider_type AND p.subscription_identity=NEW.subscription_identity)))
+BEGIN SELECT RAISE(ABORT,'registered subscription cannot be displaced by another connection'); END;
+
+CREATE TRIGGER registered_subscription_identity_is_immutable
+BEFORE UPDATE OF provider_type,subscription_identity ON provider_connections
+WHEN OLD.subscription_identity IS NOT NULL AND
+  (NEW.provider_type IS NOT OLD.provider_type OR NEW.subscription_identity IS NOT OLD.subscription_identity)
+BEGIN SELECT RAISE(ABORT,'registered subscription identity is immutable'); END;
 
 CREATE TABLE model_profiles (
 organization_id TEXT NOT NULL REFERENCES organizations(id),

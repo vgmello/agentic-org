@@ -390,6 +390,7 @@ CREATE TABLE tasks (
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT NOT NULL,
+  assigned_team_id TEXT,
   project_id TEXT,
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   work_type TEXT CHECK (work_type IN ('build', 'run')),
@@ -413,6 +414,7 @@ CREATE TABLE tasks (
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
   UNIQUE (organization_id, project_id, number),
   FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, assigned_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
@@ -1027,6 +1029,46 @@ SELECT organization_id, project_id, COUNT(*) AS usage_count,
 FROM effective_usage_records e WHERE project_id IS NOT NULL
 GROUP BY organization_id, project_id;
 
+CREATE TABLE task_events (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
+  task_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  occurred_at TEXT NOT NULL,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'owner', 'system', 'unknown')),
+  actor_id TEXT,
+  operation_id TEXT,
+  change_json TEXT NOT NULL CHECK (
+    json_valid(change_json) AND json_type(change_json) = 'object'
+    AND json_type(change_json, '$.type') IS 'text'
+    AND length(json_extract(change_json, '$.type')) > 0),
+  source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (
+    json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+  PRIMARY KEY (organization_id, task_id, revision),
+  CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
+  CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (
+    json_type(change_json, '$.from') IS 'object' AND json_type(change_json, '$.to') IS 'object'
+    AND COALESCE(json_type(change_json, '$.from.assigned_team_id') IN ('text', 'null'), 0)
+    AND COALESCE(json_type(change_json, '$.from.assignee_id') IN ('text', 'null'), 0)
+    AND COALESCE(json_type(change_json, '$.to.assigned_team_id') IN ('text', 'null'), 0)
+    AND COALESCE(json_type(change_json, '$.to.assignee_id') IN ('text', 'null'), 0))),
+  FOREIGN KEY (organization_id, task_kind, task_id) REFERENCES record_refs(organization_id, kind, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, actor_id) REFERENCES employees(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TRIGGER task_events_no_replace BEFORE INSERT ON task_events
+WHEN EXISTS (SELECT 1 FROM task_events e WHERE e.organization_id = NEW.organization_id
+  AND e.task_id = NEW.task_id AND e.revision = NEW.revision)
+BEGIN SELECT RAISE(ABORT, 'task events are immutable; compare identical retries before insertion'); END;
+CREATE TRIGGER task_events_no_update BEFORE UPDATE ON task_events
+BEGIN SELECT RAISE(ABORT, 'task events are immutable; append a new event'); END;
+CREATE TRIGGER task_events_no_delete BEFORE DELETE ON task_events
+BEGIN SELECT RAISE(ABORT, 'task history must be retained'); END;
+
 CREATE INDEX documents_by_release ON documents(organization_id, release_id, kind);
 CREATE INDEX documents_by_deployment ON documents(organization_id, deployment_id, kind);
 CREATE UNIQUE INDEX one_release_changelog ON documents(organization_id, release_id) WHERE kind = 'changelog' AND release_id IS NOT NULL;
@@ -1047,6 +1089,7 @@ CREATE INDEX employees_by_team ON employees(organization_id, home_team_id);
 CREATE INDEX projects_by_owner ON projects(organization_id, owner_team_id);
 CREATE INDEX tasks_by_project_status ON tasks(organization_id, project_id, status);
 CREATE INDEX tasks_by_assignee ON tasks(organization_id, assignee_id, status);
+CREATE INDEX tasks_by_assigned_team ON tasks(organization_id, assigned_team_id, status);
 CREATE INDEX tasks_by_milestone ON tasks(organization_id, milestone_id);
 CREATE INDEX documents_by_scope ON documents(organization_id, project_id, feature_id, kind);
 CREATE INDEX milestones_by_release ON milestones(organization_id, release_id);

@@ -92,6 +92,8 @@ The parent work file must contain the referenced comment, and the asking employe
 
 Closing a record must not discard an unresolved question/span silently. The eventual lifecycle contract must choose its explicit disposition. Deriving durations from saved timestamps is possible without old runtime logs; full historical analytics and event retention remain separate decisions.
 
+Changes to a task's watchers, questions and waiting spans also append its [task activity history](12-task-assignment-and-history.md) in the same recoverable write. This retains the facts without selecting the old process engine, all analytics or Undo behavior.
+
 ## SQLite tables
 
 ```sql

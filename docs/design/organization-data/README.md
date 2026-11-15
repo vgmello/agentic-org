@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.6. This proposal specifies data relationships and storage. It does not change the implementation, authorize a migration, or select additional v1 capabilities for porting.
+Structural draft for v1. Document revision 2.7. This proposal specifies the selected data relationships and storage, including task assignment and activity history. It does not change the application implementation or authorize a migration.
 
 Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
 
@@ -11,15 +11,17 @@ Existing v1 designs remain the implementation reference until a migration is app
 | [Organization structure](01-organization-structure.md) | Organization, offices, team tree, roles, repository registrations, structural process/standard documents | Process-engine execution or replication algorithms |
 | [Project structure](02-project-structure.md) | Project ownership, repository associations, integration branches, releases/milestones and project/feature document records | Agent provisioning or task lifecycle engine |
 | [Features and work](03-features-and-work.md) | Feature definitions and linked knowledge, typed tasks, checklists, comments and links | Areas, advanced Undo or additional v1 workflows not selected yet |
-| [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement boundary | Agent setup; separate specification pending |
+| [Agent structure](04-agent-structure.md) | Employee identity, home team, relationships and placement boundary | Memory storage or consolidation implementation |
 | [Operational data](05-operational-data.md) | Watchers, owner questions and waiting spans | Notification delivery, timers, scheduling or process-engine behaviour |
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
 | [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
-| [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or full event history |
+| [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or organization-wide event history |
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 | [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or agent setup |
+| [Agent execution addendum](11-agent-execution-pools-addendum.md) | Execution configuration, connection pools, supervision, durable placement generations and setup/runtime contracts | Automatic scheduling, private memory consolidation or task lifecycle |
+| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter, immutable task activity and verified private task-note gap | Private task-note implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 
-Each document contains its own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines those tables with indexes and team-cycle checks. Load all sections together: cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
+The structural documents contain their own table diagrams, field sources, examples and table DDL. [schema.sql](schema.sql) combines documents 01–10 and 12 with indexes and invariant checks. Document 11 is a separately applied execution extension: load its SQL after `schema.sql` when validating that contract. It extends document 04's placement projection with durable fencing evidence and takes precedence for that execution behavior. Cross-document foreign keys are intentional. A diagram's unexpanded entities are references to their owning document.
 
 ## Shared identity contract
 
@@ -42,7 +44,7 @@ Numbered records persist `number`; SQL derives `key` as the prefix plus number. 
 
 Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
-`schema_version` selects the file format; `revision` is the entity's concurrency revision. Dates/timestamps are quoted strings in YAML. Domain rows inherit `organization_id` from `organization.yaml`. Nested comments, checklist steps, watchers, questions and waiting spans have stable IDs without counters. See [identity and numbering](06-identity-and-numbering.md) for allocation, durability and index contracts.
+`schema_version` selects the file format; `revision` is the entity's concurrency revision. Dates/timestamps are quoted strings in YAML. Domain rows inherit `organization_id` from `organization.yaml`. Nested comments, checklist steps, watchers, questions and waiting spans have stable IDs without counters. Task events retain the stable `(organization_id, task_id, revision)` identity described in document 12; revisions are not another readable-number allocation. See [identity and numbering](06-identity-and-numbering.md) for allocation, durability and index contracts.
 
 ## Common record contracts
 
@@ -71,7 +73,7 @@ The organization repository must be remote. Its tracked content is mirrored as o
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 
-SQLite is the indexed projection for domain records and accounting events. Accounting recovery additionally requires the durable usage archive; rates alone or organization Git alone cannot restore per-event history. Runtime placements, cache paths and worktree paths are deliberately transient. Existing authentication/credential storage remains a separate subsystem and is not made disposable by this schema. Durable files do not contain credentials.
+SQLite is the indexed projection for domain records, task activity and accounting events. Published task activity lives in organization Git under `work-history/tasks/`; acknowledged unpublished changes also require their durable journal. Accounting recovery additionally requires the durable usage archive; rates alone or organization Git alone cannot restore accounting per-event history. Cache paths and worktree paths are transient. Document 11 requires durable placement/fencing evidence before execution; recreating an office database does not authorize starting another copy of an agent. Existing authentication/credential storage remains a separate subsystem and is not made disposable by this schema. Shared organization files do not contain credentials or private notes, including notes attached to tasks.
 
 Structural import validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
@@ -83,6 +85,9 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | --- | --- |
 | Stable IDs | Preserve existing IDs; use UUIDv7 for new records, plus readable identifiers |
 | Tasks | One entity with required team, optional project and extensible type |
+| Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
+| Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |
+| Private task notes | V1's `note` is a shared comment; private task-note storage and access controls remain unimplemented, as documented in document 12 |
 | Readable references | `TEAM-`, `P-`, `T-`, `F-`, `R-`, `M-`; slugs/handles for selected identities |
 | Single home team, nested teams, lead authority | Include the agreed structure |
 | Offices | Durable organization records; support multiple offices |
@@ -96,8 +101,9 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Delivery | Release product changelog and content manifest; deployment technical changelogs, commit/flag snapshots; build artifacts remain out of scope |
 | Remote organization Git and local-only code repositories | Include both requirements |
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
-| Agent setup | Separate specification pending; do not port old setup automatically |
+| Agent setup/execution | Document 11 defines the execution extension; memory consolidation remains separate pending work |
+| Subscription connections | One connection per provider subscription, reused by office-local bindings and profiles; shared quota remains attached to that connection |
 | Process engine | Out of scope for now; retain process/standard content and scope metadata only |
-| Areas, advanced checklist workflows, Undo, full event history, budgets, retrospectives | Still unselected; do not silently port or delete them |
+| Areas, advanced checklist workflows, Undo, organization-wide event history, budgets, retrospectives | Still unselected; do not silently port or delete them |
 
-The SQL is a structural draft for the selected scope. Runtime startup, agent setup, mutation transitions, publication/replication, analytics retention and remaining v1 migration choices require their own approved contracts. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen.
+The SQL is a structural draft for the selected scope. Document 11 supplies its separate execution contract; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.

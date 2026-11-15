@@ -13,6 +13,7 @@ erDiagram
     projects ||--o{ feature_slugs : prefixes
     features ||--|| feature_slugs : exposes
     teams ||--o{ tasks : owns
+    teams o|--o{ tasks : assigned_team_id
     projects o|--o{ tasks : optionally_scopes
     features o|--o{ tasks : feature_id
     milestones o|--o{ tasks : milestone_id
@@ -54,6 +55,7 @@ erDiagram
         INTEGER schema_version "required"
         INTEGER revision "required"
         TEXT team_id FK "required"
+        TEXT assigned_team_id FK "optional"
         TEXT project_id FK "optional"
         TEXT type "required"
         TEXT work_type "optional"
@@ -83,8 +85,10 @@ erDiagram
     }
 ```
 
-- Every task requires `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's team must equal the project's owning team.
-- Creator, assignee and the assignee's home team do not determine ownership. A director may assign a team task to another director without creating an artificial project.
+- Every task requires owning `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's owning team must equal the project's owning team. Ownership determines its backlog/scope and numbering, not who must perform the work.
+- `assigned_team_id` and `assignee_id` are the current team and individual assignment. Both are nullable and independent of owning `team_id`. A task can be assigned to a team awaiting an individual, directly to an individual, to both, or to neither. New assignments must resolve to active teams/employees in the same organization; neither project contribution membership nor the individual's home team is an assignment restriction or an access grant. An employee's later home-team move does not silently change the task's assigned team.
+- Creator, assigned team, assignee and the assignee's home team do not determine ownership. A Payments-owned task can be assigned to Platform and Ana without changing its owner or number. A director may assign a team task to another director without creating an artificial project. Owning-team backlog queries use `team_id`; work queues use `assigned_team_id` and/or `assignee_id`.
+- The reporter/originator is the task's immutable `created_by_kind`/`created_by_id`, populated from the admitted actor. `updated_by_*` describes only the latest change. [Task assignment and history](12-task-assignment-and-history.md) preserves previous assignments, status changes and their actors/times; it also distinguishes a recorded fix/closure actor from the current assignee.
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
 - A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
@@ -109,6 +113,7 @@ number: 42
 type: bug
 work_type: build
 team_id: 01J00000000000000000000020
+assigned_team_id: null
 revision: 1
 project_id: 01J00000000000000000000010
 title: Prevent overlapping reservations
@@ -230,12 +235,12 @@ erDiagram
 | --- | --- |
 | `features` | `features/<id>/feature.md`: stable `id`, `number`, `local_slug`, revision fields, `project_id`, `title`, `status`, body; `key` and public full slug are derived. |
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
-| `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required `team_id`, optional `project_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. |
+| `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
 | `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
 | `comments` | `comments[]`: `id`, `author_kind`, optional `author_id`, `created_at`, `body_markdown`; position is array order. Owner authors have `author_kind: owner` and null `author_id`; actual login identity remains in the separate authentication/audit subsystem. |
 | `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
-| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. References describe historical identity and do not require live owner records. |
+| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](12-task-assignment-and-history.md) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
 Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
@@ -292,6 +297,7 @@ CREATE TABLE tasks (
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT NOT NULL,
+  assigned_team_id TEXT,
   project_id TEXT,
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   work_type TEXT CHECK (work_type IN ('build', 'run')),
@@ -315,6 +321,7 @@ CREATE TABLE tasks (
   CHECK (project_id IS NOT NULL OR (feature_id IS NULL AND milestone_id IS NULL)),
   UNIQUE (organization_id, project_id, number),
   FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, assigned_team_id) REFERENCES teams(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, project_id, team_id) REFERENCES projects(organization_id, id, owner_team_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, assignee_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id) DEFERRABLE INITIALLY DEFERRED,
