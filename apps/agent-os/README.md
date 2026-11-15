@@ -13,6 +13,21 @@ Building the new executable does not replace the installed live CLI or move/rese
 
 Use agent-os relay run/status directly. Legacy relay argv[0] dispatch remains compatible for existing deployments; a fresh release needs no relay alias or additional service executable.
 
+## Selected organization-data target (adapter work)
+
+The commands and Phase A/opt-in Phase B behavior below describe the current executable. [Messaging data](../../docs/design/organization-data/15-messaging-and-chat.md) and [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md) select the target model without adding new CLI commands or switching this spool.
+
+| Current behavior | Target mapping and remaining work |
+| --- | --- |
+| Spool profile/status and ORG_AGENT/ORG_OFFICE binding | Employee identity requires one home team; role/reporting are optional. Model profile, local connection credentials and office placement remain separate. Spool owner flags are Phase A compatibility data, never authenticated owner authority. |
+| Directed sends/replies and thread root IDs | Import original IDs as `directed_thread`, preserving per-message sender/recipient visibility, read/triage and pending asks. Participant unions must not reveal other directed messages or their counts/previews. Preserve original v1 hash/envelope separately from normalized hashes. |
+| Local spool / office message SQL | Protected durable conversation/message envelopes and attachments outside disposable office caches; SQL is a projection. Implement recoverable source writes/actor-bound receipts before acknowledgement. The Phase A flush limitation below remains real until verified cutover. |
+| Existing messaging/directory tools | Channel discovery, group conversations, typed task mutations and execution/budget commands require reviewed adapters/contracts; no syntax for those is implemented by this target description. |
+
+New IDs use UUIDv7; preserve old IDs and explicit legacy B-/REQ- mappings. Target task references are T- for every type, qualified as `P-8/T-42` or `TEAM-12/T-42` outside scope. A handoff is not task closure and cannot discard its worktree. Chat does not copy author-only private task notes or become project/feature knowledge automatically.
+
+The selected accounting/budget data (documents 10/17) requires durable usage/price/checkpoint history, incomplete-data labels and independent budget/manual/security holds. The own-agent CLI exception permits only the authenticated agent's current-task budget and own daily/monthly spent/remaining amounts; it grants no raw history or other-agent totals and does not advertise an available command here. Budget evaluation/automatic stopping and model-profile routing remain implementation work. Git alone cannot recover protected chat, usage, receipts, budget extensions or authority.
+
 ## Commands
 
 ```bash

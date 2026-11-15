@@ -2,10 +2,10 @@
 kind: spec
 title: "Employees: supervision, goals, harness identity and private delegates (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: owner
 created: "2026-11-09"
-updated: "2026-11-10"
+updated: "2026-11-15"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, ac-product-designer-eden, owner]
 builds_on: [agent-run-modes-ux, processes-ux, chat-ux, roles-ux, costs-and-insights-ux]
@@ -22,10 +22,14 @@ definitions so a delegate can use the employee's persona. An employee can also c
 private specialists and choose between those, a fresh copy of itself and a general
 purpose agent. Those choices are driven by organization processes, with defaults the
 organization can change. Processes are injected; standards are looked up. Tool help
-teaches the `org-agent` commands separately. Channels let an agent ask a team when it
+teaches the `agent-os` commands separately (the request used the legacy `org-agent` name). Channels let an agent ask a team when it
 doesn't know whom to ask, then continue with the right person in a DM.
 
-This is a requirements proposal, not a claim that these capabilities are implemented.
+Revision 3 reconciles the body with organization-data 04/10/11/14/16/17.
+Selected execution uses explicit logical turns/attempts and one main-process slot;
+automatic goals/reminders, native delegation, private memory and scheduling remain
+unselected. They are retained as specifically deferred proposals below, not launch
+prerequisites. No implementation is claimed.
 Runtime design: [`employee-supervision.md`](../design/employee-supervision.md).
 Process delivery: [`processes-ux.md`](processes-ux.md).
 Channels: [`chat-ux.md`](chat-ux.md), extended there rather than duplicated here.
@@ -43,14 +47,23 @@ runtime stop remains visibly pending until acknowledged.
 
 ## 0. Decisions (proposed)
 
+Selected foundation: an employee has one home team with optional role/reporting;
+execution.md selects its pool/model/tools/prompt independently of identity. People
+have no agent execution. Office placement has durable HQ generation/fencing and
+local credential bindings; it does not define team membership. One office worker
+owns the supervisor/router/session runner. Its one open turn/main-process slot is
+not relaxed for helpers. Profiles have 1–64 ordered connections, organization-wide
+subscription identity and shared permits; a fresh local catalog does not promise
+available capacity. The following additional behaviors are deferred proposals.
+
 1. **An employee is an organization member.** A private delegate, a memory helper and
    a temporary fork are internal work owned by that employee, not another hire, org
-   chart entry or independently scheduled employee. Existing role-based one-off runs
-   remain a separate feature (RUN-12).
-2. **Every office-managed employee has a supervisor outside the model.** It may be
-   part of the office process that launches the runtime; one additional OS daemon per
-   employee is not required. Its record persists while the employee is asleep or
-   paused. Monitoring needs no model turn. An employee started by a person shows
+   chart entry or independently scheduled employee. Role-based one-off runs
+   remain a separate deferred integration feature (RUN-12).
+2. **Every office-managed agent has supervision outside the model.** The selected
+   topology places it inside agentic-org-office; there is no employee daemon.
+   People retain employee profiles without an execution controller. Agent control
+   state persists through idle/paused periods; automatic sleep remains deferred. Monitoring needs no model turn. An employee started by a person shows
    **Started by a person · supervision unavailable** until adopted through a verified
    office launch; the app must not pretend to control it.
 3. **Mechanism in code, working habits in processes.** Code provisions the employee's
@@ -91,8 +104,14 @@ runtime stop remains visibly pending until acknowledged.
 
 ## 1. Flow · Inspect an employee
 
-Profile › **How it runs** keeps RUN's existing mode and defaults. Add a
-**Supervision** section with words and times, not color alone:
+The selected execution view identifies requested model/pool and actual attempt
+connection, logical turn state and placement office/generation with status age.
+Blocked routes show concrete readiness/permit reasons; uncertain effects show
+Recovery required and preserve the task/workspace. A human can inspect the attempt
+history without exposing credentials, private inputs or unauthorized cost amounts.
+
+The deferred **How it runs** proposal retains RUN's mode/default designs. Its
+**Supervision** section uses words and times, not color alone:
 
 - **Health:** “Responding · last event 20 s ago”, “Waiting for approval”,
   “Waiting on tool · deadline 14:30”, “Asleep” or “Unresponsive · probe timed out”.
@@ -104,7 +123,10 @@ Profile › **How it runs** keeps RUN's existing mode and defaults. Add a
   inside the employee, never extra roster rows.
 - **Memory:** last successful checkpoint and source run, “Collecting”, “Deferred:
   quota unavailable” or a concrete failure; never a success timestamp on failure.
-- **Controls:** the existing Pause, Resume, Interrupt and session log controls.
+- **Controls:** authorized Pause, Resume, Interrupt and log controls, when their
+  reviewed handlers exist. Desired Pause, stop pending and verified stopped are
+  separate; show every unresolved manual/security/budget reason. Resume cannot
+  clear another reason, and a budget extension releases only satisfied holds.
   Stopping an internal job uses the same authorization as controlling the employee.
 
 Changing a goal does not wake a paused employee, clear an approval, force a task
@@ -114,6 +136,9 @@ Activity records goal changes, failed recovery and resource-limit stops without
 dumping private prompts or memory text into routine logs.
 
 ## 2. Flow · Delegate under a process
+
+**Deferred native-delegation behavior.** No job launch/control support is implied
+by an employee record, execution config or process Markdown file.
 
 The default, overridable **Delegation and consultation** process asks the employee
 to consider whether a bounded task benefits from delegation, then choose:
@@ -137,11 +162,25 @@ No fresh-self job receives the main transcript merely because it shares a person
 
 ## 3. Flow · Recovery and memory
 
+Selected recovery reconciles protected journals/receipts and process identity before
+replacement. An attempt replays only with proof of no effects, or resumes using a
+verified compatible execution checkpoint with completed tool receipts; uncertainty
+remains Recovery required. Automatic retry to “check state” is insufficient.
+Cache/Git reconstruction cannot restore protected usage, holds, used extensions,
+chat or launch authority by itself. Old cleanup acknowledgement or a verified
+machine fence precedes a new HQ placement generation. Task workspaces survive
+handoff and turn completion until task closure or explicit safe migration.
+
+The additional health-reminder and semantic memory behaviors below remain deferred;
+a memory summary cannot serve as an execution checkpoint or effect receipt.
+
 - A known wait shows its reason and deadline; it is not treated as a frozen model.
 - Suspected unresponsiveness triggers a bounded non-model probe where available,
   then the configured interrupt/stop/recovery sequence. After the retry budget is
   exhausted, **Needs you** says what failed and offers the existing controls.
-- Pause is final until Resume. A crash-recovery policy never resumes a paused or
+- A manual pause remains until an authorized Resume releases that manual reason;
+  budget/security holds remain independent. A reached budget is stop pending until
+  worker acknowledgement and is not proof of a stopped process. A crash-recovery policy never resumes a paused or
   offboarded employee. During a person's take-over, the lease rules still apply;
   background reminders/helpers do not inject into the interactive conversation.
 - A checkpoint helper reads a fixed snapshot up to an identified event, returns a
@@ -154,20 +193,26 @@ No fresh-self job receives the main transcript merely because it shares a person
 
 ## 4. Requirements acceptance criteria (EMP)
 
-- EMP-1 · Every office-managed employee has a deterministic supervisor record independent of a model conversation; asleep and paused employees consume no monitoring model turns. Person-started sessions show the supervision limitation.
-- EMP-2 · Health distinguishes a known wait from unresponsiveness. A silent long tool run is not killed merely for producing no tokens; recovery has explicit deadlines and a bounded retry budget.
-- EMP-3 · An admitted goal change records actor/version and delivers at start, resume, wake, recovery and supported context reset. A new request to an office known to be offline is unavailable with no goal write or queued change; an already-forwarded unknown outcome stays Pending confirmation and lookup/retry uses the same ID. Test reconnect, duplicate submission and expected-version conflict; pending delivery is visible and paused agents remain paused.
-- EMP-4 · Every supported employee harness receives a generated replica file and verified native registration/selection. A missing or wrong definition is an explicit preflight failure, never silent general-purpose fallback.
-- EMP-5 · A fresh-self delegate has the employee's persona and required guidance but no inherited transcript by default; its work remains attributed to its owning employee.
-- EMP-6 · An employee can create, inspect, revise and use its private specialists without creating members or editing another employee's definitions; the owner can inspect them.
-- EMP-7 · Delegation choices and specialist creation are driven by a seeded, overridable Markdown process. Changing that process changes guidance without a runtime code deployment; code never mandates one delegate type for a semantic task category.
-- EMP-8 · The parent remains responsible for internal work and its outputs. Internal jobs cannot gain more permissions, channels, credentials or spending authority than their parent grant.
-- EMP-9 · Every internal job has an owner, parent run, definition revision, lifecycle and metered or explicitly unknown usage. Descendants share aggregate budgets; unknown usage is never shown as zero.
-- EMP-10 · Pause, offboard, relocation, run end and office crash reconcile and clean up owned jobs and subprocesses before replacement work starts. PID reuse and unrelated user processes are handled by the existing verified ownership checks.
-- EMP-11 · A memory helper uses a bounded snapshot/fork with no project write tools, exits or is cancelled by deadline, and cannot overwrite newer memory. Main work continues unless the existing session lock requires serial execution.
-- EMP-12 · Memory failures preserve the last good checkpoint. Helpers and reminders cannot bypass quota, permissions, take-over leases or pause, and cannot create recursive helper work.
-- EMP-13 · How it runs exposes health evidence, goal delivery, internal work and checkpoint outcomes accessibly; controlling jobs or goals respects the same caller authorization as controlling the employee or linked work.
-- EMP-14 · Runtime capability checks cover registration, isolation, descendant accounting/cancellation and instruction delivery. Unsupported delegation is visible and follows the process fallback; unsupported safety guarantees never cause restrictions to be disabled.
+Selected portions below remain requirements for the unimplemented execution
+integration; deferred portions preserve the earlier UX without selecting engines.
+Cost access follows COST-7/document 17: owner-only agent browser totals/history,
+project-scoped PM amounts and the authenticated own-agent CLI exception only.
+Unknown usage is incomplete, never zero; release warning caps never stop work.
+
+- EMP-1 · **Selected execution foundation; asleep/scheduled persistence remains deferred.** Each placed runnable agent has a deterministic controller inside the office worker, independent of its model conversation. People have no execution controller. Idle/paused monitoring uses no model turns; person-started sessions show the supervision limitation.
+- EMP-2 · **Selected safe observation; automatic investigation/restart policy deferred.** Health distinguishes a known wait from unresponsiveness. A silent long tool run is not killed merely for producing no tokens; recovery has explicit deadlines and a bounded retry budget.
+- EMP-3 · **Deferred goal delivery/reminders.** An admitted goal change records actor/version and delivers at start, resume, wake, recovery and supported context reset. A new request to an office known to be offline is unavailable with no goal write or queued change; an already-forwarded unknown outcome stays Pending confirmation and lookup/retry uses the same ID. Test reconnect, duplicate submission and expected-version conflict; pending delivery is visible and paused agents remain paused.
+- EMP-4 · **Deferred reusable native replica behavior; admitted launch identity validation still required.** Every supported employee harness receives a generated replica file and verified native registration/selection. A missing or wrong definition is an explicit preflight failure, never silent general-purpose fallback.
+- EMP-5 · **Deferred native delegation.** A fresh-self delegate has the employee's persona and required guidance but no inherited transcript by default; its work remains attributed to its owning employee.
+- EMP-6 · **Deferred private specialists; owner inspection never extends to author-only private task notes.** An employee can create, inspect, revise and use its private specialists without creating members or editing another employee's definitions; the owner can inspect them.
+- EMP-7 · **Deferred process-driven delegation and inherited resolution.** Delegation choices and specialist creation are driven by a seeded, overridable Markdown process. Changing that process changes guidance without a runtime code deployment; code never mandates one delegate type for a semantic task category.
+- EMP-8 · **Deferred internal jobs; the no-authority-widening restriction remains selected for all launches.** The parent remains responsible for internal work and its outputs. Internal jobs cannot gain more permissions, channels, credentials or spending authority than their parent grant.
+- EMP-9 · **Selected actual-route accounting/unknown labels; child-job model deferred.** Every chargeable attempt retains actual consumer/connection/model attribution and known/incomplete usage. Failed attempts remain counted without overlapping parent/component double counting. A future child-job extension must retain owner/parent/definition/lifecycle and shared limits; unknown usage is never zero.
+- EMP-10 · **Selected cleanup/fencing for main processes and descendants; native job lifecycle deferred.** Pause, offboard, relocation, process stop and office crash reconcile marked ownership before replacement. Verify boot/start identity and captured descendants; a restored PID or timeout cannot authorize a signal or new placement. Handoff preserves task worktrees; turn success does not require killing a compatible idle process. Native-job completion rules remain deferred.
+- EMP-11 · **Deferred semantic memory extraction.** A memory helper uses a bounded snapshot/fork with no project write tools, exits or is cancelled by deadline, and cannot overwrite newer memory. Main work continues unless the existing session lock requires serial execution.
+- EMP-12 · **Selected quota/hold/permission boundaries; memory/reminder behavior deferred.** Memory failures preserve the last good checkpoint. Helpers and reminders cannot bypass quota, permissions, take-over leases or pause, and cannot create recursive helper work.
+- EMP-13 · **Selected turn/attempt/readiness/stop-pending presentation; goals/internal-work/memory panels deferred.** Display logical turn, actual attempts, readiness reasons, fresh/stale office observations and pending versus verified stop in text accessible to assistive technology. Apply employee/work authorization and amount visibility to every control/view. Additional goal/internal-work/memory panels retain the same boundary when separately selected.
+- EMP-14 · **Selected production-driver conformance; native-delegate capability suite deferred.** Runtime capability checks cover registration, isolation, descendant accounting/cancellation and instruction delivery. Unsupported delegation is visible and follows the process fallback; unsupported safety guarantees never cause restrictions to be disabled.
 
 ## 5. Questions for implementation review
 
@@ -175,4 +220,5 @@ No fresh-self job receives the main transcript merely because it shares a person
 - What default probe deadlines, reminder interval, helper size/time caps and aggregate resource ceilings fit the measured runtimes? Keep them explicit, bounded and inspectable; do not invent a per-agent limit editor while RUN-6 exposes organization defaults only.
 - What memory schema and retention rules should checkpoint candidates use? The invariants in §3 and EMP-11/12 apply whichever storage format is chosen.
 
-These questions refine the implementation; the requested behavior is recorded above.
+These questions remain open for the deferred proposals. They do not authorize a
+scheduler/memory/delegate engine or alter the selected execution data contract.

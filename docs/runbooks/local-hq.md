@@ -1,286 +1,182 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
-For selected data ownership and current executable availability, use the [authority map](../design/documentation-authority.md). The historical debug walkthrough below is not an installer, a target worktree layout or proof of messaging/recovery/budget migration. Preserve live spool/credentials and durable operational sources when following any separately verified replacement runbook.
+Status: **source-checked development guidance, 2026-11-15; full HQ setup blocked**.
+The current names are `agentic-org`, `agentic-org-office`, `agentic-org-web` and
+`agent-os`. Host code is `crates/org-host`. Tauri is removed. This runbook can
+inspect/build the current entry points and run a disposable foreground host; it
+cannot complete organization creation, service installation or a production browser
+session on this branch. [Executable migration](../design/executable-migration.md)
+and [the authority map](../design/documentation-authority.md) separate current code
+from the selected organization-data target.
 
-
-**Target install amendment (2026-11-15):** current planned onboarding is agentic-org setup, which creates HQ only, verifies components and registers/starts its service automatically. Satellite onboarding is initiated later from HQ. The service entry point is agentic-org serve; helpers are agentic-org-web, agentic-org-office and agent-os. These commands are requirements, not verified instructions for the historical debug build below. See [current standalone setup](../design/standalone-server.md#4-setup-and-service-lifecycle).
-
-**Current source names (2026-11-15):** the worker is `apps/agentic-org-office` /
-`agentic-org-office`, the browser UI is `apps/agentic-org-ui` / `agentic-org-ui`,
-and the host is `crates/org-host`, composed by `agentic-org serve`. The Tauri shell
-is removed. All debug instructions below retain historical baseline names and
-cannot be run verbatim against the current tree. See
-[executable migration](../design/executable-migration.md) for working entry points;
-HQ setup/service registration and production web handoff remain unavailable.
-
-**V1 direction changed 2026-11-09:** the target is a standalone Rust server
-on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
-See the [server design](../design/standalone-server.md) and [deletion inventory](../design/standalone-server-removal-inventory.md).
-This documentation change specifies the pivot; the source described below is the
-inspected pre-pivot implementation. Its Tauri/bundle commands are historical
-development instructions, not installation instructions for the new v1. Do not
-claim the new CLI, HTTP server or remote sync exists until implemented. No migration
-of the undeployed desktop app or its data is required.
-
-Status: draft (River, 2026-11-08), for ada's switchover from the mock to the real `org-office-host` and an HQ
-`org-server`, from **debug builds**, and an end-to-end check. Nothing here is signed or bundled. Each claim
-not checked against a run is marked "(unverified: …)".
+The superseded 2026-11-08 Tauri/bundle walkthrough is available in
+[Git history](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/runbooks/local-hq.md).
+Its `org-office-host`, `org-server`, `tauri dev`, sessionless create and app-token
+instructions cannot be run against the current checkout. Do not recreate them by
+bypassing the protected bootstrap gate.
 
 ## 0. Before you start: the tree must hold both halves of key custody
 
-The host side (the tip of `river/host-keys`) and the server side (`server-dev/server-key-custody`, `da54892`) are
-**not in `origin/v1` yet** (2026-11-08). They merge cleanly (`git merge-tree`), but that merge hasn't been built.
-With the host side alone, `org-server` still has its own key store: a default build reads and writes the
-**login Keychain** (service `org.agentic.office`) and ignores the key on the launch pipe, and a `--features dev-keys`
-build refuses to start, because the host passes no `ORG_OFFICE_DEV_KEY_DIR` to its servers. Check first:
+The office key is host-owned and supplied over launch v2; `office.json` remains
+schema v1. Check `crates/org-office-launch/src/lib.rs`, `crates/org-host/src/keys/`
+and `apps/agentic-org-office/` at the checkout being used. Preserve
+`org.agentic.office-key`, required signing identifiers/entitlements and existing
+`ORG_AGENT`/`ORG_OFFICE` bindings; executable renames do not rename credentials.
+Never substitute a generated key for an existing office whose legitimate key is
+missing. Debug keys are plaintext fixture files, not a release credential provider.
 
-```sh
-export REPO=/path/to/checkout   # holds both branches, e.g. v1 after both merges
-cd "$REPO"
-git merge-base --is-ancestor origin/river/host-keys HEAD && git merge-base --is-ancestor da54892 HEAD && echo "both halves: ok"
-test ! -e apps/org-server/src/keys.rs && echo "server: keys only from the launch pipe"
-```
-
-Stop if either line prints nothing.
+Current `apps/agentic-org/src/lib.rs` explicitly refuses `setup` before changing
+setup state. `apps/agentic-org-web/src/main.rs` refuses production startup without
+protected handoff. `crates/org-host/src/service/mod.rs` admits only registered-instance
+`hello` and count-only `instance.status`; it refuses every call when the instance
+is unregistered. Retired sessionless create/list/token calls are not a bootstrap
+workaround. Do not edit registry/DB/marker files by hand to make them available.
 
 ## 1. One folder for everything dev, apart from a real install
 
-A future real install uses the default home `~/Library/Application Support/agentic.org`
-(`org_proto::location::default_office_home`), the Keychain (service `org.agentic.office-key`) and the launchd label
-`org.agentic.office-host`. The dev setup uses none of them:
+Use an empty, short, owner-private disposable root, never a user's office home,
+Keychain items, installed CLI or live Phase A spool. In a development terminal:
 
 ```sh
-export DEV="$HOME/agentic-org-dev"
-export ORG_OFFICE_HOME="$DEV/home"          # the host, its servers, the app and org-client all find host.sock here
-export ORG_OFFICE_DEV_KEY_DIR="$DEV/keys"   # debug host only: office DB keys as plain files
-mkdir -p -m 700 "$DEV" "$DEV/bin" "$DEV/logs" "$DEV/keys"
+export HQ_REPO="$(pwd -P)"  # run at the repository root
+export HQ_DEV="$(mktemp -d /tmp/ao-hq.XXXXXX)"
+chmod 700 "$HQ_DEV"
+mkdir -m 700 "$HQ_DEV/control" "$HQ_DEV/keys" "$HQ_DEV/logs"
+export ORG_OFFICE_HOME="$HQ_DEV/control"
+export ORG_OFFICE_DEV_KEY_DIR="$HQ_DEV/keys"
 ```
 
-- The office home rule: `ORG_OFFICE_HOME` if it is an absolute path, otherwise `$HOME/Library/Application Support/agentic.org`.
-  A debug host also takes `--home <abs path>`, which wins over the variable, but the app and clients only read the
-  variable, so **use the variable only** and export it in every terminal that runs the host, the app or a check.
-- `ORG_OFFICE_DEV_KEY_DIR` (`apps/org-office-host/src/keys/mod.rs`, `dev_store`): required by a debug host (it
-  refuses to start without it, so it never writes a Keychain item); absolute (a relative one is resolved against
-  the host's working directory); **not inside the office home** (checked lexically and canonically). Keys are
-  `<dir>/<office id>.key`, 64 hex digits, mode 0600, and the folder is made 0700. Don't share one key folder between
-  two homes. Release builds ignore it.
-- Socket paths must fit 103 bytes: `$ORG_OFFICE_HOME/run/<12 chars>.sock`. The host checks this at startup and
-  refuses to start, so a deep home path (e.g. one under a long project folder) fails: keep `$DEV` short.
-- The home must be a real folder owned by you, **not a symlink** (the host refuses to start on one, as on any home
-  it can't make owner-only).
-- Shared with a future real install: the app's data folder for `com.ellosoft.agentic-org` (remembered
-  connections under `real/`, the login-item "off" marker) (unverified: Tauri's `app_data_dir`,
-  `~/Library/Application Support/com.ellosoft.agentic-org`).
+Keys must be outside the office home, with no symlink/alias to it. Use one key
+folder per home. Keep the generated path for later terminals; do not rerun mktemp
+to reconnect to an existing host. Socket paths, including the 12-character office
+handle, must fit macOS's 103-byte limit. The development control root is current
+implementation evidence, not the target `runtime/<office-id>` data layout.
 
 ## 2. Build (debug)
 
-The host takes the dev app's executable path **at compile time** (`option_env!("ORG_DEV_APP_PATH")`, main.rs). Cargo
-records it as a build dependency, so changing it rebuilds the host. `tauri dev` runs the **unbundled** binary
-`agentic-org` (package `agentic-org`, `src-tauri/src/main.rs`) from the workspace target folder, so that file is
-what `proc_pidpath` reports (unverified: check with step 6's `ps` line; with `CARGO_TARGET_DIR` set it is under that).
+Use the repository's pinned toolchain and platform prerequisites. These are
+commands for a prepared development Mac; this documentation edit does not claim
+they were run or that Linux release key custody is complete.
 
 ```sh
-cd "$REPO"
-export ORG_DEV_APP_PATH="$REPO/target/debug/agentic-org"
-cargo build -p org-office-host -p org-server        # no features: none is needed or wanted
-cp target/debug/org-office-host target/debug/org-server "$DEV/bin/"
-strings "$DEV/bin/org-office-host" | grep -F "$ORG_DEV_APP_PATH"   # the path is compiled in
+cargo build --locked -p agentic-org -p agentic-org-office -p agentic-org-web -p agent-os
+./target/debug/agentic-org --help
+./target/debug/agentic-org --version
+./target/debug/agentic-org serve --help
+./target/debug/agentic-org-office --help
+./target/debug/agentic-org-web --help
+./target/debug/agent-os --help
 ```
 
-- Binaries land in `$REPO/target/debug/`. Copy them out: any later `cargo build`/`cargo test` in `$REPO` without
-  `ORG_DEV_APP_PATH` rewrites `target/debug/org-office-host` without the fallback.
-- `org-office-host`'s other binary, `fake-office-server`, needs the `test-support` feature, which only tests turn on.
-- `--app-team-id` (debug only) and `ORG_APP_TEAM_ID` (build time) are for a signed app. Leave both unset: the host
-  logs `WARNING: no app team id`, which is expected here.
-
-The desktop app (Tauri 2 + SvelteKit, bun). `bun run tauri dev` starts Vite on `http://localhost:1420`
-(`beforeDevCommand`), builds the Rust shell in debug and runs it. Build the binary once now, so it exists when the
-host starts:
-
-```sh
-cd "$REPO/apps/agentic-org-ui" && bun install
-cd "$REPO" && cargo build -p agentic-org     # or: run `bun run tauri dev` once and quit it
-test -x "$ORG_DEV_APP_PATH" && echo "dev app: ok"
-```
-
-(unverified: a plain `cargo build -p agentic-org` writes the same file `tauri dev` runs.)
+There is no `org-host` executable to build or install. Test-only fake workers are
+not release helpers. Do not copy the new `agent-os` over the team's installed live
+CLI or change its spool/context. `ORG_DEV_APP_PATH` is a historical debug-only
+signed-app fallback, not a way to authorize a browser or human CLI in this run.
 
 ## 3. Start the host
 
-The app does **not** start the host in-process. When `hello` to `host.sock` fails it asks `SMAppService` for the
-bundled login item (`src-tauri/src/login_item.rs`, plist `src-tauri/launch-agents/org.agentic.office-host.plist`).
-That only works from a bundle, and the bundled host is a release build that can't start yet (section 9). So for dev,
-start the host yourself **before** the app. It then answers `hello` and the app never touches `SMAppService`.
-
-**Recommended: A, in a terminal.** Logs are on screen and Ctrl-C stops everything.
+In the same terminal, run the debug host in the foreground against the disposable
+root. This creates development host control state and logs, not an HQ organization
+or registered production service:
 
 ```sh
-"$DEV/bin/org-office-host" --server-bin "$DEV/bin/org-server" 2>&1 | tee -a "$DEV/logs/host.log"
+./target/debug/agentic-org serve \
+  --home "$ORG_OFFICE_HOME" \
+  --server-bin "$HQ_REPO/target/debug/agentic-org-office"
 ```
 
-Expect the lines `org-office-host: DEVELOPMENT FALLBACK (debug build only): office.app_token and office.restart also
-accept <path> …` and `no orphan-key sweep for …`. If you see `the development fallback is off: …`, the app binary was
-missing or isn't a file: build it, then restart the host. Stop with Ctrl-C (SIGINT, or SIGTERM): the host closes
-every server's stdin, kills any still running after 10 s, removes `host.sock` and releases `host.lock`.
-
-**B: a dev LaunchAgent**, if the host must outlive the terminal. It uses its own label and stays out of
-`~/Library/LaunchAgents`, so it is never loaded at login (unverified: `launchctl bootstrap` of a plist kept elsewhere).
-
-```sh
-cat > "$DEV/org.agentic.office-host.dev.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>org.agentic.office-host.dev</string>
-  <key>ProgramArguments</key><array>
-    <string>$DEV/bin/org-office-host</string><string>--server-bin</string><string>$DEV/bin/org-server</string>
-  </array>
-  <key>EnvironmentVariables</key><dict>
-    <key>ORG_OFFICE_HOME</key><string>$DEV/home</string>
-    <key>ORG_OFFICE_DEV_KEY_DIR</key><string>$DEV/keys</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>10</integer>
-  <key>ExitTimeOut</key><integer>20</integer>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>StandardErrorPath</key><string>$DEV/logs/host.log</string>
-  <key>StandardOutPath</key><string>$DEV/logs/host.log</string>
-</dict></plist>
-EOF
-plutil -lint "$DEV/org.agentic.office-host.dev.plist"
-launchctl bootstrap gui/$(id -u) "$DEV/org.agentic.office-host.dev.plist"
-launchctl print gui/$(id -u)/org.agentic.office-host.dev | grep -E "state|pid"
-```
-
-Stop and unload: `launchctl bootout gui/$(id -u)/org.agentic.office-host.dev` (SIGTERM; with `KeepAlive`, a plain
-`kill` only restarts it). Run only one host per home: a second one exits with `another org-office-host is already
-running for …`.
+The process remains attached until SIGINT/SIGTERM. Release builds reject these
+trust-changing overrides and require packaged signing/key-provider validation.
+The host owns locks and worker supervision; an agentic-org-web listener is not
+started by this debug command. Do not mistake the existence of `host.sock` for
+HQ readiness.
 
 ## 4. A command-line client for host.sock
 
-The wire format is one compact JSON object per line (`crates/org-proto/src/frame.rs`): request `{"id","method","params"}`,
-response `{"id","result"}` or `{"id","error"}`. No CLI in the repo sends host calls: `org-agent` only uses the local
-spool, and `org-client` is a library. The host answers every request on the connection. This script reads one response line
-for its one request, so it doesn't depend on the host closing the connection after a half-close (hosts before the
-fix of 2026-11-08 never did, so a read-to-EOF client hung):
-
-```sh
-cat > "$DEV/hostcall.py" <<'EOF'
-import json, socket, sys
-path, method = sys.argv[1], sys.argv[2]
-params = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
-s = socket.socket(socket.AF_UNIX); s.settimeout(45); s.connect(path)
-s.sendall((json.dumps({"id": 1, "method": method, "params": params}, separators=(",", ":")) + "\n").encode())
-f = s.makefile("rb")
-for line in f:  # events may come first (after `subscribe`): print up to the answer
-    message = json.loads(line); print(json.dumps(message, indent=2))
-    if message.get("id") == 1: break
-EOF
-python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" hello
-```
-
-`hello` answers `api_version` 1 and the capabilities `office.app_token`, `office.restart`, `office.status_changed`.
-(unverified: `/usr/bin/python3` needs the Xcode command line tools.)
+Do not use the old raw `organization.create` example. The private host-control
+protocol has its own versioned hello/range handshake and a registered-instance
+requirement. Count-only status does not grant access to organization records or
+provisioning. Use checked host-control clients/tests for diagnostics on a legitimately
+registered development instance. A fresh root here has no such registration, so
+`not_authorized` is expected, even for hello. Setup is the missing authorized
+provisioner; inventing a registry entry is not part of this runbook.
 
 ## 5. Create "Agentic Consulting"
 
-**From the app (the real check):**
+**Blocked on this branch.** The selected [create flow](../design/create-organization.md)
+requires an instance administrator, explicit organization slug, remote organization
+repository and state branch, and valid chosen home teams for bootstrap HR/optional
+owner-person profiles. Employee identity, execution profile/model/connection bindings
+and current office placement are separate. HR cannot become runnable from a
+teamless profile or a missing execution configuration.
 
-```sh
-cd "$REPO/apps/agentic-org-ui"
-AGENTIC_ORG_OFFICE=real bun run tauri dev     # ORG_OFFICE_HOME must be exported in this terminal
-```
-
-`AGENTIC_ORG_OFFICE=real` selects the real office on this branch. On `v1` it is already the default, and only
-`=mock` picks the mock. In the app: Welcome → **Create organization** → *Organization name* `Agentic Consulting`
-→ **Create organization**. The steps "Start the office on This Mac" (`hello`) and "Create Agentic Consulting" send
-`organization.create` (`src/lib/create-flow.ts`, `RealOffice::create_organization`). The host holds a create up to 30 s.
-
-**Fallback without the app:** `organization.create` isn't app-only, so any process of this user can send it:
-
-```sh
-python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" organization.create '{"name":"Agentic Consulting"}'
-```
-
-The org then shows under **Organizations on this Mac** on the Welcome screen. Send a create once only: a second
-one answers `already_exists`.
+Initial `agentic-org setup` must eventually perform HQ-only provisioning, protected
+recovery-code staging, component verification and automatic service registration.
+Offline setup must validate the remote URL/branch and local credential references
+without external fetch/auth/provider requests, keeping remote connectivity/publication
+unverified until authorized online; local HQ readiness cannot claim remote success.
+It currently reports that bootstrap/service integration is unavailable. Satellite
+enrollment remains a separate HQ-issued flow. The current published name-only HTTP
+request and launch-v2 create line do not carry the complete selected plan; their
+reviewed adapters are required. No replacement wire fields are invented here.
 
 ## 6. Check it works
 
-```sh
-python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" office.list         # the HQ: "role": "hq", "status": "active"
-python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" organization.list   # Agentic Consulting with its HQ
-ls "$ORG_OFFICE_HOME/offices" "$ORG_OFFICE_HOME/run" "$ORG_OFFICE_DEV_KEY_DIR"   # <id>/, <handle>.sock, <id>.key
-ps -axo pid,comm | grep -E "org-office|agentic-org"   # the app's path must equal ORG_DEV_APP_PATH
-```
+A successful debug host start proves only that its foreground composition can
+open the chosen development control root. It is not an installer, browser-auth,
+remote-sync or execution acceptance pass. The eventual HQ run must establish:
 
-- The office is active: `status` is `active` with no `status_reason`. `starting` means wait a moment.
-  `unavailable` with `key_missing` means the host has no key for it (section 8).
-- The app shows the org: it opens into the shell, the org chart loads, and **Offices** shows HQ as active. Opening
-  needs `office.app_token` (the office refuses `org.snapshot` without the app's bind), so the host log must show
-  `DEVELOPMENT FALLBACK: an app-only call was allowed for the unsigned <path>`. A `not_authorized` there means the
-  app's executable isn't exactly `ORG_DEV_APP_PATH`: fix the path, rebuild the host (step 2), copy it, restart it.
+- Canonical remote organization Git/slug/branch and valid one-home-team employees;
+  security-principal ownership remains independent of employee flags.
+- Separate server and agent readiness, ordered model-profile routes, fresh local
+  credential/entitlement evidence, shared permits and durable placement fencing.
+- Authenticated browser snapshot/event continuity, one logical result after a
+  lost reply, and no privileged key exposure through gateway/CLI.
+- Durable sources and acknowledged recovery evidence surviving cache loss without
+  broadening message/private-note/cost access or duplicating execution.
+
+Use [dogfood §6a](../specs/dogfood-run.md#6a-selected-data-and-recovery-checks) for
+concrete selected-model checks. Record missing capabilities as Blocked, not N/A or
+passed because a static page loads.
 
 ## 7. Logs
 
-| What | Where |
-| --- | --- |
-| Host | its stderr, lines starting `org-office-host:`: the terminal (A) or `$DEV/logs/host.log` (A with `tee`, B) |
-| Each office server | `$ORG_OFFICE_HOME/logs/<handle>.log` (the last 12 characters of the office id), rotated at 10 MiB to `.log.1`. The file appears only once that server first writes to its stderr |
-| App (Rust shell) | stderr of the `bun run tauri dev` terminal (no log plugin) |
-| App (UI) | the WebView's console (unverified: right-click → Inspect in a debug build) |
+Use the foreground stderr and the host's owner-private logs under the selected
+control root. Worker logs are keyed by their current office handle when a worker
+exists. Missing key/provider, malformed marker, refused create and recovery-required
+state must stay distinct. Diagnostic evidence may include fixture IDs, release and
+safe status; it must exclude key bytes, passwords, invitations, session proofs,
+private notes and recovery codes. A normal status response is not a backup.
 
 ## 8. Stop and clean up
 
-1. Quit the app (closing the window only hides it: quit from the menu bar, or Ctrl-C in its terminal).
-2. Stop the host: Ctrl-C (A), or `launchctl bootout gui/$(id -u)/org.agentic.office-host.dev` (B). Its office
-   servers stop with it. Check: `pgrep -fl org-office` prints nothing.
-3. Remove the dev setup:
+Send Ctrl-C to this foreground host or SIGTERM to its verified process. Wait for
+it to finish draining and reap its owned descendants; do not kill all processes
+with a shared executable name. Host EOF, office locks and process ownership remain
+necessary after a restart. Never signal a restored PID without matching ownership
+mark, generation and machine/boot/start identity.
 
-```sh
-rm -f "$DEV/org.agentic.office-host.dev.plist"
-rm -rf "$DEV/home" "$DEV/keys"     # or the whole "$DEV"
-```
+Remove only the exact disposable root created in §1 after confirming its host and
+children stopped and it contains no real data. Do not transplant a recursive-delete
+command to an existing office or sweep its credentials. A real target office cache
+can be rebuilt only after checking complete authorized durable sources: organization
+Git plus unpublished journals, allocation/authority and execution records, protected
+messages/attachments, receipts/streams/snapshots/cleanup, usage archive, budget
+history/extensions/holds and the separate author-private notes store. Rebind
+legitimate credentials and reconcile processes before starts. Missing coverage
+must stop affected recovery; Git alone cannot fabricate continuity.
 
-- **Deleting a key makes its office unreadable forever.** The databases are SQLCipher, and the key is only in
-  `$DEV/keys`. Delete the keys only together with the home they belong to.
-- **Dev offices made before key custody** were keyed by the server, in the login Keychain (service
-  `org.agentic.office`, account = office id). The host never reads those, so such offices show `unavailable` /
-  `key_missing` and must be created again. Removing the old items is optional. List the ids first, then per id
-  (not run while writing this runbook):
-
-```sh
-security delete-generic-password -s org.agentic.office -a <office id>
-```
+Task worktrees survive handoff until closure. Preserve local-only/unpushed code
+checkpoints before any safe workspace migration or cleanup. Uninstalling a service
+retains its data and is distinct from deleting this empty fixture root.
 
 ## 9. Known gaps for the switchover
 
-1. **Unmerged:** the host and server halves of key custody (section 0) aren't on `v1`, and their merge hasn't been
-   built or tested.
-2. **No signing:** no Developer ID, no `ORG_APP_TEAM_ID`, no `keychain-access-groups` entitlement. A **release** host
-   refuses to start without `ORG_HOST_KEYCHAIN_GROUP` and the matching entitlement, so `bun run install:dev`
-   (release host, ad-hoc signed, registered through `SMAppService`) builds a login service that can't start today.
-   `stage-office.sh` and `INSTALLING-THE-OFFICE.md` still mention `river/office-host`. A release host also gives an
-   office's key only to a server signed as `com.ellosoft.agentic-org.org-server` with the team's Developer
-   ID and the hardened runtime (the host itself is `com.ellosoft.agentic-org.org-office-host`), and with no
-   `ORG_APP_TEAM_ID` compiled in it starts no server at all; the bundle's signing doesn't set those identifiers
-   yet. **On the first signed bundle, check** that the release host admits its own hardened Developer ID server
-   (the host's log says nothing like `refused office server`, and the office becomes active): the check takes
-   the suspended child's audit token through `task_name_for_pid`, which the tests could exercise only on Apple's
-   own binaries from an unsandboxed test process. If it's refused, every office stays offline.
-3. **The app can't start a dev host:** the registration (`SMAppService.agent`) works only from a bundle and runs the
-   bundled release host. A dev run relies on the host from section 3 (unverified: what `SMAppService` reports
-   to an unbundled `tauri dev` binary; expect "The office isn't installed" if the host is down).
-4. **Dev-only fallback:** the app-only calls trust an unsigned app by its exact path, a debug-build-only check fixed
-   at compile time. Every change of the path, or of the target folder, needs a host rebuild and restart.
-5. **Orphan-key sweep is off in debug builds** (logged at startup): removing an office folder by hand leaves its
-   `<id>.key` in `$DEV/keys`. Release builds sweep at startup, on the account's own office home only: an orphaned
-   key is marked first (`<home>/orphan-keys.json`) and deleted only if it's still orphaned at a start 7 or more
-   days later.
-6. **The host's own log is stderr only.** The bundled plist has no `StandardErrorPath`, so under launchd it is
-   lost (unverified: launchd discards it). The draft in River's notes says the host logs under `<home>/logs/`, but
-   only the office servers do.
-7. **`org-agent` doesn't talk to the host yet** (spool only), and there's no CLI for host calls besides
-   `hostcall.py` above.
-8. The app's data folder is shared with a future real install (section 1).
+Protected administrator/bootstrap, HQ setup/service registration, production web
+handoff, reviewed target create adapter, selected source extraction/restore and
+runtime-path sandbox migration remain implementation gates. Satellite networking
+and selected profile/permit/session-runner integration need their own evidence.
+Manual HQ-loss recovery remains REC-1; an escrow round-trip is not promotion.
+Automatic promotion, scheduling/memory, Areas, Undo and process execution are not
+selected by this runbook. Keep active Phase A communication intact until its
+separately verified conditional transport cutover.

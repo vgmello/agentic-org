@@ -2,7 +2,7 @@
 process: decide-and-escalate     # the match key for overrides, unique per level and scope
 name: Decide, consult, escalate
 kind: process
-level: organization          # organization | team | project | agent (private)
+level: organization          # repository seed metadata; selected structural scopes are organization | team | project
 version: 1
 owner: ada (Staff Engineer)
 status: active
@@ -11,9 +11,17 @@ applies_to: every agent
 overridable: false            # sealed: §3's critical list is a floor. A team or project adds its own items in a process with another key
 ---
 
-> The user's standard procedure (2026-11-09). Kept in this repository (`docs/processes/`) until the organization's handbook repository exists.
+> The user's standard procedure (2026-11-09). Kept in this repository (`docs/processes/`) as repository contributor instructions; selected organization process records belong in the remote organization repository.
 
 # Decide, consult, escalate
+
+These instructions govern work on this software repository. Their legacy seed
+front matter is not an accepted organization-data payload. When materializing a
+selected process record, use the stable-ID path, `key`, `schema_version`, `revision`,
+`kind`, `title`, scope IDs, lifecycle and attribution fields in
+[organization structure](../design/organization-data/01-organization-structure.md).
+Preserve the explicit `overridable` value. That structural mapping neither
+activates a process engine nor changes this repository's review requirements.
 
 How every agent makes decisions. The goal: work keeps moving, people are asked only what truly needs them.
 

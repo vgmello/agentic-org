@@ -12,6 +12,18 @@ The event tests assert the frozen SHA-256 answers; the authority-record tests al
 assert the complete signing preimage. See the protocol crate's
 [test-vector notes](../org-sync-proto/test-vectors/README.md) for the exact coverage.
 
+## Selected data and recovery integration
+
+The contracts below describe implemented replication core behavior, including exact v1 codecs and authority signatures. They do not establish that organization-data source adapters or full services have shipped. [Messaging](../../docs/design/organization-data/15-messaging-and-chat.md), [accounting](../../docs/design/organization-data/10-usage-and-cost-accounting.md) and [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md) own the selected durable-source mapping.
+
+- Native message fingerprints stay unchanged. A target importer retains the original seven-field `v1_lenprefixed_sha256` hash/envelope separately from normalized RFC 8785 message hashes. Directed-thread participant unions never grant access to another sender/recipient pair; filter summaries and delayed delivery by the original per-message rights.
+- Protected conversation/membership/message envelopes and attachments are not shared Git organization data. SQL indexes and queues cannot be the sole recoverable copy of acknowledged unresolved asks/handoffs/deliveries. Durable actor/fingerprint receipts and source journal evidence must commit recoverably before ACK; receipt results retain the original actor/scope checks.
+- Recovery retains the native message content/state shared incarnation allocator and high-water; Work keeps its independent stream. Do not reset/reuse sequence identities after cache deletion or infer authority from an imported checkpoint. Snapshot/replay retains original codecs and signed authority pins.
+- Accounting replication copies immutable usage IDs and producer sequences; it never creates new consumption events. Durable JSONL/checkpoints, correction chains and price versions survive cache loss; totals report gaps/freshness, partial counts and unknown values. This core does not implement the accounting collector or totals service.
+- Budget policy/history, one-time extensions, notices and independent `stop_pending`/`held`/`released` holds are protected durable data (document 17), not reconstructed from replicated spending alone. No automatic evaluator, pause engine or new codec is introduced here.
+
+Organization Git alone cannot restore protected operational sources, command outcomes, authority or local credentials. Recovery must verify source coverage/digests and marked-process cleanup before execution; office-local state preservation during a snapshot is not permission to discard its only durable evidence.
+
 ## Writer contract
 
 `OrgStore::transact` runs a replayable attempt in one writer job with a consistent view

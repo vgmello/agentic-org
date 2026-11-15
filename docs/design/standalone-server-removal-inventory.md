@@ -1,20 +1,7 @@
 # Standalone v1: deletion and replacement inventory
 
-## Selected-model acceptance follow-up (pending)
-
-The [documentation authority map](documentation-authority.md) distinguishes selected data requirements from existing runtime behavior. These are future migration/release checks, not results established by this documentation PR:
-
-- Preserve old stable IDs and explicit legacy reference mappings; typed task numbering follows document 06 rather than separate B-/REQ- counters.
-- Retain required home team, accountable project/task owner team, independent assignment, typed task details and feature lifecycle metadata without dropping unmatched source fields.
-- Rebuild selected projections from Git plus authorized protected sources; verify incomplete source coverage fails explicitly instead of fabricating receipts, usage, budget capacity or authority.
-- Import mixed-recipient directed threads without widening visibility, and verify original message hash codecs/envelopes separately from normalized hashes.
-- Preserve budget policy revisions, used extensions, notices and independent holds across restart/rebuild; a pending stop is not a worker acknowledgement, and releasing a budget hold does not resume another pause.
-- Verify target worktree permissions, Git metadata/credential isolation and safe cleanup before treating the runtime path migration as complete.
-
-Areas, Undo, memory/scheduling and process-engine acceptance are not newly selected here. Keep historical tooling, signing identities and the live spool cutover evidence; a documentation rename does not migrate them.
-
-
-Status: **source audit and proposed implementation checklist**, 2026-11-09.
+Status: **source audit with reconciled target replacement checklist**, 2026-11-15.
+Historical audit baseline: 2026-11-09.
 Owner: ada. Base: `v1` at `7a8827875e41cac45b75cbf170d6703417652379`.
 Implements [ADR-0005](../adr/0005-standalone-server-v1.md), the
 [server design](standalone-server.md) and
@@ -26,6 +13,29 @@ production web handoff remain incomplete. See [executable migration](executable-
 been deployed: delete superseded code directly, with no old-app compatibility or
 data-migration workstream. Keep commits buildable by updating affected callers in
 the same change. Git history is sufficient to recover the old shell for reference.
+
+## Selected source replacement and retention gates
+
+The [authority map](documentation-authority.md) gives organization-data precedence
+for selected sources/fields. Existing source/fixture observations below remain
+historical implementation evidence, not approval to port their obsolete semantics.
+
+| Existing assumption being replaced | Required replacement before removal/migration |
+| --- | --- |
+| Name-only organization bootstrap | Explicit slug, remote organization repository ID/URL and state branch; valid chosen team for every HR/optional owner-person employee. Offline validation uses only URL/branch syntax and local credential configuration, makes zero external requests and leaves connectivity/publication unverified until authorized online; no local-only organization fallback. Update typed provisioning and durable retry boundary; do not add unpublished fields to launch v2/HTTP revision 2. |
+| Multi-membership/teamless employees | One required home team, optional role/reporting and direct-member lead. Require an explicit home-team import choice and retain other associations in staging. Preserve owner principal independently of `is_owner`. |
+| Project linked teams/local bare paths | Required accountable owner team, optional contributors, organization repository registrations and many project/repo associations with required integration branch. One office cache per repo. Code repos can be local; organization Git must be remote. |
+| Separate bug/request counters or DTO identity | One extensible task entity, required accountable team, optional project, independent assignment pair and immutable reporter/history. New stable IDs UUIDv7; preserve old IDs and explicit B-/REQ- reference mappings without renumbering. |
+| Office SQLite as the complete source | Git definitions/open work plus durable journals/allocations, protected chat, receipts/streams/snapshots/cleanup, usage archive, execution authority and budget history. Extract and verify these sources before any cache removal. Private notes remain in a separate author-only durable DB with no admin exception. |
+| Agent runtime/model embedded in identity | `profile.md` identity, separate `execution.md`, ordered model profiles/connections, local credentials, shared permits and durable placement generation. Verify old-process cleanup/fence before replacement launch; logical turns/attempts/processes are separate. |
+| Old office worktree allowlists | Target team/employee/task/repository paths with derived Git/credential/managed-state/other-task denies. Preserve worktrees through handoff and protected local/unpushed code checkpoints. A renamed allowlist is not migration evidence. |
+| Shared thread participant union | Protected per-message visibility for imported directed threads, filtered previews/counts/search, and immutable original v1 codec/envelope alongside normalized hash. Never drop unresolved live asks/read/triage before conditional cutover. |
+| Spend reconstructed from a rollup or Git | Restore protected accounting/budget policy versions, periods, extension-use/notices and independent holds. Preserve unknown usage and stop-pending distinction; release caps warn only. Do not claim an implemented evaluator/admission service. |
+
+Areas, Undo, advanced checklist execution, retrospectives, automatic scheduling/
+memory and process execution remain unselected/deferred. Retain their earlier
+fixtures/proposals as such, rather than making them production deletion gates.
+Structural process/standard files and overridable scope data are selected.
 
 ## 0. Rename retained applications and reorganize by domain
 
@@ -105,9 +115,9 @@ payload gate. Production uses explicit unavailable defaults until real adapters 
 
 | File | Observed behavior and disposition |
 | --- | --- |
-| `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
-| `src-tauri/src/org_engine/projects.rs` | Preserve the exact project/area cases for B1-10. Missing canonical behavior includes project key derivation/reservations, case-insensitive names, project metadata/archive, General areas, area name/team/lead validation and reconciliation after membership, offboarding, team deletion or project-team removal. Do not transplant fabricated repository paths or pretend repository creation occurred. The canonical command/write ports do not implement this model yet. |
-| `src-tauri/src/org_agent_rules.rs` | Delete the duplicate validators. `org-office::rules::decide` already enforces trimmed/control-free bounded profile text, handle uniqueness/reservations, known runtimes, schedule/run-mode consistency and offboard restrictions. Its runtime-alias checks are stricter than the mock's literal-name check and stay authoritative. Legacy caller-supplied `home` validation is not a new standalone capability: X-02/B1-07 retire home overrides under protocol v2 and report managed paths read-only. |
+| `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity against the current multi-membership model; target home-team semantics need distinct versioned adapters/vectors. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
+| `src-tauri/src/org_engine/projects.rs` | Preserve exact historical project/area cases as evidence. Selected project work needs owner-team/contributor reconciliation, scoped numbering and repository associations. General areas and their area/team/lead reconciliation cases remain unselected proposals; retain in the deferred fixture set rather than treating them as selected canonical behavior. Do not transplant fabricated repository paths or pretend repository creation occurred. The canonical command/write ports do not implement this model yet. |
+| `src-tauri/src/org_agent_rules.rs` | Delete the duplicate validators. `org-office::rules::decide` already enforces trimmed/control-free bounded profile text, handle uniqueness/reservations, known runtimes, legacy schedule/run-mode consistency and offboard restrictions. Schedule/run-mode cases describe the earlier runtime only; they do not select automatic scheduling for the target. Its runtime-alias checks are stricter than the mock's literal-name check and stay authoritative. Legacy caller-supplied `home` validation is not a new standalone capability: X-02/B1-07 retire home overrides under protocol v2 and report managed paths read-only. |
 | `src-tauri/src/org_command.rs` | Delete the app-local tagged enum and dispatch mirror. Reuse typed `org-proto` contracts and canonical request parsers at the authorized gateway/worker boundary. Merely having a wire call type does not mean the worker implements it. |
 | `src-tauri/src/work_engine.rs` | Delete the mock engine after the canonical vector reader is preserved. `org-work` already owns task/bug transitions, text/ID checks, project/team/recipient checks, checklist guards, fix-link edge rules, numbering, idempotency and time figures through its transaction/read ports. The canonical implementation additionally enforces caller authority, ULID age, durable refusals, per-field conflicts and versioned waiting events; do not replace those with the mock's loose IDs, whole-record version checks or answer cache. See the explicit work-vector differences below. Paged snapshot/list integration belongs to B1-11. |
 | `src-tauri/src/org_mock.rs` | Keep invented seed data only as test fixtures. The preserved `org-office/test-vectors/organization.json` is checked against both the legacy Rust seed and the TypeScript seed. Canonical rules do not depend on an application library. |
@@ -130,8 +140,10 @@ lists all 104 deferred cases by name: 97 need an unimplemented project/area comm
 in setup or execution; seven more require area-state/reconciliation support in
 otherwise supported commands. The canonical reader covers every other case, checks
 the total and exact manifest membership, verifies deferred methods are unavailable
-and checks area writes are refused without mutation. Once B1-10 supports a missing
-capability these sentinels fail, requiring its positive cases to be enabled. The
+and checks area writes are refused without mutation. For a selected project capability, implementation makes its sentinel fail and
+requires the corresponding revised positive cases. Area sentinels remain deferred
+until an explicit scope decision; do not enable old positives merely to satisfy
+the audit manifest. The
 original positive expectations remain in the shared fixture and retained
 TypeScript parity runner; the legacy Rust shell runner was retired in F1-03. No
 deferred case is claimed as a working real-server feature. Missing capabilities remain explicitly unavailable.
@@ -190,7 +202,7 @@ The following records the original mock audit; paths track subsequent module mov
 | Organization | `src/lib/org/api.ts` selects a Tauri implementation or browser mock | Authenticated snapshot/command/feed APIs with existing version checks |
 | Work | `src/lib/work/index.ts` selects browser mock or shell path; comments say the real office work surface is pending | Audit and implement each advertised task/bug/request operation; API outage never becomes sample work |
 | Chat | `src/lib/modules/messaging/legacy-api.ts` constructs `chatApi` with `createMockChat`; the public module index stays free of construction | Real conversation/message operations or an explicit unavailable feature state; no fabricated reply |
-| Processes | `src/lib/modules/processes/world.ts` builds `sampleWorld` | Connect production views to real process documents when supported; keep samples only in fixtures |
+| Processes | `src/lib/modules/processes/world.ts` builds `sampleWorld` | Use selected structural process/standard documents when supported; resolution/execution engines remain deferred and samples stay fixture-only |
 | Copilot and other staged features | Explicit mock modules exist; no complete backend audit is claimed here | Inventory consumers during implementation; report unsupported capabilities instead of making sample results look real |
 
 The pivot does not promise that every mocked feature is implemented by replacing
@@ -232,6 +244,14 @@ names current source locations and remaining work.
 
 ## 6. Deletion acceptance
 
+Exercise the source replacement table above using §6a of
+[dogfood-run.md](../specs/dogfood-run.md#6a-selected-data-and-recovery-checks).
+Remove a disposable projection only after recording complete protected-source
+coverage and safe process shutdown. Missing coverage must yield recovery required;
+a valid Git checkout cannot stand in for chat, usage, budget or authority backup.
+Preserve credentials/signing namespaces, live spool and opaque unmapped source
+payloads until the corresponding reviewed replacement/cutover is verified.
+
 Before considering the implementation complete:
 
 - Retained browser sources/package use `apps/agentic-org-ui` / `agentic-org-ui`; server sources,
@@ -251,7 +271,7 @@ Before considering the implementation complete:
 - Per-office locking, authenticated agent tooling, key custody, durability, bounded
   resource cleanup and meaningful domain tests survive the removal.
 - Named-instance setup, macOS/Linux packaging and the HQ/satellite walkthrough pass
-  [SRV-1 through SRV-32](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
+  [SRV-1 through SRV-41](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
 
 No source deletions, Cargo/Clippy checks or runtime acceptance passes are claimed by
 this documentation-only audit. The audit's evidence is the inspected source and

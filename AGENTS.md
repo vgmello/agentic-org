@@ -16,12 +16,21 @@ Don't edit another owner's area. If you need a change there, message its owner.
 
 **Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: the messaging owner). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto`, `org-sync-proto`, `org-office-launch` or `org-runtime` goes through ada.
 
-The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/` and the UX specs in `docs/specs/`.
+The product is named **Agentic Org**. For data relationships, fields, identities,
+canonical files and selected execution/control contracts, start with
+[`docs/design/organization-data/README.md`](docs/design/organization-data/README.md)
+and the [documentation authority map](docs/design/documentation-authority.md).
+The other designs in `docs/design/`, ADRs in `docs/adr/` and UX specs in
+`docs/specs/` explain those contracts in their own contexts. Their older code/API
+observations do not override the selected model. Conversely, draft SQL and target
+acceptance criteria do not establish that a migration, command or service ships.
+Read the owning primary document before changing a dependent example or rule;
+keep implemented wire/security evidence explicitly scoped to its version.
 
 The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See docs/design/executable-migration.md for implemented versus unavailable entry points. Owners above retain the same responsibilities after the renames.
 
 ## Rules
-1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.
+1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.
 2. **Branches: one open branch per agent.** The full process is [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md); follow it.
    - You have exactly **one** open working branch. Don't start new work, open a second branch or stack branches until it's reviewed and merged into `v1`.
    - Start every branch from `origin/v1` in your own worktree:
