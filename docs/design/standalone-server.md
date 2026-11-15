@@ -148,6 +148,10 @@ separate setup package or executable. Release staging must select this CLI's
 artifact. `setup` is reserved and currently fails before provisioning; protected
 HQ bootstrap and service registration must land before it can perform onboarding.
 
+## Selected data storage boundary
+
+The [authority map](documentation-authority.md) links selected file ownership and runtime evidence. Documents [15](organization-data/15-messaging-and-chat.md), [16](organization-data/16-recovery-and-office-continuity.md) and [17](organization-data/17-budgets-and-controls.md) require protected organization operational sources outside disposable office projections. Instance provisioning must resolve and protect that durable root; deleting or uninstalling an office/cache must not remove its only acknowledged messaging, recovery or budget evidence. Host credential stores, private notes and accounting archives retain their separate requirements. This does not implement a new backup/restore or pause service.
+
 ## 3. Instance selection and storage
 
 An omitted `--name` selects `default`. `--name lab` selects exactly `lab`. Normalize
@@ -175,8 +179,10 @@ Keep office control state in `<instance root>/office-state/`, with each office a
 in the retained host/session contracts. Employee homes are server-provisioned
 siblings at `<instance root>/agents/<office id>/<member id>/`. Both belong to the
 instance, while employee homes remain outside the control-state subtree as the
-session security rules require. Task worktrees keep their existing office-owned
-`workspace/projects/` layout. The instance lock protects the full root; the host
+session security rules require. The existing implementation uses office-owned `workspace/projects/` worktrees.
+The selected target uses the [employee/task runtime hierarchy](organization-data/04-agent-structure.md#runtime-location),
+with shared organization repository registrations and per-office caches; adopting
+those paths requires a separately verified sandbox/workspace migration. The instance lock protects the full root; the host
 and office locks also protect their own state. None of these paths is browser-editable.
 
 Do not put long data-root paths directly into macOS Unix-socket names: the existing

@@ -1,5 +1,14 @@
 # Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
+## Selected data-model amendment
+
+Retain host key custody, private launch and process identity guarantees. Documents 15/16/17 add protected acknowledged sources outside disposable office projections; removing a cache must not erase unresolved communication, command receipts, budget extensions/holds or cleanup evidence. Rebuild requires legitimate keys/identity and reconciliation, not a new authority inferred from Git. Paths and launch details below remain implementation evidence; no host-key namespace or signing identifier is renamed by the target data model.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 

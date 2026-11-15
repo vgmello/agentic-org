@@ -1,5 +1,8 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
+For selected data ownership and current executable availability, use the [authority map](../design/documentation-authority.md). The historical debug walkthrough below is not an installer, a target worktree layout or proof of messaging/recovery/budget migration. Preserve live spool/credentials and durable operational sources when following any separately verified replacement runbook.
+
+
 **Target install amendment (2026-11-15):** current planned onboarding is agentic-org setup, which creates HQ only, verifies components and registers/starts its service automatically. Satellite onboarding is initiated later from HQ. The service entry point is agentic-org serve; helpers are agentic-org-web, agentic-org-office and agent-os. These commands are requirements, not verified instructions for the historical debug build below. See [current standalone setup](../design/standalone-server.md#4-setup-and-service-lifecycle).
 
 **Current source names (2026-11-15):** the worker is `apps/agentic-org-office` /

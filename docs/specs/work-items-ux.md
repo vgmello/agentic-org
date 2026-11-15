@@ -13,6 +13,15 @@ builds_on: [offices-and-teams-ux]
 
 # Spec · Work items: tasks, bugs and project docs (UX)
 
+## Selected data-model amendment
+
+Use typed **tasks** and T- references for tasks, bugs and requests. Every task has an accountable team; project is optional. Project-scoped and team-scoped references resolve using document 06; never imply T-12 is organization-unique. An independent assigned team/person may do the work. Bug/request details, checklist evidence and feature relationships remain structured data under documents 03/05/12. The separate B-/REQ- examples and mandatory-area rules below are earlier UX contracts awaiting their explicit migration, not new-model requirements. Areas and Undo remain deferred.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `offices-and-teams-ux.md` rev 4.
 
 **Sources:** ada's phase-1 plan (`ac-staff-engineer-ada/knowledge/plans/phase-1.md`, W7 and W9). The user's rule (2026-11-08): **bugs are first class**. Every project has its own bugs, and each bug sits in an **area** of the project, owned by a team, so it reaches the people who own that part. codex-dev's provisional model (not yet approved): flat areas per project with stable ids, a renamable name and an owning team; the reporter suggests the area and triage confirms or reroutes it; severity is separate from priority; New → Triaged → In progress → Fixed → Verified/Closed, with reopen, duplicate and won't-fix paths; a bug links to one or more fix tasks rather than turning into one. **ada's defaults (2026-11-08, for the user to approve with this design):** areas are flat, each owned by one of the project's teams, with an optional area lead (default: the team's lead), and every project has a default area **General**; severity is critical, major, minor or trivial, set by the reporter and confirmed at triage; **priority is a separate field shared with tasks** (urgent, high, normal, low); the reporter or the area lead verifies the fix.

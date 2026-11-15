@@ -13,6 +13,15 @@ builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-it
 
 # Spec · Chat: channels, DMs and threads where agents and people talk (UX)
 
+## Selected data-model amendment
+
+Document 15 owns conversation/message/membership, read/triage and protected-source data. Imported directed threads retain per-message sender/recipient visibility even when the thread has more than two participants; they are not group-DM grants. Preserve original hash codecs/envelopes separately from normalized hashes. New channels/group DMs and typed task links use that target model; chat is not session/tool output or a substitute for project/feature knowledge. Old ac-B-/REQ- references below require typed T- migration mappings. External bridges remain optional/unselected by the data change; their earlier UX is not an implemented capability.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agent-run-modes-ux.md` (waking agents), `feature-requests-ux.md`, `work-items-ux.md` and `decisions-and-tech-debt-ux.md` (agent guidance §6.2). Built with [Chat SDK](https://chat-sdk.dev/) (Vercel's TypeScript SDK for chat bots and agents across platforms).
 
 ## The request (the user, 2026-11-08)

@@ -13,6 +13,15 @@ builds_on: [decisions-and-tech-debt-ux, retrospectives-ux, work-items-ux, our-or
 
 # Spec · Processes: how agents work, written down and inherited (UX)
 
+## Selected data-model amendment
+
+Document 01 owns selected process/standard metadata and recursive organization/team/project scopes. Teams have TEAM- references but canonical file paths use stable IDs. Processes describe how work is done; standards describe required constraints such as technology/security rules. Overrides are allowed by default unless the parent definition explicitly prohibits them. The execution/resolution UI below remains a deferred proposal; align structural labels without selecting its engine.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Builds on `decisions-and-tech-debt-ux.md` (docs in the repo, templates, agent guidance §6.2), `retrospectives-ux.md` (action items), `work-items-ux.md` (checklists §9.1), `our-org-in-the-app.md` (agents, teams, the HR lead), `offices-and-teams-ux.md` (nested teams §7.5, shared projects §7.9) and `agent-run-modes-ux.md` (start and wake).
 
 ## Changelog

@@ -1,5 +1,14 @@
 # ADR-0001 · The app is a client; the office server holds the organization
 
+## Selected data-model amendment
+
+For selected target relationships, documents 01/02/03/04/06 replace the earlier multiple-membership/unassigned-project/work-item data split. Employees have one home team, projects one accountable owner team with optional contributors, and typed tasks a required team plus optional project. Documents 15/16/17 specify protected chat, recovery and budget data. The historical decisions below retain runtime/security evidence and do not imply the replacement schema is already applied.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Amended 2026-11-09 by the owner's standalone-v1 decision:**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop packaging, local-app
 access and Tauri transport below. V1 is a macOS/Linux server with HQ browser access;

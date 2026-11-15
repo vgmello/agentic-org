@@ -1,5 +1,14 @@
 # Design: agent sessions (the office runs the agents)
 
+## Selected data-model amendment
+
+Document 04 defines employee/task runtime paths, with organization-registered repository caches and worktrees under the placed employee's task/project scope. Documents 11/16/17 define execution, cleanup evidence and budget holds. The office-owned workspace/projects and mirror/work.git security examples below describe the inspected implementation. Before adopting target paths, recompute and verify all managed-state, Git-config/hooks, credential and other-task denies for each runtime; do not claim the old sandbox proof automatically covers a new layout. Handoff is not task closure and must not delete the workspace.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 

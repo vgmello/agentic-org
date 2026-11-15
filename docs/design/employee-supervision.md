@@ -1,5 +1,14 @@
 # Design: employee supervision, native identity and internal work
 
+## Selected data-model amendment
+
+Documents 04/11 define selected employee/execution data; documents 16/17 define recovery and budget evidence. Keep current task, assignment, employment status, desired/manual pause and independent budget holds distinct. A reached notice records intent; only worker acknowledgement establishes the stop. Cache rebuild must preserve used extensions and reconcile prior owned processes before new launch. This is not approval to implement the proposed scheduling/memory/delegate engines below.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 

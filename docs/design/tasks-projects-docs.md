@@ -1,5 +1,14 @@
 # Design: work items (tasks, bugs, requests, features), projects and project docs (W7)
 
+## Selected data-model amendment
+
+The selected entity is **task**, with `type: task | bug | request | ...`, one T- sequence per project or projectless team, required accountable team and optional project. Assigned team/person are independent. B-/REQ- sequences and “work item” entity naming below are earlier implementation/reference rules, not the target. Preserve their stable IDs and typed details through the explicit mappings in documents 03/05/06/12. Open tasks and features have canonical organization-Git sources plus indexed projections; protected operational sources remain outside Git. Areas, Undo and automatic transitions remain unselected.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Status: **proposed, rev 2 (Eden's review applied)** 2026-11-08. Owner: ada. It builds on [ADR-0001](../adr/0001-app-is-a-client-office-is-a-server.md), [ADR-0002](../adr/0002-storage-sqlite-sqlcipher-one-writer.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) (proposed), [`offices-hq-and-satellites.md`](offices-hq-and-satellites.md) ("Office-first: tasks and messages"), [`teams-and-org-chart.md`](teams-and-org-chart.md) and [`projects-git-github.md`](projects-git-github.md). It implements Eden's specs [`work-items-ux.md`](../specs/work-items-ux.md) rev 5, [`features-ux.md`](../specs/features-ux.md), [`feature-requests-ux.md`](../specs/feature-requests-ux.md), [`decisions-and-tech-debt-ux.md`](../specs/decisions-and-tech-debt-ux.md) rev 7 and [`costs-and-insights-ux.md`](../specs/costs-and-insights-ux.md) rev 3, and follows codex-dev's approved outline. Where it departs from a spec, §9 says so. **Rev 2** applies Eden's review of rev 1 against her specs: the departures she accepted are marked agreed in §9 and carry her UI wordings where this design mentions UI; time figures no longer fold untracked working time into idle (§6); waiting on the owner includes triage and decisions (§6); values set with git read "from git" (§4.9); every doc has a stable `id` (§4.9); `doc template show|edit` (§5); and the gaps she listed are plan items with a phase (§7.1). It sets the work-items library's crate name: **`org-work`**.
 
 ## In one paragraph
