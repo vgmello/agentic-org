@@ -111,7 +111,7 @@ class DraftSchemaTests(unittest.TestCase):
     def test_consolidated_tables_and_views_match_structural_documents(self):
         sections = []
         for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            if not path.name.startswith("11-"):
+            if not path.name.startswith(("11-", "14-")):
                 sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
@@ -410,6 +410,20 @@ class IntegrityAuditTests(unittest.TestCase):
         asset = (ROOT / "execution-schema.sql").read_text().split("\n", 1)[1].strip()
         self.assertEqual(asset, documented)
 
+    def test_provider_pool_document_matches_executable_sql_subset(self):
+        apply_execution_extension(self.db)
+        documented = sqlite3.connect(":memory:")
+        self.addCleanup(documented.close)
+        source = (ROOT / "14-model-providers-and-connection-pools.md").read_text()
+        for block in re.findall(r"```sql\n(.*?)\n```", source, re.S):
+            documented.executescript(block)
+        definitions = documented.execute("SELECT name,sql FROM sqlite_schema WHERE type IN ('table','view')").fetchall()
+        self.assertEqual(len(definitions), 8)
+        for name, sql in definitions:
+            actual = self.db.execute("SELECT sql FROM sqlite_schema WHERE name=?", (name,)).fetchone()[0]
+            with self.subTest(entity=name):
+                self.assertEqual(re.sub(r"\s+", "", sql).lower(), re.sub(r"\s+", "", actual).lower())
+
     def test_all_documented_diagram_fields_exist_in_their_database(self):
         apply_execution_extension(self.db)
         structural = database()
@@ -422,7 +436,7 @@ class IntegrityAuditTests(unittest.TestCase):
                 for table, body in re.findall(r"(\w+)\s*\{([^{}]*)\}", diagram, re.S):
                     fields = re.findall(r"^\s*(?:TEXT|INTEGER|REAL|BLOB)\s+(\w+)", body, re.M)
                     if fields:
-                        db = private if table.startswith("private_") else self.db if path.name.startswith("11-") else structural
+                        db = private if table.startswith("private_") else self.db if path.name.startswith(("11-", "14-")) else structural
                         actual = {row[1] for row in db.execute(f'PRAGMA table_xinfo("{table}")')}
                         with self.subTest(document=path.name, table=table):
                             self.assertEqual(set(fields), actual)

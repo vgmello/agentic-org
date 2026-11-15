@@ -136,6 +136,8 @@ This explicitly extends document 04's runtime-only placement contract with a sma
 
 ## 4. Configuration transactions and discovery
 
+For the focused data-structure view—concepts, field diagrams, relationships, canonical files, examples and SQL mapping—see [Model providers, connections and pools](14-model-providers-and-connection-pools.md). It describes the same records as this execution contract.
+
 All IDs use the existing stable-ID contract. `workspace_id` from the upload maps to organization_id. Every foreign reference is organization-scoped. Provider/profile keys are organization-unique readable strings; no new human number counter is required.
 
 For `subscription_cli`, `subscription_identity` is required: the provider adapter's canonical, non-secret identity for the actual subscription entitlement/quota account, not a connection label, credential path, model name or office ID. HQ registers it once per `(organization_id, provider_type, subscription_identity)`. Two different connection IDs for that same subscription are rejected with `SUBSCRIPTION_ALREADY_REGISTERED`, returning the existing connection ID. Disabled/archived definitions also reserve their identity; reuse/re-enable the existing definition. One connection may appear in several profiles and have one local binding per office, while all those uses share its HQ permit/cooldown state. Multiple subscription connections in a pool represent distinct subscriptions.
