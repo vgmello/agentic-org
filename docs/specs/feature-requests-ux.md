@@ -13,6 +13,15 @@ builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
 
 # Spec · Capture requests and route them to whoever should scope them (UX)
 
+## Selected data-model amendment
+
+A feature request is now a task with `type: request`, a T- reference, required accountable team and optional project. It is not a second identity/counter. Request-specific content, routing source (`person | rule | copilot`), proposals and decisions are preserved by document 03; creating a request does not automatically create approved features or tasks. Existing UI lifecycle requirements remain earlier workflow proposals unless separately selected. Use agent-os for new CLI examples; old REQ- lookup needs an explicit migration alias, never a guessed renumbering.
+
+Read the [documentation authority map](../design/documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 **Revision 4 (2026-11-09): browser capture for standalone v1.**
 Native/global capture and the menu-bar outbox move to v2 with Tauri. V1 retains
 New request inside the authenticated HQ application. A browser draft is not a

@@ -2,7 +2,7 @@
 
 Structural draft for v1. Document revision 2.8. This proposal specifies the selected data relationships and storage, including task assignment and activity history. It does not change the application implementation or authorize a migration.
 
-Existing v1 designs remain the implementation reference until a migration is approved: [teams and organization chart](../teams-and-org-chart.md), [tasks and projects](../tasks-projects-docs.md), and [project Git integration](../projects-git-github.md). This directory describes the proposed replacement data model and records pending decisions.
+This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
 
 ## Documents and boundaries
 

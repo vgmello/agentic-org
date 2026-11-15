@@ -1,5 +1,14 @@
 # Design: teams and the org chart
 
+## Selected data-model amendment
+
+The selected relationship is one `home_team_id` per agent/person, with recursive `parent_team_id` ownership, an optional direct-member lead and separate `reports_to_employee_id`. A team lead manages the subtree; being a non-lead member of an ancestor team does not. Projects require one owner team and may have contributing teams. Multiple membership rows and unassigned-project rules below describe the earlier model, not the selected target. The authenticated owner account is distinct from employee membership; an owner person record still requires a home team. A special chart presentation does not waive that constraint. See documents 01, 02 and 04.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Status: **approved by the user** 2026-11-08 (decisions at the end); amended by ada 2026-11-08 (agents as members, `member.move`, one handle namespace); amended by ada 2026-11-08 (offboarding as a state, run modes); amended by ada 2026-11-08 (reserved and refused handles: `office`, `run:` and ULID-shaped handles, the owner's display name exempt). Owner: ada. It follows the user's model (2026-11-08). It builds on `offices-hq-and-satellites.md`: teams are organization data, so HQ owns them and every office has a copy.
 
 ## The user's model, in short

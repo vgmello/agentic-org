@@ -1,5 +1,14 @@
 # Design and plan: projects as git repositories, connected to GitHub
 
+## Selected data-model amendment
+
+A project is a long-lived product/work scope, not a repository. Register remote/local code repositories at organization level; associate any number with each project through `project_repositories`, each with its own integration branch. Shared infrastructure/library repositories use one local cache per office/repository. Worktrees belong to the runtime employee/task hierarchy, including projectless tasks. Feature/design definitions belong to the organization metadata Git repository as defined in document 02, not automatically to one code repo. The mirror.git/work.git arrangement below is earlier implementation/hardening evidence; it does not redefine target ownership. Preserve its credential separation when adapting the layout; document 04 owns target paths.
+
+Read the [documentation authority map](documentation-authority.md) for the owning document links and target-versus-implementation precedence. This amendment supersedes conflicting target relationships, references and storage examples below; it does not change code or retire required compatibility/security evidence.
+
+## Earlier requirements and implementation evidence
+
+
 Status: **approved by the user** 2026-11-08 (decisions at the end); amended by ada 2026-11-08 (owners: River for the adapters; real-GitHub testing in v2, the user's decision). Owner: ada. It follows the user's decisions: project files are git repositories, the GitHub connection comes first, and **one GitHub App, managed by HQ** (revised the same day). It builds on `offices-hq-and-satellites.md`.
 
 > **For now: local git** *(the user, 2026-11-08: "let's use a local git for now")*. Projects use a local bare repository on disk as their remote, with the same `mirror.git`/`work.git` layout, the same office-run push and the same hardening. The remote sits behind a small interface (a URL plus a credential source), so moving to GitHub later is a configuration change. Phase 1 projects still run on local git. The GitHub pieces below (the app, tokens, repository creation) are built and tested in phase 1 against a fake GitHub. Real GitHub comes in v2 *(the user, 2026-11-08)*.
