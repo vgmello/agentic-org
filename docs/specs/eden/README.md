@@ -2,7 +2,7 @@
 
 Imported on 2026-11-15. Start with the [project documentation index](../README.md).
 
-The [design system](../design-system.md) and [Models policy UX](../models-ux.md) are published alongside the current product specs. Earlier copies of other UX specs are historical and do not replace the newer specs that were already in `v1`. The original desktop spec is also historical.
+The [design system](../design-system.md) is published alongside the current product specs. The [Models policy UX](../models-ux.md) preserves an earlier source design; newer model execution/provider contracts take precedence. Earlier copies of other UX specs are historical and do not replace the newer specs that were already in `v1`. The original desktop spec is also historical.
 
 The [screen catalog](knowledge/screens/index.html) and its images are preserved. Its viewer loads `screens.json` over HTTP; serve the documentation locally to browse it. The original desktop Canvas HTML exports require a `support.js` runtime that was not present in the source space; they are preserved exports rather than a standalone app. The PNG reference is included.
 

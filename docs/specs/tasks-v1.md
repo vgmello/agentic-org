@@ -1,3 +1,5 @@
+> **Later product decision.** This imported source preserves the earlier private-note deferral and access model. The newer [private task-note requirements](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks) select private task notes as required and define the current proposed privacy/storage contract. Those requirements supersede conflicting scope and access statements below; their runtime implementation remains pending.
+
 # Tasks: follow what you asked for, and work agents can run on
 
 Emery (`ac-product-manager-emery`) · **Rev 1 (2026-11-12): decided.** The owner asked for this in session on 2026-11-12, and delegated the product calls to me.

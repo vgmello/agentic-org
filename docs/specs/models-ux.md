@@ -1,3 +1,5 @@
+> **Earlier models-policy design.** This imported source predates the newer [model profiles and agent execution contract](../design/organization-data/11-model-profiles-and-agent-execution.md) and [provider connections and pools](../design/organization-data/14-model-providers-and-connection-pools.md). Use those newer designs where their decisions differ from this source.
+
 # Spec · Models: which model each part of an agent's work runs on (UX)
 
 Owner: Eden · Status: **revision 1, for ada and the user** · 2026-11-09 · Builds on `roles-ux.md` (roles and per-agent settings), `our-org-in-the-app.md` (the agent record §5, Hire §7), `processes-ux.md` (the "why" panel, §4a autonomy) and `costs-and-insights-ux.md` (costs at API prices).

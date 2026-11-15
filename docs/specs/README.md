@@ -6,9 +6,11 @@ are preserved under the original authors’ names.
 
 ## Product requirements
 
-Emery’s PRDs retain their original decisions, acceptance-criterion IDs and release boundaries.
-Importing them does not move deferred features into v1.0. In particular, private notes remain
-deferred as recorded in [Tasks §4.5](tasks-v1.md#45-brief-comments-and-private-notes).
+Emery’s PRDs retain their original text and acceptance-criterion IDs. Their recorded release
+boundaries are source history; newer product decisions take precedence. In particular, the newer
+[private task-note requirements](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks)
+select private notes as required and supersede the earlier deferral and conflicting access model
+in the imported Tasks PRD and acceptance-test list. Runtime implementation remains pending.
 
 - [Acceptance tests: v1 PRD set](acceptance-tests-v1-prd-set.md)
 - [Away digest and time zones: "since you were away", in your own time](away-digest-and-timezones-v1.md)
@@ -30,7 +32,9 @@ The existing product UX specs remain in place. Their newer revisions take preced
 earlier copies preserved in [Eden’s source records](eden/README.md).
 
 - [Design system](design-system.md): Eden’s shared visual language, components and interaction rules.
-- [Models policy UX](models-ux.md): previously missing from the product specs.
+- [Models policy UX](models-ux.md): earlier source design; read alongside the newer
+  [model execution](../design/organization-data/11-model-profiles-and-agent-execution.md) and
+  [provider/connection/pool](../design/organization-data/14-model-providers-and-connection-pools.md) designs.
 - [Agent run modes ux](agent-run-modes-ux.md)
 - [App shell ux](app-shell-ux.md)
 - [Chat ux](chat-ux.md)
@@ -55,6 +59,8 @@ earlier copies preserved in [Eden’s source records](eden/README.md).
 - [Emery: research, prototypes, product decisions and records](emery/README.md).
 - [Architecture decisions](../adr/) and [technical designs](../design/) remain the product’s architecture references.
 - [Architecture rules](../architecture-rules.md) remain unchanged.
+- [Organization data design](../design/organization-data/README.md): newer structural contracts,
+  including task assignment/history, private notes and model execution.
 
 The imported historical desktop spec, older UX revisions, journals, memory, backlogs, drafts,
 message drafts, patches and retrospective records are evidence of decisions at their recorded
@@ -68,7 +74,9 @@ The migration started from the freshly fetched `origin/v1` at `700d5a378b09568da
 All source files remain available in the agents repository. The versioned copies in this
 repository are now the project documentation; future product-documentation changes belong here.
 The original filenames, requirement IDs and document bodies are retained, with historical
-notices on earlier Eden specs and relocated Markdown links where necessary.
+notices on earlier Eden specs, precedence notices for later private-note/model decisions,
+and relocated Markdown links where necessary. The branch was subsequently reconciled with
+`origin/v1` at `86a1ecb975f10a054a9e2cf5e1113260d94d5990`; its newer docs and ADRs remain intact.
 
 [The migration manifest](migration-manifest.json) records every imported source and destination,
 their SHA-256 fingerprints, link changes and notices. It also accounts for excluded files:

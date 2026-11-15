@@ -2,7 +2,7 @@
 
 Imported on 2026-11-15. Start with the [project documentation index](../README.md).
 
-The [product requirements](../README.md#product-requirements) are published at `docs/specs/`. Their original release boundaries and deferrals remain in force. The [IA v2 prototype](knowledge/prototypes/ia-v2/index.html) and [feature-proposals prototype](workspace/feature-proposals.html) are historical design references.
+The [product requirements](../README.md#product-requirements) are published at `docs/specs/`. They preserve their recorded release boundaries; newer product decisions, including the required private task-note contract, take precedence. The [IA v2 prototype](knowledge/prototypes/ia-v2/index.html) and [feature-proposals prototype](workspace/feature-proposals.html) are historical design references.
 
 ## handover
 

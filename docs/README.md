@@ -3,6 +3,7 @@
 - [Requirements, UX specs, product knowledge and migration index](specs/README.md).
 - [Architecture decisions](adr/).
 - [Technical designs and contracts](design/).
+- [Organization data structural design](design/organization-data/README.md).
 - [Architecture rules](architecture-rules.md).
 - [Processes](processes/).
 - [Runbooks](runbooks/).

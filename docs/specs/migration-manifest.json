@@ -1906,9 +1906,9 @@
       "source": "projects/ac/agents/ac-product-designer-eden/knowledge/specs/models-ux.md",
       "destination": "docs/specs/models-ux.md",
       "source_sha256": "a60a107ef2a88014bdc49371a4e1d1ff693e333dcc92cbef6460f7fddf0fbb50",
-      "destination_sha256": "a60a107ef2a88014bdc49371a4e1d1ff693e333dcc92cbef6460f7fddf0fbb50",
-      "bytes": 12565,
-      "historical_notice": "",
+      "destination_sha256": "6a00bc9efdfcd20aa2f17f2937291a65300bec68e5259b4a026f5afccec7a321",
+      "bytes": 12939,
+      "historical_notice": "> **Earlier models-policy design.** This imported source predates the newer [model profiles and agent execution contract](../design/organization-data/11-model-profiles-and-agent-execution.md) and [provider connections and pools](../design/organization-data/14-model-providers-and-connection-pools.md). Use those newer designs where their decisions differ from this source.\n\n",
       "link_rewrites": []
     },
     {
@@ -2496,9 +2496,9 @@
       "source": "projects/ac/agents/ac-product-manager-emery/knowledge/prds/acceptance-tests-v1-prd-set.md",
       "destination": "docs/specs/acceptance-tests-v1-prd-set.md",
       "source_sha256": "038e9686ad4e78fa5bea5e37df205bb72f6b70611629c34bb3a83330a0d06d6b",
-      "destination_sha256": "038e9686ad4e78fa5bea5e37df205bb72f6b70611629c34bb3a83330a0d06d6b",
-      "bytes": 78865,
-      "historical_notice": "",
+      "destination_sha256": "8b599b646025a9ff95eb31871b907c8ee1eec568f0a267d7746799f49171c2af",
+      "bytes": 79324,
+      "historical_notice": "> **Later product decision.** This imported source preserves the earlier private-note deferral and access model. The newer [private task-note requirements](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks) select private task notes as required and define the current proposed privacy/storage contract. Those requirements supersede conflicting scope and access statements below; their runtime implementation remains pending.\n\n",
       "link_rewrites": []
     },
     {
@@ -2625,9 +2625,9 @@
       "source": "projects/ac/agents/ac-product-manager-emery/knowledge/prds/tasks-v1.md",
       "destination": "docs/specs/tasks-v1.md",
       "source_sha256": "4b055155abcb5d068eaa00c58aba3de242eaf51d04c2874ec1bae73ee0c08a8f",
-      "destination_sha256": "4b055155abcb5d068eaa00c58aba3de242eaf51d04c2874ec1bae73ee0c08a8f",
-      "bytes": 117107,
-      "historical_notice": "",
+      "destination_sha256": "f929aaa6f1615de2b0f9bf514749a82be3a8ba06b12a5257bee76491453ad482",
+      "bytes": 117566,
+      "historical_notice": "> **Later product decision.** This imported source preserves the earlier private-note deferral and access model. The newer [private task-note requirements](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks) select private task notes as required and define the current proposed privacy/storage contract. Those requirements supersede conflicting scope and access statements below; their runtime implementation remains pending.\n\n",
       "link_rewrites": []
     },
     {
@@ -3267,5 +3267,10 @@
       "files": 3,
       "bytes": 0
     }
-  ]
+  ],
+  "reconciled_with": {
+    "ref": "origin/v1",
+    "commit": "86a1ecb975f10a054a9e2cf5e1113260d94d5990",
+    "note": "Later v1 documentation preserved; current private-note and model execution decisions explicitly take precedence over conflicting imported source statements."
+  }
 }
