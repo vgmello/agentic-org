@@ -1,0 +1,114 @@
+{
+  "files": {
+    ".agent-kit/.gitignore": "f389e43cfdd5a3fd5875bb837688d5d3b19f05663becad58552dae018418ab60",
+    ".agent-kit/DECISIONS.md": "0af4a0a0d04db6cae057e585a8f885736881e69002a9f415da66093df4f9e36c",
+    ".agent-kit/PROJECT_MAP.md": "90e5fc47566cb157006ae5d49ce2787b409d6cc7aac5ffe4b97c202b78b6e3e6",
+    ".agent-kit/WORKFLOW.md": "794d11cfd37a7144cab88ca8a7d7d9c91efed93dfa22c164afe8fdd4eab3e046",
+    ".agent-kit/context-tools.json": "c80617ab93495224c2f55425b15115807a624084b8542f6f20fd05857a7db99c",
+    ".agent-kit/memory-tools.json": "4ae9b9db0cfc4e756cae6e3fc90032f90e25e2b272c997e437d1ca64c9ad2fa7",
+    ".agent-kit/policy/hindsight/Dockerfile": "daceecb90e2a693729566a388647b74a4acc73e89bdc36b941305d820189faf9",
+    ".agent-kit/policy/hindsight/download_models.py": "48c15a4eb4e68074b4405c4998c442dd5f0aef897f81bdc55e50ebe5531624ba",
+    ".agent-kit/policy/hindsight/requirements.txt": "669692449bd95131b226878484b29de49bdce4797f784b29464caee0530c7a88",
+    ".agent-kit/policy/hindsight/runtime.json": "d77a37b4225ea1098a9e73e8a4c894d535dea891a8467ef0c4f3243795da676f",
+    ".agent-kit/policy/model-routing.json": "ac5d854bd1099d450b46cf216efd059f01e7eeac3d83377109de269bff1f0fbe",
+    ".agent-kit/policy/repowise-requirements.txt": "71bcdffbeb3f5586d3fddc462160cd9840acd25a42261b6b8a11233912d70c79",
+    ".agent-kit/policy/repowise.in": "f64b303ded1d62559d58d1ecb016bd0b853a1e66002fa1543264602d7083d24c",
+    ".agent-kit/reference/ADOPT.md": "392cbb62bc36910e1949e95952b48cde58c7cd1f38393c0f7564c4ff0ffea55e",
+    ".agent-kit/reference/CODEX_ONLY.md": "5d7a29a0d958f37780df1cc998c9d25c926a6ea599f3bfcd5a6bea42e6c6fe59",
+    ".agent-kit/reference/CONTEXT_TOOLS.md": "72fb89bfab36f75ec00ee9f32fd925b8ee62ca0b33130505d795a23d56ebc1fe",
+    ".agent-kit/reference/HINDSIGHT.md": "a2744f7b427f6e32db6370686403274a785acf10dfe76e3aaa68ba0e82296008",
+    ".agent-kit/reference/PROJECT_CAPABILITIES.md": "2ca5efb0992d078b8b858f2eb1af9d7d68d31dae3d987fdf012ea41713fdf67b",
+    ".agent-kit/runtime/kit_codex.py": "d22fdc642d69b6be0dc602164e67fea26d285a930539cc48d6e4da601ecc8f9a",
+    ".agent-kit/runtime/kit_codex_hooks.py": "8dfc1893876d81fc87ed47f1ae6b9bca97da1a123a5cefc24d0ef0be12eb26ae",
+    ".agent-kit/runtime/kit_config.py": "9fcd60f0e7572f7b145267e05ed04871c883a8e6e8943b53560c6ba57f2d224f",
+    ".agent-kit/runtime/kit_context.py": "8dbcefebfc9e80d9fc58f37499f873ab32529a3455a142f750c4ce005768146d",
+    ".agent-kit/runtime/kit_context_setup.py": "ab2b78c41e2cd146a36c81d928ab58125197cb0b18bdc2dca7ed86a7d5767bd4",
+    ".agent-kit/runtime/kit_doctor.py": "38a7b2950c53b41dc44992b63cf6a1598766e41c5a8b5743c9cd9a32a111b83d",
+    ".agent-kit/runtime/kit_evidence.py": "a7c9d7160dd62ea273feb8870b8836dde116ecae00731e0fbd9f5c747d2d80e9",
+    ".agent-kit/runtime/kit_hindsight.py": "f926893df907114de43e4b76f8fc08dab53a1378a1989bfc312a0a5f01ed8adc",
+    ".agent-kit/runtime/kit_hooks.py": "07b7e1d6cc9ee915eb04484592a4cf03d7caad4373383afb2f6e6f682f754f03",
+    ".agent-kit/runtime/kit_memory.py": "94a0190e2d998a0cbff9dfe2164e770de6b275f59fd27fe5cba36b7b37cbfdba",
+    ".agent-kit/runtime/kit_metrics.py": "e3c031653f3e436ef7a417618b43ae23b7169a06a6339c461e46c7670a063078",
+    ".agent-kit/runtime/kit_policy.py": "94c5f7259dbd590616d0ea8767732a7ad7edd83664b5dea2b3cc5f7b74602b1e",
+    ".agent-kit/runtime/kit_review.py": "e8f3e1ef3b191cb50f7afa73eb0961eafe319a5e104f834a6b035faa3b9f950c",
+    ".agent-kit/runtime/kit_skills.py": "8b208ee6cc5b3baf12f18d8e18de4b1ed85217702067eb68706cf6305a298f94",
+    ".agent-kit/skill-catalog.json": "021ed08f485d60c611947647770ef0f762b312a6a811dcdc007e79dcf4d837f4",
+    ".agent-kit/templates/ADOPTION.md": "cf8a1974c95d9edb66f144c61917300d62131f1382aaa396f1964dacb697314a",
+    ".agent-kit/templates/ARCHITECTURE_DECISION.md": "7e2173a73972d6e4f8cf904d46df3a6edcc3efb3ff052cdee76499a7fbd51108",
+    ".agent-kit/templates/EXPERIMENT.json": "1efd8da9257495ee5a5e4f5a4b1db62ba08def669748cec8c6c6394782c5b1d4",
+    ".agent-kit/templates/FINAL_REVIEW.json": "4a395ecd7d1cda84ee17e7e9b84a3b28c8f5ad34bcb3a6a0f9cda025ad337b3f",
+    ".agent-kit/templates/HINDSIGHT_PILOT.md": "b0e03da7a2c9a955cd8a62c26c86d469a9e1697fe31ad824e68e9e5fca73cd96",
+    ".agent-kit/templates/IMPROVEMENT_DECISION.md": "9125fd5f901d5556b2bcaa47b228bf2d6ce2b790bcf63ef7fe2780ae025e6090",
+    ".agent-kit/templates/KNOWLEDGE.json": "4ee8ecd9bb20c2bb62d5e1286177dda9ea0015ade8ffc237f80b26a74a4425d1",
+    ".agent-kit/templates/PILOT_RUN.json": "3995b35d67c0918b8dacbef334c2ef4009c0ad630fdd76d43bb7f38ea4f3a6e8",
+    ".agent-kit/templates/PLAN_REVIEW_SCHEMA.json": "bf76b2d3d19e04ad9a29d0412b6c925d158a8fccac75bc087c7605e1a6ff5b8a",
+    ".agent-kit/templates/PROJECT_ROLE.md": "857fbe18d0c029114164d2f7ef62a430bd09d5a56aabe88f72fdea694b54375e",
+    ".agent-kit/templates/PROJECT_SKILL.md": "4ae826702556103cc49d440a9f36f4ece201201e718d1996350745aae9490b37",
+    ".agent-kit/templates/SKILL_PREFLIGHT.json": "4f358f20307a07d84cc62d6d6ab6569affd9dbca5f50941b1b17fec722fb0d5f",
+    ".agent-kit/templates/SLICE_CONTRACT.md": "33c87da09567def0123bcdcbba565d1627a941c0b831842dd6b8847626878719",
+    ".agent-kit/templates/SUBSYSTEM_MAP.md": "7e1341c640a1c81e95817b21e73b3c3bbfd6e5b76432ca84adc83eaf9e5ad2c7",
+    ".agent-kit/templates/TASK_ASSESSMENT.json": "1a05a120b6ec7b4edfc78a4105beb9435e51755f81a2d39a371c5c0ccb47ca2c",
+    ".agent-kit/templates/TASK_STATE.md": "d96a929eba32ff53f864552bed15b0c634bb2aaf69680787c5240276319e1131",
+    ".agent-kit/verification.json": "da0e44b6a33c53f87d1141c734096fe38718d0342c4fc4b7f89f919e2a2457d4",
+    ".agents/skills/architecture-decisions/SKILL.md": "81f28f4dfd2531ec9b88e7844db0dbc30ba382c6512e969e8a3d5ad3286fa0c8",
+    ".agents/skills/bounded-lookup/SKILL.md": "c1a0a1b0c8a801eb5d6c46ad9acd8df6bbf80096ff6879628e3df6befd919a9d",
+    ".agents/skills/code-navigation/SKILL.md": "194ffe11f756fef9003ef4019f62601d8d6a7d9ebe409b638af504b7f191916c",
+    ".agents/skills/cost-aware-execution/SKILL.md": "2ea7639a3bec786f6efd7d7e09bfd3b03aeb2d530844051ed00b41d0a1ac75cc",
+    ".agents/skills/indexed-context/SKILL.md": "91cb55b720ee1ddc720c7ecf3a67832e844686435ff49613ea11abf4123b5799",
+    ".agents/skills/plan-review/SKILL.md": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577",
+    ".agents/skills/process-improvement/SKILL.md": "350ac236bb1e0fe9a7193a88871732cd1455e934c07dd21fc44385316fcd5708",
+    ".agents/skills/project-capabilities/SKILL.md": "2c80679ba5f55bb5b6e40abe9cdb65f12bfc6b616c295c2bda8a720a824c2af9",
+    ".agents/skills/project-memory/SKILL.md": "3406a79fa1a0e612f5c6b3f779b4f5f44c3c275b128bbd14005ed7e5770a0490",
+    ".agents/skills/review-cycle/SKILL.md": "7a984e5a4bd807b80ae43562953c34725e0a420a4d956d257481a228801c463f",
+    ".agents/skills/setup-health/SKILL.md": "bea1808fc4917fb3cc2868f73f7ef40d741f0d13c2dd3bfaefabf19f0f0754e5",
+    ".agents/skills/skill-routing/SKILL.md": "451a87e1b7c8fe733ad735402fee8d0ed89d2d6de5a89a56308929cdf727cb06",
+    ".agents/skills/task-routing/SKILL.md": "630b45ca6cce995e9a7e524e9f670f41e6e2a2622cc29d0bc91e67307a1bce9c",
+    ".codex/agents/architecture-reviewer.toml": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002",
+    ".codex/agents/code-reviewer.toml": "a3601c4805b20207f5a1ff8c1d002b5276415275dbffcc36b9831db4b14714dd",
+    ".codex/agents/codebase-scout.toml": "0edfb177190ab952e1c8e42932392cb979c7f87108f01287e7b4b7e2d9bdb94b",
+    ".codex/agents/fullstack-engineer.toml": "48bd08838e056a7874162b75c0dfbea0e3fdb135aadb534257d54a1d40148685",
+    ".codex/agents/staff-engineer.toml": "95923ebe0deefae124f0da03b42c51750e6154d59f6b035ce4adea04e8095162",
+    ".codex/config.toml": "e011d15040c3e784be0c377bf2883132a7cd640cb7e42846aecf37b75d2b4974",
+    ".codex/hooks.json": "44d5eeb100bfe70c9e5c2ec6868345567bc87851662bb97492d6ac433de3a525",
+    "AGENTS.md": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19",
+    ".agent-kit/runtime/kit_hindsight_embed.py": "2a60a49711d30708f76de68c807f65c0f9bcb69e790bfe1ae11b9c13ea8447e9",
+    ".agent-kit/policy/hindsight/embed.json": "9217050898e809066002cdba90262cb79af75320df62d45795b0f1cd10f28de1"
+  },
+  "kit_version": "0.10.0",
+  "mode": "codex-only",
+  "version": 1,
+  "local_adaptations": {
+    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process.",
+    "source_revision": "01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1",
+    "files": {
+      ".agent-kit/runtime/kit_hindsight.py": {
+        "upstream_sha256": "308ce94823d4c383078f97fee96e53816d6e809f8dfd68ec6beb07428335c0cb",
+        "local_sha256": "f926893df907114de43e4b76f8fc08dab53a1378a1989bfc312a0a5f01ed8adc"
+      },
+      ".agent-kit/runtime/kit_doctor.py": {
+        "upstream_sha256": "86e1d6738a47d2cbc518fa22623af8c8dfe09ed1e642caad78e38b4df59c43c7",
+        "local_sha256": "38a7b2950c53b41dc44992b63cf6a1598766e41c5a8b5743c9cd9a32a111b83d"
+      },
+      ".agent-kit/runtime/kit_hindsight_embed.py": {
+        "upstream_sha256": null,
+        "local_sha256": "2a60a49711d30708f76de68c807f65c0f9bcb69e790bfe1ae11b9c13ea8447e9"
+      },
+      ".agent-kit/policy/hindsight/embed.json": {
+        "upstream_sha256": null,
+        "local_sha256": "9217050898e809066002cdba90262cb79af75320df62d45795b0f1cd10f28de1"
+      },
+      ".agent-kit/runtime/kit_codex.py": {
+        "upstream_sha256": "730b2ae4f14611886d9ed5f8cbaabf1daec3aeac52b5f53a9e0950c6fbccf878",
+        "local_sha256": "d22fdc642d69b6be0dc602164e67fea26d285a930539cc48d6e4da601ecc8f9a"
+      },
+      ".agents/skills/plan-review/SKILL.md": {
+        "upstream_sha256": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
+        "local_sha256": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577"
+      },
+      ".codex/agents/architecture-reviewer.toml": {
+        "upstream_sha256": "e26421b2f2aed013c0cce96705df398e4cf88bfd6b5d1202d2af1f3c31557dcc",
+        "local_sha256": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002"
+      }
+    }
+  }
+}

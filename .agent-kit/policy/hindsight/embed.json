@@ -1,0 +1,10 @@
+{
+  "version": "1.2.1",
+  "deployment": "hindsight-embed",
+  "profile": "coding-agent",
+  "port": 9077,
+  "llm_provider": "openai-codex",
+  "llm_model": "gpt-6.1-sol",
+  "python": "3.12",
+  "psutil_version": "7.2.2"
+}

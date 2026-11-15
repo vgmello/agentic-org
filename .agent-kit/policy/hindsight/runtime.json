@@ -1,0 +1,16 @@
+{
+  "version": "1.2.1",
+  "base_image": "ghcr.io/vectorize-io/hindsight-api@sha256:084af5a6522d67f5905f7992cdb3d910d778496e5dd2566caec7cf82ed2e7d8c",
+  "models": {
+    "embedding": {
+      "repository": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "file": "onnx/model.onnx"
+    },
+    "reranker": {
+      "repository": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+      "file": "onnx/model.onnx"
+    }
+  }
+}

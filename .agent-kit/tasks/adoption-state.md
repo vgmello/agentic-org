@@ -1,0 +1,9 @@
+# Adoption handoff
+
+Target: **/Users/vgmello/projects/agentic-org**. Implementation branch: **codex/install-agent-kit**, base origin/v1 b1256c9771b15c0b47198828164e5efe78db2e96. Mode codex-only; base kit 0.10.0 / 01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1.
+
+Owner corrections: new branch directly in original checkout; hindsight-embed instead of Docker; native Codex-only hindsight-coding-agents; existing Codex login extracts/stores memories. Local reviews, then send finished exact commit to reviewer and merge into **v1-integration**, the integration branch for ALL v1 features; no PR wait.
+
+Installed/probed here: fresh Repowise CONTEXT_READY, embed HINDSIGHT_READY at127.0.0.1:9077, eight daemon/review-isolation checks, actual Sol extraction/store/recall with disposable-bank deletion, eight native MCP tools. Full root Rust fmt/Clippy/workspace tests and frontend typecheck/1929 tests/build/lint/format passed. Live root doctor configuration/services/checks/health passed. No caches/envs/receipts copied. The previous Hindsight Docker container is stopped with data retained. Native settings opt into this repository only. See ../ADOPTION.md for commands, scoped model usage and historical evidence.
+
+Confirmed P1 review-runner and P2 separate plan-review/native-role memory-isolation findings fixed with per-child hook/MCP overrides, guarded native-role guidance and regression coverage. The first local Sol cycle was blocked by protected .agents repair; the original author made that correction without weakening its sandbox. Next: finish independent/local exact-commit reviews, sync committed knowledge and obtain a final source-bound health receipt; send exact candidate and merge/push v1-integration under the owner's new direction. Fresh interactive native hook trust remains unverified, so full LIVE_VALIDATED=false. No v1 release merge. Preserve the earlier wrong-location checkout/branch until cleanup is authorized.

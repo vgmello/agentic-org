@@ -1,0 +1,8 @@
+{
+  "command": "python3",
+  "args": [
+    "-c",
+    "import pathlib,runpy,subprocess,sys; p=pathlib.Path(subprocess.check_output(['git','rev-parse','--show-toplevel'],text=True).strip()); sys.argv.extend(['--repo',str(p)]); sys.path.insert(0,str(p/'.agent-kit/runtime')); runpy.run_path(str(p/'.agent-kit/runtime/kit_context.py'),run_name='__main__')",
+    "serve"
+  ]
+}
