@@ -1,6 +1,6 @@
 # Documentation authority and selected v1 model
 
-This is the reading map for the selected organization data design after PRs #6 and #12. It does not change application behavior, approve a migration or select deferred engines.
+This is the reading map for the selected organization data design and its reconciled design/UX guides (2026-11-15). The owning organization-data documents remain unchanged by that reconciliation. Documentation does not change application behavior, approve a migration or select deferred engines.
 
 ## Which document answers which question?
 
@@ -19,6 +19,32 @@ This is the reading map for the selected organization data design after PRs #6 a
 
 For selected target data, the organization-data contract takes precedence over contradictory older relationship, identifier and folder examples. An old design's approved status/date does not supersede later owner decisions. Conversely, the target draft does not prove code or migrations have landed. Keep current-runtime evidence and selected-target rules explicitly separated. New conflicts require a recorded decision; do not infer a missing engine from a data field.
 
+## Reconciled implementation and UX guides
+
+Use these guides for concrete flows, examples and acceptance criteria. Follow the
+primary contract when a secondary guide's level of detail does not cover a field;
+do not reconstruct a target entity from an old API example. Criterion IDs retained
+from older specs may now describe a selected target, a current-runtime check or a
+deferred proposal; the criterion's text and scope decide which evidence is needed.
+An old revision's claim that it is approved does not activate its deferred engine.
+
+| Concern | Detailed guides | Primary contract |
+| --- | --- | --- |
+| Organization bootstrap, home teams, leads and project accountability | [Creation](create-organization.md), [team model](teams-and-org-chart.md), [office/team UX](../specs/offices-and-teams-ux.md), [hiring/profile UX](../specs/our-org-in-the-app.md), [roles](../specs/roles-ux.md) | 01, 02, 04, 06, 08 |
+| Typed tasks, assignment, reporter, history and private notes | [Task design](tasks-projects-docs.md), [task UX](../specs/work-items-ux.md), [request UX](../specs/feature-requests-ux.md) | 03, 05, 06, 08, 12 |
+| Repository associations, feature/knowledge/release content | [Git design](projects-git-github.md), [features](../specs/features-ux.md), [knowledge](../specs/decisions-and-tech-debt-ux.md), [status reports](../specs/project-status-ux.md) | 02, 03, 07, 08, 09 |
+| Execution configuration, routing, placement and recovery | [Sessions](agent-sessions.md), [supervision](employee-supervision.md), [employee UX](../specs/employee-supervision-ux.md), [run-mode UX](../specs/agent-run-modes-ux.md), [smart features](smart-features.md) | 04, 10, 11, 14, 16, 17 |
+| Messaging, accounting and budget controls | [Messaging ADR](../adr/0003-agent-messaging-office-first.md), [chat UX](../specs/chat-ux.md), [cost UX](../specs/costs-and-insights-ux.md) | 10, 15, 16, 17 |
+| Durable source layout, API adaptation and acceptance | [Storage ADR](../adr/0002-storage-sqlite-sqlcipher-one-writer.md), [offices](offices-hq-and-satellites.md), [host boundary](office-host-boundary.md), [HTTP contract](gateway-api-v1.md), [standalone design](standalone-server.md), [installation UX](../specs/server-installation-and-access-ux.md), [dogfood](../specs/dogfood-run.md) | 01, 04, 06, 11, 15, 16, 17 |
+| Structural processes versus unselected engines | [Process design](processes.md), [process UX](../specs/processes-ux.md), [retrospectives proposal](../specs/retrospectives-ux.md) | 01 and the selected/pending scope in the data index |
+
+Current CLI/library READMEs describe implemented interfaces. Their target mappings
+are adaptation requirements, not newly supported commands. The
+[local-HQ runbook](../runbooks/local-hq.md) must distinguish commands usable against
+the checked source from installation or recovery procedures still awaiting
+implementation. Research/spike records and pinned test evidence remain historical
+observations; changing them to match a target would falsify their results.
+
 ## Selected relationships and references
 
 - Organization → recursive team tree; each employee has one home team. A lead is a direct member appointed to manage the subtree; an ordinary ancestor-team member gains no such authority. Explicit person-to-person reporting remains distinct.
@@ -27,11 +53,15 @@ For selected target data, the organization-data contract takes precedence over c
 - TEAM- and P- counters are organization-scoped; T- is project-scoped or team-scoped when projectless; F-/R- are project-scoped; M- belongs to its release. Slugs/handles follow document 06. Organization/office IDs do not get new human counters.
 - A repository is registered once under the organization and may be shared by projects. Integration branches belong to each project/repository association, never to the organization cache. Local code repositories are supported; the organization metadata repository itself must be remote.
 - Features use project-prefixed slugs and stable-ID file paths in organization Git. Feature definitions explain behavior/limitations; supporting project/feature/release/deployment documents have the ownership defined in document 02. Release product changelogs and deployment technical changelogs remain distinct.
+- A built-in HR agent is an employee and therefore requires a home team; bootstrap must choose a valid team explicitly before admitting the profile. Its special chart placement is presentation, not an identity exception.
 - An authenticated owner account remains a security principal. If represented by an employee/person record, that record has the same required home-team constraint; displaying the owner above the chart does not create a teamless employee or grant authority from a YAML flag.
 
 ## Folder and privacy boundaries
 
-Portable definitions/open work live in organization Git; task work and code live in runtime worktrees. Protected chat, budget amounts/history, private notes, usage archives, command receipts and recovery evidence are not made public by putting their SQL projection in one draft schema. Each source's visibility and durability boundary still applies.
+Portable definitions/open work live in organization Git; task work and code live in runtime worktrees. Supporting knowledge uses a required project scope and at most one same-project feature/release/deployment scope. Release content and intended flags are authored records; deployment commit/flag snapshots record what was actually applied. These fields do not implement deployment or flag evaluation. Protected chat, budget amounts/history, private notes, usage archives, command receipts and recovery evidence are not made public by putting their SQL projection in one draft schema. Each source's visibility and durability boundary still applies. Private task notes
+are author-only by default, including against organization owners/administrators;
+existing shared note comments are not private. Published task history is immutable
+shared evidence and must contain no private-note body or identifying metadata.
 
 The target runtime layout is defined by [employee structure](organization-data/04-agent-structure.md#runtime-location):
 

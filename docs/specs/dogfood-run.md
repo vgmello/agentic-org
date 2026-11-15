@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 10
+revision: 11
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,19 +13,13 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
 
-## Selected-model acceptance follow-up (pending)
-
-The [documentation authority map](../design/documentation-authority.md) distinguishes selected data requirements from existing runtime behavior. These are future migration/release checks, not results established by this documentation PR:
-
-- Preserve old stable IDs and explicit legacy reference mappings; typed task numbering follows document 06 rather than separate B-/REQ- counters.
-- Retain required home team, accountable project/task owner team, independent assignment, typed task details and feature lifecycle metadata without dropping unmatched source fields.
-- Rebuild selected projections from Git plus authorized protected sources; verify incomplete source coverage fails explicitly instead of fabricating receipts, usage, budget capacity or authority.
-- Import mixed-recipient directed threads without widening visibility, and verify original message hash codecs/envelopes separately from normalized hashes.
-- Preserve budget policy revisions, used extensions, notices and independent holds across restart/rebuild; a pending stop is not a worker acknowledgement, and releasing a budget hold does not resume another pause.
-- Verify target worktree permissions, Git metadata/credential isolation and safe cleanup before treating the runtime path migration as complete.
-
-Areas, Undo, memory/scheduling and process-engine acceptance are not newly selected here. Keep historical tooling, signing identities and the live spool cutover evidence; a documentation rename does not migrate them.
-
+**Revision 11 (2026-11-15):** selected-data acceptance replaces multi-membership,
+teamless, Always-on and Undo pass conditions. Adds concrete §6a source/recovery
+rows and target setup/profile/permit checks; keeps existing row IDs and marks
+superseded requirements individually. Areas, Undo, advanced checklist execution,
+retrospectives, automatic scheduling/memory and process execution remain deferred.
+These are required future release checks, not claims of a working installer or
+migration. Earlier revision entries record the older run, not active acceptance.
 
 **Revision 10 (2026-11-15):** HQ-only one-command initial setup, automatic service registration, separate HQ-issued satellite onboarding and target executable names. Adds coverage for SRV-33/34; preserves existing recovery and identity checks.
 
@@ -94,7 +88,7 @@ Owner amendment (2026-11-15): use agentic-org setup as the one initial HQ comman
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
-| 1.1 | Install with no instance name, configure HQ and owner access | One `default` instance, platform-private data, valid release payload, ready service; no Tauri or frontend build tools | SRV-1, SRV-2, SRV-7, SIGN-21, SIGN-22, RCV-13 | Required |
+| 1.1 | Run HQ-only setup without an instance name; configure owner access, slug, remote organization repository/state branch and valid bootstrap home team | One default instance, private roots, verified release and ready service; canonical fields/team references round-trip. No local-only organization Git, teamless HR, Tauri or frontend build tools. Agent and remote connectivity/publication readiness are separate; offline validation cannot mark either externally verified | SRV-1, SRV-2, SRV-7, SRV-35, SRV-36, SIGN-21, SIGN-22, RCV-13 | Required |
 | 1.2 | Open its URL from a browser on the other machine | Authenticate and see the real organization without installing/enrolling the browser machine | SRV-8, SRV-18, SIGN-23 | Required |
 | 1.3 | Repeat install/setup without a name | Same instance/office identity, root, endpoint and release pin; no duplicate process, enrollment or configuration reset | SRV-2, SRV-6 | Required |
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 | Required |
@@ -113,6 +107,7 @@ Owner amendment (2026-11-15): use agentic-org setup as the one initial HQ comman
 | 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider; later collect the recovery code at the machine | Same result as wizard when valid, except the recovery code, which stays waiting until `agentic-org recovery release` at the machine; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26, RCV-20 | Required |
 | 2.6 | Use default/lab and a hostile dev server on the same host; copy/overwrite cookies and try read, mutation, stream, refresh/proof recovery and logout | No cross-origin/instance authority without the matching proof; proof never enters URL/log/redirect; valid paired sessions still work | SRV-23 | Required |
 | 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27, SIGN-14, SIGN-20 | Required |
+| 2.8 | Run complete local-bundle HQ setup with --offline while recording attempted external requests; supply a syntactically valid remote organization URL/branch and local credential references, then later authorize online operation | Zero external requests: no Git fetch/auth, provider/model discovery or update checks. HQ may be locally ready; registration remains remote and connectivity/publication/provider readiness stays unverified or pending. Missing local prerequisites fail without fetching. Later authorized online verification/publication updates its own status without changing organization identity; remote-auth failure cannot fabricate success | SRV-34, SRV-35; data 11 AE-17 | Required |
 
 ## 3. Enroll and execute at a satellite
 
@@ -123,14 +118,16 @@ Satellite onboarding starts from HQ's Add office UI or an HQ-issued command on t
 | 3.1 | Create invitation at HQ; run the HQ-issued enrollment flow on the other OS using protected input | CLI identifies destination/execution consent and reports awaiting approval; no public satellite app port | SRV-5, SRV-9 | Required |
 | 3.2 | Restart pending enrollment; approve its code in HQ's browser | Same request/key and one office; verified certificate, completed snapshot and ready status | SRV-6, SRV-9 | Required |
 | 3.3 | Repeat satellite enrollment/start | Reuse enrolled identity and stream positions; no second invitation or office | SRV-6, SRV-10 | Required |
-| 3.4 | Provision an employee through the real domain/hiring flow and place it at that office | Stable member ID, server-managed home/configuration, scoped `agent-os`, honest runtime readiness | SRV-13, SRV-14 | Required |
-| 3.5 | Run a bounded non-repository task and send an agent message locally | Owning office durably commits work, supervisor accounts for it, HQ browser receives real results | SRV-10, SRV-21 | Required |
+| 3.4 | Provision an agent through approved hiring with one home team, separate execution config/profile/model and local connection binding; place it at the satellite | Stable employee ID/handle, valid home team and generation, managed paths and scoped agent-os. Missing config/auth/model/permit shows specific not-ready state; a ready route shares the canonical connection quota | SRV-13, SRV-14, SRV-36, SRV-37 | Required |
+| 3.5 | Explicitly execute one bounded team-scoped non-repository task and send a local message | Required accountable team, project_id null, one T- reference in that team scope; turn/attempt/actual consumer usage retained, incomplete usage labelled. Office durably commits before ack; HQ receives authorized real results | SRV-10, SRV-21, SRV-37 | Required |
 | 3.6 | Inspect the session through HQ and pause/resume through supported authorized controls | Routed to the correct office/employee; no second main session or uncontrolled descendants | SRV-11, SRV-17 | Required |
 
-Use a non-repository task for 3.5 until a supported cross-office repository transport
-exists. V1's current local-bare-Git design does not make an HQ directory reachable
-from another host. This run cannot be cited as validation of cross-office coding;
-add a real checkout/commit/transfer run once that separate capability is supported.
+Use a team-scoped non-repository task for 3.5 until a supported cross-office code
+transport exists. The selected model allows local-only code repositories, but an
+HQ filesystem path is not another host's remote. Organization metadata Git must
+already be remote. This run proves no cross-office coding unless real checkout,
+commit and transport evidence is added. §6a.3 checks repository associations/cache
+semantics separately.
 
 ## 3a. Manage the team (HQ)
 
@@ -148,43 +145,46 @@ Hire every throwaway agent with the focus "Dogfood run: act only when the runner
 tells you. Don't approve, reject, start or finish anything on your own." (in
 Review, or in the request text for hires by command), and before 3a.5 message
 Dogfood Lead 1 the same. Rows 3a.5 to 3a.7 and 3b.4 rely on it. Both no-op tasks (3a.10, 3a.12) also say in their description "Dogfood run: leave
-this in To do. Don't start it until told.", so an Always on agent doesn't start or
-finish them before 3a.13 and 3b.4 need them in To do. Hire every throwaway agent with **How it runs: Always on**, so between turns it
-shows **Idle** (an On call agent shows Asleep instead). Roles are free text in
-v1.0 (role files come later, `roles-ux.md`), so no proposal here is classed as
-needing a new role, and APPR-2's new-role routing isn't exercised.
+this in To do. Don't start it until told." Use explicit bounded turns; no row
+requires automatic scheduling or an Always-on/On-call engine. Observe the actual
+ready/idle state supported by the execution backend. Identity profiles have one
+required home team and optional role/reporting. Role files are selected structural
+data; optional descriptive role_text is separate. Preserve hiring approval checks
+without inferring roles or authority from free text.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
-| 3a.1 | Create the teams Dogfood App and Dogfood Office, with no lead. From each team, create its project: Dogfood Desktop from Dogfood App, Dogfood Server from Dogfood Office | Both teams show in the org chart; each card lists its one project | TEAM-5, TEAM-8 | Required |
-| 3a.2 | From Dogfood App, open **Hire**: "A QA lead for the app". Name it Dogfood Lead 1 and place it at HQ's office. Stop at Review | The HR lead wakes (its chip no longer says Asleep) and proposes. Review shows team, reports to, runtime, model, office, home folder (read-only) and messaging name. Nothing exists yet: no card, no roster row, and Agents › Requests shows the proposal as **Waiting for you** | STAFF-1, HRL-3, APPR-3 | Required |
+| 3a.1 | Create Dogfood App and Dogfood Office teams with no lead; create Dogfood Desktop and Dogfood Server projects with the corresponding owner_team_id | Both teams show; each project has one required accountable owner team. No Area is created as an implicit requirement | TEAM-5, selected organization-data 01/02 | Required |
+| 3a.2 | From Dogfood App open Hire for Dogfood Lead 1, select its one home team, optional role/reporting, execution profile/model and HQ placement, then stop at Review | Review separates identity, reporting, execution and placement; proposed managed path/handle are read-only. No employee, home or messaging binding before approval; Requests is Waiting for you | STAFF-1, HRL-3, APPR-3, SRV-36, SRV-37 | Required |
 | 3a.3 | Approve the hire. Then make Dogfood Lead 1 the lead of Dogfood App | Hiring progress in words, then "Dogfood Lead 1 is hired and in Dogfood App." The card appears in Dogfood App, highlighted; Activity has one row, "Dogfood Lead 1 was hired into Dogfood App"; the profile records who requested and approved it. The card then shows Lead, and the team card names it | STAFF-2, APPR-5, MOVE-5 | Required |
 | 3a.4 | Hire Dogfood QA 1 into Dogfood App the same way, and approve it | Review suggests Dogfood Lead 1 as its manager (the team's lead). After approval it's in Dogfood App, under Dogfood Lead 1 in Reporting lines | STAFF-1, STAFF-2 | Required |
-| 3a.5 | In Dogfood Lead 1's Settings, turn on **Can approve hires**. Then have Dogfood QA 1 run `agent-os hire request "A QA engineer named Dogfood QA 2 for Dogfood App, always on, at HQ's office, with the focus: Dogfood run: act only when the runner tells you. Don't approve, reject, start or finish anything on your own."` | The roster and quick view show "Approves hires" on Dogfood Lead 1. The request becomes a proposal in Requests with requester Dogfood QA 1 and state **Waiting for Dogfood Lead 1**; Dogfood Lead 1 gets it in its inbox; nothing is hired yet | APPR-1, APPR-2, HRL-4, APPR-8 | Required |
-| 3a.6 | Have Dogfood Lead 1 run `agent-os hire approve <id>` with no reason, then again with `--reason "…"` | Without a reason it's refused and nothing changes. With one, Dogfood QA 2 is hired with no human step, Always on, at HQ's office, with the dogfood-run focus (its profile shows all three): its card appears in Dogfood App, highlighted; its profile and Activity say it was requested by Dogfood QA 1 and approved by Dogfood Lead 1; Home shows "Dogfood Lead 1 approved hiring Dogfood QA 2…" with **Open** | APPR-4, APPR-5, APPR-8, STAFF-2 | Required |
+| 3a.5 | In Dogfood Lead 1's Settings, turn on **Can approve hires**. Then have Dogfood QA 1 run `agent-os hire request "A QA engineer named Dogfood QA 2 for Dogfood App, at HQ's office, with the focus: Dogfood run: act only when the runner tells you. Don't approve, reject, start or finish anything on your own."` | The roster and quick view show "Approves hires" on Dogfood Lead 1. The request becomes a proposal in Requests with requester Dogfood QA 1 and state **Waiting for Dogfood Lead 1**; Dogfood Lead 1 gets it in its inbox; nothing is hired yet | APPR-1, APPR-2, HRL-4, APPR-8 | Required |
+| 3a.6 | Have Dogfood Lead 1 run `agent-os hire approve <id>` with no reason, then again with `--reason "…"` | Without a reason it's refused and nothing changes. With one, Dogfood QA 2 is hired with no human step, one home team Dogfood App, HQ placement and the dogfood-run focus; separate execution readiness remains visible: its card appears in Dogfood App, highlighted; its profile and Activity say it was requested by Dogfood QA 1 and approved by Dogfood Lead 1; Home shows "Dogfood Lead 1 approved hiring Dogfood QA 2…" with **Open** | APPR-4, APPR-5, APPR-8, STAFF-2 | Required |
 | 3a.7 | Have Dogfood QA 2 request another hire ("Dogfood QA 4"). Have Dogfood Lead 1 run `agent-os hire reject <id>` with no reason, then with `--reason "…"` | Without a reason it's refused. With one, Requests shows **Rejected**; no card, roster row or messaging name exists for Dogfood QA 4 | APPR-8, HRL-4 | Required |
-| 3a.8 | Open **Add agent record** for Dogfood QA 3 (messaging name, runtime, role and title, team Dogfood App, reports to Dogfood Lead 1, office HQ) and submit. Before approving, call `member.add_agent` directly through HQ's API for Dogfood QA 3 with the owner's session. Then **Reject** the proposal with a reason | Submitting creates only a proposal, **Waiting for you**. The direct call is refused (the error it returns is A96 in `our-org-in-the-app.md` §13), and creates no member, home or messaging binding. After Reject, Requests shows **Rejected**, and Dogfood QA 3 appears nowhere else: not in the chart, the roster or the HQ office's agents | STAFF-4, HRL-3, SRV-30, APPR-6 | Required |
-| 3a.9 | On Dogfood QA 2, **Add to team…** › Dogfood Office. Then **Remove from Dogfood Office** (no confirmation expected), and start **Remove from Dogfood App** (its last team) but cancel it. On Dogfood Lead 1, open **Move to team…** › Dogfood Office and cancel; then **Add to project…** › Dogfood Server | Dogfood QA 2 shows in both teams, each with the "+N teams" badge naming the other, then in Dogfood App only. Removing its last team asks first and says it would be in Not in a team; Cancel changes nothing. Dogfood Lead 1's Move dialog says "Dogfood Lead 1 leads Dogfood App. Dogfood App will have no lead.", and Cancel changes nothing. Add to project lists Dogfood Server's one team and adds Dogfood Lead 1 to Dogfood Office in one step | TEAM-2, DEAL-2, MOVE-2, MOVE-3 | Required |
-| 3a.10 | On the Dogfood Desktop board, create the task "Dogfood QA: no-op" and assign it to Dogfood QA 1 | The assignee picker shows each agent's status and runtime. The task shows on Dogfood QA 1's Tasks tab | MOVE-4 | Required |
-| 3a.11 | **Move to team…** › Dogfood Office on Dogfood QA 1. Press **Undo** on the toast, then move it again | The dialog says "Moves Dogfood QA 1 from Dogfood App to Dogfood Office. Dogfood QA 1 stops working on Dogfood App's projects (Dogfood Desktop) and starts on Dogfood Office's (Dogfood Server)." The card moves in one step, never through Not in a team; the toast reads "Dogfood QA 1 moved to Dogfood Office. **Undo**", and Undo moves it back the same way. | MOVE-1, MOVE-2 | Required |
+| 3a.8 | Open **Add agent record** for Dogfood QA 3 (handle, optional role/title/reporting, home team Dogfood App, separate execution profile/model and HQ placement) and submit. Before approving, attempt direct employee provisioning through the advertised typed target adapter with the owner's session (legacy native name: member.add_agent; no new HTTP route is implied). Then **Reject** the proposal with a reason | Submitting creates only a proposal, **Waiting for you**. The direct call is refused (the error it returns is A96 in `our-org-in-the-app.md` §13), and creates no member, home or messaging binding. After Reject, Requests shows **Rejected**, and Dogfood QA 3 appears nowhere else: not in the chart, the roster or the HQ office's agents | STAFF-4, HRL-3, SRV-30, APPR-6 | Required |
+| 3a.9 | Try adding a second home team and clearing Dogfood QA 2's home team through the UI/target adapter; cancel moving Dogfood Lead 1; add Dogfood Office as a contributor to Dogfood Desktop | Second simultaneous home membership and teamless result refused; cancelled move changes nothing, including lead appointment. Contributor changes do not move employees or change project owner. Any lead transfer explicitly updates the direct-member appointment | Selected 01/02/04; TEAM-2 and last-team DEAL-2 superseded, project-to-membership MOVE-3 superseded | Required |
+| 3a.10 | Create a task on Dogfood Desktop and atomically assign team/individual at expected revision to Dogfood App/Dogfood QA 1 | Required accountable team remains the project owner; assigned pair is separate and reporter immutable. Task has project-scoped T- reference, retained assignment event and the employee Tasks tab entry | MOVE-4, selected 03/12 | Required |
+| 3a.11 | Move Dogfood QA 1's single home team from Dogfood App to Dogfood Office and inspect task/workspace state | One atomic home-team/path move preserving ID/handle and history; optional reporting is explicit. Existing project accountability/assignment is not silently rewritten and worktree is retained. Show a textual confirmation/toast; Undo is deferred | Selected 04/12; MOVE-1 home move retained, MOVE-2 Undo portion deferred | Required |
 | 3a.12 | Check that Dogfood QA 2 is Idle, then **Pause** it. While it's paused, have Dogfood QA 1 send it a message, and assign it a new task "Dogfood QA: no-op 2" on the Dogfood Desktop board. Then **Resume** it | The dialog says HQ will record Pause and new work waits once the office applies it. The card shows **Paused · stop pending at office** (at HQ's own office this may be too brief to see; 4.8 covers it), then **Paused** once HQ's office confirms. Paused, it isn't woken and the message waits; assigning asks "Dogfood QA 2 is paused. Assign anyway? They'll see it when resumed." Resume is one click, and the message then reaches it | DEAL-3, MOVE-4 | Required |
-| 3a.13 | In Reporting lines, note Dogfood Lead 1's manager and who reports to it. **Offboard** Dogfood Lead 1, then Dogfood QA 1. Then try **Add person** with Dogfood QA 1's messaging name | Each dialog lists only what applies: Dogfood Lead 1's names each agent that reports to it and says they will report to its manager, or to the owner if it had none; Dogfood QA 1's says its open task comes back unassigned. Afterwards both are under Settings › Team › Former members with the date, read-only; the task is unassigned; the reporting lines changed as stated. Add person refuses the name inline | DEAL-4, PEOPLE-4 | Required |
-| 3a.14 | Throughout 3a.1 to 3a.13, watch the second browser | Each of these changes from 3a.1 to 3a.13 (hires, lead, teams, task, move, Undo, pause, resume, offboard) shows in its org chart, where the chart shows it (cards, teams, lead and status; tasks aren't on cards), and in its Activity (Pause and Resume are Status changes, hidden by default: turn on the Status filter to see them; consecutive changes by one member collapse into a group such as "… changed team 3 times · Show", and Show lists one row per change), within the live-update allowance (§7) and without a reload. Proposals, rejections and the Can approve hires setting add no card and aren't counted as Activity rows here. Project creation (3a.1) is checked in the chart only: Activity has no row for it (decision 7 and LIVE-1 list team and member changes, not project changes) | LIVE-1, LIVE-6, STAFF-2, MOVE-1, Success test 3 (`our-org-in-the-app.md`) | Required |
+| 3a.13 | Offboard Dogfood Lead 1 and Dogfood QA 1 using the supported explicit reconciliation; try reusing Dogfood QA 1's handle | Profiles inactive with IDs/handles/history retained, active assignments reconciled and lead removed. Reporters/history do not change. Any reporting reassignment names a valid active employee or null; no implicit teamless owner fallback. Reusing retained handle refused | DEAL-4, PEOPLE-4, selected 04/08/12 | Required |
+| 3a.14 | Throughout 3a.1 to 3a.13, watch the second browser | Each of these changes from 3a.1 to 3a.13 (hires, lead, teams, task, move, pause, resume, offboard) shows in its org chart, where the chart shows it (cards, teams, lead and status; tasks aren't on cards), and in its Activity (Pause and Resume are Status changes, hidden by default: turn on the Status filter to see them; consecutive changes by one member collapse into a group such as "… changed team 3 times · Show", and Show lists one row per change), within the live-update allowance (§7) and without a reload. Proposals, rejections and the Can approve hires setting add no card and aren't counted as Activity rows here. Project creation (3a.1) is checked in the chart only: Activity has no row for it (decision 7 and LIVE-1 list team and member changes, not project changes) | LIVE-1, LIVE-6, STAFF-2, MOVE-1, Success test 3 (`our-org-in-the-app.md`) | Required |
 | 3a.15 | Throughout 3a.1 to 3a.13, watch the 3.4 employee | The 3.4 employee keeps working on its own runtime: nothing stops, restarts or pauses it | Success test 3 (`our-org-in-the-app.md`; no criterion ID) | Required |
-| 3a.16 | Words check across 3a. Open the HR lead's quick view | The UI never says "deallocate"; it offers Remove from team, Pause, Resume, Offboard and Unassign. Status, runtime, Paused and Lead are words with icons. The HR lead has no Offboard, Move or team action | DEAL-1, HRL-1 | Required |
+| 3a.16 | Check words/icons throughout; inspect HR identity and its chosen home team separately from its bootstrap-management restrictions | No deallocate wording or meaning by color alone. HR has a real required home team and separate execution readiness; restricted destructive bootstrap controls do not imply a teamless employee | DEAL-1; HRL-1 teamless interpretation superseded by selected 04 | Required |
 
 ## 3b. See what's happening, live (HQ)
 
 Run after 3a, with Dogfood QA 2 (kept from 3a) and the 3.4 employee. Watch the
 second browser from 3a, without reloading, after turning its Activity Status
-filter back off (Activity's default). The owner's messaging handle is `owner`.
+filter back off (Activity's default). Select an authorized owner-linked employee contact with a valid home team for the
+message step; its handle is not inferred from the account's login. Owner browser
+read authority follows existing chat policy, not the employee's is_owner flag.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
 | 3b.1 | Give the 3.4 employee a bounded non-repository task. While it works, open Home | Home shows **Needs you**, **Working now** with the 3.4 employee and its current task on one line, and **Latest**: the newest 8 Activity rows with **All activity**. Only real members and tasks; no sample data | LIVE-4 | Required |
-| 3b.2 | Have Dogfood QA 2 send the 3.4 employee a short message with `agent-os msg send`. Open the thread from Activity. Then have the 3.4 employee send `owner` a message, and open that thread | The message row appears in Activity within the allowance, and **Open thread** shows the whole thread. The first thread is read-only and says so; the thread addressed to the owner offers **Reply**, and a reply sends | LIVE-2, LIVE-3 | Required |
-| 3b.3 | Have Dogfood QA 2 start a turn (send it a message), then let it finish | Its card's status word changes to Working and back, and Working now on Home adds and removes it, each within the allowance. Activity shows no Status row by default; the Status filter shows them | LIVE-6, LIVE-4, PROF-3 | Required |
-| 3b.4 | Have Dogfood QA 2 move its task "Dogfood QA: no-op 2" with `agent-os task start <id>`. As the owner, move "Dogfood QA: no-op" on the board, and report a bug in Dogfood Desktop | Each shows as a row in Activity (Tasks and bugs), and the board updates, within the allowance | LIVE-1 | Required |
+| 3b.2 | Send between the two agents, inspect Activity/thread, then send to the selected owner contact and reply where authorized | Activity is filtered to authorized messages. Open thread shows visible content only, preserving directed recipient restrictions and hidden-parent previews. Reply is available only with an authorized recipient/actor; no thread-participant union grants read access | LIVE-2, LIVE-3, SRV-39 | Required |
+| 3b.3 | Explicitly start a bounded turn for Dogfood QA 2, then let it finish | Card and Working now reflect the real turn within allowance; Activity default Status filtering works. Turn completion does not close the task, and message membership alone does not require an automatic wake engine | LIVE-6, LIVE-4, PROF-3, selected 11/15 | Required |
+| 3b.4 | Start the task through an advertised supported command, move another task on the board and report a bug type in Dogfood Desktop | Activity and board update once within allowance; all task types have T- references, required accountable team and durable ordered history. Preserve retained bug detail without fabricating a separate B- counter | LIVE-1, selected 03/12 | Required |
 | 3b.5 | In Activity, scroll down, then have Dogfood QA 2 send another message. Press **Jump to latest** | The list doesn't move, and an "n new · Jump to latest" pill appears (1 new when only that message arrived). Jump to latest goes to the top with the new row there | LIVE-5 | Required |
 | 3b.6 | Merge a reviewed branch into the integration branch of a repository the HQ office fetches | A Git row in Activity ("merged … into …") once the office has fetched | LIVE-1 | Optional |
 | 3b.7 | With Activity open in both browsers, run `agentic-org service stop` on the HQ machine. Move to another screen already loaded, and press **Retry**. While HQ is down, have the 3.4 employee send Dogfood QA 2 a message. Then run `agentic-org service start` | Both browsers show "Live updates paused. Showing what was loaded at <HH:MM>." with **Retry**, on every screen; Retry reads "Retrying…" and the line stays while HQ is down. Once HQ is back the line clears by itself, after signing in again if the restart ended the session. The message sent while HQ was down then shows in Activity once, with no gap | LIVE-8, SIGN-17, SIGN-13, SRV-10, SRV-12 | Required |
@@ -250,11 +250,35 @@ behavior. Native/global capture and old import criteria are retired by the updat
 specs. Run repository formatting, relevant Rust tests/Clippy and frontend checks,
 tests and build on the implementation, with the deletion ledger reviewed.
 
+## 6a. Selected data and recovery checks
+
+Use disposable authored-source fixtures and explicitly supported import/restore
+entry points. No such command is invented here; a missing adapter/restore service
+makes its row **Blocked** with that capability named. The draft SQL alone cannot
+pass these checks. Each row below is Required for a complete selected-model run.
+
+| Step | Action | Pass condition | Requirements | Type |
+| --- | --- | --- | --- | --- |
+| 6a.1 | Save/reload bootstrap and an employee move; import a retained legacy ID and a new UUIDv7 | Explicit slug/remote repo/state_branch and home-team/path consistency; offline saves retain remote registration with unverified connectivity/publication until authorized online. Valid direct-member lead/subtree relationship. Owner security grants unchanged. Old IDs retained; no regenerated identities | SRV-35, SRV-36; data 01/04/06 | Required |
+| 6a.2 | Create a task type change and cross-team assignment; replay with same ID, then conflicting expected revision; close/archive and reload | All types retain stable ID/T- number. Accountable team is project's owner or team scope; nullable assigned team/assignee pair atomic, including independently null assigned-team/assignee cases. Reporter unchanged, ordered history retained. P-/TEAM-scoped T- resolves correctly; old B-/REQ- mappings preserved without renumbering | Data 03/05/06/12 | Required |
+| 6a.3 | Associate one registered repo to two projects with different integration branches, plus a second repo/local-only code registration | Many repos per project and branches round-trip per association; one bare cache per office/repo. Local code supported, local organization Git rejected. Feature definition is feature.md; supporting docs require project and at most one same-project feature/release/deployment scope | SRV-35, SRV-41; data 01/02/03 | Required |
+| 6a.4 | Persist acknowledged changes/messages/allocations/receipts; stop processes and remove only the verified disposable projection; rebuild from sources | Same domain versions, actor/fingerprint results, origin/incarnation high-waters and allocations. Hash-verified snapshots, trusted HQ/CA pins and highest epoch checked. Unknown operation side effects reconciled before retry; retained native/base/pending source payload remains lossless | SRV-38; data 06/16 | Required |
+| 6a.5 | Repeat restore with a missing journal/blob, corrupt hash, older authority checkpoint or missing credential; simulate a stale surviving child | Explicit recovery-required/unavailable result with missing coverage; no invented receipt, lower high-water or duplicate execution. A restored PID is never signalled without ownership/machine/boot/start proof; prior cleanup/fence and placement generation verified before start | SRV-26, SRV-37, SRV-38; data 11/16 | Required |
+| 6a.6 | Import A→B then B→C in one directed thread; inspect as each participant and authorized owner; retry message/state writes | Per-message bodies/counts/previews/search/attachments retain original visibility. Original seven-input v1_lenprefixed_sha256 hash/envelope verified separately from normalized canonical JSON; mixed content/state original allocator and high-water preserved. One logical delivery | SRV-39; data 15/16 | Required |
+| 6a.7 | Save a private task note and a shared comment, rebuild shared caches and inspect as author/another employee/owner | Author-private separate durable DB survives; no admin exception or existence leak through shared receipts/search/export. Shared comment remains shared under its own policy | SRV-38, SRV-39; data 05/13 | Required |
+| 6a.8 | Create partial/unavailable usage, a budget extension and pending/held manual/security/budget reasons; restart/rebuild then release only the budget reason | Protected policy revisions/period/extension-use/notices/holds restored; no invented zero spend/capacity, second extension or held acknowledgement. Other holds remain; release caps warn only. Owner/project-manager cost scope and only the own-agent CLI current-task/daily/monthly amount exception preserved | SRV-40; data 10/17 | Required |
+| 6a.9 | Run concurrent turns across two profiles/offices sharing a registered connection; fail one route; restart/relocate with retained work | One canonical subscription quota/permit context, ordered eligible routes and actual attempts/usage. Fresh model/auth evidence required, safe process reuse/switch, no unsafe replay or duplicate placement. Handoff keeps task worktrees and local/unpushed checkpoints; target Git/credential/other-task/managed-state denies verified | SRV-37, SRV-41; data 11/14 | Required |
+
+Restore rows do not demonstrate automatic promotion, zero backup data loss, automatic
+scheduling/memory, advanced checklist/Undo or a process engine. Budget data tests
+do not claim a running pause evaluator. Record those features separately as deferred.
+
 ## 7. Required rows and the result
 
 **Type.** Every row is **Required** or **Optional**. Required rows decide the
 result. An Optional row is still run and recorded; its failure becomes a bug but
-doesn't fail the run. §6's checks count as Required.
+doesn't fail the run. §6's checks and every §6a row count as Required; deferred portions explicitly marked
+in §3a are excluded rather than reported as supported.
 
 **Results.** Each row gets one result per platform assignment: **Pass**, **Pass
 with notes**, **Fail**, **Blocked** or **N/A**.
@@ -294,7 +318,7 @@ change the run's result: it isn't an exception, and it files no bug.
 
 **Bugs.** Every Fail, and every Pass with notes, becomes a bug in Agentic Org
 (`ac`), with the row number and platform assignment in its title (for example
-"3a.11 macOS HQ: Move toast has no Undo"):
+"3a.11 macOS HQ: Home-team move loses task workspace"):
 
 - **Critical:** a Required row that fails, and any data-loss, authorization or
   duplicate-execution finding, wherever it shows up.

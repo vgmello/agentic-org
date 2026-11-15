@@ -14,6 +14,33 @@ The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
 setuid/setgid executable launches are refused. Missing/restricted process APIs
 fail the launch; there is no fallback to a weaker descriptor or identity policy.
 
+## Boundary with the selected execution model
+
+[Organization-data execution](../../docs/design/organization-data/11-model-profiles-and-agent-execution.md)
+selects the office worker's internal supervisor/router/session runner as this
+library's caller. That integration owns employee identity versus execution config,
+ordered connection pools, private local bindings, HQ permits, logical turns and
+attempts. org-supervise does not implement any of those services or select a
+scheduler, memory helper or native delegate engine. The current APIs below remain
+the implemented process contract; target schema tables are not applied migrations.
+
+Persist this library's ownership/cleanup evidence outside disposable projections,
+as [recovery](../../docs/design/organization-data/16-recovery-and-office-continuity.md)
+requires. Cleanup generation/mark is not HQ employee placement_generation. The
+caller must bind the resulting evidence to the correct durable process/placement,
+keep unknown cleanup and expired permits occupied, and require verified old cleanup
+or a machine fence before new placement. A response deadline, budget stop_pending
+notice or missing cache is not a RecoveryGone proof. Budget/manual/security holds
+remain independent in the caller; this library neither clears them nor restores
+used extensions. Task workspaces survive handoff/turn completion; this crate's
+private probe/temp cleanup does not authorize task-worktree deletion.
+
+The target runtime repository/task paths also require fresh sandbox/config/hooks/
+credential/other-task validation by each adapter. Generic path/process primitives
+here do not prove that an old work.git allowlist safely covers the new topology.
+
+## Implemented process contract
+
 The caller supplies captured environment data, a sanitized `SearchPath` (pin the
 verified release helper directory first, exclude workspace and private-home roots),
 its context values and a random session mark. Nothing is inherited from the

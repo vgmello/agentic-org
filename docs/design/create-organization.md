@@ -1,62 +1,117 @@
 # Design: create an organization through standalone HQ
 
-Status: **proposed implementation**, 2026-11-09, following the owner's v1 pivot.
-Owner: ada. Replaces the undeployed Tauri/SMAppService creation flow; there is no
-old-app import or compatibility path. See [ADR-0005](../adr/0005-standalone-server-v1.md)
-and [server setup requirements](../specs/server-installation-and-access-ux.md).
+Status: **selected target flow; implementation pending**, revision 2, 2026-11-15.
+Owner: ada. [Organization data](organization-data/01-organization-structure.md)
+owns the records below; [ADR-0005](../adr/0005-standalone-server-v1.md) and
+[installation UX](../specs/server-installation-and-access-ux.md) own installation.
+The current `agentic-org setup` refuses before provisioning: protected bootstrap,
+service registration and production browser handoff remain unavailable. The
+published name-only create contract is existing evidence, not this complete target.
 
 ## Setup and ownership
 
-Standalone setup selects `default` or an explicitly named instance. A new HQ setup
-establishes an instance administrator before exposing administration. It can create the
-first organization using the same domain operation as the authenticated HTTP API.
-Initial agentic-org setup creates HQ only and registers/starts the service automatically. It offers no satellite choice. Satellite onboarding is initiated separately from HQ's UI or an HQ-issued command. Opening
-HQ in a browser performs neither installation nor enrollment.
+Initial setup selects `default` or a named instance, establishes an authenticated
+instance administrator, creates HQ only and registers/starts its service. Satellite
+enrollment is a separate HQ-issued flow. Opening HQ in a browser does neither.
+Organization ownership alone never authorizes creating an organization.
+
+The owner account remains a host security principal. An optional person profile
+representing that owner must have a valid home team like every other employee;
+`is_owner` neither grants login nor creates a teamless profile. The built-in HR
+bootstrap exception permits approved system provisioning, not invalid employees.
+HR requires a selected valid home team before its profile is committed. No team
+name, lead appointment or reporting line is inferred from the word HR.
 
 ## Create flow
 
-1. An authenticated instance administrator chooses **Create organization** and enters the name. Organization ownership alone is insufficient. The
-   browser shows which HQ instance will store it. No local path picker appears.
-2. The request carries an operation ID and the proposed organization details.
-   The instance browser gateway (`agentic-org-web`) authenticates and authorizes the request before invoking a typed, restricted host operation. The host validates its admitted gateway capability, administrator grant and instance scope before provisioning; no browser HTTP parser runs in the key-custody host or office worker.
-3. The instance reserves the normalized name and IDs under its catalog lock, then
-   performs slow provisioning outside that lock. Creation is idempotent by
-   operation ID; concurrent requests cannot create duplicate names or identities.
-4. The host inside agentic-org serve creates the office key and starts its agentic-org-office HQ worker through the private
-   launch contract. The worker owns its folder, databases and durable `office.json`
-   marker. Preserve the existing adopt-versus-discard rules after a crash.
-   Creating the organization also provisions its versioned encrypted CA escrow and
-   owner recovery code. Complete the protected, one-time owner delivery and off-HQ
-   retention acknowledgement before reporting recovery material ready; use the same
-   durable create operation on retry. The [server design](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate)
-   records REC-1 for the still-unproven manual HQ-loss recovery procedure.
-
-
-5. Return a durable result containing organization/office IDs and readiness. The
-   browser opens the organization, showing Starting until its office is ready.
-   Report recovery-material acknowledgement separately; never label recovery ready
-   before the protected delivery is acknowledged.
-   If the response is lost, retry or look up the same operation instead of creating
-   a second organization. A saved organization may be stopped/unavailable; that is
-   distinct from a failed create.
-
-The server provisions agent homes and the built-in HR flow through their existing
-domain contracts. The new organization begins without imported HR/spool records.
-Owner/team/role/hiring behavior remains in the corresponding specs.
+1. An authenticated instance administrator chooses **Create organization**. Show
+   the destination instance, organization name and explicit organization slug,
+   remote organization repository registration and `state_branch`. Slugs are
+   lowercase kebab-case, unique in the organization catalog, and are not silently
+   recalculated after a rename. No browser storage-path picker appears. The
+   organization repository must have `kind: remote` and a syntactically valid
+   `remote_url`; local-only code repositories are allowed separately, never as
+   organization Git. Offline setup validates the registration URL, state-branch
+   syntax and local credential references/configuration only. It performs no
+   fetch, remote authentication probe or other external request. Persist the remote
+   registration and locally authored state with connectivity/publication readiness
+   explicitly unverified or pending until online operation is authorized.
+2. Collect the initial team choice needed by any bootstrap employees. Either
+   select an existing valid team in a resumed plan or create a root team at HQ
+   within that plan. Every employee has one required `home_team_id`, optional
+   `role_id` and `reports_to_employee_id`, and an organization-unique handle.
+   A lead must be a direct member and manages the subtree. A plan with a missing
+   HR/owner-person home team cannot claim bootstrap complete. The exact initial
+   team content remains a product choice; it is not selected by this document.
+3. Submit one operation ID bound to actor, instance and the validated plan.
+   `agentic-org-web` authenticates and authorizes before invoking a typed restricted
+   host operation. The host verifies the gateway capability and administrator
+   grant. No browser HTTP parser or raw-key access lives in the host operation.
+   Reserve the name, slug, IDs and plan under the catalog lock, then provision
+   outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
+   IDs keep their existing codecs. Numbered teams use durable HQ allocation.
+4. Register the remote organization repository, persist `organization.yaml`
+   (`id`, `slug`, `name`, `organization_repository_id`, `state_branch`, format and
+   concurrency revisions and provenance), `repositories.yaml`, HQ's office record,
+   initial team and any bootstrap profiles at their stable-ID paths. Employee
+   identity stays in `profile.md`; runnable HR additionally requires a separate
+   `execution.md`, selected model profile and fresh local credential/model evidence
+   under [execution](organization-data/11-model-profiles-and-agent-execution.md).
+   Creating its identity alone must show a specific not-ready state, not launch.
+   Offline setup does not probe provider authentication/model entitlement; local
+   configuration can be saved while execution readiness remains unverified.
+5. The host creates and retains the office encryption key and starts
+   `agentic-org-office` using its private launch contract. The worker owns its
+   stored `office.json` marker. Retain adopt-versus-discard and quarantine rules:
+   never discard a committed office after a lost response, nor invent replacement
+   keys. The current launch-v2 first line cannot carry the full target plan; its
+   versioned adaptation and the cross-store durable commit/recovery boundary must
+   be implemented before this flow is enabled. Do not add guessed wire fields.
+6. Provision versioned encrypted CA escrow and the same owner recovery code on
+   retry. Protected delivery may remain Waiting or Shown, not confirmed while HQ
+   becomes usable. Require off-HQ retention acknowledgement only before reporting
+   recovery material collected; never send the code through the gateway.
+   [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) still gates
+   the supported manual HQ-loss recovery procedure.
+7. Return the durable organization/office identity and separate server, runtime
+   and recovery readiness, plus remote repository connectivity/publication readiness.
+   Offline HQ service readiness must not imply that the configured remote was
+   contacted or that any Git publication succeeded. A saved office may be
+   Starting or unavailable.
+   Persist accepted plan, required sources and result evidence before acknowledging;
+   publish Git separately. Resolve a lost response using the same actor-bound
+   operation and fingerprint, rather than creating another organization.
 
 ## Reads and failures
 
-HQ lists only organizations the browser principal may access. Last-selected
-organization is a UI preference; it contains no privileged office token. Unknown
-or unauthorized organization IDs do not expose metadata. Invalid name, duplicate
-name, unavailable key store, failed worker, storage error and temporary starting
-state have distinct actionable responses. Status/event reconnect follows the
-standalone server's snapshot/cursor contract. Service start/repair belongs to the
-local CLI and works even if the HTTP server is stopped.
+List only organizations the principal can access. The selected organization is a
+UI preference, never a credential. Unauthorized and absent IDs reveal the same
+metadata. Distinguish invalid/duplicate name or slug, missing remote repository,
+invalid state branch or local credential configuration, invalid bootstrap team,
+key-store failure, worker failure and temporary startup. When online operation is
+authorized, report remote authentication/connectivity/publication failures in that
+separate readiness state; do not infer them from offline validation or discard an
+already-created HQ because a later publication fails. Preserve entered safe
+fields and show the failing step; never log credentials or recovery material.
+
+The currently published [HTTP v1 contract](gateway-api-v1.md) accepts `{name}` and
+returns its existing view. It must stay exact until a reviewed versioned adapter
+covers the additional target fields and validates all required references. Do not
+silently insert them into revision 2 DTOs or advertise target readiness through
+that old result. Local service repair must remain available when HTTP is down.
 
 ## Verification
 
-Test repeated/lost create responses, competing name reservations, interruption
-before and after the durable office marker, unavailable credentials, unauthorized
-browser access, organization-owner-only attempts, two HQ organizations sharing one gateway listener, unavailable escrow creation, interrupted recovery delivery, and create success followed by worker failure. Use disposable roots;
-never import or reset a user's existing organization as a test fixture.
+Use disposable roots. Verify remote organization Git rejection of local-only
+registration, explicit slug/branch round-trip, valid HR and optional owner-person
+home teams, direct-member lead rules and missing execution configuration readiness.
+Exercise lost/repeated create replies, fingerprint/actor conflicts, concurrent
+name/slug reservations, interruption around each durable source and office marker,
+key failures, online remote-auth failures, quarantine, owner-only create refusal,
+two HQs on one listener, interrupted escrow delivery and stored-create/failed-worker
+separation. Instrument offline setup to prove zero external requests, unchanged
+remote registration and pending connectivity/publication status; later authorized
+online verification must update that status without creating a second organization.
+Prove acknowledged records and receipts survive projection loss; Git publication
+alone cannot establish that boundary. These are required implementation checks,
+not test results from this documentation revision.

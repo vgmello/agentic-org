@@ -34,10 +34,19 @@ still require implementation.
    An instance may host several offices. HQ remains the organization authority and
    the browser entry point. Satellites execute locally, connect outward, enroll
    once and resume authenticated synchronization on later starts.
-5. **The server owns filesystem layout.** Agent identity is stable; setup chooses
-   local data roots and the server provisions homes/configuration. Browser path
-   display is read-only. There is no v1 desktop import, folder picker or workspace
-   relocation flow. Binaries and persistent data have separate lifecycles.
+5. **The server owns filesystem layout and source lifetimes.** Setup selects
+   local roots, registers the required remote organization repository and state
+   branch, and prepares durable local state. Offline setup validates local
+   configuration only and leaves remote access/publication readiness unverified;
+   it performs no external fetch or credential probe. Agent identity has a required home team; runnable
+   agents additionally need separate execution configuration and validated local
+   connection bindings. Runtime caches/worktrees use the office/team/employee/task
+   layout in organization-data document 04. Protected chat, accounting, private
+   notes, budgets and authority journals are not disposable caches or shared Git
+   content. Browser paths are read-only; there is no folder picker or arbitrary
+   relocation flow. Cache deletion requires recoverable sources and process
+   reconciliation. Uninstall preserves data by default and never removes a peer
+   instance's credentials or only acknowledged source.
 6. **Human, service and agent identities remain distinct.** Browser sessions
    replace signed-desktop privileges. Office certificates do not confer human
    administration. Local agent IPC may remain; HTTP is the user interface's single
@@ -45,7 +54,16 @@ still require implementation.
 7. **Delete superseded code directly.** No dual desktop/web implementation, legacy
    IPC adapter or old-app data importer is required. Retain domain logic, useful
    tests and security invariants. Installers/tests never erase user data merely
-   because this is an undeployed product.
+   because this is an undeployed product. Existing live Phase A coordination and
+   retained stable IDs still require explicit preservation; the selected data model
+   is not a blanket authorization to reset them.
+
+Selected entity, storage and recovery contracts are owned by
+[organization-data](../design/organization-data/README.md), with precedence and
+implementation boundaries in the [authority map](../design/documentation-authority.md).
+The [creation flow](../design/create-organization.md) must provision required
+organization/repository fields and valid home teams before admitting employees;
+a built-in HR agent is not exempt from the employee constraints.
 
 ## Component names and organization (owner amendment 2026-11-10)
 

@@ -1,8 +1,8 @@
 ---
-process: branch-and-merge     # the match key for overrides, unique per level and scope (the doc's own id, doc-<ULID>, is assigned when it's saved through the tool)
+process: branch-and-merge     # the match key for overrides, unique per level and scope (a selected organization record receives a stable UUIDv7 ID; existing IDs are preserved)
 name: Branch, review and merge
 kind: process
-level: organization          # organization | team | project | agent (private)
+level: organization          # repository seed metadata; selected structural scopes are organization | team | project
 version: 1
 owner: ada (Staff Engineer)
 status: active
@@ -11,9 +11,17 @@ applies_to: every agent that changes a repository
 overridable: true             # a team or project may override this process, or add its own
 ---
 
-> Kept in this repository (`docs/processes/`) until the organization's handbook repository exists (Processes, `docs/specs/processes-ux.md`). Here the release branch is `v1` and the lead is ada.
+> Kept in this repository (`docs/processes/`) as repository contributor instructions; selected organization process records belong in the remote organization repository (Processes, `docs/specs/processes-ux.md`). Here the release branch is `v1` and the lead is ada.
 
 # Branch, review and merge
+
+These instructions govern work on this software repository. Their legacy seed
+front matter is not an accepted organization-data payload. When materializing a
+selected process record, use the stable-ID path, `key`, `schema_version`, `revision`,
+`kind`, `title`, scope IDs, lifecycle and attribution fields in
+[organization structure](../design/organization-data/01-organization-structure.md).
+Preserve the explicit `overridable` value. That structural mapping neither
+activates a process engine nor changes this repository's review requirements.
 
 How every change reaches the release branch. Follow it from the moment you start work.
 
