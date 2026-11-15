@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "v1-task-history",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": true,
+    "ambiguity_resolved": false
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "crates/org-work/src/hash.rs: existing pure canonical JSON/SHA-256 implementation"
+    ],
+    "precise_scope": [
+      ".agent-kit/tasks/v1-task-history-contract.md: selected task history validation only"
+    ],
+    "localized_change": [
+      "crates/org-work/src/lib.rs: pure library; no protocol or persistence trait changes planned"
+    ],
+    "deterministic_checks": [
+      "docs/design/organization-data/test_schema.py:event and canonical: executable producer for interoperability fixtures"
+    ],
+    "low_risk": [
+      "docs/design/organization-data/05-operational-data.md: history integrity and replay are data durability boundaries"
+    ],
+    "no_prior_failure": [
+      "New delivery; no implementation or repair attempted"
+    ],
+    "ambiguity_resolved": [
+      "Float encoding interoperability and exact baseline validation require architecture disposition before implementation"
+    ]
+  }
+}
