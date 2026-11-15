@@ -143,7 +143,7 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── projects/<project-id>/...       # Defined in document 02
 ├── identity/counters/<scope-kind>/<scope-id>/<entity-kind>.yaml
 ├── identity/allocations/<scope-kind>/<scope-id>/<entity-kind>/<number>.yaml
-├── work-history/tasks/<task-id>/<revision>.json  # Immutable task activity, document 12
+├── work-history/tasks/<task-id>/<revision>.json  # Immutable task activity, document 05
 └── tombstones/<kind>/<id>.yaml
 ```
 

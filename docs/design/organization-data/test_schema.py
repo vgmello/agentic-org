@@ -418,11 +418,11 @@ class IntegrityAuditTests(unittest.TestCase):
         self.addCleanup(private.close)
         private.executescript((ROOT / "private-notes-schema.sql").read_text())
         for path in ROOT.glob("[0-9][0-9]-*.md"):
-            db = private if path.name.startswith("13-") else self.db if path.name.startswith("11-") else structural
             for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
                 for table, body in re.findall(r"(\w+)\s*\{([^{}]*)\}", diagram, re.S):
                     fields = re.findall(r"^\s*(?:TEXT|INTEGER|REAL|BLOB)\s+(\w+)", body, re.M)
                     if fields:
+                        db = private if table.startswith("private_") else self.db if path.name.startswith("11-") else structural
                         actual = {row[1] for row in db.execute(f'PRAGMA table_xinfo("{table}")')}
                         with self.subTest(document=path.name, table=table):
                             self.assertEqual(set(fields), actual)

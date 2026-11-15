@@ -172,12 +172,10 @@ The feature body contains its description. SQL derives `F-6` from the number; th
 
 Full slug lookup splits on the single `/`, resolves the organization/project slug, then uses that project and feature local slug. SQL enforces lowercase kebab-case on both components, so neither can contain `/`. Existing UNIQUE indexes support both steps; a duplicate stored full-path column or extra text index is unnecessary.
 
-## Shared child records
+## Record identity and tombstones
 
 ```mermaid
 erDiagram
-    record_refs ||--o{ checklist_steps : typed_owner
-    record_refs ||--o{ comments : typed_owner
     record_refs ||--o{ links : source_and_target
     tombstones o|--|| record_refs : deleted_reference
     record_refs {
@@ -185,27 +183,6 @@ erDiagram
         TEXT kind PK "required"
         TEXT id PK "required"
         INTEGER is_deleted "required"
-    }
-    checklist_steps {
-        TEXT organization_id PK, FK "required"
-        TEXT target_kind PK, FK "required"
-        TEXT target_id PK, FK "required"
-        TEXT id PK "required"
-        INTEGER position "required"
-        TEXT text "required"
-        INTEGER required "required"
-        INTEGER done "required"
-    }
-    comments {
-        TEXT organization_id PK, FK "required"
-        TEXT target_kind PK, FK "required"
-        TEXT target_id PK, FK "required"
-        TEXT id PK "required"
-        INTEGER position "required"
-        TEXT author_kind "required"
-        TEXT author_id "optional"
-        TEXT created_at "required"
-        TEXT body_markdown "required"
     }
     tombstones {
         TEXT organization_id PK, FK "required"
@@ -229,6 +206,8 @@ erDiagram
 
 `record_refs` is a derived lookup index across entity types, not another authored work entity. Bugs and requests register as `kind: task`, never as separate entity kinds. It allows shared metadata to point to `(target_kind, target_id)`. Before publishing a projection, validation must confirm each live lookup row has an actual source entity and each deleted row has a tombstone. Historical author/link references may resolve to tombstones.
 
+Task comments, checklist entries and activity records are defined in [operational data](05-operational-data.md). Their attachment to task identity does not make them separate work entities.
+
 ## File to SQL mapping
 
 | Table | Source fields |
@@ -237,15 +216,13 @@ erDiagram
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
-| `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
-| `comments` | `comments[]`: `id`, `author_kind`, optional `author_id`, `created_at`, `body_markdown`; position is array order. Owner authors have `author_kind: owner` and null `author_id`; actual login identity remains in the separate authentication/audit subsystem. |
 | `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
-| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](12-task-assignment-and-history.md) remain. References describe historical identity and do not require live owner records. |
+| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
 Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
 
-Private notes attached to tasks are a required, separate capability defined by [document 12](12-task-assignment-and-history.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. The shared `comments` table below does not satisfy that requirement; [document 13](13-private-task-notes.md) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
+Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
 An eventual import maps existing bug/request records into tasks with the corresponding `type`, preserving their stable IDs and mapping child references to entity kind `task`. It must detect collisions between previously separate entity namespaces before publishing anything. Existing readable references need an explicit mapping; this draft neither silently renumbers records nor implements that migration.
 
@@ -355,37 +332,7 @@ CREATE TABLE record_refs (
   PRIMARY KEY (organization_id, kind, id)
 ) STRICT;
 
-CREATE TABLE checklist_steps (
-  organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
-  target_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  position INTEGER NOT NULL CHECK (position >= 0),
-  text TEXT NOT NULL,
-  required INTEGER NOT NULL CHECK (required IN (0, 1)),
-  done INTEGER NOT NULL CHECK (done IN (0, 1)),
-  PRIMARY KEY (organization_id, target_kind, target_id, id),
-  UNIQUE (organization_id, target_kind, target_id, position),
-  FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
-    DEFERRABLE INITIALLY DEFERRED
-) STRICT;
 
-CREATE TABLE comments (
-  organization_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind = 'task'),
-  target_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  position INTEGER NOT NULL CHECK (position >= 0),
-  author_kind TEXT NOT NULL CHECK (author_kind IN ('employee', 'owner')),
-  author_id TEXT,
-  created_at TEXT NOT NULL,
-  body_markdown TEXT NOT NULL,
-  PRIMARY KEY (organization_id, target_kind, target_id, id),
-  UNIQUE (organization_id, target_kind, target_id, position),
-  CHECK ((author_kind = 'employee' AND author_id IS NOT NULL) OR (author_kind = 'owner' AND author_id IS NULL)),
-  FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
-    DEFERRABLE INITIALLY DEFERRED
-) STRICT;
 
 CREATE TABLE tombstones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),

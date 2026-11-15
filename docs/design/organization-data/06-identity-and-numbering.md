@@ -20,7 +20,7 @@ Counter rows identify `(organization_id, scope_kind, scope_id, entity_kind)`:
 
 Teams and projects each have their own organization-wide sequence. A project task uses only the project counter, even though `team_id` is required. Team tasks use only their team's counter. Team nesting and office placement never introduce another numbering level. A milestone's full reference can be `P-8/R-3/M-2`.
 
-Task `assigned_team_id` and `assignee_id` never participate in identity, numbering or canonical path selection. Assigning a team task from Payments to Platform leaves its Payments-scoped number and file in place. Only an explicit ownership/scope move can require the separate reallocation contract below. Assignment changes append [task history](12-task-assignment-and-history.md).
+Task `assigned_team_id` and `assignee_id` never participate in identity, numbering or canonical path selection. Assigning a team task from Payments to Platform leaves its Payments-scoped number and file in place. Only an explicit ownership/scope move can require the separate reallocation contract below. Assignment changes append [task history](05-operational-data.md#task-activity-history).
 
 ## Multiple offices
 

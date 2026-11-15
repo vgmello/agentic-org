@@ -1,6 +1,6 @@
 # Agent and employee structure boundary
 
-Structural draft for v1. Document revision 2.7. This document fixes employee identity relationships. [Document 11](11-agent-execution-pools-addendum.md) extends it with execution configuration, setup and durable placement/fencing requirements. Memory consolidation and scheduling remain separate pending work. [Document 12](12-task-assignment-and-history.md#private-notes-attached-to-tasks) checks private task notes against v1.
+Structural draft for v1. Document revision 2.7. This document fixes employee identity relationships. [Document 11](11-agent-execution-pools-addendum.md) extends it with execution configuration, setup and durable placement/fencing requirements. Memory consolidation and scheduling remain separate pending work. [Document 05](05-operational-data.md#private-notes-attached-to-tasks) checks private task notes against v1.
 
 ## Confirmed relationships
 
