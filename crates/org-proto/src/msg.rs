@@ -104,7 +104,7 @@
 //!
 //! ## Unknown values
 //! Enum values this build doesn't know decode as `Unknown` and re-serialize as `"unknown"`.
-//! So a client that prints a result re-serialized (e.g. `org-agent msg notify --format json`)
+//! So a client that prints a result re-serialized (e.g. `agent-os msg notify --format json`)
 //! may show `unknown` for a value from a newer server.
 
 use std::collections::BTreeMap;
@@ -762,7 +762,7 @@ pub struct MsgNotifyParams {
 
 /// `msg.notify`'s result.
 ///
-/// **A locked contract**: `org-agent msg notify --format json` prints it as-is, re-serialized
+/// **A locked contract**: `agent-os msg notify --format json` prints it as-is, re-serialized
 /// from this struct, so its keys come out in this order:
 /// `{"v","agent","urgent","count","urgent_count","items","more","text"}`. (On the socket it
 /// travels inside a response, whose key order isn't guaranteed.) Add fields only at the end.
@@ -1177,7 +1177,7 @@ impl EventKind for MessageDeliveryFailed {
     type Data = MessageDeliveryFailedData;
 }
 
-/// A `msg.send` written to the office's spool by `org-agent` while its office server is
+/// A `msg.send` written to the office's spool by `agent-os` while its office server is
 /// unreachable (ADR-0003 §3.5), and ingested by the office when it starts. Only
 /// fire-and-forget sends are spooled, never asks, so it has no deadline.
 ///
@@ -1222,7 +1222,7 @@ pub struct SpooledSend {
     pub meta: Meta,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
-    /// When `org-agent` wrote it, as the writer claims (see above).
+    /// When `agent-os` wrote it, as the writer claims (see above).
     pub created_at: String,
 }
 
@@ -2452,10 +2452,10 @@ mod tests {
                 i.from_name, i.from, i.subject, i.kind, i.id
             ));
         }
-        lines.push("…and 4294967295 more (org-agent msg inbox)".into());
+        lines.push("…and 4294967295 more (agent-os msg inbox)".into());
         lines.push(
-            "Triage each: answer now, `org-agent msg defer <id> --until \
-             30m|2h|after-task|<time>`, or `org-agent msg done <id>`."
+            "Triage each: answer now, `agent-os msg defer <id> --until \
+             30m|2h|after-task|<time>`, or `agent-os msg done <id>`."
                 .into(),
         );
         let result = NotifyResult {

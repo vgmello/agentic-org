@@ -29,13 +29,13 @@ jobs:
         os: [macos-15, ubuntu-26.04]
         include:
           - os: ubuntu-26.04
-            # org-office-host has items only its macOS code uses (code-signature peer checks,
+            # The extracted org-host library has items only its macOS code uses (code-signature peer checks,
             # Keychain key store), so on Linux clippy's dead-code and unused-import lints fail, and
-            # its tests can't start a worker yet. Until B2-06 (Linux host bring-up) gates those items
+            # the host integration tests in agentic-org cannot start every worker path yet. Until B2-06 (Linux host bring-up) gates those items
             # by target, it's excluded here and linted by the `clippy (Linux host)` step with only
             # those two lints allowed; its tests stay excluded.
-            clippy-flags: --exclude org-office-host
-            test-flags: --exclude org-office-host
+            clippy-flags: --exclude org-host --exclude agentic-org
+            test-flags: --exclude org-host --exclude agentic-org
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,7 +63,11 @@ jobs:
 
       - name: clippy (Linux host)
         if: runner.os == 'Linux'
-        run: cargo clippy --locked -p org-office-host --all-targets -- -D warnings -A dead_code -A unused_imports
+        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports
+
+      - name: CLI migration checks (Linux)
+        if: runner.os == 'Linux'
+        run: cargo test --locked -p agentic-org --lib --test cli
 
       - name: cargo test
         run: cargo test --locked --workspace ${{ matrix.test-flags }}

@@ -1,5 +1,5 @@
 //! B1-12: durable rows for the processes an office spawns, read by crash recovery. Plain data:
-//! org-server adapts them to org-supervise's ports and owns inventory limits (`with_inventory`).
+//! agentic-org-office adapts them to org-supervise's ports and owns inventory limits (`with_inventory`).
 //! The SQL is `store::owned_processes`'s.
 
 use std::time::Instant;

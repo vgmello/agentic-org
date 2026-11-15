@@ -657,7 +657,7 @@ fn sqlcipher_override_policy_covers_other_files_and_comment_spoofs() {
         ));
         for file in [
             "crates/org-office/src/store/status.rs",
-            "apps/org-office-host/src/lib.rs",
+            "crates/org-host/src/lib.rs",
         ] {
             assert!(std::panic::catch_unwind(|| override_policy(Path::new(file), &code)).is_err());
         }
@@ -1222,11 +1222,11 @@ fn sqlcipher_function_matcher_requires_the_declaration_name_token() {
 // Each process-private host opener has one statement-scoped exception.
 fn host_opener_statements() -> [(&'static str, &'static str, &'static str); 3] {
     [
-        ("apps/org-office-host/src/hostdb.rs", "fn connect(",
+        ("crates/org-host/src/hostdb.rs", "fn connect(",
          "letdb=Connection::open_with_flags(path,OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NOFOLLOW,)?;"),
-        ("apps/org-office-host/src/hostdb/sqlcipher.rs", "pub(super)fn ready(",
+        ("crates/org-host/src/hostdb/sqlcipher.rs", "pub(super)fn ready(",
          "letdb=Connection::open_in_memory()?;"),
-        ("apps/org-office-host/src/hostdb/tests.rs", "pub(super)fn connection_for_test(",
+        ("crates/org-host/src/hostdb/tests.rs", "pub(super)fn connection_for_test(",
          "letdb=Connection::open_with_flags(path,flags).map_err(Error::from)?;"),
     ]
 }

@@ -703,7 +703,7 @@ fn rule_notify_lists_at_most_ten_urgent_first_and_the_rest_come_next() {
     assert_eq!(first.more, 2);
     assert_eq!(first.items[0].id, urgent, "urgent first");
     assert_eq!(first.items[1].id, normal[0], "then oldest first");
-    assert!(first.text.contains("…and 2 more (org-agent msg inbox)"));
+    assert!(first.text.contains("…and 2 more (agent-os msg inbox)"));
     assert_eq!(first.text.lines().count(), 1 + NOTIFY_MAX_ITEMS + 2);
 
     // Only listed items were recorded for the session: the other two come up next.
@@ -752,7 +752,7 @@ fn rule_notify_text_is_sanitized_framed_as_untrusted_and_never_has_bodies() {
     assert!(lines
         .next()
         .unwrap()
-        .starts_with("Triage each: answer now, `org-agent msg defer <id>"));
+        .starts_with("Triage each: answer now, `agent-os msg defer <id>"));
     assert_eq!(sanitize_inline_text("  a \t\t b  ", 80), "a b");
 }
 

@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn mcp_server_names() {
         check::<McpServerName>(
-            &["office", "org-agent", "a_b", "A1"],
+            &["office", "agent-os", "a_b", "A1"],
             &[
                 owned(&["", "my server", "a.b", "a/b", "a:b", "a\"b", "-x", "--help"]),
                 vec!["s".repeat(65)],
