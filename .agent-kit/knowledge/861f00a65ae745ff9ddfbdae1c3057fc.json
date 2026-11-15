@@ -1,0 +1,29 @@
+{
+  "title": "Repository ownership and release gates remain mandatory",
+  "kind": "decision",
+  "summary": "Path owners, one unmerged branch, full checks, own independent review, reviewer READY and ada go remain required alongside kit gates.",
+  "rationale": "Adoption is tooling configuration; it does not transfer product or contract ownership or authorize merging.",
+  "sources": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19"
+    },
+    {
+      "path": "docs/processes/branch-and-merge.md",
+      "sha256": "91a460fcead6a524729d10ef6fd377bcf1019248bd556515b9f0b6ce08ebfbc3"
+    },
+    {
+      "path": ".agent-kit/DECISIONS.md",
+      "sha256": "6b63ab375fb1ea0ac85b0f7dcec47b15036961a5a6b8846f188dda3f5a22863c"
+    }
+  ],
+  "version": 1,
+  "id": "861f00a65ae745ff9ddfbdae1c3057fc",
+  "status": "ACCEPTED",
+  "root": "/Users/vgmello/projects/app-codex-starter-kit",
+  "created_at": "2026-11-15T04:54:06.496484+00:00",
+  "head": "b1256c9771b15c0b47198828164e5efe78db2e96",
+  "reviewed_by": "01a1dd82-ffe6-7363-af94-6072c75de2d1",
+  "review_rationale": "Reviewed retained AGENTS ownership and branch/review process against the user-authorized adoption; this record adds no authority.",
+  "reviewed_at": "2026-11-15T04:54:47.470196+00:00"
+}

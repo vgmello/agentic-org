@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "session_id": "REPLACE_WITH_OBSERVED_WORKER_SESSION",
+  "read": [],
+  "notes": "After reading the packet sources, record applicable constraints, tools/checks and any blockers. Copy current read references in packet order; do not acknowledge unread material."
+}

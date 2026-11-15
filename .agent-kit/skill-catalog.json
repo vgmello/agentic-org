@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "status": "ready",
+  "reviewed_by": "01a1dd82-ffe6-7363-af94-6072c75de2d1",
+  "rationale": "Actual Rust 1.99.1/Svelte 5 static monorepo, maintained UI skills, existing ownership/merge process and sensitive host/storage/protocol boundaries. New briefs add only missing project-specific procedures. No application changes or speculative skill pack. Owner-requested local embed daemon and Codex native memory are documented in the maintenance skill; existing product ownership remains unchanged.",
+  "project_evidence": [
+    {
+      "path": ".agent-kit/project-roles/code-reviewer.md",
+      "sha256": "5aacb9dbc6183affd9fae6e956391e5eb4afcc90d377873a4087a05fa360c7ea"
+    },
+    {
+      "path": ".agent-kit/project-roles/codebase-scout.md",
+      "sha256": "8496989201b03e7ae118b946cfeaf0b0a38e83cfa389a3e6814771490a109b5d"
+    },
+    {
+      "path": ".agent-kit/project-roles/fullstack-engineer.md",
+      "sha256": "a6b935c57906ae10655a4680ee7e3e5be7c8518d3d971e85a639cbeb9329a950"
+    },
+    {
+      "path": ".agent-kit/project-roles/staff-engineer.md",
+      "sha256": "57eb9af5ef20b7c1a1c9dfd840f171622a44bf2cf921d0acadfc0aaa364dcfba"
+    },
+    {
+      "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
+      "sha256": "a04eea1920dca5518c9a41390028fe4ee77a371f1b3dfcdaeb3571244da90fab"
+    },
+    {
+      "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
+      "sha256": "34b74996eb8c441136490163ce3521ce7c43b7c0e8d641af1545e98ed0c55eaa"
+    },
+    {
+      "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
+      "sha256": "c21e731d48e2b57f60c17dd3c326fb91ad239f348c84f508091b391fc030167f"
+    },
+    {
+      "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
+      "sha256": "5c9cdf68662568d41bf88b8a0f5ee87398394d6d76a14017da50c4e611aa2de1"
+    },
+    {
+      "path": ".agents/skills/playwright-cli/SKILL.md",
+      "sha256": "b07a6cbe4e5b638046fe0b9df0e84783cb9899f0aed3db1eef915601c3260a64"
+    },
+    {
+      "path": ".agents/skills/shadcn-svelte/SKILL.md",
+      "sha256": "1c11b03e380578beb93807b46f3a0c4b243e1aeeef27e8782fe8bf2c8dfcf862"
+    },
+    {
+      "path": ".codex/config.toml",
+      "sha256": "4b4fadcd85bf04f59a64c250a2ad34a12fecda76ab192de07663ecd71344972a"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "0d07f8b1889c8fcd64219c0d87c0b3e5831db9a6d3536a7cae0d8e3d977e1119"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "615f0bbf53f4bb125cbf4d25271de4a3376511cc7ed6eac18dcf5219211c0fa0"
+    },
+    {
+      "path": "apps/agentic-org-ui/AGENTS.md",
+      "sha256": "9ddf8bf65a90042fdf9b7b5bbcba4cece92bac35331a517f21a1f215c4c8b58c"
+    },
+    {
+      "path": "apps/agentic-org-ui/components.json",
+      "sha256": "9f67d2b4c696eb7e1c32042d299ad72a6aaccebf704cce256b1a5671a85a0a0d"
+    },
+    {
+      "path": "apps/agentic-org-ui/package.json",
+      "sha256": "a5f4697b3d032b26acaf83fde679694345e853f104f4adfbdc324572314450aa"
+    },
+    {
+      "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
+      "sha256": "a77502af12f59a2d65778414261eefa078c4b39ba62db467a23e1b801288283a"
+    },
+    {
+      "path": "docs/adr/0005-standalone-server-v1.md",
+      "sha256": "d073d3427e489b48ccbb98f6f148fea2ec8f53a8e54e39f85fdfb222905c9ca8"
+    },
+    {
+      "path": "docs/architecture-rules.md",
+      "sha256": "c809d3fba308f63f81b07268e3b6db9c62a96a18519611035f555c6d287c9d19"
+    },
+    {
+      "path": "docs/design/documentation-authority.md",
+      "sha256": "783539842788d7901c2b7ff85f984b1e2832ab7c6bc15cb205ca448262b09674"
+    },
+    {
+      "path": "docs/design/organization-data/README.md",
+      "sha256": "64a93cde7d9d5458db28d9c91da12afb44ae5bda5423260b6c9f43108565e095"
+    },
+    {
+      "path": "docs/design/project-structure.md",
+      "sha256": "94077069631e634c110751bd2dc5979fa3fadde65e80077716d0f129266b4910"
+    },
+    {
+      "path": "docs/processes/branch-and-merge.md",
+      "sha256": "91a460fcead6a524729d10ef6fd377bcf1019248bd556515b9f0b6ce08ebfbc3"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    }
+  ],
+  "roles": {
+    "staff-engineer": ".agent-kit/project-roles/staff-engineer.md",
+    "fullstack-engineer": ".agent-kit/project-roles/fullstack-engineer.md",
+    "code-reviewer": ".agent-kit/project-roles/code-reviewer.md",
+    "codebase-scout": ".agent-kit/project-roles/codebase-scout.md"
+  },
+  "skills": [
+    {
+      "id": "project-conventions",
+      "description": "Ownership, architecture and release process",
+      "paths": [
+        "."
+      ],
+      "risks": [],
+      "implementation": [
+        "AGENTS.md",
+        "docs/processes/branch-and-merge.md"
+      ],
+      "review": [
+        "AGENTS.md",
+        "docs/processes/branch-and-merge.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "rust-workspace",
+      "description": "Rust composition and pinned verification",
+      "paths": [
+        "crates",
+        "apps/agentic-org",
+        "apps/agentic-org-office",
+        "apps/agentic-org-web",
+        "apps/agent-os"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/rust-workspace/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/rust-workspace/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "static-ui",
+      "description": "Static SvelteKit UI and maintained component/browser skills",
+      "paths": [
+        "apps/agentic-org-ui"
+      ],
+      "risks": [],
+      "implementation": [
+        "apps/agentic-org-ui/AGENTS.md",
+        ".agent-kit/project-skills/ui-maintenance/SKILL.md",
+        ".agents/skills/shadcn-svelte/SKILL.md",
+        ".agents/skills/playwright-cli/SKILL.md"
+      ],
+      "review": [
+        "apps/agentic-org-ui/AGENTS.md",
+        ".agent-kit/project-skills/ui-maintenance/SKILL.md",
+        ".agents/skills/shadcn-svelte/SKILL.md",
+        ".agents/skills/playwright-cli/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "host-and-storage",
+      "description": "Credential, authorization and durable storage boundaries",
+      "paths": [
+        "crates/org-host",
+        "crates/org-office",
+        "apps/agentic-org",
+        "apps/agentic-org-web"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "public-contracts",
+      "description": "Protocol/runtime owner and compatibility review",
+      "paths": [
+        "crates/org-proto",
+        "crates/org-sync-proto",
+        "crates/org-office-launch",
+        "crates/org-runtime"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "selected-data-model",
+      "description": "Read owning selected model separately from application implementation",
+      "paths": [
+        "docs/design/organization-data"
+      ],
+      "risks": [],
+      "implementation": [
+        "docs/design/documentation-authority.md",
+        "docs/design/organization-data/README.md",
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        "docs/design/documentation-authority.md",
+        "docs/design/organization-data/README.md",
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "credential-risk",
+      "description": "Cross-path credential/authorization risks",
+      "paths": [
+        "."
+      ],
+      "risks": [
+        "credentials",
+        "authorization",
+        "durability"
+      ],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "kit-maintenance",
+      "description": "Project kit setup and truthful service/review evidence",
+      "paths": [
+        ".agent-kit",
+        ".codex",
+        ".agents/skills",
+        "AGENTS.md"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "agent-execution-risk",
+      "description": "Model/process execution and configuration effects",
+      "paths": [
+        "."
+      ],
+      "risks": [
+        "agent-execution"
+      ],
+      "implementation": [
+        ".agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "critical": true
+    }
+  ]
+}

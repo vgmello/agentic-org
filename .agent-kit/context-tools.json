@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "profile": "large-project",
+  "backend": "repowise",
+  "executable": ".agent-kit/tools/repowise-0.61.0/bin/repowise",
+  "expected_version": "0.61.0",
+  "max_chars": 12000,
+  "timeout_seconds": 600,
+  "selection_reason": "Fixed stack: Repowise for bounded structural retrieval and repository history; shared by Claude and Codex."
+}

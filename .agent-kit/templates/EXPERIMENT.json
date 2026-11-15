@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "REPLACE-with-unique-experiment-id",
+  "hypothesis": "REPLACE with one change and its expected mechanism",
+  "baseline": "REPLACE with exact workflow/configuration/CLI versions",
+  "candidate": "REPLACE with the one changed treatment; retain acceptance gates",
+  "cases": {
+    "case-1": {
+      "category": "bounded-fix",
+      "contract_sha256": null,
+      "application_paths": ["src", "tests", "REPLACE-with-dependency-lock"],
+      "trials": ["trial-1", "trial-2", "trial-3"]
+    }
+  },
+  "minimum_pairs": 3,
+  "objective": "cost_per_accepted",
+  "minimum_improvement_fraction": 0.1,
+  "quality_window_days": 7,
+  "budget": "REPLACE with explicit total allowance/time and stop criteria; do not run without available budget",
+  "rollback": "REPLACE with the signal and owner that restore the previous version"
+}

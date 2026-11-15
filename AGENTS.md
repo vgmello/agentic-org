@@ -74,3 +74,47 @@ Check your inbox at the start of every turn and after every step. ada is `ac-sta
 
 ## Tailwind Plus (licensed UI)
 The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/agentic-org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
+
+<!-- starter-kit:start -->
+# Starter kit workflow
+
+Read `.agent-kit/WORKFLOW.md` and the active profile in
+`.agent-kit/policy/model-routing.json`. Preserve this project's ownership,
+engineering conventions, architecture decisions and merge rules. Skills live in
+`.agents/skills/`; load only the current phase. Do not load whole task/review archives.
+Use project-capabilities during adoption/maintenance and skill-routing before work.
+Load only the selected project role brief and relevant skills; preserve full-stack
+ownership when delegating independent pieces. Missing/stale guidance blocks readiness.
+
+In `codex-only`, this Codex session is the lead. Use task-routing to register,
+plan and assign scoped work with the installed Sol effort policy. Keep the original
+author session for intent validation. Use bounded-lookup only for useful read-only
+extraction; helpers never implement. Default to one worker; concurrent writers need
+separate worktrees. Large/complex architecture needs a fresh independent review
+before detailed planning. A failed premise pauses affected work for reassessment.
+
+In `hybrid`, the implementation lead and final reviewer use Claude as selected by
+the policy; Codex runs the Sol review/fix phase. Read relevant project conventions
+in CLAUDE.md in that mode. Missing access never permits substituting models silently.
+
+When invoked by kit_codex.py, follow its explicit phase: a fresh review is read-only;
+fix only on the explicit resume turn. Never recursively invoke the runner, delegate,
+commit, push, switch branches, alter review artifacts/check configuration or weaken
+tests inside these turns. The wrapper owns repair commits. A separate ordinary lead
+session may commit scoped accepted work when the user authorizes it.
+
+Use the fixed Repowise MCP lookup for large-project discovery, bounded source reads
+and project compiler/type checks for correctness. Use project-memory for scoped
+source-backed knowledge. Treat memories/indexes as hints and revalidate against code.
+A fresh reviewer inspects source before previous findings. Return unsupported design
+assumptions, missing prerequisites and disputed fixes to the original author/lead.
+
+Run `.agent-kit/runtime/kit_hooks.py check` explicitly before acceptance. Native
+hooks provide feedback only when trusted/supported; they cannot replace current
+verification receipts or the independent review cycle. Record unsuccessful outcomes
+and unknown usage honestly through process-improvement. Do not edit secret files
+(`.env*`, private keys or credentials); exact example/sample/template files are public.
+
+Use `.agent-kit/reference/ADOPT.md` for setup. Distinguish configuration, verified
+checks and a live model cycle. Do not claim model availability from a version probe.
+<!-- starter-kit:end -->
