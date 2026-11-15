@@ -43,6 +43,32 @@ fn nothing_to_do_commits_nothing() {
 }
 
 #[test]
+fn b111_reconciliation_rejects_numbered_projectless_bug_before_any_domain_writes() {
+    let w = World::new();
+    w.bug_in(Some(AREA_UI));
+    let invalid = w.bug_in(Some(AREA_UI));
+    {
+        let mut state = w.store.work.lock().unwrap();
+        let bug = state.items.get_mut(&invalid).unwrap();
+        bug.number = Some(7);
+        bug.project_id = None;
+    }
+    w.store.org_mut(|o| o.delete_area(AREA_UI, AREA_PAY));
+    let before = w.store.snapshot();
+    let out = reconcile(&w);
+    let TxnOutput::Refused(error) = out else {
+        panic!("numbered projectless bug must refuse reconciliation: {out:?}");
+    };
+    assert_eq!(error.code, org_proto::ErrorCode::InvalidRequest);
+    assert_eq!(error.message, "a numbered task or bug must have a project");
+    let after = w.store.snapshot();
+    assert_eq!(after.items, before.items);
+    assert_eq!(after.events, before.events);
+    assert_eq!(after.numbers, before.numbers);
+    assert_eq!(after.feed, before.feed);
+}
+
+#[test]
 fn deleting_an_area_moves_its_open_bugs_and_leaves_the_closed_ones() {
     let w = World::new();
     let new = w.bug_in(Some(AREA_UI));

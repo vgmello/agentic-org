@@ -291,6 +291,9 @@ pub(crate) fn make_task(ctx: &mut Ctx, p: &ChecklistMakeTaskParams) -> Result<Pl
         return Err(invalid("the project is archived: it takes no new items"));
     }
     not_deleted(&item)?;
+    if item.part_of().is_some() {
+        return Err(invalid("a subtask cannot have subtasks"));
+    }
     if step.task_id.is_some() {
         return Err(invalid("this step was already made into a task"));
     }

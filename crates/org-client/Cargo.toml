@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Explicit teardown for descriptor-owning tests; never enabled in normal builds.
+testkit = []
+
 [dependencies]
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }

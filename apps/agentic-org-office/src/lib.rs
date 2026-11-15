@@ -31,6 +31,10 @@ mod startup;
 mod transfer;
 mod zeroed;
 
+#[cfg(test)]
+#[path = "../tests/support/teardown.rs"]
+mod test_teardown;
+
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

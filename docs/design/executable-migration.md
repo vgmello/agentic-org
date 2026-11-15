@@ -9,6 +9,11 @@ This change migrates implemented executable responsibilities. Application direct
 | agentic-org-web | apps/agentic-org-web / agentic-org-web | Existing HTTP/assets/TLS library retained; new executable supports help/version and refuses production startup until authenticated host handoff and backend composition land. |
 | agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
 
+The static browser application is `apps/agentic-org-ui`, frontend package
+`agentic-org-ui`. CI, build scripts and licensed UI containment use that path. It
+produces static assets served by `agentic-org-web`, not another executable or
+JavaScript service.
+
 ## Host extraction
 
 Host behavior lives in crates/org-host as a library, preserving its build guard. The human CLI in apps/agentic-org composes this library; it is not another executable, and there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Service managers must use serve when their registration implementation lands.

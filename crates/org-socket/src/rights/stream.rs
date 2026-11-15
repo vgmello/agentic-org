@@ -1,4 +1,4 @@
-//! Validate a received capability before it becomes a serving stream.
+//! Validate owned socket shape and flags before typed adoption.
 #[cfg(target_os = "macos")]
 mod macos;
 use super::invalid;
@@ -6,8 +6,9 @@ use super::invalid;
 use libc::{fcntl, getsockname, getsockopt};
 use std::io;
 use std::mem;
+use std::net::TcpListener;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
-use std::os::unix::net::{SocketAddr, UnixStream};
+use std::os::unix::net::{SocketAddr, UnixDatagram, UnixStream};
 #[cfg(test)]
 use tests::{fcntl, getsockname, getsockopt, peer_address};
 
@@ -24,32 +25,12 @@ pub fn connected_unix_stream(descriptor: OwnedFd) -> io::Result<UnixStream> {
     if kind != libc::SOCK_STREAM {
         return Err(invalid("channel descriptor is not a stream"));
     }
-    // SAFETY: zeroed storage prevents uninitialized reads; kernel output is trusted.
-    let mut address: libc::sockaddr_storage = unsafe { mem::zeroed() };
-    let mut length = mem::size_of_val(&address) as libc::socklen_t;
-    // SAFETY: the owned fd and live address/length buffers cover the kernel's output.
-    succeeded(unsafe {
-        getsockname(
-            fd,
-            (&mut address as *mut libc::sockaddr_storage).cast(),
-            &mut length,
-        )
-    })?;
-    require_unix(libc::c_int::from(address.ss_family))?;
-    #[cfg(target_os = "macos")]
-    if macos::listening(fd)? {
+    require_unix(socket_family(fd)?)?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if listening(fd)? {
         return Err(invalid("channel descriptor is a listener"));
     }
-    #[cfg(target_os = "linux")]
-    if socket_option(fd, libc::SO_ACCEPTCONN)? != 0 {
-        return Err(invalid("channel descriptor is a listener"));
-    }
-    // SAFETY: inspect the owned descriptor, without changing its flags outside the fence.
-    let flags = unsafe { fcntl(fd, libc::F_GETFD) };
-    succeeded(flags)?;
-    if flags & libc::FD_CLOEXEC == 0 {
-        return Err(invalid("channel descriptor is not close-on-exec"));
-    }
+    require_cloexec(fd)?;
     let stream = UnixStream::from(descriptor);
     if let Err(error) = peer_address(&stream) {
         if !peer_closed(&error, cfg!(target_os = "macos")) {
@@ -98,5 +79,86 @@ fn succeeded(result: libc::c_int) -> io::Result<()> {
         Ok(())
     }
 }
+
+/// Adopt an owned UNIX datagram socket that is already close-on-exec.
+///
+/// This validates socket shape only, not connected/receive-only host authority.
+/// It never repairs flags; every refusal drops the descriptor. Receivers must
+/// establish CLOEXEC inside their receive/spawn fence before calling this helper.
+pub fn unix_datagram(descriptor: OwnedFd) -> io::Result<UnixDatagram> {
+    let fd = descriptor.as_raw_fd();
+    require_kind(fd, libc::SOCK_DGRAM)?;
+    require_unix(socket_family(fd)?)?;
+    require_cloexec(fd)?;
+    Ok(UnixDatagram::from(descriptor))
+}
+
+/// Adopt an owned IPv4 or IPv6 TCP listener that is already close-on-exec.
+///
+/// This validates socket shape/listening state, not host provenance or authority
+/// to serve a configured origin. It never repairs flags; every refusal drops the
+/// descriptor. Adoption must complete before acknowledging a descriptor transfer.
+pub fn tcp_listener(descriptor: OwnedFd) -> io::Result<TcpListener> {
+    let fd = descriptor.as_raw_fd();
+    require_kind(fd, libc::SOCK_STREAM)?;
+    require_inet(socket_family(fd)?)?;
+    if !listening(fd)? {
+        return Err(invalid("descriptor is not a listener"));
+    }
+    require_cloexec(fd)?;
+    Ok(TcpListener::from(descriptor))
+}
+
+fn require_kind(fd: RawFd, expected: libc::c_int) -> io::Result<()> {
+    if socket_option(fd, libc::SO_TYPE)? != expected {
+        return Err(invalid("descriptor has the wrong socket type"));
+    }
+    Ok(())
+}
+
+fn socket_family(fd: RawFd) -> io::Result<libc::c_int> {
+    // SAFETY: zeroed storage prevents uninitialized reads; kernel output is trusted.
+    let mut address: libc::sockaddr_storage = unsafe { mem::zeroed() };
+    let mut length = mem::size_of_val(&address) as libc::socklen_t;
+    // SAFETY: the owned fd and live address/length buffers cover the kernel's output.
+    succeeded(unsafe {
+        getsockname(
+            fd,
+            (&mut address as *mut libc::sockaddr_storage).cast(),
+            &mut length,
+        )
+    })?;
+    Ok(libc::c_int::from(address.ss_family))
+}
+
+fn require_cloexec(fd: RawFd) -> io::Result<()> {
+    // SAFETY: inspect the owned descriptor without changing flags outside the fence.
+    let flags = unsafe { fcntl(fd, libc::F_GETFD) };
+    succeeded(flags)?;
+    if flags & libc::FD_CLOEXEC == 0 {
+        return Err(invalid("channel descriptor is not close-on-exec"));
+    }
+    Ok(())
+}
+
+fn listening(fd: RawFd) -> io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::listening(fd)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(socket_option(fd, libc::SO_ACCEPTCONN)? != 0)
+    }
+}
+
+fn require_inet(family: libc::c_int) -> io::Result<()> {
+    if family != libc::AF_INET && family != libc::AF_INET6 {
+        Err(invalid("listener descriptor is not IPv4 or IPv6"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests;

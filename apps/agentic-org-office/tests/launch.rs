@@ -10,7 +10,11 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use org_client::Client;
+#[path = "launch/joined_client.rs"]
+mod joined_client;
+#[path = "support/teardown.rs"]
+mod test_teardown;
+use joined_client::Client;
 use org_office_launch::{
     office_dir, read_server_event, write_host_message, CreateOffice, DiscardOffice, FailCode,
     HostMessage, OfficeFile, ServerEvent, StartOffice,

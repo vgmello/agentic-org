@@ -73,10 +73,16 @@ pub(crate) struct WriteJob {
 /// One go at a request, inside its savepoint.
 type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Send;
 
+/// Check an unreleased schema before its opening transaction commits.
+type Admission = fn(&rusqlite::Transaction<'_>) -> Result<(), OfficeError>;
+
 /// What a database holds. `create` makes the tables of a new database, inside the transaction
-/// that sets `user_version` to `version`; an existing database is only checked against
-/// `version` (a newer one is refused).
+/// that sets `user_version` to `version`; an older file is upgraded and a newer one refused.
+/// Optional admission also checks files already at the current version.
 pub(crate) struct Schema {
+    /// Optional idempotent admission for an unreleased schema, in the open transaction after
+    /// creation/upgrade and before commit, including files already at the current version.
+    pub(crate) admit: Option<Admission>,
     pub(crate) version: i64,
     pub(crate) create: fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>,
     /// Brings a database made at an older version (the argument) up to `version`, in the same
@@ -857,6 +863,9 @@ fn migrate_bound(
         tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
     }
+    if let Some(admit) = schema.admit {
+        admit(&tx)?;
+    }
     tx.commit().map_err(OfficeError::storage)
 }
 
@@ -908,6 +917,7 @@ mod tests {
 
     /// A small registry schema: the engine's tests need some table to write to.
     const REGISTRY: Schema = Schema {
+        admit: None,
         version: SCHEMA_VERSION,
         upgrade: |_, _| Ok(()),
         create: |tx| {

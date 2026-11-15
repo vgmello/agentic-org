@@ -24,7 +24,7 @@ product scope, process/security boundaries, and deletion acceptance.
 | apps/agentic-org-web / agentic-org-web | agentic-org-web | Browser HTTP, assets and APIs |
 | apps/agent-os / agent-os | agent-os | Agent-facing CLI |
 | crates/org-host / org-host | Library only | Host lifecycle and key custody |
-| apps/org-ui / org-ui | Static assets | Browser application |
+| apps/agentic-org-ui / agentic-org-ui | Static assets | Browser application |
 
 Application source directories, package names and production executable names are aligned. Reusable org-* libraries retain domain/contract names. Existing signing identifiers, persisted data and wire fields remain stable; filenames do not define trust. HQ bootstrap/service registration and production web handoff are still unavailable as documented in executable-migration.md. The obsolete desktop/Tauri executable is removed; it must not overwrite the current agentic-org artifact.
 
@@ -134,7 +134,7 @@ apps/
   agentic-org/                         # Planned setup CLI; binary agentic-org adapters
   # Host lifecycle is a library at crates/org-host, not a separate app.
   agent-os/                         # Small employee CLI
-  org-ui/                            # Static browser application; see below
+  agentic-org-ui/                            # Static browser application; see below
 ```
 
 The planned crate names record the existing designs' proposed responsibilities;
@@ -171,7 +171,7 @@ one runnable application's library from another to assemble the service.
 ## 4. Proposed Svelte/TypeScript layout
 
 ```text
-apps/org-ui/
+apps/agentic-org-ui/
   src/
     routes/                          # SvelteKit navigation entry points
     lib/
@@ -215,7 +215,7 @@ this profile does not introduce a Node backend or SvelteKit server actions. Brow
 state is a view of server authority, with loading/unavailable/error/freshness states.
 Keep shared HTTP/event code free of unrelated business policy.
 
-Tailwind Plus components remain inside `apps/org-ui`, the renamed product UI home.
+Tailwind Plus components remain inside `apps/agentic-org-ui`, the renamed product UI home.
 They must not become a separately published kit, template, package, or crate.
 
 ## 5. Shared functionality: upload, validation, and hashes
@@ -237,7 +237,7 @@ office implementation/
   employees/features/upload_avatar.rs
   projects/features/attach_document.rs
 
-apps/org-ui/src/lib/
+apps/agentic-org-ui/src/lib/
   components/ui/FilePicker.svelte
   components/ui/UploadProgress.svelte
   modules/files/upload/UploadPanel.svelte
@@ -283,7 +283,7 @@ stop pending until acknowledged, as the employee and session designs require; re
 | Step | Source-to-target work | Verification |
 | --- | --- | --- |
 | 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
-| 2. Application naming | Rename retained browser sources to `apps/org-ui`; rename server app/package/binary to `apps/agentic-org-office` / `agentic-org-office`; use distinct `agentic-org` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
+| 2. Application naming | Rename retained browser sources to `apps/agentic-org-ui`; rename server app/package/binary to `apps/agentic-org-office` / `agentic-org-office`; use distinct `agentic-org` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
 | 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve public compatibility where retained, visibility, transactions, invariants, and acyclic source direction |
 | 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
 | 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |

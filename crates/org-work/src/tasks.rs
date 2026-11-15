@@ -18,7 +18,7 @@ use crate::engine::{Ctx, Draft, Origin, Plan};
 use crate::fail::{invalid, not_found, refuse, Fail};
 use crate::fixes::{self, Edge};
 use crate::model::{BugFields, StoredItem, StoredLink, TaskFields};
-use crate::states::{is_task_status, task_move_allowed};
+use crate::states::{is_task_status, is_terminal, task_move_allowed};
 use crate::text::{multi_line, one_line};
 use crate::waiting;
 
@@ -310,6 +310,35 @@ pub(crate) fn assign(ctx: &mut Ctx, p: &TaskAssignParams) -> Result<Plan, Fail> 
     Ok(Plan::of(vec![draft]))
 }
 
+/// Parent completion is never overridable; cancellation retains its separate semantics.
+fn require_closed_subtasks(ctx: &mut Ctx, parent: &StoredItem) -> Result<(), Fail> {
+    let mut open: Vec<_> = ctx
+        .txn
+        .linked_to(&parent.id, LinkKind::PartOf)?
+        .into_iter()
+        .filter(|child| {
+            child.kind == ItemKind::Task && !child.deleted && !is_terminal(child.kind, child.status)
+        })
+        .collect();
+    open.sort_by(|a, b| a.number.cmp(&b.number).then_with(|| a.id.cmp(&b.id)));
+    if open.is_empty() {
+        return Ok(());
+    }
+    let keys: Vec<_> = open.iter().map(task_key).collect();
+    let count = open.len();
+    Err(invalid(format!(
+        "{} has {count} open subtask{}: {}. Finish or cancel them first.",
+        task_key(parent),
+        if count == 1 { "" } else { "s" },
+        keys.join(", ")
+    )))
+}
+
+fn task_key(item: &StoredItem) -> String {
+    item.number
+        .map_or_else(|| crate::short_id(&item.id), |n| format!("T-{n}"))
+}
+
 /// `task.set_status`: a move in the task's state machine, with Done's step guard (§1.10).
 pub(crate) fn set_status(ctx: &mut Ctx, p: &TaskSetStatusParams) -> Result<Plan, Fail> {
     let item = load_task(ctx, &p.item_id)?;
@@ -359,6 +388,7 @@ pub(crate) fn set_status(ctx: &mut Ctx, p: &TaskSetStatusParams) -> Result<Plan,
     // Done (completed) with required steps unticked needs a reason; cancelled skips the guard.
     let mut anyway = None;
     if resolution == Some(Resolution::Completed) {
+        require_closed_subtasks(ctx, &item)?;
         let left = item.required_left();
         if !left.is_empty() {
             let Some(reason) = anyway_reason else {

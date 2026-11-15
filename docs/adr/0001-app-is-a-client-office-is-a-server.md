@@ -3,8 +3,8 @@
 **Amended 2026-11-09 by the owner's standalone-v1 decision:**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop packaging, local-app
 access and Tauri transport below. V1 is a macOS/Linux server with HQ browser access;
-Tauri is v2. The owner's naming amendment targets `apps/org-ui` for the browser
-application and `apps/org-server` / `org-server` for the per-office worker;
+Tauri is v2. The owner's naming amendment targets `apps/agentic-org-ui` for the browser
+application and `apps/agentic-org-office` / `agentic-org-office` for the per-office worker;
 see [project structure](../design/project-structure.md). This is an undeployed-product pivot with no old-app migration or
 compatibility requirement. The office/domain/storage model remains applicable.
 

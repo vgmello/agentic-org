@@ -1,6 +1,7 @@
 use super::*;
 
 const V4: Schema = Schema {
+    admit: None,
     version: 4,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v4.sql")),
     upgrade: |_, _| unreachable!("fixture creates a released v4 file"),
@@ -555,28 +556,32 @@ fn work_v5_sql_guards_cover_insert_update_replace_delete_and_reopen() {
 }
 
 const V5: Schema = Schema {
+    admit: None,
     version: 5,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v5.sql")),
     upgrade: |_, _| unreachable!(),
 };
 
 const V1: Schema = Schema {
+    admit: None,
     version: 1,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v1.sql")),
     upgrade: |_, _| unreachable!(),
 };
 const V2: Schema = Schema {
+    admit: None,
     version: 2,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v2.sql")),
     upgrade: |_, _| unreachable!(),
 };
 const LEGACY_V3: Schema = Schema {
+    admit: None,
     version: 3,
     create: |tx| tx.execute_batch(include_str!("fixtures/office-v3.sql")),
     upgrade: |_, _| unreachable!(),
 };
 
-fn schema_rows(db: &Connection) -> Vec<(String, String, String, Option<String>)> {
+pub(super) fn schema_rows(db: &Connection) -> Vec<(String, String, String, Option<String>)> {
     db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name")
         .unwrap()
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
@@ -584,7 +589,7 @@ fn schema_rows(db: &Connection) -> Vec<(String, String, String, Option<String>)>
         .collect::<rusqlite::Result<_>>()
         .unwrap()
 }
-fn old_rows(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
+pub(super) fn old_rows(db: &Connection) -> Vec<(String, Vec<Vec<Value>>)> {
     let names: Vec<String> = db
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
         .unwrap()
