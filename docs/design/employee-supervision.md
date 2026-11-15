@@ -234,7 +234,7 @@ sealed autonomy processes and owner-only decisions still bind these defaults.
 
 Standards such as technology stacks and cloud conventions are indexed/referenced,
 not bulk injected. A process tells the agent when to retrieve the applicable standard
-and by what reference. Inject concise `org-agent` command/tool help separately from
+and by what reference. Inject concise `agent-os` command/tool help separately from
 behavioral process text, with progressive help for detailed arguments. No process
 edit invents commands or changes tool permissions.
 

@@ -3,9 +3,9 @@
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 
-**Naming amendment (2026-11-10):** the worker app/package/binary is now
-`apps/org-server` / `org-server`;
-the retained browser application becomes `apps/org-ui` / `org-ui`. See
+**Naming amendment (2026-11-15):** the worker app/package/binary is
+`apps/agentic-org-office` / `agentic-org-office`;
+the retained browser application is `apps/agentic-org-ui` / `agentic-org-ui`. See
 [project structure](project-structure.md). Host custody, private launch and one worker
 per office remain. Executable/build references use the renamed worker without merging process roles.
 
@@ -36,7 +36,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **Work data** (tasks and messages, which change constantly) is **office-first**. See the next section.
 - **Runtime summaries** (e.g. "3 agents running") are not logged. Each office sends HQ passing status updates over its connection. HQ keeps the latest one per office in memory and forwards them to the other offices, so the app can show the whole organization without growing the log or forcing a full flush per status change.
 - **Office runtime** is owned by each office and never copied: running sessions, live status, the scheduler's run queue, caches. (Tasks themselves are work data and do sync.)
-- **The browser talks to HQ over authenticated HTTP.** It needs no local office. Setup provisions an HQ or enrolls a satellite through the CLI; opening an organization in a browser does not enroll its machine.
+- **The browser talks to HQ over authenticated HTTP.** It needs no local office. Initial setup provisions HQ only; a separate HQ-issued flow enrolls satellites; opening an organization in a browser does not enroll its machine.
 
 ## Processes in one instance
 The boundary between the host and an office server (who writes what on disk, the pipe protocol, what the host does with each failure) is in [`office-host-boundary.md`](office-host-boundary.md).

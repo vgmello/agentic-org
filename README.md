@@ -16,6 +16,9 @@ belongs to the offices; the browser accesses it through HQ.
 
 ## Proposed v1 layout
 
+The [organization data documentation](docs/design/organization-data/README.md) defines the proposed durable organization/project/agent data model. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
+
+
 Application directories, Cargo packages and executable names now match:
 
 ```text
@@ -24,7 +27,7 @@ apps/
   agentic-org-office/  One office worker
   agentic-org-web/     Browser entry point and HTTP library
   agent-os/            Small employee CLI
-  org-ui/              Static browser assets
+  agentic-org-ui/      Static browser assets
 crates/
   org-host/            Host lifecycle/key-custody library
   ...                  Domain and protocol libraries
@@ -39,10 +42,10 @@ The application/package naming migration and Tauri-shell removal are implemented
 in both ordinary development and release; test fakes require explicit test composition.
 The historical shell commands below no longer run against this tree.
 
-Run the UI checks from `apps/org-ui`:
+Run the UI checks from `apps/agentic-org-ui`:
 
 ```sh
-cd apps/org-ui
+cd apps/agentic-org-ui
 bun install --frozen-lockfile
 bun run check
 bun run test

@@ -1,4 +1,6 @@
-# Gateway HTTP API v1
+# Web HTTP API v1
+
+Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. gateway in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
 
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
@@ -25,7 +27,7 @@ Approved placement: `org_proto::gateway` owns transport-neutral browser wire DTO
 of host-control methods or secrets. `org-proto` versions, launch v3, host-control
 v1 and HTTP `/api/v1` remain independent version spaces.
 
-FE-1 (Jules) owns `apps/org-ui/src/lib/platform/http/wire.ts` and
+FE-1 (Jules) owns `apps/agentic-org-ui/src/lib/platform/http/wire.ts` and
 `gateway-vectors.test.ts`, reserved to his session for the minimum TS mirror and
 reader. Kai owns Rust DTOs/vectors/reader and lands them first; Jules's companion
 branch follows from those landed files. B1-02 is complete only when both readers

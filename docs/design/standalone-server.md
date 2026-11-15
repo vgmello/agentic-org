@@ -22,18 +22,18 @@ source-to-target reorganization plan under the [architecture rules](../architect
 
 ```mermaid
 flowchart TD
-    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| Gateway[org-gateway: instance browser HTTP]
-    Gateway -->|Authorized local operations| HQ[org-server: HQ office]
+    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| Gateway[agentic-org-web: instance browser HTTP]
+    Gateway -->|Authorized local operations| HQ[agentic-org-office: HQ office]
     Gateway -->|Restricted create/list operations| Instance
     HQ --> HQWork[HQ storage and local agent supervision]
     Sat[Satellite office] -->|Outbound authenticated duplex connection| HQ
     Sat --> SatWork[Satellite storage and local agent supervision]
-    Agents[Satellite agents] --> CLI[org-agent]
+    Agents[Satellite agents] --> CLI[agent-os]
     CLI -->|Local authenticated protocol| Sat
-    OS[launchd or systemd] --> Instance[Instance host supervisor]
+    OS[launchd or systemd] --> Instance[agentic-org serve: instance host]
     Instance --> HQ
     Instance -->|Supervises| Gateway
-    Setup[Setup and local lifecycle CLI] --> OS
+    Setup[agentic-org setup: HQ-only onboarding] --> OS
 ```
 
 HQ and satellite are persisted **office roles**. An instance is the local service,
@@ -48,33 +48,36 @@ offices in one instance may share one browser listener, with explicit organizati
 routing and authorization. An instance containing only satellites has no public
 application listener. It does not automatically become HQ when the connection fails.
 
-The inspected branch already has a static SvelteKit adapter, a local host, per-office
-processes, SQLCipher storage, Unix-socket clients and runtime contracts. It does
-**not** have the proposed HTTP server or the `org-sync`, `org-sync-proto` and
-`org-pki` crates. `apps/org-office-host/src/sync.rs` is a mutex utility, not office
-replication. Browser mode currently selects mocks in office/org/work API factories;
-chat always selects its mock. Static asset serving alone cannot make these real.
+The inspected baseline had a static SvelteKit adapter, a local host, per-office
+processes, SQLCipher storage, Unix-socket clients and runtime contracts. The current
+source adds the renamed CLI and a guarded web executable with the existing
+HTTP/assets/TLS library. Production browser authentication/backend composition and
+remote replication remain incomplete; `org-sync`, `org-sync-proto` and `org-pki`
+are still planned. `crates/org-host/src/sync.rs` is a mutex utility, not office
+replication. Missing browser capabilities render unavailable; static asset serving
+alone cannot make them real. See [executable migration](executable-migration.md)
+for implemented entry points.
 
 ## 2. Release, install and runtime boundaries
 
-Use one user-facing executable, provisionally `agentic-org`, for setup and local
+Use one user-facing executable, `agentic-org`, for setup and local
 lifecycle commands. The bootstrap only resolves the platform/version, downloads
 and verifies that executable and invokes setup. It is small enough to audit; it
 does not own office provisioning logic. Existing installs are discovered before
 activation, so re-running bootstrap cannot silently update every instance.
 
-**Proposed packaging:** the release executable carries the static asset/server
-payload and platform-matched internal host, office and `org-gateway` helpers plus the small
-`org-agent` helper. It unpacks verified payloads into an immutable versioned
-release directory. One download may yield multiple local executables. This retains
-the existing process and signing boundaries and the tiny CLI instead of requiring
-every agent tool invocation to start a universal server program. `org-relay` is a
-legacy alias, not a v1 installation prerequisite. Exact release sizes are measured.
+**Owner amendment (2026-11-15):** four framework executables define the target release:
 
-Retain the host and per-office worker processes. The service manager starts the
-resolved host executable for an instance; foreground `serve` uses the same entry
-point. Setup is not an extra long-running supervisor. Avoid installing from an
-agent turn or downloading dependencies inside normal daemon startup.
+| Executable | Role |
+| --- | --- |
+| `agentic-org` | Human CLI; setup performs initial HQ onboarding; serve runs the host, key custody, child supervision and update management. |
+| `agentic-org-web` | Instance browser HTTPS, authentication, static assets, API responses and live events; no office database keys. |
+| `agentic-org-office` | One HQ or satellite office worker, including its internal agent supervisor/router/session runner and one data writer. |
+| `agent-os` | Small agent-facing CLI, invoked on demand with employee-scoped authority. |
+
+The online bootstrap downloads/verifies agentic-org and invokes agentic-org setup. Setup downloads/verifies missing release components, or extracts a complete local bundle, into an immutable versioned release directory. Embedded payloads are an optional delivery optimization, not a required second installer. One release pin selects all matching binaries/assets together. Application directories, Cargo packages and executable names now agree: apps/agentic-org, apps/agentic-org-office, apps/agentic-org-web and apps/agent-os. Host/platform behavior lives in crates/org-host and is composed by agentic-org serve; there is no additional permanent host or updater daemon. Platform signing, key-custody and restricted launch identities remain stable. The source renames and host extraction are implemented; bootstrap downloads, verified release activation and service registration described here remain requirements.
+
+The service manager starts agentic-org serve for the selected instance. It supervises office workers and, when the instance hosts HQ, agentic-org-web. Each office worker owns its agents through an internal supervisor; do not add a sibling agent-supervisor daemon. Agent runtimes are child processes. An HTTP-agent worker is introduced only with its implemented backend. Serve starts installed releases without requiring a download; setup is a short-lived command, not another long-running supervisor. Avoid installing from an agent turn.
 
 The server implementation may use a small HTTP adapter crate (Axum/Tokio is a
 candidate, not an existing dependency). Libraries own behavior; binaries compose
@@ -82,16 +85,16 @@ them. Do not link one app's library from another app to assemble the release.
 Extract shared behavior into a crate when a real second caller or a meaningful
 dependency/visibility boundary justifies it.
 Embedding a built executable as a release payload is packaging, not an app-to-app
-Rust dependency. Rename the retained browser application to `apps/org-ui/` with
-frontend package name `org-ui`, and the Rust server app to `apps/org-server/`
-with Cargo package/executable `org-server` (Rust library import `org_server`).
-Delete the Tauri-only shell according to the inventory. Keep licensed Tailwind Plus
-sources inside the renamed product UI application and update AGENTS.md's path
-references with implementation; its license restrictions remain in force.
+Rust dependency. The retained browser application is `apps/agentic-org-ui/`, with
+frontend package name `agentic-org-ui`. The office worker is
+`apps/agentic-org-office/`, Cargo package/executable `agentic-org-office` and Rust
+library import `agentic_org_office`. The Tauri-only shell is removed. Keep licensed
+Tailwind Plus sources inside the product UI application; AGENTS.md's ownership and
+license restrictions apply at its renamed path.
 
-This renames the worker, not the office model: `org-office-host` still supervises
+This renames the worker, not the office model: the host inside `agentic-org serve` supervises
 one worker per office with the existing private launch/key boundaries. The
-user-facing setup/release executable above remains provisionally `agentic-org`.
+user-facing setup/release executable above remains `agentic-org`.
 The [project structure](project-structure.md) distinguishes current audited paths
 from target names and lists affected workspace, tests, build and packaging references.
 
@@ -99,17 +102,17 @@ The first release must verify download authenticity, executable signatures where
 applicable, checksums of embedded helpers and architecture compatibility. Extract
 to a private staging directory; reject path traversal and symlink redirection;
 publish a complete release atomically. A release pin selects setup, host, worker, gateway, assets
-and `org-agent` together. The short bootstrap trusts a configured release signing
+and `agent-os` together. The short bootstrap trusts a configured release signing
 key; a checksum downloaded from an unauthenticated source is not sufficient.
 
 ### Browser listener and privilege boundary
 
 The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) keeps browser-specific response mapping at the gateway and reusable use cases in their owning Rust modules, ready for future integration API adapters.
 
-**Chosen topology:** one new `org-gateway` helper (`apps/org-gateway/`, planned)
-per instance terminates browser HTTP/TLS, serves `org-ui` assets and manages browser
+**Chosen topology:** one `agentic-org-web` helper (`apps/agentic-org-web/`; executable present, production handoff pending)
+per instance terminates browser HTTP/TLS, serves `agentic-org-ui` assets and manages browser
 sessions/events for all authorized HQ organizations on that listener. It runs as
-a supervised child of `org-office-host`, separately from each `org-server` worker.
+a supervised child of `agentic-org serve`, separately from each `agentic-org-office` worker.
 An instance with no HQ has no public browser listener. Office enrollment/mTLS still
 terminates at its reviewed federation component, not this browser proxy.
 
@@ -139,12 +142,11 @@ post-merge review question.)
 
 ### Setup executable package identity
 
-Use Cargo package `org-setup` (`apps/org-setup/`, planned) for the setup/lifecycle
-binary provisionally named `agentic-org`. The inspected Tauri shell already uses
-Cargo package `agentic-org`. Keep the new package ID distinct, and remove the old
-Tauri workspace member before building/staging the new binary of the same name.
-Do not build both into the same output path or package a stale Tauri executable.
-This is a buildable source-change ordering requirement, not a compatibility layer.
+Cargo package `agentic-org` at `apps/agentic-org/` owns the human CLI and serve
+composition. The retired same-named Tauri workspace member is removed; there is no
+separate setup package or executable. Release staging must select this CLI's
+artifact. `setup` is reserved and currently fails before provisioning; protected
+HQ bootstrap and service registration must land before it can perform onboarding.
 
 ## 3. Instance selection and storage
 
@@ -199,32 +201,46 @@ users/containers. The runtime sandbox/permission model must still enforce its de
 
 ## 4. Setup and service lifecycle
 
-Setup is a resumable state machine. For an HQ: reserve instance, verify release,
-write config, establish the instance administrator, provision the office, register
-service, start, probe. For a satellite: reserve instance, verify release, write
-config, register service, start, probe, then hand the invitation to the running host
-with `office.join` on `host.sock` and poll its status (`awaiting_approval` for
-non-interactive setup). `office.join` is gated by the signed `agentic-org` peer and
-the destination consent setup captured, plus an administrator session when the
-instance has accounts. On a satellite-only instance the service host creates its
-account registry database (X-02 §6.3; a draft, see the launch v3 note in office-host-boundary.md §3) at its first start, with the op journal and
-no accounts (X-02 §12 Q9).
+**Implementation status at merged v1 700d5a37:** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
+
+
+Initial installation is HQ-only. After obtaining the platform executable, the user runs:
+
+```bash
+agentic-org setup
+```
+
+Setup is one resumable workflow: select/reserve default or --name <name>; verify a complete platform release; collect HQ organization/listener configuration; establish the instance administrator; provision HQ using protected host operations and the existing recovery-code flow; register/start the per-user service; probe and show the HQ browser URL. Service registration is automatic; users do not run a separate install or service install step. Preserve the recovery delivery/deferred-collection behavior in the installation UX spec. Repeating setup resumes the same operation and reuses identity/data/configuration/service without changing roles, silently upgrading or duplicating HQ. Existing satellite-only state is not converted into HQ by rerunning setup.
+
+The initial wizard and noninteractive setup schema offer no satellite role, invitation or --hq join option. Requests to use initial setup for joining are rejected before provisioning and direct the user to HQ's Add office flow. Satellite creation is initiated separately from HQ's authenticated UI or an HQ-issued onboarding command. That destination flow can ensure missing release/service prerequisites through the same internal foundation, but is not a mode of agentic-org setup. Its public command spelling is outside this initial-setup contract; do not invent a setup join flag.
+
+For offline HQ installation:
+
+```bash
+agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
+```
+
+Verify the complete local bundle with the same trust as online installation; perform no external fetches or update checks. Persist offline policy for background jobs until online operation is explicitly enabled. Local IPC remains available. Missing platform prerequisites produce actionable errors instead of downloads. Offline setup creates HQ only and does not attempt remote enrollment. Provider access/authentication remains distinct from framework readiness.
+
+### Satellite enrollment is a separate HQ-initiated flow
+
+On the destination, the HQ-issued flow reserves local instance/office identities, verifies installed release compatibility, starts/reuses the host service and submits the invitation through protected office.join on host.sock. Admission retains destination consent, trusted peer checks and the administrator grant when the instance already has accounts. A satellite-only host initializes its account registry/op journal with no accounts as specified by X-02. No web child or new HQ is created. Unattended enrollment can remain awaiting_approval; it never masquerades as a completed initial HQ setup.
+
 The satellite worker generates and keeps the TLS identity key; see the offices design. Each irreversible identity/provisioning step has a durable operation
 ID and completion marker before another invocation may advance it. The satellite
 worker persists its TLS identity key, request and invitation key in its `office.db`,
 and writes `office.json` (`state: pending`), before sending the request; after an ambiguous reply query that
 request's outcome rather than minting a second office. Resume the same pending
-approval after restart. If setup re-runs `office.join` for its own pending office, gets
+approval after restart. If the enrollment flow re-runs `office.join` for its own pending office, gets
 `already_exists`, and the status read shows that `office_id` as a pending join, it shows the existing request and check code (JOIN-6) instead of
-failing. If the status read shows that office as `active`, setup reports it as already
-joined; if it shows a terminal state (`expired`, `cancelled` or `rejected`), setup points
+failing. If the status read shows that office as `active`, enrollment reports it as already
+joined; if it shows a terminal state (`expired`, `cancelled` or `rejected`), enrollment points
 to `agentic-org office remove-pending <id>` (the offices design, "Provisioning a
 satellite"). An explicit mode/config change on existing state is refused
-with instructions; setup does not silently convert roles.
+with instructions; neither setup nor enrollment silently converts roles.
 
 Interactive and automated input feed the same validation layer. Noninteractive
-mode has no hidden prompt; bounded waiting can finish with an `awaiting_approval`
-result. Error codes distinguish invalid input, permission failure, address conflict,
+mode has no hidden prompt. Only the separate enrollment flow can finish with an awaiting_approval result; initial setup accepts HQ configuration only. Error codes distinguish invalid input, permission failure, address conflict,
 unsupported version, unavailable credential provider and incomplete enrollment.
 Secrets use a protected descriptor/file or dedicated stdin input. Normal JSON
 status, diagnostics, journals and argv never contain them.
@@ -236,15 +252,14 @@ release, with an explicit runtime PATH/environment. Reconcile service registrati
 idempotently; do not take over an unrelated unit with a colliding name. Report
 login/session/lingering requirements instead of claiming unconditional boot startup.
 
-`start`, `stop`, `status`, `logs`, `doctor`, `upgrade`, `uninstall` and `serve`
-select the same instance. Local lifecycle control works when HTTP is down. An
+`service start`, `service stop`, `service status`, `logs`, `doctor`, `upgrade`, `uninstall` and `serve` select the same instance. Setup registers the service automatically; service commands are maintenance operations. Local lifecycle control works when HTTP is down. An
 explicit stop must not trigger the service manager's crash-restart policy. Stop
 admission, cancel ephemeral streams, drain writes and stop/reap owned runtime trees
 within deadlines. A disconnected browser does not cancel durable submitted work.
 Host death retains the existing office-stop/reconciliation behavior; supervise
 children rather than leaving agents orphaned.
 
-Release pins are per instance. An explicit upgrade stages/verifies a new complete
+Release pins are per instance. Background checks discover/stage updates under the configured policy; an unavailable update source never prevents startup. Activation drains the selected instance under its maintenance policy. An explicit upgrade stages/verifies a new complete
 release, stops that instance, handles supported new-format schema changes, changes
 its pin and probes readiness. Retain the prior release and a recoverable data state.
 Never roll back only the executable after an incompatible schema change. Shared
@@ -365,7 +380,7 @@ Satellite connections remain outbound. Direct HQ reachability remains required.
 
 Retain host custody of office encryption keys and private launch channels. The
 downloaded payload must preserve separate key-access identities where the platform
-uses code signing; an `org-agent` alias must not gain the host's key entitlement.
+uses code signing; an `agent-os` alias must not gain the host's key entitlement.
 The current app-only peer checks, fixed bundle-relative executable paths and one
 pinned home require replacement, not removal of their security invariants.
 
@@ -404,10 +419,7 @@ never expose the code through later status/read APIs. A lost already-acknowledge
 code requires the separately reviewed recovery/rotation policy, not cookie-only
 redisplay or an implicit setup reset.
 
-Setup delivers the code through this dedicated protected owner channel, distinct
-from status JSON/logs, and requires acknowledgement that the encrypted recovery
-package and code are retained off the HQ machine. Automation uses separate protected
-outputs. A fixture must recover the same CA public identity with the code and fail
+Setup offers code collection through the dedicated protected owner channel after HQ creation, before starting its registered service. As already specified in installation UX revision 5, the owner can defer collection/confirmation: HQ setup completes while recovery material remains Waiting or Shown, not confirmed. Noninteractive setup and setup over SSH on macOS receive no code or protected code output; the instance administrator collects it later through agentic-org recovery release at the HQ machine. Acknowledgement that the package/code are retained off HQ is required before marking recovery material collected, not before declaring the HQ service ready. Status JSON/logs never contain the code. A fixture must recover the same CA public identity with the code and fail
 closed for a wrong code or damaged package. Escrow is not a backup of office DB
 keys, repository data or work records, and does not change device-bound key custody.
 
@@ -464,7 +476,7 @@ every employee. A browser connection is never the lifetime owner of this work.
 | Acceptance and deletion check | macOS/Linux release walkthrough, failure tests and no Tauri dependency or production mock fallback |
 
 Owners follow AGENTS.md: app agent for frontend, server-dev for domain/API/storage,
-River for host/platform/sync/PKI, Remy for `org-agent`, runtime owners for adapters,
+River for host/platform/sync/PKI, Remy for `agent-os`, runtime owners for adapters,
 Ada for shared contracts/design, Eden for UX specs. Cross-cutting changes need their
 contract review; this docs proposal does not claim merge approval.
 
