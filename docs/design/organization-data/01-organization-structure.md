@@ -406,3 +406,7 @@ CREATE TABLE repository_caches (
   FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
 ) STRICT;
 ```
+
+[Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
+
+[Recovery and office continuity](16-recovery-and-office-continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.

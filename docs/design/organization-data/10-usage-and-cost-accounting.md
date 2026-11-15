@@ -439,3 +439,5 @@ GROUP BY organization_id, project_id;
 ```
 
 The consolidated schema protects usage records, referenced price versions and stream checkpoints against SQL replacement as well as direct mutation. Every write connection enables recursive triggers. Checkpoint stream identity is immutable, and historical agent consumers cannot be retyped as people. Per-record half-up quantization can differ from rounding a combined token total; totals sum the stored event amounts and must not be described as partition-independent billing.
+
+[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.

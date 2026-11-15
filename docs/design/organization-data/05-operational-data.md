@@ -31,6 +31,10 @@ erDiagram
         TEXT text "required"
         INTEGER required "required"
         INTEGER done "required"
+        TEXT linked_task_id FK "optional"
+        TEXT checked_by_employee_id FK "optional"
+        TEXT checked_at "optional"
+        INTEGER revision "required"
     }
     comments {
         TEXT organization_id PK, FK "required"
@@ -117,7 +121,7 @@ operations:
       ended_at: null
 ```
 
-The parent work file must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete import bundle. Open questions/spans and watcher subscriptions remain recoverable with pending work. Transient notification receipts and old chat messages are separate data; retaining this metadata does not require retaining them.
+The parent work file must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete import bundle. Open questions/spans and watcher subscriptions remain recoverable with pending work. Notification receipts and chat are separate data governed by [messaging](15-messaging-and-chat.md) and [recovery](16-recovery-and-office-continuity.md). Pending asks, handoffs and deliveries must survive cache loss; this paragraph does not authorize deleting them.
 
 ## File to SQL mapping
 
@@ -145,6 +149,12 @@ CREATE TABLE checklist_steps (
   text TEXT NOT NULL,
   required INTEGER NOT NULL CHECK (required IN (0, 1)),
   done INTEGER NOT NULL CHECK (done IN (0, 1)),
+  linked_task_id TEXT,
+  checked_by_employee_id TEXT,
+  checked_at TEXT,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  FOREIGN KEY (organization_id,linked_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   UNIQUE (organization_id, target_kind, target_id, position),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
@@ -426,3 +436,11 @@ Task closure, reassignment, ownership changes or archival do not delete notes or
 Back up the private database consistently, with encrypted backups and authorized key recovery separate from shared organization backups. Rebuilding `schema.sql` or restoring organization Git cannot reconstruct private notes. A restore must reconcile deletions accepted after the backup before serving reads; retain those tombstones through the backup retention window. If that deletion evidence or the key is unavailable, recovery blocks rather than exposing an older deleted body. Deployment must define and enforce a maximum private-backup retention period before enabling this feature. Logical deletion does not promise immediate physical erasure from WAL, storage media or older encrypted backups.
 
 Run `python3 docs/design/organization-data/test_schema.py` for structural checks of private-note references, immutable ownership, revisions, tombstones and separation from shared SQL. These tests use in-memory SQLite and do not prove encryption, authenticated access, publication idempotency or backup recovery; PN-01–06 require those application tests before the feature is complete.
+
+## Retained checklist evidence
+
+Checklist step front matter additionally carries `linked_task_id`, `checked_by_employee_id`, `checked_at` and `revision` (default 1). These project directly into `checklist_steps`. V1's step `task_id` maps to `linked_task_id`, while the parent task ID remains the enclosing record. V1 step version 0 (no step event yet) maps to revision 1; retain the original version in migration evidence if needed. Preserve checker/time when known; absence never fabricates an actor. Task closure/tombstones retain checklist evidence with the final record. This adds data preservation only: promotion, automatic ticking/cascades and Undo remain unselected.
+
+[Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
+
+[Recovery and office continuity](16-recovery-and-office-continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.

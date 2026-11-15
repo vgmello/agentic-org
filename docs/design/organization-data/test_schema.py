@@ -650,5 +650,185 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         self.db.rollback()
 
 
+class GapPreservationTests(unittest.TestCase):
+    def setUp(self):
+        self.db = database()
+        self.addCleanup(self.db.close)
+        seed_organization(self.db)
+        seed_task(self.db)
+        insert(self.db, "offices", organization_id="org", id="hq", slug="hq", schema_version=1, revision=1, name="HQ", role="hq")
+        for conversation in ("dm", "other"):
+            insert(self.db, "conversations", organization_id="org", id=conversation, kind="dm", created_at="2026-11-15T12:00:00Z")
+            for employee in ("ana", "reporter"):
+                insert(self.db, "conversation_memberships", organization_id="org", conversation_id=conversation,
+                       employee_id=employee, joined_at="2026-11-15T12:00:00Z")
+        self.db.commit()
+
+    def message(self, identity="message", conversation="dm", sequence=1, **overrides):
+        fields=dict(organization_id="org", id=identity, conversation_id=conversation, sender_kind="employee",
+                    sender_employee_id="ana", sender_display_name="Ana", kind="request", body_markdown="Review?",
+                    created_at="2026-11-15T12:00:00Z", origin_office_id="hq", origin_incarnation="incarnation",
+                    origin_sequence=sequence, org_epoch=1, org_sequence=1, content_sha256="a"*64)
+        insert(self.db,"messages",**(fields | overrides))
+
+    def test_reply_cannot_cross_conversation_and_origin_cannot_duplicate(self):
+        self.message(); self.db.commit()
+        self.message("cross", "other", 2, reply_to_message_id="message")
+        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
+        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.message("duplicate")
+        self.db.rollback()
+        self.message("reply", sequence=2, reply_to_message_id="message")
+        self.db.commit()
+
+    def test_read_markers_are_conversation_scoped_and_mutes_are_independent(self):
+        self.message(); self.db.commit()
+        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="other",viewer_employee_id="reporter",last_read_message_id="message")
+        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
+        self.db.rollback()
+        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",last_read_message_id="message")
+        insert(self.db,"conversation_preferences", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",muted_employee_id="ana",mute_mode="digest")
+        self.db.commit()
+
+    def test_recipient_requires_membership_in_the_message_conversation(self):
+        self.message(); self.db.commit()
+        self.db.execute("DELETE FROM conversation_memberships WHERE conversation_id='dm' AND employee_id='reporter'")
+        self.db.commit()
+        insert(self.db,"message_recipient_states",organization_id="org",message_id="message",conversation_id="dm",employee_id="reporter",
+               state="snoozed",updated_at="2026-11-15T12:00:00Z",owner_office_id="hq",origin_incarnation="i",origin_sequence=1,org_epoch=1,org_sequence=1)
+        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
+        self.db.rollback()
+
+    def test_employee_lifecycle_cannot_be_assigned_to_a_person(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE employees SET agent_status='paused' WHERE id='reporter'")
+        self.db.rollback()
+        self.db.execute("UPDATE employees SET agent_status='offboarded',offboarded_at='2026-11-15T12:00:00Z',status='inactive' WHERE id='ana'")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE employees SET agent_status='active' WHERE id='ana'")
+        self.db.rollback()
+
+    def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
+        insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",
+               reopen_count=2,shortcut_json='{"type":"debt","ids":["DEBT-1"]}',done_anyway_json='{"reason":"Approved","steps":["step-1"]}')
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT json_extract(shortcut_json,'$.ids[0]'),reopen_count FROM task_details").fetchone()[0],"DEBT-1")
+        with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE task_details SET request_outcome_json='[]'")
+        self.db.rollback()
+
+    def test_feature_replacement_must_stay_in_the_same_project(self):
+        for identity,project in (("a","project"),("b","project")):
+            insert(self.db,"features",organization_id="org",id=identity,schema_version=1,revision=1,project_id=project,local_slug=identity,title=identity,status="planned")
+        self.db.commit()
+        self.db.execute("UPDATE features SET replaced_by_feature_id='b',delivered_at='2026-11-15T12:00:00Z',retired_reason='Superseded' WHERE id='a'")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE features SET replaced_by_feature_id='a' WHERE id='a'")
+        self.db.rollback()
+        insert(self.db,"projects",organization_id="org",id="second",schema_version=1,revision=1,slug="second",name="Second",owner_team_id="payments")
+        insert(self.db,"features",organization_id="org",id="c",schema_version=1,revision=1,project_id="second",local_slug="c",title="C",status="planned")
+        self.db.commit()
+        self.db.execute("UPDATE features SET replaced_by_feature_id='c' WHERE id='a'")
+        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
+        self.db.rollback()
+
+    def test_command_retry_identity_and_terminal_outcome_are_retained(self):
+        fields=dict(organization_id="org",command_id="command",origin_office_id="hq",actor_kind="employee",actor_id="ana",command_kind="task.create",
+                    request_sha256="a"*64,state="reserved",created_at="2026-11-15T12:00:00Z",updated_at="2026-11-15T12:00:00Z")
+        insert(self.db,"mutation_receipts",**fields); self.db.commit()
+        for sql in ("UPDATE mutation_receipts SET request_sha256='"+"b"*64+"'", "DELETE FROM mutation_receipts", "INSERT OR REPLACE INTO mutation_receipts SELECT * FROM mutation_receipts"):
+            with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError): self.db.execute(sql)
+            self.db.rollback()
+        self.db.execute("UPDATE mutation_receipts SET state='completed',result_ref='protected-result'")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE mutation_receipts SET state='reserved'")
+        self.db.rollback()
+
+    def test_origin_watermark_cannot_regress_fork_or_reopen(self):
+        insert(self.db,"office_origin_streams",organization_id="org",office_id="hq",stream_kind="work",incarnation="i",high_water_sequence=2,journal_ref="journal",head_sha256="a"*64,state="sealed")
+        self.db.commit()
+        for sql in ("UPDATE office_origin_streams SET high_water_sequence=1", "UPDATE office_origin_streams SET head_sha256='"+"b"*64+"'", "UPDATE office_origin_streams SET state='open'", "INSERT OR REPLACE INTO office_origin_streams SELECT * FROM office_origin_streams"):
+            with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError): self.db.execute(sql)
+            self.db.rollback()
+
+
+class BudgetSchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.db=database()
+        self.addCleanup(self.db.close)
+        seed_organization(self.db)
+        seed_task(self.db)
+
+    def budget(self, identity="budget", scope="task", period="lifetime", **overrides):
+        target={"task":"task_id", "agent":"agent_id", "release":"release_id"}[scope]
+        value={"task":"task", "agent":"ana", "release":"release"}[scope]
+        insert(self.db,"budgets",**(dict(organization_id="org",id=identity,current_revision=1,scope_kind=scope,
+               period_kind=period,time_zone="UTC",time_zone_source="hq",created_at="2026-11-15T00:00:00Z",**{target:value}) | overrides))
+        insert(self.db,"budget_policy_versions",organization_id="org",budget_id=identity,revision=1,state="active",unit="tokens",limit_amount=100,
+               changed_by_kind="owner",changed_at="2026-11-15T00:00:00Z")
+        self.db.commit()
+
+    def period(self, budget="budget", identity="period"):
+        insert(self.db,"budget_periods",organization_id="org",budget_id=budget,id=identity,policy_revision=1,period_key="lifetime",state="open")
+        self.db.commit()
+
+    def test_daily_and_monthly_agent_limits_coexist_but_duplicate_scope_does_not(self):
+        self.budget("daily","agent","day")
+        self.budget("monthly","agent","month")
+        with self.assertRaises(sqlite3.IntegrityError): self.budget("another","agent","day")
+        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.budget("person","agent","day",agent_id="reporter")
+        self.db.rollback()
+
+    def test_policy_history_is_immutable_and_current_revision_requires_a_version(self):
+        self.budget()
+        for sql in ("UPDATE budget_policy_versions SET limit_amount=500", "INSERT OR REPLACE INTO budget_policy_versions SELECT * FROM budget_policy_versions", "DELETE FROM budget_policy_versions"):
+            with self.subTest(sql=sql),self.assertRaises(sqlite3.IntegrityError): self.db.execute(sql)
+            self.db.rollback()
+        self.db.execute("UPDATE budgets SET current_revision=2")
+        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
+        self.db.rollback()
+
+    def test_extension_cannot_be_reset_by_replay_but_new_policy_can_rearm_it(self):
+        self.budget();self.period()
+        self.db.execute("UPDATE budget_periods SET extension_used=1");self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE budget_periods SET extension_used=0")
+        self.db.rollback()
+        insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="tokens",limit_amount=200,
+               changed_by_kind="owner",changed_at="2026-11-15T01:00:00Z")
+        self.db.execute("UPDATE budgets SET current_revision=2")
+        self.db.execute("UPDATE budget_periods SET policy_revision=2,extension_used=0,used_amount=120")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT used_amount FROM budget_periods").fetchone()[0],120)
+
+    def test_notice_delivery_dedupes_each_threshold_and_extension_stage(self):
+        self.budget();self.period()
+        fields=dict(organization_id="org",id="notice",budget_id="budget",period_id="period",policy_revision=1,stage="base",threshold=100,
+                    recipient_kind="owner",kind="budget_reached",delivery_state="pending",created_at="2026-11-15T00:00:00Z")
+        insert(self.db,"budget_notices",**fields);self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError): insert(self.db,"budget_notices",**(fields | {"id":"duplicate"}))
+        self.db.rollback()
+        insert(self.db,"budget_notices",**(fields | {"id":"extended","stage":"extended"}));self.db.commit()
+        self.assertEqual(self.db.execute("SELECT count(*) FROM budget_notices").fetchone()[0],2)
+
+    def test_zero_limit_and_wrong_target_period_are_refused(self):
+        self.budget()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="micro_usd",limit_amount=0,
+                   changed_by_kind="owner",changed_at="2026-11-15T01:00:00Z")
+        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.budget("invalid","task","day")
+        self.db.rollback()
+
+    def test_release_cap_cannot_acquire_a_stop_hold(self):
+        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0",status="planned")
+        self.db.commit()
+        self.budget(scope="release");self.period()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db,"budget_holds",organization_id="org",budget_id="budget",period_id="period",policy_revision=1,stage="base",state="held",
+                   created_at="2026-11-15T00:00:00Z",updated_at="2026-11-15T00:00:00Z")
+        self.db.rollback()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
