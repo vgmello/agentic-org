@@ -24,9 +24,7 @@ still require implementation.
 1. **V1 ships the server and browser application.** HQ serves static SvelteKit
    assets, authenticated HTTP operations and live events. Opening a browser does
    not create an office. Tauri, tray management and native capture are v2.
-2. **One bootstrap command downloads one release executable.** That executable
-   owns setup, automation and lifecycle management, and can unpack trusted server
-   and CLI helpers from its payload. Preserve per-office child processes and
+2. **One bootstrap command downloads agentic-org and invokes setup.** Initial setup creates HQ only, installs verified components, and registers/starts the service automatically. Satellite onboarding is a separate HQ-initiated UI/command flow. Online downloads and offline bundles use the same release verifier. Preserve per-office child processes and
    credential boundaries; one downloaded artifact does not require one process.
 3. **Instances are explicit.** No name selects `default`; `--name` selects a
    stable existing instance or creates that named instance. Repeated install/setup
@@ -51,31 +49,25 @@ still require implementation.
 
 ## Component names and organization (owner amendment 2026-11-10)
 
-Rename the retained browser application from `apps/desktop/` to `apps/org-ui/`
-and use `org-ui` as its frontend package name. Delete the Tauri-only shell under
+Rename the retained browser application from `apps/desktop/` to `apps/agentic-org-ui/`
+and use `agentic-org-ui` as its frontend package name. Delete the Tauri-only shell under
 the existing removal inventory; retain the actual browser application and licensed
 UI within its renamed product directory.
 
-The worker application lives in `apps/org-server/`, its Cargo package and
-worker executable are `org-server`, and affected Rust library imports use
-`org_server`. Update workspace/lockfiles, test helpers, build/release/signing
-references, host helper resolution, and ownership documentation with the source
-rename. No legacy desktop naming alias is required for this undeployed product.
+The worker source is apps/agentic-org-office with Cargo package/executable agentic-org-office and Rust library agentic_org_office. Source/package/executable renames and host extraction have landed; workspace/lockfiles, test helpers, helper resolution and ownership references follow these names. No legacy desktop naming alias is required for this undeployed product.
 
-The setup/release executable remains provisionally `agentic-org`. The host,
-private worker launch, per-office processes, key custody, and HQ/satellite roles
-retain their boundaries. Names do not merge these processes or rename all
-office-related domain concepts.
+**Owner amendment (2026-11-15).** Executables and matching application directories/packages are agentic-org (human CLI and service host), agentic-org-web (browser server), agentic-org-office (office worker), and agent-os (agent CLI). Host behavior lives in crates/org-host. Reusable domain/contract libraries retain their identities. agentic-org serve composes the existing host lifecycle/key-custody behavior through a library; no extra host/updater/agent-supervisor daemon is required. The OS service manager restarts the host. Each office contains its agent supervisor, router and session runner; the web process and agent CLI retain restricted identities and never gain raw office keys.
+
+agentic-org setup is the single initial HQ setup command, including first administrator/organization and automatic service registration/start. There is no initial satellite selection or setup join flag. Satellites are added later from HQ's UI or an HQ-issued command. Offline HQ setup uses setup --bundle <path> --offline. A repeated setup safely resumes/reuses existing state; it does not convert office roles or upgrade implicitly. Exact setup/release behavior is defined in the standalone design and installation UX spec. The names and serve/agent CLI entry points are implemented; HQ setup/service registration, downloads/updates and production web handoff remain requirements. See [executable migration](../design/executable-migration.md).
 
 Use domain modules containing vertical slices inside meaningful package
 boundaries, as specified in [project structure](../design/project-structure.md)
 and the language-agnostic [architecture rules](../architecture-rules.md).
-The layout and renames are implementation requirements; this PR changes docs only.
-Baseline-source references retain their actual pre-rename paths.
+Remaining domain-layout changes are implementation requirements. Explicit baseline-source references retain their actual pre-rename paths.
 
 ## Review clarifications (2026-11-10)
 
-- The planned instance-scoped `org-gateway` process terminates browser HTTP/TLS
+- The instance-scoped `agentic-org-web` process (production handoff pending) terminates browser HTTP/TLS
   separately from the key-custody host and per-office workers. The gateway holds no
   office DB key. Create organization requires instance-admin authority; owning an
   organization alone is insufficient.
@@ -95,8 +87,8 @@ Baseline-source references retain their actual pre-rename paths.
 - V1 creation includes CA escrow/recovery-code provisioning and protected delivery.
   REC-1 explicitly remains an open production-release decision for the reviewed
   manual HQ-loss recovery/fencing procedure; automatic promotion remains deferred.
-- Use Cargo package `org-setup` for the new `agentic-org` CLI and retire the old
-  same-named Tauri workspace member before building/staging that binary.
+- Use Cargo package `agentic-org` at `apps/agentic-org` for the CLI. The old
+  same-named Tauri workspace member is removed; stage the current CLI artifact.
 
 The [review decisions](../design/standalone-v1-review-decisions.md) map every review
 item to its clarification and acceptance evidence. These are documentation changes;
