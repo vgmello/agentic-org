@@ -43,7 +43,7 @@ At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, the [cost UX specificat
 
 Proposed selected-scope extension: features and tasks have nullable `work_type: build | run`, displayed as Build (R&D) and Run (KTLO). Build creates or materially improves capabilities; Run maintains existing service and ongoing operations. It is independent of task `type`: a bug found during new-feature development may be Build, while a production maintenance bug may be Run. It is also independent of team, project, release and office.
 
-Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. This adds classification data only. Usage events, historical attribution and price versions are now selected in [usage accounting](10-usage-and-cost-accounting.md). Budgets, stop rules and retrospectives remain unselected. Existing usage records are not silently reclassified; the captured Build/Run value is historical accounting data.
+Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. This adds classification data only. Usage events, historical attribution and price versions are now selected in [usage accounting](10-usage-and-cost-accounting.md). Budget data and stop-control records are now selected in [document 17](17-budgets-and-controls.md); runtime enforcement and retrospectives remain unimplemented/unselected respectively. Existing usage records are not silently reclassified; the captured Build/Run value is historical accounting data.
 
 ## Explicit relationship types
 
@@ -55,7 +55,7 @@ Null means not classified, not Build or Run. Store each record's classification 
 | `documents` | Supporting document describes its optional feature, release or deployment, otherwise its project. Derived from document scope foreign keys. |
 | `relates_to` | Authored reference from a project, feature, task or document to another registered entity in the same organization. It does not change ownership or imply a dependency. |
 
-The `entity_relationships` view presents both authored and derived relationships. `links` stores only `depends_on` and `relates_to`. For cross-feature knowledge, keep one canonical project document and use `relates_to` links; a document still has at most one feature/release/deployment owner in addition to its required project. Cross-project task dependencies are allowed within one organization. Source and target resolve through `record_refs`, including historical tombstones. A dependency on a deleted task needs explicit disposition before accepting new active work; it is never silently treated as satisfied.
+The `entity_relationships` view presents both authored and derived relationships. `links` stores `depends_on`, `relates_to` and `fixes`. A `fixes` edge links a task to a bug-typed task; the importer validates the target type. `fixed_by` is its reverse query, not an authored duplicate. Task deletion retains link identity in tombstone metadata; no automatic bug transition/cascade is introduced. For cross-feature knowledge, keep one canonical project document and use `relates_to` links; a document still has at most one feature/release/deployment owner in addition to its required project. Cross-project task dependencies are allowed within one organization. Source and target resolve through `record_refs`, including historical tombstones. A dependency on a deleted task needs explicit disposition before accepting new active work; it is never silently treated as satisfied.
 
 `links[]` belongs in its source record's front matter and contains `id`, `kind`, `target_kind`, `target_id`. Source/organization IDs come from that parent. Every participating project/feature/document may have this array in addition to tasks. `record_refs` includes these document and project identities. Inverse queries use the target index instead of writing duplicate arrays on the target.
 
@@ -110,13 +110,13 @@ CREATE TABLE links (
   source_kind TEXT NOT NULL CHECK (source_kind IN ('project', 'feature', 'task', 'document')),
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to')),
+  kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to', 'fixes')),
   target_kind TEXT NOT NULL,
   target_id TEXT NOT NULL,
   PRIMARY KEY (organization_id, source_kind, source_id, id),
   UNIQUE (organization_id, source_kind, source_id, kind, target_kind, target_id),
   CHECK (source_kind <> target_kind OR source_id <> target_id),
-  CHECK (kind <> 'depends_on' OR (source_kind = 'task' AND target_kind = 'task')),
+  CHECK (kind NOT IN ('depends_on','fixes') OR (source_kind = 'task' AND target_kind = 'task')),
   FOREIGN KEY (organization_id, source_kind, source_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)

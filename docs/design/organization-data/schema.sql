@@ -369,6 +369,13 @@ project_id TEXT NOT NULL,
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   updated_by_id TEXT,
+  delivered_at TEXT,
+  retired_reason TEXT,
+  replaced_by_feature_id TEXT,
+  legacy_definition_path TEXT,
+  CHECK (replaced_by_feature_id IS NULL OR replaced_by_feature_id<>id),
+  FOREIGN KEY (organization_id,replaced_by_feature_id,project_id)
+    REFERENCES features(organization_id,id,project_id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, id),
   CHECK (status NOT IN ('in_progress', 'live') OR owner_employee_id IS NOT NULL),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
@@ -457,6 +464,12 @@ CREATE TABLE checklist_steps (
   text TEXT NOT NULL,
   required INTEGER NOT NULL CHECK (required IN (0, 1)),
   done INTEGER NOT NULL CHECK (done IN (0, 1)),
+  linked_task_id TEXT,
+  checked_by_employee_id TEXT,
+  checked_at TEXT,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  FOREIGN KEY (organization_id,linked_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   UNIQUE (organization_id, target_kind, target_id, position),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
@@ -485,13 +498,13 @@ CREATE TABLE links (
   source_kind TEXT NOT NULL CHECK (source_kind IN ('project', 'feature', 'task', 'document')),
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to')),
+  kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to', 'fixes')),
   target_kind TEXT NOT NULL,
   target_id TEXT NOT NULL,
   PRIMARY KEY (organization_id, source_kind, source_id, id),
   UNIQUE (organization_id, source_kind, source_id, kind, target_kind, target_id),
   CHECK (source_kind <> target_kind OR source_id <> target_id),
-  CHECK (kind <> 'depends_on' OR (source_kind = 'task' AND target_kind = 'task')),
+  CHECK (kind NOT IN ('depends_on','fixes') OR (source_kind = 'task' AND target_kind = 'task')),
   FOREIGN KEY (organization_id, source_kind, source_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
@@ -537,6 +550,16 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   updated_by_id TEXT,
+  contact TEXT,
+  title TEXT,
+  focus TEXT,
+  role_text TEXT,
+  title_in_team TEXT,
+  is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
+  agent_status TEXT CHECK (agent_status IN ('active','paused','offboarded')),
+  offboarded_at TEXT,
+  CHECK (kind='agent' OR (agent_status IS NULL AND offboarded_at IS NULL)),
+  CHECK (offboarded_at IS NULL OR agent_status='offboarded'),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
@@ -1683,3 +1706,472 @@ FROM model_profile_connections p JOIN office_connection_models m
  ON m.organization_id=p.organization_id AND m.connection_id=p.connection_id
 WHERE m.entitlement='confirmed'
 GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
+
+CREATE TABLE task_details (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  definition_of_done TEXT,
+  branch TEXT,
+  shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
+  done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
+  what_happened TEXT,
+  expected TEXT,
+  steps TEXT,
+  environment TEXT,
+  severity_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (severity_confirmed IN (0,1)),
+  reopen_count INTEGER NOT NULL DEFAULT 0 CHECK (reopen_count>=0),
+  duplicate_of_task_id TEXT,
+  closed_reason TEXT,
+  affects_feature_id TEXT,
+  request_kind TEXT,
+  request_text TEXT,
+  route_reason TEXT,
+  routing_source TEXT CHECK (routing_source IN ('person','rule','copilot')),
+  routed_by_employee_id TEXT,
+  request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
+  merged_into_task_id TEXT,
+  decline_reason TEXT,
+  suggested_triager_id TEXT,
+  suggested_verifier_id TEXT,
+  PRIMARY KEY (organization_id,task_id),
+  CHECK (duplicate_of_task_id IS NULL OR duplicate_of_task_id<>task_id),
+  CHECK (merged_into_task_id IS NULL OR merged_into_task_id<>task_id),
+  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,duplicate_of_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,merged_into_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,affects_feature_id) REFERENCES features(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,routed_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,suggested_triager_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,suggested_verifier_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE conversations (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  kind TEXT NOT NULL CHECK (kind IN ('dm','group_dm','channel','directed_thread')),
+  name TEXT,
+  auto_scope TEXT CHECK (auto_scope IN ('organization','team','project')),
+  team_id TEXT,
+  project_id TEXT,
+  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,id),
+  CHECK (auto_scope IS NULL OR (kind='channel' AND
+    ((auto_scope='organization' AND team_id IS NULL AND project_id IS NULL)
+    OR (auto_scope='team' AND team_id IS NOT NULL AND project_id IS NULL)
+    OR (auto_scope='project' AND project_id IS NOT NULL AND team_id IS NULL)))),
+  FOREIGN KEY (organization_id,team_id) REFERENCES teams(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,project_id) REFERENCES projects(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE UNIQUE INDEX conversation_auto_org ON conversations(organization_id) WHERE auto_scope='organization';
+CREATE UNIQUE INDEX conversation_auto_team ON conversations(organization_id,team_id) WHERE auto_scope='team';
+CREATE UNIQUE INDEX conversation_auto_project ON conversations(organization_id,project_id) WHERE auto_scope='project';
+CREATE TABLE conversation_memberships (
+  organization_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  joined_at TEXT NOT NULL,
+  left_at TEXT,
+  PRIMARY KEY (organization_id,conversation_id,employee_id),
+  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE messages (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  sender_kind TEXT NOT NULL CHECK (sender_kind IN ('employee','office')),
+  sender_employee_id TEXT,
+  sender_office_id TEXT,
+  sender_display_name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','high','urgent')),
+  subject TEXT,
+  body_markdown TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json) AND json_type(metadata_json)='object'),
+  thread_root_id TEXT,
+  reply_to_message_id TEXT,
+  also_in_channel INTEGER NOT NULL DEFAULT 0 CHECK (also_in_channel IN (0,1)),
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  ttl_ms INTEGER CHECK (ttl_ms>=0),
+  origin_office_id TEXT NOT NULL,
+  origin_incarnation TEXT NOT NULL,
+  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
+  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
+  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
+  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  source_content_sha256 TEXT CHECK (source_content_sha256 IS NULL OR (length(source_content_sha256)=64 AND source_content_sha256 NOT GLOB '*[^0-9a-f]*')),
+  source_hash_codec TEXT CHECK (source_hash_codec IS NULL OR source_hash_codec='v1_lenprefixed_sha256'),
+  source_envelope_json TEXT CHECK (source_envelope_json IS NULL OR (json_valid(source_envelope_json) AND json_type(source_envelope_json)='object')),
+  CHECK ((source_content_sha256 IS NULL)=(source_hash_codec IS NULL) AND (source_content_sha256 IS NULL)=(source_envelope_json IS NULL)),
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,id,conversation_id),
+  UNIQUE (organization_id,origin_office_id,origin_incarnation,origin_sequence),
+  CHECK ((sender_kind='employee' AND sender_employee_id IS NOT NULL AND sender_office_id IS NULL)
+    OR (sender_kind='office' AND sender_employee_id IS NULL AND sender_office_id IS NOT NULL)),
+  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,sender_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,sender_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,origin_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,thread_root_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,reply_to_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE INDEX message_conversation_time ON messages(organization_id,conversation_id,created_at,id);
+CREATE TABLE message_recipient_states (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  recipient_display_name TEXT,
+  state TEXT NOT NULL CHECK (state IN ('unread','snoozed','read','done','expired','dead_letter')),
+  triage_generation INTEGER NOT NULL DEFAULT 0 CHECK (triage_generation>=0),
+  snoozed_until TEXT,
+  snooze_after_task INTEGER NOT NULL DEFAULT 0 CHECK (snooze_after_task IN (0,1)),
+  snooze_note TEXT,
+  triaged_at TEXT,
+  read_at TEXT,
+  updated_at TEXT NOT NULL,
+  reason TEXT,
+  expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
+  owner_office_id TEXT NOT NULL,
+  origin_incarnation TEXT NOT NULL,
+  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
+  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
+  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
+  PRIMARY KEY (organization_id,message_id,employee_id),
+  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,conversation_id,employee_id) REFERENCES conversation_memberships(organization_id,conversation_id,employee_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,owner_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE INDEX message_recipient_inbox ON message_recipient_states(organization_id,employee_id,state,snoozed_until);
+CREATE TABLE conversation_preferences (
+  organization_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  viewer_employee_id TEXT NOT NULL,
+  muted_employee_id TEXT NOT NULL,
+  mute_mode TEXT NOT NULL DEFAULT 'none' CHECK (mute_mode IN ('none','muted','digest')),
+  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id,muted_employee_id),
+  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,muted_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE conversation_read_markers (
+  organization_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  viewer_employee_id TEXT NOT NULL,
+  read_at TEXT,
+  last_read_message_id TEXT,
+  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id),
+  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,last_read_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE message_attachments (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  byte_count INTEGER NOT NULL CHECK (byte_count>=0),
+  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  PRIMARY KEY (organization_id,message_id,id),
+  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE message_reactions (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  reaction TEXT NOT NULL CHECK (reaction IN ('seen','looking')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,message_id,employee_id,reaction),
+  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE mutation_receipts (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  command_id TEXT NOT NULL,
+  origin_office_id TEXT NOT NULL,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','owner','system')),
+  actor_id TEXT,
+  command_kind TEXT NOT NULL,
+  request_sha256 TEXT NOT NULL CHECK (length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
+  state TEXT NOT NULL CHECK (state IN ('reserved','linked','completed','rejected','abandoned','outcome_unknown')),
+  result_ref TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT,
+  PRIMARY KEY (organization_id,command_id),
+  CHECK ((actor_kind='employee')=(actor_id IS NOT NULL)),
+  FOREIGN KEY (organization_id,actor_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,origin_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE office_origin_streams (
+  organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  stream_kind TEXT NOT NULL CHECK (stream_kind IN ('organization','work','message_content','message_state')),
+  incarnation TEXT NOT NULL,
+  high_water_sequence INTEGER NOT NULL CHECK (high_water_sequence>=0),
+  journal_ref TEXT NOT NULL,
+  head_sha256 TEXT CHECK (head_sha256 IS NULL OR (length(head_sha256)=64 AND head_sha256 NOT GLOB '*[^0-9a-f]*')),
+  state TEXT NOT NULL CHECK (state IN ('open','sealed')),
+  PRIMARY KEY (organization_id,office_id,stream_kind,incarnation),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE office_recovery_checkpoints (
+  organization_id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  hq_office_id TEXT NOT NULL,
+  authority_epoch INTEGER NOT NULL CHECK (authority_epoch>0),
+  highest_seen_epoch INTEGER NOT NULL CHECK (highest_seen_epoch>=authority_epoch),
+  applied_sequence INTEGER NOT NULL CHECK (applied_sequence>=0),
+  digest_sha256 TEXT NOT NULL CHECK (length(digest_sha256)=64 AND digest_sha256 NOT GLOB '*[^0-9a-f]*'),
+  base_sequence INTEGER NOT NULL CHECK (base_sequence>=0 AND base_sequence<=applied_sequence),
+  base_digest_sha256 TEXT NOT NULL CHECK (length(base_digest_sha256)=64 AND base_digest_sha256 NOT GLOB '*[^0-9a-f]*'),
+  protocol_level INTEGER NOT NULL CHECK (protocol_level>0),
+  restore_pending INTEGER NOT NULL CHECK (restore_pending IN (0,1)),
+  awaiting_snapshot INTEGER NOT NULL CHECK (awaiting_snapshot IN (0,1)),
+  native_sequence INTEGER NOT NULL CHECK (native_sequence>=0),
+  pending_base_sha256 TEXT CHECK (pending_base_sha256 IS NULL OR (length(pending_base_sha256)=64 AND pending_base_sha256 NOT GLOB '*[^0-9a-f]*')),
+  journal_ref TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,office_id),
+  CHECK ((authority_epoch<highest_seen_epoch)=(pending_base_sha256 IS NOT NULL)),
+  CHECK (authority_epoch=highest_seen_epoch OR restore_pending=1),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,hq_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE recovery_snapshot_transfers (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  authority_epoch INTEGER NOT NULL CHECK (authority_epoch>0),
+  base_sequence INTEGER NOT NULL CHECK (base_sequence>=0),
+  content_ref TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  state TEXT NOT NULL CHECK (state IN ('staging','verified','installing','installed','rejected')),
+  byte_count INTEGER NOT NULL CHECK (byte_count>=0),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,id),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE process_cleanup_records (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  office_id TEXT NOT NULL,
+  execution_process_id TEXT,
+  generation INTEGER NOT NULL CHECK (generation>0),
+  ownership_mark TEXT NOT NULL CHECK (length(ownership_mark)>0),
+  machine_id TEXT NOT NULL,
+  boot_id TEXT,
+  leader_pid INTEGER,
+  leader_pgid INTEGER,
+  leader_started TEXT,
+  inventory_json TEXT NOT NULL CHECK (json_valid(inventory_json) AND json_type(inventory_json)='object'),
+  state TEXT NOT NULL CHECK (state IN ('owned','cleanup_pending','cleaned','unverified')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,office_id,ownership_mark),
+  CHECK ((leader_pid IS NULL)=(leader_pgid IS NULL) AND (leader_pid IS NULL)=(leader_started IS NULL) AND (leader_pid IS NULL)=(boot_id IS NULL)),
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,execution_process_id) REFERENCES agent_process_instances(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TRIGGER receipt_identity_immutable BEFORE UPDATE ON mutation_receipts
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.command_id<>OLD.command_id OR NEW.origin_office_id<>OLD.origin_office_id
+ OR NEW.actor_kind<>OLD.actor_kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.command_kind<>OLD.command_kind OR NEW.request_sha256<>OLD.request_sha256
+ OR (OLD.state IN ('completed','rejected','abandoned') AND (NEW.state<>OLD.state OR NEW.result_ref IS NOT OLD.result_ref))
+BEGIN SELECT RAISE(ABORT,'receipt identity or terminal outcome changed'); END;
+CREATE TRIGGER receipt_no_replace BEFORE INSERT ON mutation_receipts
+WHEN EXISTS (SELECT 1 FROM mutation_receipts WHERE organization_id=NEW.organization_id AND command_id=NEW.command_id)
+BEGIN SELECT RAISE(ABORT,'receipt command already registered'); END;
+CREATE TRIGGER origin_stream_no_regression BEFORE UPDATE ON office_origin_streams
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.stream_kind<>OLD.stream_kind OR NEW.incarnation<>OLD.incarnation
+ OR NEW.high_water_sequence<OLD.high_water_sequence OR (NEW.high_water_sequence=OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
+ OR (OLD.state='sealed' AND (NEW.state<>OLD.state OR NEW.high_water_sequence<>OLD.high_water_sequence))
+BEGIN SELECT RAISE(ABORT,'origin stream regressed or forked'); END;
+CREATE TRIGGER origin_stream_no_replace BEFORE INSERT ON office_origin_streams
+WHEN EXISTS (SELECT 1 FROM office_origin_streams WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id AND stream_kind=NEW.stream_kind AND incarnation=NEW.incarnation)
+BEGIN SELECT RAISE(ABORT,'origin identity already registered'); END;
+CREATE TRIGGER checkpoint_no_regression BEFORE UPDATE ON office_recovery_checkpoints
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.highest_seen_epoch<OLD.highest_seen_epoch
+ OR NEW.authority_epoch<OLD.authority_epoch OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence<OLD.applied_sequence)
+ OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence=OLD.applied_sequence AND NEW.digest_sha256<>OLD.digest_sha256)
+BEGIN SELECT RAISE(ABORT,'recovery checkpoint regressed or forked'); END;
+CREATE TRIGGER checkpoint_no_replace BEFORE INSERT ON office_recovery_checkpoints
+WHEN EXISTS (SELECT 1 FROM office_recovery_checkpoints WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id)
+BEGIN SELECT RAISE(ABORT,'checkpoint identity already registered'); END;
+CREATE TRIGGER receipt_no_delete BEFORE DELETE ON mutation_receipts
+BEGIN SELECT RAISE(ABORT,'receipt retention requires reviewed expiry/archive procedure'); END;
+CREATE TRIGGER origin_stream_no_delete BEFORE DELETE ON office_origin_streams
+BEGIN SELECT RAISE(ABORT,'origin watermark must be retained'); END;
+CREATE TRIGGER checkpoint_no_delete BEFORE DELETE ON office_recovery_checkpoints
+BEGIN SELECT RAISE(ABORT,'authority checkpoint must be retained'); END;
+
+CREATE TABLE budgets (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
+  current_revision INTEGER NOT NULL CHECK (current_revision>0),
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task','agent','release')),
+  task_id TEXT,
+  agent_id TEXT,
+  release_id TEXT,
+  period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
+  time_zone TEXT NOT NULL,
+  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_subject_ref TEXT,
+  created_at TEXT NOT NULL,
+  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
+  PRIMARY KEY (organization_id,id),
+  CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
+    OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
+    OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
+  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
+CREATE UNIQUE INDEX budget_agent_identity ON budgets(organization_id,agent_id,period_kind) WHERE scope_kind='agent';
+CREATE UNIQUE INDEX budget_release_identity ON budgets(organization_id,release_id) WHERE scope_kind='release';
+CREATE TABLE budget_policy_versions (
+  organization_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision>0),
+  state TEXT NOT NULL CHECK (state IN ('active','cleared')),
+  unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
+  limit_amount INTEGER CHECK (limit_amount>0),
+  changed_by_kind TEXT NOT NULL CHECK (changed_by_kind IN ('employee','owner')),
+  changed_by_id TEXT,
+  changed_at TEXT NOT NULL,
+  reason TEXT,
+  PRIMARY KEY (organization_id,budget_id,revision),
+  CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
+  CHECK ((changed_by_kind='employee')=(changed_by_id IS NOT NULL)),
+  FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE budget_periods (
+  organization_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  policy_revision INTEGER NOT NULL,
+  period_key TEXT NOT NULL,
+  starts_at TEXT,
+  ends_at TEXT,
+  used_amount INTEGER NOT NULL DEFAULT 0 CHECK (used_amount>=0),
+  usage_status TEXT NOT NULL DEFAULT 'unavailable' CHECK (usage_status IN ('complete','partial','unavailable')),
+  includes_estimates INTEGER NOT NULL DEFAULT 0 CHECK (includes_estimates IN (0,1)),
+  includes_api_equivalent INTEGER NOT NULL DEFAULT 0 CHECK (includes_api_equivalent IN (0,1)),
+  unpriced_records INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_records>=0),
+  incomplete_records INTEGER NOT NULL DEFAULT 0 CHECK (incomplete_records>=0),
+  extension_used INTEGER NOT NULL DEFAULT 0 CHECK (extension_used IN (0,1)),
+  kept_paused INTEGER NOT NULL DEFAULT 0 CHECK (kept_paused IN (0,1)),
+  state TEXT NOT NULL CHECK (state IN ('open','closed')),
+  evaluated_at TEXT,
+  ledger_checkpoint_ref TEXT,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,budget_id,id),
+  UNIQUE (organization_id,budget_id,period_key),
+  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE budget_events (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('evaluated','warning','reached','extended','policy_changed','cleared','stop_requested','hold_released','period_reset')),
+  policy_revision INTEGER NOT NULL,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','owner','system')),
+  actor_id TEXT,
+  occurred_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND json_type(payload_json)='object'),
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,budget_id,operation_id),
+  CHECK ((actor_kind='employee')=(actor_id IS NOT NULL)),
+  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,actor_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE budget_notices (
+  organization_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  policy_revision INTEGER NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
+  threshold INTEGER NOT NULL CHECK (threshold IN (80,100)),
+  recipient_kind TEXT NOT NULL CHECK (recipient_kind IN ('employee','owner')),
+  recipient_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('neutral','budget_reached')),
+  delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','delivered','resolved')),
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  PRIMARY KEY (organization_id,id),
+  UNIQUE (organization_id,budget_id,period_id,policy_revision,stage,threshold),
+  CHECK ((recipient_kind='employee')=(recipient_id IS NOT NULL)),
+  CHECK (threshold=100 OR kind='neutral'),
+  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TABLE budget_holds (
+  organization_id TEXT NOT NULL,
+  budget_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  policy_revision INTEGER NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
+  state TEXT NOT NULL CHECK (state IN ('stop_pending','held','released')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  release_reason TEXT,
+  PRIMARY KEY (organization_id,budget_id,period_id,policy_revision,stage),
+  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
+ OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind OR NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref
+ OR NEW.current_revision<OLD.current_revision
+BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
+CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
+WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
+BEGIN SELECT RAISE(ABORT,'agent budget requires an agent'); END;
+CREATE TRIGGER employee_budget_kind_update BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
+BEGIN SELECT RAISE(ABORT,'budgeted employee must remain an agent'); END;
+CREATE TRIGGER employee_budget_kind_insert BEFORE INSERT ON employees
+WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
+BEGIN SELECT RAISE(ABORT,'budgeted employee must be an agent'); END;
+CREATE TRIGGER budgets_no_delete BEFORE DELETE ON budgets
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+CREATE TRIGGER budget_policy_versions_no_update BEFORE UPDATE ON budget_policy_versions
+BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
+CREATE TRIGGER budget_policy_versions_no_delete BEFORE DELETE ON budget_policy_versions
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+CREATE TRIGGER budget_periods_no_delete BEFORE DELETE ON budget_periods
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+CREATE TRIGGER budget_events_no_update BEFORE UPDATE ON budget_events
+BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
+CREATE TRIGGER budget_events_no_delete BEFORE DELETE ON budget_events
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+CREATE TRIGGER budget_notices_no_delete BEFORE DELETE ON budget_notices
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+CREATE TRIGGER budget_holds_no_delete BEFORE DELETE ON budget_holds
+BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
+
+CREATE TRIGGER budget_period_identity_update BEFORE UPDATE ON budget_periods
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.budget_id<>OLD.budget_id OR NEW.period_key<>OLD.period_key
+ OR NEW.starts_at IS NOT OLD.starts_at OR NEW.ends_at IS NOT OLD.ends_at
+ OR NEW.policy_revision<OLD.policy_revision OR (NEW.policy_revision=OLD.policy_revision AND NEW.extension_used<OLD.extension_used)
+BEGIN SELECT RAISE(ABORT,'budget period identity/extension regressed'); END;
+CREATE TRIGGER budget_release_no_hold BEFORE INSERT ON budget_holds
+WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
+BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
+CREATE TRIGGER budget_release_no_hold_update BEFORE UPDATE ON budget_holds
+WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
+BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
