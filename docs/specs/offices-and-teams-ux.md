@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 17
+revision: 18
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,12 +13,13 @@ builds_on: []
 
 # Spec · Offices, organizations and teams (UX)
 
+Selected chart data follows [organization](../design/organization-data/01-organization-structure.md), [projects](../design/organization-data/02-project-structure.md), [employees](../design/organization-data/04-agent-structure.md) and [task assignment](../design/organization-data/12-task-assignment-and-history.md). The body and criteria below use those target relationships. Detailed office/enrollment UX remains a requirement; target records do not prove handlers or migration are implemented. [Authority map](../design/documentation-authority.md).
+
 **Revision 12 (2026-11-09): standalone server pivot.**
 [server-installation-and-access-ux.md](server-installation-and-access-ux.md) supplies
 the v1 installation/access requirements. The browser's machine is not an office.
 MENU-1 through MENU-6 are retired from v1 (native shell deferred to v2), OPEN/JOIN
-and OFC criteria below are revised for HQ HTTP access and CLI enrollment. Existing
-team, people, reporting and owner semantics remain. Old changelog entries record
+and OFC criteria below are revised for HQ HTTP access and CLI enrollment. The later selected chart semantics below supersede the old membership/owner exceptions. Old changelog entries record
 history and do not reintroduce the desktop flows.
 
 Requested by ada for the user.
@@ -28,6 +29,10 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 18 (2026-11-15):** rewrites chart forms, diagrams, model wording and TEAM/PEOPLE/REPORT/OWNER criteria for one home team, subtree leads, independent reporting, required project owner and optional contributors. Owner/HR employee exemptions are removed. Existing wire adapters need an explicit migration; no new commands are introduced. Layout-changing operations wait for verified turn/process quiescence and cleanup, without depending on deferred run modes or automatic restart. Undo remains deferred.
+
+The entries below are historical revision notes, not active relationship or identifier requirements. Pre-selection statements about multiple memberships, teamless owners, name-as-handle and ownerless projects are superseded individually by §§7.0–7.10 and their revised criteria.
 
 **Revision 17 (2026-11-15):** initial agentic-org setup creates HQ only and registers its service automatically. Satellite onboarding is a separate HQ UI/issued-command flow. Destination enrollment repair copy no longer tells users to run initial setup. Enrollment approval, consent and retry rules remain unchanged.
 
@@ -89,11 +94,7 @@ X-02 (`org-proto` v2, approved by ada):
 Also new: JOIN-17 (remove-pending refusals, including a non-admin) and JOIN-18 (noninteractive setup ends with waiting_for_idle); §5b lists every HQ-machine command that needs the instance-admin grant.
 Also new: JOIN-20 and §5c "Signing in first" (a join on an instance with accounts needs an instance admin).
 
-- *(Review of 07a8a4b)* **Waiting for running agents** ends only when no agent
-  session on that instance is running: each agent Asleep, Paused or stopped. An
-  agent that's Idle between turns still counts (`agent-sessions.md`, ADR-0003).
-  The copy reads "Waiting for 3 agents to stop. Their current sessions must end
-  first." No agent is stopped or relaunched for it (§5a, §6.2; OFC-28, OFC-29).
+- *(Historical review of 07a8a4b)* Clarified that the old session-based wait covered idle sessions too and did not stop/relaunch agents. Revision 18 replaces sleep/pause labels as completion evidence with verified active-turn/process cleanup.
 - *(Rowan's answers, 2026-11-10; X-02 Q9)* A101: the wait's number comes from
   `waiting_for_idle { sessions }`; Cancel cancels the same operation; a waiting
   organization shows in the switcher, and a waiting office as a pending row in
@@ -106,16 +107,7 @@ Also new: JOIN-20 and §5c "Signing in first" (a join on an instance with accoun
   (§3.3, §5c). New A105: telling a decline from a mismatch, both
   `join_rejected`. §5b lists `agentic-org account link`, `unlink` and `revoke`
   (`server-installation-and-access-ux.md` rev 5, its A103).
-- *(Review of 02316bb)* The wait for running agents names the agents it waits
-  for, each with a link to its profile and **Pause** (DEAL-3), and says
-  Always-on agents keep running until paused, since their sessions restart.
-  Pausing them ends the wait once their sessions stop; nothing is stopped
-  automatically. Setup names them and says to pause them in the app, and its
-  noninteractive message prints the cancel command with the office ID.
-  `office remove-pending` on a join waiting for running agents asks "Cancel
-  joining…? The join hasn't reached HQ yet." §5b no longer lists
-  `office remove-pending` among the HQ-machine commands (§5a, §5b, §5c, §6.2;
-  OFC-28, OFC-29, OFC-37, JOIN-11, JOIN-18, JOIN-19). New A106.
+- *(Historical review of 02316bb)* Added authorized profile links/Pause controls, pending-operation cancellation and office-ID CLI repair details. Its automatic run-mode/sleep explanation is superseded by revision 18's explicit turn/process/drain boundary; the controls/privacy/cancel behavior is retained in the flows below.
 - *(Review of 0802754)* The CLI follows the browser's rule for agents of
   organizations the reader doesn't own: counted, not named. Setup with an
   instance admin signed in names the agents of organizations that account owns,
@@ -167,26 +159,7 @@ Instance admin and Recovery code. §10 points to the recovery-code screens in
 
 **Revision 6 (2026-11-08): why an office stopped, in plain words.** ada's `OfficeInfo.status_reason`, `next_restart_at`, the live `office.status_changed` event and `office.restart` (branch ada/proto-office-status, with the reasons `unsupported_version`, `invalid_request`, `unknown` and the error `not_ready`) get their copy and actions in §3.3. From the Offices review: status is shown only when live, each status has its own icon, and the build's good choices are now part of the spec (an Unknown row in §3.1, and Sample data and the disabled Add office in §6.1). `key_missing` and `storage_error` copy follows `office-host-boundary.md`. The remove dialog's no-manager variant is written outside the dialog text (§7.4). OFC-11 to OFC-13 added.
 
-**Revision 5 (2026-11-08): reporting lines follow org-proto on v1.** Removing a member sends their reports to that member's own manager, or to the owner if they had none (§7.4, §7.8, PEOPLE-5).
-
-**Revision 4 (2026-11-08): one handle namespace (org-proto on v1, `86a6a9f`).** A person's name is also their handle, unique across every member ignoring case (agents' messaging names, people's names and the reserved `owner`), so two people can't share a name and a person can't take an agent's handle. §7.4's "Add anyway" is replaced by a refusal with a suggestion. PEOPLE-4 rewritten, PEOPLE-8 added.
-
-**Revision 3 (2026-11-08): reviewer fixes.** A removed person's tasks come back **unassigned** for the owner to reassign (teams design). "Open organization" stays on the first-launch screen (ada, A38). "Join organization" is used only for joining with an invitation link (phase 3).
-
-**Revision 2 (2026-11-08): the user's final team model, and ada's answers.**
-
-- **Only teams.** The Guilds tab, the guild chart and every label are gone. A "division" is just a team that owns teams. **GUILD-1 and GUILD-2 are retired** (IDs not reused).
-- **Members are agents or people**, styled differently (§7.0). People are never placed in offices. Agents can only reach people who've been added.
-- **The owner** is the organization's special user: in no team, full rights, reachable by any agent, shown once above the chart (§7.1), never on a card.
-- **Lead** is optional, an agent or a person, and also leads the team's projects.
-- **Shared projects:** a project can have several teams (usually one), with a **Shared** badge. A project with no team is **unassigned**. §7.6 rewritten (it used to move a project between teams).
-- **Three views of one chart:** **Teams**, **People** (where you add a person, §7.3 and §7.4) and **Reporting lines** (where you set someone's manager, §7.8). The nav item is **Org chart** again (decision 10).
-- **Product name: Agentic Org.** All copy says "Agentic Org" where it said "agentic.org". The sample organization in this spec is renamed **Lumen Labs** so copy like "Join Lumen Labs?" can't be confused with the app.
-- **Resolved:** U1 (keep "HQ" and "office" for now), U2 (reporting lines stay, as their own view), U3 (no departments, no labels), U4 (one optional lead; the owner in no team; shared projects allowed), A1 (join warning copy), A2 (stable check code: the "code changed" state is removed), A3 (three wrong codes cancel the invitation), A4 (a removed office's agents become unplaced), A5 (Add office and approval only on HQ's Mac), A6 (8 characters, Crockford base32, two groups of four).
-- **Criteria rewritten (same ID):** JOIN-3, OFC-6, OFC-7, OFC-8, TEAM-1, TEAM-3, TEAM-4, TEAM-5, TEAM-8, TEAM-9, TEAM-10.
-- **Criteria added:** JOIN-8, OFC-10, TEAM-11 to TEAM-15, PEOPLE-1 to PEOPLE-7, REPORT-1 to REPORT-5, OWNER-1 to OWNER-3.
-
-**Revision 1 (2026-11-08):** first draft. 13 decisions, 4 flows, 37 criteria.
+**Revisions 1–5 (2026-11-08), historical chart work:** introduced the three views, distinct agents/people, reporting and owner presentation. Revision 18 replaces the earlier multi-membership, teamless-owner, display-name-as-handle and symmetric project-link relationships throughout the body/criteria. [The earlier spec](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/offices-and-teams-ux.md) preserves those obsolete forms and decisions. Retained criteria IDs include TEAM-1–15, PEOPLE-1–8, REPORT-1–5 and OWNER-1–3. GUILD-1/2 remain retired and are not reused.
 
 ## 0. Decisions in this spec
 
@@ -204,8 +177,8 @@ Instance admin and Recovery code. §10 points to the recovery-code screens in
 12. **Every edit has a non-drag path** (menu, dialog, keyboard). Drag-to-move and drag-to-change-manager are shortcuts, never the only way.
 13. **Office outboxes report Pending and Blocked.** HQ shows their known outcomes. A disconnected browser marks its view stale and its own unsubmitted text unsaved; it does not become a satellite outbox.
 14. **Agents and people never look alike**, and the difference is never color only (§7.0).
-15. **The owner is shown once, above the chart**, never inside it, except as the root of Reporting lines, where everyone ultimately reports to them.
-16. **Reporting lines and teams are independent.** Leading a team doesn't make you anyone's manager, and the UI says so where people would assume it.
+15. **The owner account bar is above the chart.** A linked owner employee retains its required home team and is counted/displayed there; account authority is separate from employee identity.
+16. **Reporting references and team hierarchy are distinct.** A lead manages the entire team subtree; an ordinary ancestor-team employee does not. Explicit reporting remains visible independently.
 17. **Accounts sign in; people don't** *(rev 14, O-1)*. An account belongs to the instance. Only an instance admin creates organizations, and whoever creates one owns it. People are records agents can reach, never sign-ins. Accounts are added and passwords reset only on the HQ machine (`server-installation-and-access-ux.md` §4a.1).
 
 ## 1. Words (proposed additions to the design-system glossary)
@@ -226,10 +199,11 @@ Instance admin and Recovery code. §10 points to the recovery-code screens in
 | Account *(rev 14)* | What you sign in with: a username and a password on this HQ instance. It can own organizations. People and agents don't have one. | User, login, profile |
 | Instance admin *(rev 14)* | An account that can create organizations on this HQ instance, and add offices on it *(rev 15)*. Setup makes the first account one. It isn't the same as owning an organization. | Admin (alone), superuser, root, owner |
 | Recovery code *(rev 14)* | The code, collected on the HQ machine *(rev 15: shown once, and again only until it's confirmed as stored)*, that will let the owner recover an organization if HQ is lost. Never shown in the browser. | Backup code, recovery key, password |
-| Lead | A team's optional lead, agent or person. Also leads the team's projects. | Manager, head |
-| Reports to / Manager | Who someone reports to. Separate from teams. | Lead, boss |
-| Shared | A project worked on by more than one team | Cross-team, joint |
-| Unassigned | A project with no team, or an agent with no office ("Unplaced") | Orphan |
+| Lead | Optional direct home-team employee appointed to manage its whole subtree | Inferred project co-lead |
+| Reports to / Manager | Explicit employee reporting reference, separate from subtree lead responsibility | Inferred ancestor-team manager |
+| Contributor | Optional participating team; the project still has one accountable owner | Co-owner |
+| Unplaced | An agent without current execution placement; home team is still required | Teamless |
+| Unassigned | A task with no individual and/or assigned team, independent of required accountable team | Ownerless project |
 
 "Department" (from the role catalog) is not a grouping in the app, and there are no labels.
 
@@ -421,12 +395,16 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 ```
  Create organization                                    (slide-over)
  Name        [ Side Project                        ]
+ Slug        [ side-project                        ]
+ Org Git     [ https://example.com/org/state.git   ] remote repository
+ State branch[ main                                ]
+ Bootstrap   [ Choose valid home team(s)…          ] owner/HR employees if created
  ┃ ⓘ It will be stored on HQ instance default (hq-mac), and you'll own it.
  ┃   Its recovery code is then collected on that machine.
                                     [Cancel]  [Create organization]
 ```
 
-- **Name:** required, trimmed. The form has no other field and no folder picker.
+- **Name:** required, trimmed. No browser-machine folder picker is offered. The selected target additionally requires explicit organization slug, a remote organization repository registration, state branch and valid chosen home teams for any owner/HR employees created during bootstrap. These may be separate setup steps, but must be resolved before admitting those records; never guess a team name or create teamless employees. Code repositories may be local; organization Git cannot. Current name-only create APIs require an explicit target adapter, not invented new request fields on that wire.
   - Empty: "Give the organization a name."
   - Too long: "Use 64 characters or fewer."
   - Control characters: "The name can't contain control characters."
@@ -445,7 +423,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 
 | State | What shows |
 | --- | --- |
-| Waiting for running agents *(rev 15)* | "Waiting for 3 agents to stop: Kai (Always on), Remy, Riley. Their current sessions must end first. Always-on agents keep running until you pause them." with a spinner, then the list of those agents, each with **Pause** (below the table), then "Side Project is created once they've stopped. Nothing is stopped for it." and **Cancel**. Name is read-only. One agent: "Waiting for 1 agent to stop: Remy. Its current session must end first." The Always-on sentence shows only while an Always-on agent is in the list. See **Waiting for running agents** below the table. **Cancel** stops it: "Side Project wasn't created." and the form is back with the name. If it's already being created: "Too late to cancel: Side Project is being created now." and the panel shows Creating…. Closing the panel doesn't cancel it. |
+| Waiting for running agents *(rev 18)* | “Waiting for 3 agents to stop: Kai, Remy, Riley. Their active work and process cleanup must finish first.” Spinner, authorized agent list with supported **Pause** control (below), then “Side Project is created once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** remains available and fields are read-only. One agent: “Waiting for 1 agent to stop: Remy.” No run-mode badges or sleep prediction. See **Waiting for running agents** below. Cancel cancels this operation: “Side Project wasn't created”, returning to the retained form. If creation already began, show “Too late to cancel: Side Project is being created now” and Creating…. Closing the panel does not cancel it. |
 | Creating | **Creating…**, disabled. Name is read-only. **Cancel** becomes **Close**, with "Closing this panel doesn't stop it." A second click sends nothing. |
 | Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". |
 | Ready | The organization's pages load as usual. The recovery-code notice shows for its owner once the code is waiting to be collected (a new organization starts as Being prepared, `server-installation-and-access-ux.md` §4a.6). |
@@ -454,63 +432,26 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 | Checking (the response was lost) | "Checking whether Side Project was created…" with a spinner. The browser looks up the same attempt; it never sends a new one while the outcome is unknown. |
 | Session ended | The sign-in-again dialog (`server-installation-and-access-ux.md` §4a.4). The form keeps its text. After signing in, press **Create organization** again. |
 
-**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10; X-02
-Q9)*. A new organization changes what the agents running on that instance may
-access, and the host can't yet ask offices to relaunch their sessions (X-02 Q9's
-`layout_changed`; `agent-sessions.md`). So HQ creates it only once **no agent
-session on that instance is running**, and never stops or relaunches an agent
-for it:
-- An agent counts as running while it has a live session, **including Idle**,
-  between turns (ADR-0003). It stops counting once it's **Asleep**, **Paused**
-  or stopped (Offline). Agents of every organization on that instance count.
-- The create stays accepted, and its lookup and HQ's status feed report how many
-  sessions it waits for (`waiting_for_idle { sessions: n }`). "3" in the copy is
-  that number, and it goes down live as sessions end. When HQ doesn't give the
-  number: "Waiting for running agents to stop. Their current sessions must end
-  first."
-- **It names the agents it waits for** *(review of 02316bb)*, because an
-  Always-on agent's session restarts when it ends (`agent-run-modes-ux.md`
-  decision 1), so the wait never ends while one is Always on and running.
-  Under the copy, one row per agent:
+**Waiting for running agents** *(rev 18; A101's existing operation tracking retained)*. A new organization changes the layout/policy context available to processes on this instance. The operation waits for the affected work to drain and for verified safe process cleanup before changing that context. [Execution document 11](../design/organization-data/11-model-profiles-and-agent-execution.md) owns turn/attempt/process evidence; automatic schedules, Always on/On call modes and restart-on-idle behavior are deferred and are not prerequisites for this flow.
 
-  ```
-   Kai     Lumen Labs · Always on · Working                     [Pause]
-   Remy    Lumen Labs · On call · Idle                          [Pause]
-   Riley   Lumen Labs · Scheduled · Idle                        [Pause]
+- Count affected employees with active/open turns, live main processes or unresolved stopping/cleanup evidence, including a warm idle process when it holds the old layout context. A status label such as Idle, Paused, Offline or Asleep does not prove quiescence. Admit the layout change only when the owning process controller confirms no affected active work/live process remains and cleanup is complete. Stale/unavailable evidence keeps the operation waiting with “Can't confirm that work has stopped on <instance>.” No cache deletion, elapsed timeout or zero presence count substitutes for this proof.
+- Waiting does not automatically stop, cancel, restart or schedule agent work. Any necessary drain/admission control and safe stop must use explicitly supported, authorized lifecycle actions and durable control state; do not imply a newly implemented drain service or invent a command. Later explicit work still requires current execution readiness, placement generation and permits.
+- The create remains accepted. Preserve existing operation lookup/status and the current-contract `waiting_for_idle { sessions: n }` field, but map that legacy session count to verified target turn/process blockers through an explicit adapter. A count alone cannot prove target quiescence. Counts update in place as blockers clear. Without a trustworthy number show “Waiting for active work and process cleanup to finish”; if verification is unavailable say so instead of reporting zero or ready.
+- **Authorized list:** one row per affected employee, with a profile link, observed turn/process state, observation freshness and any supported Pause action:
+
+  ```text
+  Kai     Lumen Labs · Turn running                             [Pause]
+  Remy    Lumen Labs · Cleanup required, last observed idle             [Pause]
+  Riley   Lumen Labs · Stop pending at office
   ```
 
-  - The name links to the agent's profile. Leaving the panel doesn't cancel the
-    create; the switcher's waiting entry reopens it.
-  - **Pause** is the agent's usual Pause (`our-org-in-the-app.md` §9, DEAL-3),
-    with its dialog. The row then shows "Paused · stop pending at office" and
-    no Pause, and leaves the list once the agent's session stops; the number
-    goes down with it. Pausing them ends the wait once their sessions stop.
-    Nothing is stopped automatically.
-  - The copy marks Always-on agents ("Kai (Always on)"). On call and Scheduled
-    agents go back to sleep on their own once idle (`agent-run-modes-ux.md`
-    decision 7), so they're named without a mark.
-  - Agents of an organization this account doesn't own are counted, not named,
-    because the admin grant alone doesn't open it (§5b): one row "1 agent in
-    Other Org · Ask its owner to pause it", with no link and no Pause. The copy
-    reads "Waiting for 3 agents to stop: Kai (Always on), Remy, 1 agent in Other
-    Org."
-  - Until HQ gives the agents (A106), or when it doesn't, the copy keeps its
-    count-only form, without the list.
-- There's no time limit: it waits until the sessions end or someone cancels.
-  `agentic-org doctor` on the HQ machine lists it with a count for each
-  organization and no names, because it runs without a session, so it can't
-  tell which organizations its reader owns *(review of 0802754)*: "Creating
-  Side Project: waiting for 3 agents to stop (3 in Lumen Labs), since 14:05."
-  With an agent of Other Org waiting too, it reads "(2 in Lumen Labs, 1 in
-  Other Org)" *(review of 18d3f56)*.
-- **Cancel** cancels that same create (its operation ID), from this panel or
-  from the switcher's waiting entry, in any tab or browser of that account.
-- **While it waits, it isn't an organization yet.** After the panel is closed,
-  the organization switcher shows a waiting entry for it, driven by the
-  operation: "Side Project · Waiting for 3 agents to stop", with an `hourglass`
-  icon. It can't be opened; choosing it reopens this panel in its Waiting state,
-  with **Cancel**. Once the create starts, the entry becomes "HQ · Starting" (OFC-23).
-  After Cancel it goes away.
+  - Profile navigation does not cancel the operation; the switcher's waiting entry reopens it.
+  - **Pause** uses the usual authorized dialog (`our-org-in-the-app.md` §9, DEAL-3), when that capability is supported. Show **Pause requested · stop pending at office** until confirmed. Pause acceptance alone does not remove the blocker: current work and any retained process/descendants still need verified cleanup. Explain an unavailable action or required explicit safe stop/drain; never predict that a mode will send the employee to sleep.
+  - Agents in organizations this account does not own are counted, not named. Show “1 agent in Other Org · Ask its owner to finish or safely stop the work”, with no link/Pause; admin status alone grants no organization access. Main copy can read “Waiting for 3 agents to stop: Kai, Remy, 1 agent in Other Org.”
+  - Until HQ provides authorized per-employee lifecycle evidence (A106), retain the count-only fallback, with no fabricated rows, mode labels or controls.
+- No time limit: wait for verified quiescence or Cancel. `agentic-org doctor` without a session shows supported counts by organization and no names: “Creating Side Project: waiting for 3 agents to stop (2 in Lumen Labs, 1 in Other Org), since 14:05.” Unknown lifecycle evidence stays explicit.
+- **Cancel** uses this same operation ID from this panel, its waiting switcher entry or another authorized browser tab. It cancels only the layout operation, never resumes or restarts agents or clears independent manual/security/budget holds.
+- **While waiting, it is not an organization yet.** Closing the panel leaves an operation-driven switcher entry: hourglass, “Side Project · Waiting for 3 agents to stop”. Selecting it reopens this panel with Cancel. Once creation starts, the entry becomes “HQ · Starting”; Cancel removes the waiting entry.
 
 **Failure reasons** (the alert's words). `organization.create` fails only when
 nothing was stored. An organization that was stored but whose office didn't start
@@ -654,76 +595,41 @@ Status: waiting for approval at HQ · checked 14:05
 - `agentic-org service status` shows the same Check code, Status and Last error lines for
   a pending join.
 
-**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10;
-X-02 Q9)*. Adding the joining office changes what the agents already running on
-this instance may access, so, as for Add office › On this instance (§6.2), the
-join waits while any agent session on this instance is running (an Idle agent
-counts; an Asleep, Paused or stopped one doesn't). No agent is stopped or
-relaunched for it. With an instance admin signed in (an instance with accounts,
-"Signing in first", above; here alex, who owns Lumen Labs but not Other Org),
-setup shows:
+**Waiting for running agents** *(rev 18)*. Joining this instance changes its process layout/access context, so the join waits for the same verified turn/process drain and cleanup boundary as §5a. A warm idle process or unresolved cleanup can block; a Paused/Offline label alone cannot clear it. No mode engine, automatic sleep or automatic restart is assumed. With an instance-admin session (alex owns Lumen Labs but not Other Org):
 
-```
+```text
 Joining Lumen Labs as "Studio Mac" (instance default)
 Waiting for 3 running agents to stop…
-  Kai (Always on) · Lumen Labs · Pause it in the app
-  Remy · Lumen Labs · Pause it in the app
-  1 agent in Other Org · ask its owner to pause it
-Their current sessions must end first. They aren't stopped or restarted for this.
-Always-on agents keep running until they're paused.
+  Kai · Lumen Labs · Turn running · Pause or safely stop it in the app
+  Remy · Lumen Labs · Process cleanup pending
+  1 agent in Other Org · ask its owner to finish or safely stop the work
+Active work and process cleanup must finish first.
+No agent is automatically stopped or restarted for this.
 Press Ctrl-C to cancel.
 ```
 
-- The number, the names and the counts go down in place as sessions end
-  ("Waiting for 1 running agent to stop…" for one). Without a terminal, setup
-  writes new lines only when they change. Then setup goes on as above.
-- *(Review of 02316bb; review of 0802754)* **Who's named** follows the
-  browser's rule (§5a): agents of an organization the reader doesn't own are
-  counted, not named. With an instance admin signed in, setup names the agents
-  of organizations that account owns, one line each with "Pause it in the app",
-  and "(Always on)" after each Always-on one: its session restarts when it ends
-  (`agent-run-modes-ux.md` decision 1), so the join waits until it's paused.
-  For each other organization it shows one line, "2 agents in Other Org ·
-  ask its owner to pause them" ("1 agent in Other Org · ask its owner to
-  pause it" for one), with no names. The Always-on line shows only while an
-  Always-on agent is named. There's no CLI command to pause an agent, so setup
-  says to pause it in the app (`our-org-in-the-app.md` §9, DEAL-3). Nothing is
-  stopped automatically.
-- *(Review of 0802754)* **Without a session**, the CLI shows counts only, one
-  for each organization, and no names. That covers setup on an instance with no
-  accounts, noninteractive setup (even after signing in), `agentic-org service status`
-  and `agentic-org doctor` (their lines are below). Setup on an instance with no
-  accounts, where the only organization is the joining machine's own (here
-  Side Project), shows:
+- Numbers/names/counts update in place as verified blockers clear; one agent uses singular copy. Nonterminal output writes a new line only when state changes. Continue only after the owning controller verifies quiescence; missing/stale cleanup evidence keeps waiting with its reason.
+- **Who's named** follows §5a. Name only employees of organizations the session owns, with observed turn/process state and supported authorized controls. Setup can point to Pause/safe stop in the app but must not invent a CLI endpoint or promise Pause alone finishes cleanup. Other organizations show counts and the instruction to ask their owner. No Always on/On call/Scheduled badge or sleep prediction appears.
+- **Without a session**, show supported counts per organization and no employee names. This includes noninteractive output, `agentic-org service status`, `agentic-org doctor` and setup without accounts. For example:
 
-  ```
+  ```text
   Waiting for 3 running agents to stop (3 in Side Project)…
-  Their current sessions must end first. They aren't stopped or restarted for this.
-  Always-on agents keep running until they're paused in the app.
+  Active work and process cleanup must finish first.
+  No agent is automatically stopped or restarted for this.
   Press Ctrl-C to cancel.
   ```
 
-  It can't tell which agents are Always on, so the Always-on line always
-  shows. Setup still shows counts only there, for consistency, even though
-  that machine has just one organization, if any.
-- Until the instance gives the agents and their organizations (A106), setup,
-  `status` and `doctor` show only the total, "Waiting for 3 running agents to
-  stop…", without names or counts for each organization.
-- There's no time limit. Noninteractive setup doesn't wait here: it ends with
-  the `waiting_for_idle` result and prints, without a session:
+  If lifecycle evidence/counts are unavailable, show “Waiting for active work and process cleanup to finish; verification unavailable” rather than inventing zero blockers or a run-mode explanation. Until A106's organization counts exist, retain only the supported total.
+- No time limit. Noninteractive enrollment returns its existing `waiting_for_idle` result without blocking; the legacy wire result needs the verified lifecycle adapter described in §5a. It prints:
 
-  ```
+  ```text
   Waiting for 3 agents to stop before joining (2 in Lumen Labs, 1 in Side Project).
-  This instance finishes the join when they stop; see agentic-org service status.
-  Always-on agents keep running until they're paused in the app.
+  This instance finishes the join after verified work/process cleanup; see agentic-org service status.
+  No agent is automatically stopped or restarted for this.
   To cancel the join: agentic-org office remove-pending 01JBX7…
   ```
 
-  The last line carries this join's office ID, which `remove-pending` needs.
-  `agentic-org service status` shows the same lines until the wait ends or the join is
-  cancelled. `agentic-org doctor` lists the wait: "Joining Lumen Labs as Studio
-  Mac: waiting for 3 agents to stop (2 in Lumen Labs, 1 in Side Project), since
-  14:05."
+  The last line uses this join's full office ID. Service status preserves the same supported counts/reason until completion or cancellation. Doctor lists the operation, counts and waiting-since timestamp without names. Unsupported target lifecycle evidence must be called out rather than claiming the existing count contract already supplies it.
 - **Ctrl-C here cancels the join** (unlike Ctrl-C while waiting for approval,
   which only stops watching): "Cancelled. Studio Mac wasn't added to instance
   default. To join, rerun the HQ-issued onboarding command with the invitation." Exit
@@ -873,21 +779,9 @@ key and a worker on HQ's instance (`standalone-server.md`, "Create organization"
 - Inviting, approving and removing a satellite stay open to any authorized owner
   (OFC-7).
 
-**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10;
-X-02 Q9)*. A new office on this instance changes what the agents running there
-may access, so the office is added only once **no agent session on that
-instance is running**, as for Create organization (§5a): an Idle agent, between
-turns, still counts; an Asleep, Paused or stopped one doesn't. They're never
-stopped or relaunched for it. The form shows "Waiting for 3 agents to stop:
-Kai (Always on), Remy, Riley. Their current sessions must end first. Always-on
-agents keep running until you pause them." with a spinner, then the list of
-those agents, each with a link to its profile and **Pause**, then "Office 2 is
-added once they've stopped. Nothing is stopped for it." and **Cancel**. The name
-is read-only. The number comes from the operation's `waiting_for_idle {
-sessions: n }` and goes down live. The list, its Pause, the agents of
-organizations this account doesn't own, and the one-agent and no-number forms
-are §5a's *(review of 02316bb)*: pausing them ends the wait once their sessions
-stop, and nothing is stopped automatically.
+**Waiting for running agents** *(rev 18)*. Adding an office on this instance uses §5a's verified active-turn/process/drain boundary. An idle retained process or unresolved cleanup still blocks; an employment, presence or mode label never proves work is stopped. The form shows “Waiting for 3 agents to stop: Kai, Remy, Riley. Their active work and process cleanup must finish first”, spinner, the authorized profile/state list with supported Pause controls, then “Office 2 is added once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** stays available and fields are read-only.
+
+Existing `waiting_for_idle { sessions: n }` lookup/count behavior is retained as current-contract evidence; the target needs an explicit lifecycle adapter and confirmed cleanup before admission. Unknown evidence keeps waiting. The authorized controls, per-organization privacy, singular/count-only forms, independent holds and absence of automatic mode restart follow §5a. Pause requests alone never remove a blocker before verified cleanup.
 - **Cancel** cancels that same Add office (its operation ID), as for Create
   organization: "Office 2 wasn't added." The form is back with the name.
 - Already being added: "Too late to cancel: Office 2 is being added now." Then
@@ -947,7 +841,7 @@ Triggers: the HQ Needs-you inbox and highlighted Offices row. Each opens this ac
 
 Modal, red icon. "Remove Studio Mac from Lumen Labs? It can't sync again. Its 2 agents stop running there and become unplaced: you choose a new office for each, or offboard them. HQ takes back their 5 tasks. If Studio Mac is offline, it keeps its copy until it next connects, then deletes it. To add it again, send a new invitation." Primary: **Remove Studio Mac** (red).
 
-**After removal** (A4, resolved): the agents are **Unplaced**. They keep their teams, reporting lines and history, but don't run. They show:
+**After removal** (A4, resolved): agents become **Unplaced** while retaining their required home teams, reporting and history. Show stop/cleanup as pending until confirmed; durable placement generations, fencing and process reconciliation must prevent duplicate execution. Office removal does not itself prove processes stopped or authorize deleting task workspaces. Safe transfer preserves task worktrees until closure or explicit migration. They show:
 - as a needs-you item: "2 agents are unplaced in Lumen Labs…", until each is placed or offboarded;
 - in the Offices list's last row, **Place or offboard**, which opens a list of them, each with **Place…** (office picker, the agent profile's placement flow) and **Offboard…** (the HR flow);
 - in the org chart with an **Unplaced** tag, and under **Office: Unplaced** in the office filter.
@@ -966,233 +860,152 @@ browser connection.
 
 ## 7. Flow 4 · Org chart: Teams, People and Reporting lines
 
-Nav **Org chart**, with pill tabs **Teams | People | Reporting lines**. One chart over the same data: switching tabs keeps the search and the selected member. Toolbar: Search members · **Office: All ▾** (Teams and Reporting lines only) · Collapse all / Expand all · zoom (− % + Fit) · List view · the view's primary action: **New team** (Teams), **Add person** (People) or none (Reporting lines). Editing works from all three views (create a team, add a member, move, add a person, link a project, change a manager).
+Nav **Org chart**, pill tabs **Teams | People | Reporting lines**. Switching preserves search and the selected employee. Toolbar: Search members · **Office: All ▾** (Teams and Reporting lines) · Collapse all / Expand all · zoom (− % + Fit) · List view · **New team** or **Add person**. Every drag action has a menu/dialog and keyboard equivalent. The word Member remains UI copy for the selected `employees` entity.
 
 ### 7.0 Agents and people
 
-Agents and people are always told apart by **shape and words**, never by color alone:
+Agents and people differ by shape and words, never color alone:
 
 | | Agent | Person |
 | --- | --- | --- |
-| Avatar | Rounded **square** tile with the robot glyph, indigo tint | **Circle** with initials, neutral (gray-700) |
-| Shown as | `[R]` in the wireframes | `(S)` in the wireframes |
-| Secondary text | its office ("Studio Mac", or **Unplaced**) | contact, if any; never an office |
-| Screen reader | "Riley, agent" | "Sam Ortiz, person" |
-| On a team card | the **Agents** row | the **People** row |
+| Avatar | Rounded square with robot glyph, indigo tint | Circle with initials, neutral gray |
+| Wireframe | `[R]` | `(S)` |
+| Secondary text | Executing office and freshness, or **Unplaced** | Contact if any; never execution office |
+| Screen reader | “Riley, agent” | “Sam Ortiz, person” |
+| Home-team card | Agents row | People row |
+
+Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employment (`active | inactive`), legacy operating state and observed process status are separate.
 
 ### 7.1 The owner, above every view
 
-```
- ┌───────────────────────────────────────────────────────────────────────────┐
- │ (AK) Alex Kim (you) · Owner of Lumen Labs                                  │
- │      Full access to every team, member and project. Any agent can          │
- │      message you, ask you or assign you work.                              │
- └───────────────────────────────────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────────────────────┐
+│ (AK) Alex Kim (you) · Owner of Lumen Labs                                 │
+│ Account authority: full access to this organization. [Employee profile]  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- One owner bar, pinned above the chart in all three views. It's the only place the owner appears in Teams and People. In Reporting lines it is also the root (§7.8).
-- **Never** on a team card, in "Not in a team", in member or lead pickers, or in team and organization counts.
-- The owner bar opens the owner's quick view, which has no Remove, Add to team or Change manager action, only Edit name and contact.
-- **Wherever agents' recipients or assignees are picked** (messages, Ask, Assign), the owner is always listed first as "Alex Kim (you)".
+- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Its `is_owner` marker neither grants authentication nor waives required membership.
+- A linked owner employee can be shown on its home-team card and in eligible member/lead pickers subject to ordinary direct-membership rules. Account-removal protections are separate from employee editing. Changing an employee name, handle, home team or reporting line cannot transfer ownership of the account.
+- **Message/Ask** can retain the current owner security-principal recipient route. Task assignment stores an employee ID: list a linked active owner employee if present; do not manufacture one from a sign-in account. Current wire `owner` addressing stays unchanged until explicitly migrated.
+- The built-in HR shortcut may sit beside the bar. Its employee also has a valid home team and appears in the team and reporting views; the shortcut does not hide it from employee counts. Earlier built-in lifecycle/manager restrictions remain a separate UX policy to implement; home membership itself never appoints HR as a lead or manager.
 
 ### 7.2 Teams view
 
-```
- (owner bar, §7.1)
-                         [ Lumen Labs · 4 teams · 7 agents · 3 people ]
-                       ┌────────────────────┴─────────────────────┐
-         ┌─────────────────────────────┐            ┌─────────────────────────────┐
-         │ Product                   ⋯ │            │ Platform                  ⋯ │
-         │ Lead: (S) Sam Ortiz         │            │ Lead: [A] ada               │
-         │ Agents [E]          1       │            │ Agents [A][R][R]    3       │
-         │ People (S)          1       │            │ People —                    │
-         │ 2 teams · no projects       │            │ agentic-org app  Shared     │
-         └─────────────┬───────────────┘            └─────────────────────────────┘
-          ┌────────────┴─────────────┐
- ┌──────────────────────────┐ ┌──────────────────────────┐   ┌ Not in a team (3) ┐
- │ Checkout               ⋯ │ │ Growth                 ⋯ │   │ [J] Jules         │
- │ Lead: [R] Riley          │ │ No lead                  │   │ [N] Nova          │
- │ Agents [R][M]   2        │ │ Agents [E]   1           │   │ (P) Priya Shah    │
- │ People (J)      1        │ │ People —                 │   └───────────────────┘
- │ checkout                 │ │ agentic-org app  Shared  │   ┌ Unassigned projects (1) ┐
- │                          │ │                          │   │ onboarding  Assign team…│
- └──────────────────────────┘ └──────────────────────────┘   └─────────────────────────┘
+```text
+(owner account bar, §7.1)
+                  [Lumen Labs · 4 teams · 5 agents · 3 people]
+                    ┌────────────────┴────────────────┐
+        ┌ Product · TEAM-1 ──────────┐  ┌ Platform · TEAM-2 ─────────┐
+        │ Lead: (S) Sam Ortiz       │  │ Lead: [A] ada              │
+        │ Agents [H] · People (S)   │  │ Agents [A][M] · People —   │
+        │ 2 child teams             │  │ P-8 Agentic Org · Owner    │
+        └────────────┬───────────────┘  └────────────────────────────┘
+               ┌─────┴─────────┐
+     ┌ Checkout · TEAM-3 ─────┐ ┌ Growth · TEAM-4 ───────────┐
+     │ Lead: [R] Riley       │ │ No lead                   │
+     │ Agents [R] · People(J)│ │ Agents [E] · People (P)   │
+     │ P-9 Checkout · Owner  │ │ P-8 Agentic Org · Contributor │
+     └───────────────────────┘ └───────────────────────────┘
 ```
 
-- **Root** is the organization card (name and real counts, not counting the owner). Top-level teams hang off it.
-- **Team card:** name · ⋯ menu · lead ("Lead:" with the agent tile or person circle, or "No lead") · **Agents** row and **People** row, each with up to 4 avatars + "+N" and a count (a dash when none) · "N teams" when it owns teams · projects as chips (the first 2, then "+N"), with a **Shared** badge on a project that other teams also work on.
-- **Expand a card** (click or Enter) → it lists members under **Agents** and **People** headings: avatar · name · title in this team ("frontend lead", free text) · a **"+2 teams"** badge when they're in others. The badge's popover lists the other teams as links; each link scrolls to and highlights that team.
-- **Shared badge:** its popover reads "Also worked on by Growth" with a link; each team's lead is listed as a lead of the project.
-- **Not in a team** (a side tray) lists agents and people with no team, so no one disappears. It's hidden when empty. The owner is never in it.
-- **Unassigned projects** (a side tray) lists projects with no team, each with **Assign team…**. While any exist, a quiet note above the chart reads "1 project has no team · Assign". Hidden when empty.
-- **Office filter:** Office: All · each office · **Unplaced**. Agents placed in the chosen office get a ring and an office tag; everyone else, people included, dims to 40%. A line above the chart reads "Highlighting 3 agents at Studio Mac · Clear". Never hidden, never color only.
-- **Selecting a member** (click the avatar) opens their quick view, with **Teams** and **Reports to** sections (§7.4, §7.8).
-- **Accessibility:** the chart is a `role="tree"`: ↑ owner team, ↓ first sub-team, ←/→ siblings, Enter expand, Space opens the menu. Connectors are decorative. **List view** shows the same tree as an indented list.
+- **Root:** organization name and real employee/team counts. Count employees once, including any owner/HR employee; exclude security principals without employee profiles. Cards list direct members, keeping child-team counts separate from direct-employee counts.
+- **Card:** TEAM- reference and name · menu · optional direct-member lead · Agents and People rows (up to four avatars, +N and counts, dash when empty) · child teams · first two project chips then +N. Repeated team names remain distinguishable by reference/path.
+- **Expand** (click or Enter): separate Agents/People headings, avatar, name, `@handle`, home-team appointment title. No “+N teams” badge. A lead caption says “Manages this team and its child teams”; ordinary ancestor-team membership conveys no such authority.
+- **Project chips:** **Owner** or **Contributor** badge with words/icons. A contributor popover links the accountable owner and other contributors. Participation never creates co-owners or an inferred project-lead list.
+- Missing required home team/project owner is a validation/import repair issue, not an ordinary **Not in a team** or **Unassigned projects** tray. A repair notice links staged records and blocks admission until resolved; existing invalid data is not silently assigned to a guessed team.
+- **Office filter:** All · each office · Unplaced. Highlight placed agents with a ring and tag; dim others, including people, without hiding them. “Highlighting 3 agents at Studio Mac · Clear.” Keep observed placement freshness visible.
+- **Quick view:** Home team (link), explicit Reports to, and team-lead responsibility as separate facts. The chart is `role="tree"`; connectors are decorative. Arrow keys navigate, Enter expands, Space opens the menu. List view uses the same indented tree.
 
 ### 7.3 People view (the human org chart)
 
-```
- (owner bar, §7.1)
- ┃ ⓘ Agents can only reach the people listed here. Add someone so your
- ┃   agents can message them, ask them or assign them work.     [Add person]
+The same team tree shows only people on each card. An agent lead can still appear as “Lead: Riley (agent)”. Teams with no direct people stay compact (“No people · 3 agents”), preserving hierarchy and **Add person to Platform…**. All people appear at exactly one home team, including a linked owner employee. No teamless tray is offered.
 
-                         [ Lumen Labs · 3 people ]
-                       ┌────────────────────┴─────────────────────┐
-         ┌─────────────────────────────┐            ┌──────────────────────┐
-         │ Product                   ⋯ │            │ Platform           ⋯ │
-         │ Lead: (S) Sam Ortiz         │            │ No people · 3 agents │   ← compact card
-         │ (S) Sam Ortiz   lead        │            └──────────────────────┘
-         └─────────────┬───────────────┘
-          ┌────────────┴─────────────┐
- ┌──────────────────────────┐ ┌──────────────────────┐   ┌ Not in a team (1) ┐
- │ Checkout               ⋯ │ │ Growth             ⋯ │   │ (P) Priya Shah    │
- │ Lead: [R] Riley (agent)  │ │ No people · 1 agent  │   └───────────────────┘
- │ (J) Jo Park   design     │ └──────────────────────┘
- └──────────────────────────┘
-```
-
-- The **same team tree**, showing **only people** on the cards. Agents don't appear, except as a team's lead, which is named with "(agent)" so the card still says who leads it.
-- Teams without people stay in the tree as **compact cards** ("No people · 3 agents"), so the shape matches the Teams view and you can add someone there (⋯ › **Add person to Platform…**).
-- The **info alert** about reaching people always shows (it's the rule that makes adding a person matter).
-- **Empty** (no people yet): the tree shows compact cards only, and the alert's primary action is **Add your first person**.
-- **Loading, live updates, Pending and Blocked:** as in the Teams view.
+The info alert always says: “Agents can reach people registered in this organization. Add someone to make them available as a participant.” **Add person** is its action. With no people, compact cards remain and the action reads **Add your first person**. Registration is not a sign-in, credential or permission grant. Loading, Pending/Blocked and live states follow Teams view.
 
 ### 7.4 Add, edit and remove a person
 
-Entry points: the People toolbar's **Add person**; a team's ⋯ › **Add person to Checkout…** (prefills the team); in any member picker, the last option **Add a new person "Sam"…** (prefills the name).
+Entry points: toolbar, team menu (prefills home team), last member-picker option **Add a new person “Sam”…**.
 
-```
- Add person                                          (slide-over)
- Name         [ Sam Ortiz                ]
- Contact      [ sam@example.com          ]  optional
-              How to reach them outside Agentic Org, e.g. an email.
- Teams        [ Search teams…            ]  optional (multi-select, team path shown)
-              Product ×
- Reports to   [ (AK) Alex Kim (you) ▾    ]
- ┃ ⓘ Once added, any agent in Lumen Labs can message Sam, ask Sam or
- ┃   assign Sam work.
-                                        [Cancel]  [Add person]
+```text
+Add person                                               (slide-over)
+Name         [Sam Ortiz                  ] required
+Handle       [sam-ortiz                   ] required, shown as @sam-ortiz
+Contact      [sam@example.com             ] optional
+Home team    [Product · TEAM-1          ▾ ] required, single choice
+Reports to   [No explicit manager       ▾ ] optional employee reference
+Once added, agents in Lumen Labs can reach Sam as a participant.
+                                            [Cancel] [Add person]
 ```
 
-- **Name:** required, trimmed, no control characters ("Enter a name." / "Names can't contain special control characters."). Names are handles: agents address people by name (`--to "Sam Ortiz"`), so a name must be unique across all members ignoring case, and can't be `owner` *(rev 4)*. As the owner types, a clash shows inline: "Sam Ortiz is already in Lumen Labs. Use a different name, such as Sam Ortiz (Design)." or "codex-dev is an agent's name. Choose another." **Add person** stays disabled until the name is free.
-- **Contact** is free text, stored now and used later (the design says so). Not validated beyond trimming.
-- **Added:** the person appears in their teams (highlighted for 2 s), or in **Not in a team**. Toast: "Added Sam Ortiz. Agents can now reach Sam." On an office that can't reach HQ, it shows as **Pending**.
-- **Person quick view:** name · Person · contact · teams (links) · reports to · their reports · "Agents can reach Sam". Actions: **Edit** (name, contact; clearing contact is allowed) · **Edit teams…** · **Change manager…** · **Remove from Lumen Labs…**.
-- **Remove a person** (modal, red icon), naming everything that changes, only the lines that apply:
-  > Remove Sam Ortiz from Lumen Labs?
-  > - Sam leaves Product and Checkout, and stops leading Product.
-  > - Jo Park, who reports to Sam, will report to Sam's manager, Lee Chen.
-  > - Agents can no longer reach Sam. 3 messages waiting for Sam won't be delivered, and Sam's 2 open tasks come back unassigned for you to reassign.
-  >
-  > **Remove Sam Ortiz** (red)
-
-  When Sam has no manager, the second line reads "Jo Park, who reports to Sam, will report to you."
-- **Removing an agent** isn't done here: an agent's quick view offers **Offboard…**, which is the HR flow (same consequences, listed the same way).
-- **When an agent can't reach someone** (the recipient isn't in the organization, or was removed): the agent's activity shows "Couldn't reach "Sam": Sam isn't in Lumen Labs. **Add a person…**". Removed recipients read "…was removed from Lumen Labs". The owner also sees the reclaimed tasks in Needs you, to reassign.
+- Name is trimmed, required and has no control characters. Display-name duplicates are allowed. Handle is a separate explicit lowercase identifier using permitted letters/digits/dots/underscores/hyphens; check uniqueness across people and agents, not by renaming a display name. Preserve current reserved recipient addresses/ID disambiguation at the compatibility boundary. Inline errors name the unavailable handle and suggest another; do not silently overwrite it when the name changes.
+- Contact remains optional free text (trimmed); clearing it is allowed. Home team cannot be cleared. If none exists, **Create team…** returns to this form with the chosen valid team before submission.
+- Added: show once at the home team, highlight for two seconds and focus it. Toast “Added Sam Ortiz. Agents can now reach Sam.” Pending on the receiving office's outbox is distinct from an accepted committed record.
+- Quick view: name/handle, Person, contact, Home team, Reports to and reports. Actions: Edit · Move home team… · Change manager… · Deactivate…. Employment and account access remain separate.
+- Deactivation preserves profile, ID, home team and handle. Explain affected lead appointments, reports and current assignments and require their explicit resolution in the supported operation. Clear or reassign the individual assignment without changing task accountable team or status merely because the person leaves. Report histories remain immutable. Destructive deletion is only available for an unreferenced mistake with no history, after backend validation; do not promise a cascading delete.
+- Unknown/removed messaging participants show a plain failure with **Add a person…** where appropriate; task assignment validates active employees independently. Existing queued-message delivery/dead-letter behavior is governed by the messaging contract, not by the chart mutation.
 
 ### 7.5 Create a team (under another team)
 
-Entry points: Teams toolbar **New team**; a team's ⋯ › **Add team under Product** (prefills "Part of"); the empty state.
-
-```
- New team                                           (slide-over)
- Name        [ Checkout                 ]
- Part of     [ Product              ▾ ]   (combobox; "None: top level" first)
- Members     [ Search agents and people… ]  (multi-select; agent tiles and person circles,
-             [R] Riley ×   (J) Jo Park ×     each option shows its current teams)
- Lead        [ No lead ▾ ]   (optional; only members chosen above, agents or people)
-             The lead also leads Checkout's projects.
-                                         [Cancel]  [Create team]
+```text
+New team
+Name        [Checkout                   ]
+Part of     [Product · TEAM-1          ▾ ] “None: top level” first
+Lead        [No lead                    ] optional, direct member only
+                                            [Cancel] [Create team]
 ```
 
-- The owner is never offered as a member or lead.
-- Validation inline: "Product already has a team called Checkout." (unique among siblings, ignoring case; top-level teams are siblings of each other) · "Name a team (1–64 characters)."
-- **Created:** the new card appears under its owner team, highlighted for 2 s, and gets focus. On an office that can't reach HQ it appears **Pending** (§6.5).
-- **Empty organization:** "Teams group your agents and people. A team can be part of another team, so a whole division is just a team with teams under it." **Create your first team**. Every member shows in "Not in a team".
+- A new empty team needs no lead. To appoint one, explicitly select/create an employee whose home team is this team; moving an existing employee requires the same reviewed home-team move as §7.6. Never silently add another membership. Explain that the lead manages the whole subtree, including child-team leads.
+- New team numbers come from organization-wide allocation, never depth/name. Client-side name checks preserve compatible length/control-character constraints and backend conflict feedback. Do not invent a target uniqueness constraint from a display name alone; existing sibling-name restrictions remain in the current wire adapter.
+- Created: card appears under its parent, highlights for two seconds and receives focus. Show Pending/Blocked accurately. Empty organization: “Teams group your agents and people. A team can contain other teams.” **Create your first team**. Create a valid team before any employee or owned project can be accepted, including owner/HR employee bootstrap.
 
-### 7.6 Add a member to several teams
+<a id="76-add-a-member-to-several-teams"></a>
 
-Two directions, same result:
+### 7.6 Move an employee’s home team
 
-- **From a team:** ⋯ › **Add members…** → a combobox multi-select of agents and people; each option shows "Also in: Platform". The last option is **Add a new person…** (§7.4).
-- **From a member** (quick view or profile, **Teams** section) → **Edit teams…** → a dialog with the team tree as a checklist, and an optional title per checked team:
+The former heading is retained only as an explicit link anchor. The selected action is **Move home team…**, with one required destination and optional home-team title. Additional memberships are not offered.
 
+```text
+Move Riley's home team
+From       App · TEAM-3
+To         [Office · TEAM-5           ▾] required
+Title      [frontend lead             ] optional
+Riley leads App. Resolve or clear that appointment before the move.
+Current task assignments and project participation do not change automatically.
+                                             [Cancel] [Move Riley]
 ```
- Teams for Riley
- ☑ Product
-   ☑ Checkout        title [ frontend lead ]
-   ☐ Growth
- ☑ Platform          title [ frontend      ]
-                                   [Cancel]  [Save]
-```
 
-- Unchecking the team a member leads: "Riley leads Checkout. Removing Riley also clears Checkout's lead." · **Remove and clear lead**.
-- Unchecking every team: the member moves to **Not in a team**. No warning needed; it's reversible.
-- Saving sends one change per team. If one fails, the dialog stays open, names it ("Couldn't add Riley to Growth: Growth was deleted.") and keeps the rest.
+The move uses the expected employee revision and updates profile `home_team_id` plus stable-ID path together, resolving any old-team lead appointment in the same recoverable change. No transient teamless record. Preserve ID, handle, reporting and history. File/workspace changes require an explicit controller plan; no recursive workspace deletion. On stale revision retain input and show current home/lead state. If unsupported by the current service, explain that the target move is unavailable rather than submitting unrelated membership calls as if atomic.
 
 ### 7.7 Move a team
 
-- **Drag** a card onto another card (or onto the root for top level). While dragging, the card itself and every team under it are dimmed with a "can't drop here" cursor; valid targets get an indigo outline.
-- **Without drag:** ⋯ › **Move to…** → a dialog with the team tree; the team and its sub-teams are disabled with "Can't move a team under itself or its own teams".
-- **Confirm (both ways):** "Move Checkout (with 1 team and 2 projects) from Product to Platform? Members and projects stay with it." · **Move Checkout**.
-- **Done:** toast "Moved Checkout to Platform · **Undo**" (Undo = the reverse move, for 8 s).
-- **Rejected by HQ** (someone changed the tree meanwhile): "Couldn't move Checkout: Platform is now under Checkout. Nothing changed." The chart shows the current tree.
+- Drag onto another card or root; self and descendants are disabled with a reason. Menu **Move to…** offers the identical tree dialog and keyboard path.
+- Confirm: “Move Checkout (with 1 child team and 2 projects) from Product to Platform? Its employees and owned projects keep their identities; subtree lead responsibility follows the new hierarchy.” Both canonical `parent_team_id` and team path change together.
+- Done: “Moved Checkout to Platform.” **Undo is deferred**; no automatic eight-second reverse mutation is claimed. A later reverse move is a new authorized revision-checked operation.
+- A concurrent cycle/revision conflict changes nothing and displays current state: “Platform is now under Checkout. Choose another parent.” Preserve focus/input.
 
 ### 7.8 Reporting lines view
 
-```
- (owner bar is the root here)
-                       ┌ (AK) Alex Kim (you) · Owner ┐
-          ┌────────────────────┼────────────────────────┐
- ┌───────────────────┐ ┌───────────────────────┐ ┌───────────────────┐
- │ [A] ada · Agent ⋯ │ │ (S) Sam Ortiz · Person⋯│ │ [J] Jules · Agent⋯│
- │ Platform          │ │ Product, Checkout     │ │ No team           │
- │ 2 reports         │ │ 2 reports             │ │                   │
- └─────────┬─────────┘ └───────────┬───────────┘ └───────────────────┘
-      ┌────┴─────┐            ┌────┴─────┐
-   [R] Riley  [R] Remy     [E] Eden   (J) Jo Park
- Reporting lines are separate from teams: leading a team doesn't make someone a manager.
-```
+Draw `reports_to_employee_id` separately from team hierarchy. The owner bar can act as a visual grouping root for records with no explicit employee manager; label that absence **No explicit manager**, not an inferred foreign key to the owner. A linked owner employee appears exactly once in its recorded reporting position, retaining its home team. Built-in HR is an employee in this view too.
 
-- **Root:** the owner. Anyone without a manager hangs directly under the owner. Everyone in the organization appears exactly once.
-- **Node:** avatar (§7.0) · name · "Agent" or "Person" · their teams (or "No team") · "N reports". Agents show the **Unplaced** tag when it applies; the office filter works as in the Teams view.
-- **Change manager:** ⋯ › **Change manager…**, the quick view's **Reports to** section, or **drag** a node onto another (shortcut).
+Nodes show shape/name/handle, Agent or Person, one Home team and number of explicit reports; agents show office/Unplaced and freshness. Always explain: “Reporting lines are explicit. Team leads also manage their team's subtree; ordinary ancestor-team members do not.”
 
-```
- Who does Riley report to?
- [ Search agents and people…        ]
-   (AK) Alex Kim (you) · Owner
-   [A] ada · Agent · Platform                      (current)
-   (S) Sam Ortiz · Person · Product
-   [E] Eden · Agent        Reports to Riley         (disabled)
-                                         [Cancel]  [Save]
-```
-
-- The member isn't listed. Everyone who reports to them, directly or through others, is disabled with "Reports to Riley", so a loop can't be picked.
-- **Saved:** no confirmation; toast "Riley now reports to Sam Ortiz · **Undo**" (8 s). The node moves and keeps focus.
-- **Rejected by HQ** (a loop created meanwhile): "Couldn't change Riley's manager: Sam now reports to Riley. Nothing changed." The view shows the current lines.
-- **The owner's node** has no ⋯ actions apart from opening the quick view: "The owner reports to no one."
-- **Removing a member** sends their reports to that member's own manager, or to the owner if they had none (org-proto on v1), as the remove dialog says (§7.4).
-- The footnote about teams always shows (decision 16).
+**Change manager…** (node menu, quick view or drag shortcut) offers active eligible employees plus **No explicit manager**. The employee itself is absent and descendants in the reporting graph are disabled with “Reports to Riley”. Save uses expected revision; toast names the selected manager, node moves with focus retained. A concurrent loop/conflict refreshes current lines and preserves input. Undo is deferred. Editing one graph does not silently rewrite the other; show both sources of responsibility when relevant. Deactivation/lead moves resolve live references explicitly rather than fabricating a new reporting line.
 
 ### 7.9 Give a project to a team, or share it
 
-- **From a project** (project header and project settings): a **Teams** field, a combobox multi-select with the team path ("Product › Checkout"). Usually one team.
-- **From a team:** ⋯ › **Add project…** → a project picker; each project shows its current teams, or "No team".
-- **Adding a team** to a project that already has one needs no confirmation: the project now shows on both cards with **Shared**. Toast: "checkout is now shared by Checkout and Platform."
-- **Removing a team** (× on the team chip in the project, or the team's ⋯ › project › **Remove from Checkout**): no confirmation while other teams remain. Removing the **last** team confirms: "Remove checkout from Checkout? It will have no team and show under Unassigned projects." · **Remove**.
-- **The project's lead:** the project header shows "Lead: Riley (Checkout)", or for a shared project one per team ("Leads: Riley (Checkout), ada (Platform)"), or "No lead" when its teams have none. It changes only through the teams' leads.
-- **New project** offers **Teams** prefilled with the team you started from. Leaving it empty creates an unassigned project. (This needs `team_ids?` on `project.create`, which arrives with the projects contract, G1. Until then a new project is created unassigned and the app opens **Assign team…** right after.)
+- Project settings: **Accountable owner team** (required single combobox), **Contributing teams** (optional multiple choice). A team menu can open the project with the intended owner/contributor action made explicit. Show reference and full path for every team.
+- New project requires an owner before submission, prefilled from the launching team when applicable. No unassigned project is created and no follow-up dialog repairs a deliberately omitted owner.
+- Adding/removing a contributor does not change accountability or current assignments. Each participating card links to the project's owner. Do not label every participating lead as the project's lead.
+- Changing owner previews affected tasks. The service updates required project owner and all project tasks' accountable `team_id` with durable history in the same recoverable operation. Assigned teams/individuals remain unchanged, even if outside the new owner team.
+- Owner cannot be removed/cleared. Pick a replacement; its availability and revision are checked at admission. Project records retain required integration branches per repository association, independent of team participation and the office's shared repository cache.
 
 ### 7.10 Delete a team, and other states
 
-- **Delete a team that owns teams** is refused up front: "Checkout still has 1 team under it. Move or delete it first." with a link to each. No disabled-without-reason buttons.
-- **Delete any other team:** a confirmation naming what changes: "Delete Growth? Eden stays in Lumen Labs and in Product. Its project agentic-org app stays with Platform." When a project or member has nothing else, the dialog says so instead: "onboarding has no other team, so it moves to Unassigned projects." / "Jo Park moves to Not in a team." · **Delete Growth**.
-- **Loading:** the owner bar and root card at once, team cards (or nodes) as skeletons.
-- **Large organization** (> 30 teams, or > 50 people in Reporting lines): opens collapsed below level 2, with Fit applied.
-- **Stale edit** (version conflict): "Checkout changed at HQ while you were editing. Here's the latest." The form reloads with the latest values and keeps the field you typed in, marked.
-- **Someone else's change arrives live:** cards update in place; a removed card animates out and focus moves to its owner team (or, in Reporting lines, to the manager).
-- **Errors from HQ** that the UI should have prevented (`owner_protected`, `not_a_member`, `already_exists`) show plain messages: "The owner can't be added to a team." · "Riley isn't in Checkout any more, so can't lead it." · "Riley is already in Checkout."
+- Prefer **Archive** to preserve team IDs/history. Explain how current employees, owned projects/tasks and live assignments/lead appointments will be resolved before admitting an incompatible lifecycle change.
+- Delete is blocked while child teams, home employees, accountable projects/tasks or other durable references remain. List blockers with links and explicit move/reassign/archive actions. No cascade into teamless employees or ownerless projects; no silent history deletion. “Checkout still has 1 child team and 2 home employees. Resolve them first.”
+- Loading: owner bar/root then skeleton cards/nodes. Large organization (>30 teams or >50 reporting nodes): collapse below level two and Fit. Live updates apply in place, retaining selection; removed/archived card focus goes to its parent or a stable ancestor.
+- Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Riley's home team is Office, so Riley cannot lead Checkout”; “Choose an accountable owner team”). Current-wire `owner_protected` remains a compatibility error, not a target rule forbidding an owner employee from having a team.
 
 ## 8. UX acceptance criteria
 
@@ -1222,10 +1035,10 @@ Two directions, same result:
 - JOIN-12 · *(new, rev 15)* `agentic-org office remove-pending` on an office that has joined removes nothing and points to Remove office at HQ.
 - JOIN-13 · *(new, rev 15, A102)* When the server at HQ's address doesn't match the certificate authority the invitation pins, the join ends as `join_rejected` and setup makes no further attempt. Setup shows §5c's "couldn't prove it's <organization>'s HQ" row, or, while the status can't say which `join_rejected` it was (A105), the combined row; never the decline row alone.
 - JOIN-14 · *(new, rev 15, A102)* When HQ doesn't support the joining instance's version, the join stays pending and setup shows "This instance needs an update to join this HQ. Update it, then setup continues." until the invitation expires.
-- JOIN-15 · *(new, rev 15, A101; rewritten in review of 0802754)* A join on an instance with running agent sessions waits, and setup shows "Waiting for <n> running agents to stop…" (without a session, "Waiting for <n> running agents to stop (<n> in <org>, …)…", with a count for each organization) and "Press Ctrl-C to cancel", with <n> going down as sessions end; no agent is stopped or relaunched for it.
+- JOIN-15 · *(rev 18)* A join waits for verified affected turn/process drain and cleanup. Setup retains the existing waiting_for_idle tracking/count contract through an explicit target adapter and updates supported counts as blockers clear; Ctrl-C cancels the same join. Stale/unknown evidence cannot prove readiness, and no agent is automatically stopped or relaunched.
 - JOIN-16 · *(new, rev 15, A101)* Ctrl-C while a join waits for running agents cancels the join: setup prints "Cancelled. <office> wasn't added to instance <name>…", and the instance has no office or pending join for it.
 - JOIN-17 · *(new, rev 15)* Each row of §5c's `office remove-pending` table shows its copy and exit status and removes nothing; signed in as an account without the instance-admin grant it's refused with "<username> isn't an instance admin, so it can't remove join requests…".
-- JOIN-18 · *(new, rev 15, A101; rewritten, reviews of 02316bb and 0802754)* With an instance admin signed in, setup's wait for running agents names each agent of an organization that account owns, one line each with "Pause it in the app" and "(Always on)" after Always-on agents, and shows "Always-on agents keep running until they're paused." while one is named; each other organization gets one line, "<n> agents in <organization> · ask its owner to pause them", with no names. Without a session (setup on an instance with no accounts, noninteractive setup, `agentic-org service status`, `agentic-org doctor`), no agent is named: the wait shows a count for each organization, "(2 in Lumen Labs, 1 in Side Project)", and setup's message always shows "Always-on agents keep running until they're paused in the app." (`agentic-org doctor`'s one line doesn't). Noninteractive setup that reaches the wait ends with the `waiting_for_idle` result and §5c's message: the counts, "This instance finishes the join when they stop", and "To cancel the join: agentic-org office remove-pending <office id>" with this join's office ID. `agentic-org service status` shows the same lines and `agentic-org doctor` the wait with its counts, until it ends or the join is cancelled.
+- JOIN-18 · *(rev 18)* With an authorized instance-admin session, setup names only agents in organizations that account owns, with observed lifecycle state and supported Pause/safe-stop guidance. Other organizations and unauthenticated/noninteractive outputs show counts only. No run-mode labels, automatic-sleep or automatic-restart promises appear. Noninteractive waiting_for_idle output names pending verification, service status and the exact remove-pending command/office ID; status/doctor preserve supported counts and privacy.
 - JOIN-19 · *(new, rev 15, review of 02316bb)* `agentic-org office remove-pending <office id>` on a join waiting for running agents asks "Cancel joining <organization> as <office>? The join hasn't reached HQ yet. [y/N]", with no mention of HQ approval, and after y in a terminal prints "Cancelled. <office> wasn't added to instance <name>…", leaving the instance with no office or pending join for it. Any other answer, no terminal, or a join that reached HQ before y cancels nothing, with §5c's copy and exit status Error.
 - JOIN-20 · *(new, rev 15)* On an instance that has accounts, setup asks for an instance admin's sign-in before joining; an account without the instance-admin grant is refused with "<username> isn't an instance admin, so it can't join offices on this instance…" and no join request reaches HQ. On an instance with no accounts, setup asks for no sign-in.
 
@@ -1246,7 +1059,7 @@ Two directions, same result:
 
 **Create organization and who can do what (OFC)** *(new, rev 14, §5a, §5b)*
 - OFC-14 · For an instance admin, the organization switcher ends with a divider and **+ Create organization**. For any other account it has no divider, no Create organization item (enabled or disabled) and no hint.
-- OFC-15 · The Create organization form has one field, Name, and no folder picker. Its note names the HQ instance and machine that will store it and says the creator will own it.
+- OFC-15 · *(rev 18)* Selected organization creation resolves name, explicit slug, remote organization repository/state branch and valid chosen bootstrap employee home teams before admission, with no browser folder picker. These may be separate setup steps; current name-only APIs require an explicit adapter. The note names the HQ instance/machine and creator ownership.
 - OFC-16 · An empty or too long name, or one with control, invisible or direction-changing characters, shows its inline message and sends no request.
 - OFC-17 · A name HQ refuses as already used shows "There's already an organization called <name> on this HQ. Choose another name." and no organization is created.
 - OFC-18 · While creating, the button reads **Creating…** and is disabled; double-clicking sends one request.
@@ -1255,19 +1068,19 @@ Two directions, same result:
 - OFC-21 · When the create response is lost, the panel shows "Checking whether <name> was created…" and looks up the same attempt. Each lookup outcome shows its copy (including "still being created", which keeps checking), and repeating the check never creates a second organization.
 - OFC-22 · HQ's refusal for a missing instance-admin grant shows "Only an instance admin can create organizations." with no Try again.
 - OFC-23 · Closing the panel while creating doesn't stop it: the new organization then appears in the switcher with "HQ · Starting".
-- OFC-24 · The form meets §5a's accessibility: labelled Name with linked rule and errors, `aria-invalid` on an invalid name, announced failures with focus on the alert, polite announcements of progress, focus on the new organization's heading, and focus returned to the switcher on close.
+- OFC-24 · *(rev 18)* The form meets §5a's accessibility: labelled fields with linked rules/errors, `aria-invalid` on an invalid name, announced failures with focus on the alert, polite announcements of progress, focus on the new organization's heading, and focus returned to the switcher on close.
 - OFC-25 · Add person and the person quick view offer no invite, password or sign-in option.
 
 **Joins that end, waiting for running agents, and offices on this instance (OFC)** *(new, rev 15, §3.3, §5a, §6.2)*
 - OFC-26 · In the joining instance's own view (its status and, if it has one, its local status page), a satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office. HQ's Offices list never shows this row: after 3 wrong check codes, a decline or an expired invitation it shows §6.3's row with New invitation and Remove.
 - OFC-27 · On the joining instance's own status (CLI or local status page), when `office.restart` answers `unavailable` because the office's join ended, the office shows the join-ended row, with no restart action. HQ's Offices list is unaffected and keeps §6.3's rows.
-- OFC-28 · *(rewritten in rev 15, reviews of 07a8a4b and 02316bb)* Create organization while any agent session on the HQ instance is running shows "Waiting for <n> agents to stop: <names>. Their current sessions must end first…" with Cancel, and creates the organization only once no agent session on that instance is running (each agent Asleep, Paused or stopped); no agent is stopped or relaunched for it. It lists each agent it waits for in the account's organizations, with a link to its profile and Pause (DEAL-3), marks Always-on ones "(Always on)", and says "Always-on agents keep running until you pause them." while one is listed. Agents of an organization the account doesn't own show as a count with no name, link or Pause. Pausing a listed agent shows "Paused · stop pending at office", and the agent leaves the list and the count once its session stops; with an Always-on agent running, the wait doesn't end until it's paused.
-- OFC-29 · *(rewritten in rev 15, reviews of 07a8a4b and 02316bb)* Add office › On this instance while any agent session on that instance is running shows "Waiting for <n> agents to stop: <names>. Their current sessions must end first…" with Cancel, and adds the office only once no agent session on that instance is running (each agent Asleep, Paused or stopped); no agent is stopped or relaunched for it. Its list of agents, their links and Pause, the Always-on copy and the agents of other organizations behave as in OFC-28.
+- OFC-28 · *(rev 18)* Create organization waits for verified affected turns/processes to finish and cleanup to complete; a live idle process or unresolved cleanup blocks, and Paused/Offline/presence alone cannot clear it. Keep Cancel, authorized profile links and supported Pause controls. Show stop pending until confirmed cleanup; name only owned-organization agents, count others. Unknown evidence keeps waiting. No mode engine or automatic stop/restart is assumed.
+- OFC-29 · *(rev 18)* Add office on this instance uses the same verified turn/process/drain boundary and controls/privacy/freshness as OFC-28, with spinner, retained read-only fields and Cancel. Existing waiting_for_idle tracking needs an explicit lifecycle adapter; do not infer readiness from a zero legacy count or an agent mode/status label.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
 - OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
 - OFC-32 · *(rewritten in rev 15, A102)* In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval while its `join_phase` is `awaiting_approval`, then Starting · copying records while it's `initial_sync`, and never Online before its first copy of records completes. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
-- OFC-33 · *(new, rev 15)* An agent that's Idle, between turns, keeps a create or Add office waiting; an agent that's Asleep, Paused or stopped doesn't.
-- OFC-34 · *(new, rev 15, A101)* The waiting copy's number is HQ's `waiting_for_idle` session count, and it goes down without a reload as sessions end.
+- OFC-33 · *(rev 18)* A warm idle process holding the affected layout context, open turn or unresolved cleanup keeps create/Add office/join waiting. Only verified quiescence clears the blocker; Paused, Offline or a deferred Asleep label is not proof.
+- OFC-34 · *(rev 18)* Waiting counts update without reload as verified blockers clear. Existing waiting_for_idle.sessions is a legacy session count requiring target lifecycle mapping; unavailable counts/evidence show explicit waiting/verification copy rather than fabricated zero or readiness.
 - OFC-35 · *(new, rev 15, A101)* Cancel on a waiting create or Add office, from the panel, another tab, the switcher's waiting entry or the Offices list's pending row, cancels that same operation, and the organization or office is never created.
 - OFC-36 · *(new, rev 15, A101)* After its panel is closed, a waiting organization shows in the switcher as "<name> · Waiting for <n> agents to stop", can't be opened, and reopens the panel in its Waiting state when chosen.
 - OFC-37 · *(new, rev 15, A101; rewritten, review of 02316bb)* A waiting Add office shows in the Offices list only as a pending row with "Waiting for <n> agents to stop" and Cancel, with no status dot or other action; choosing it reopens the form in its Waiting state with the agents and their Pause, and it becomes the office once it's added.
@@ -1286,43 +1099,43 @@ Two directions, same result:
 - OFC-48 · *(new, rev 16)* The Offices list's footer reads "Shown from HQ. Statuses include last-seen information."
 
 **Org chart: Teams (TEAM)**
-- TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
-- TEAM-2 · A member in several teams appears in each, with a "+N teams" badge listing the others.
-- TEAM-3 · *(rev 2)* Agents and people in no team appear in "Not in a team"; the owner never does.
+- TEAM-1 · *(rev 18)* Teams view draws the recursive parent_team_id tree. Cards show TEAM- reference/name, direct lead or No lead, direct Agents/People rows/counts, child-team count and projects marked Owner or Contributor.
+- TEAM-2 · *(rev 18)* Every employee appears exactly once at the required home team. No multiple-membership badge or checklist is offered; name, handle and home-team appointment title remain distinct.
+- TEAM-3 · *(rev 18)* Required home-team failures appear as validation or unresolved import repair, never an ordinary Not in a team tray. Owner and HR employee records obey the same constraint.
 - TEAM-4 · *(rev 2)* The office filter (each office, and Unplaced) highlights agents placed there with a ring and a tag, dims everyone else including people, and hides no one.
-- TEAM-5 · *(rev 2)* New team supports a "Part of" team, members (agents and people) and an optional lead chosen from those members; the owner is never offered; a duplicate sibling name shows the inline error.
-- TEAM-6 · Edit teams adds or removes a member in several teams at once, warns when it clears a lead, and reports any single failure without losing the others.
-- TEAM-7 · Moving a team works by drag and by **Move to…**; a team and its sub-teams are never offered as targets; the confirmation names what moves; Undo is offered for 8 s.
-- TEAM-8 · *(rev 2)* A project's teams can be added and removed from the project and from the team; adding a team needs no confirmation, and removing a project's last team confirms that it becomes unassigned.
-- TEAM-9 · *(rev 2)* Deleting a team that owns teams is refused before any request, listing them; deleting any other team confirms first, naming the members who move to Not in a team and the projects that become unassigned.
+- TEAM-5 · *(rev 18)* New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Create a valid team before employee/bootstrap admission; preserve current-wire name validation only in its adapter.
+- TEAM-6 · *(rev 18)* Move home team is one employee-revision-checked recoverable operation updating field/path and resolving departed leadership; preserve ID, handle, reporting, history and current task assignments. Stale state keeps input and explains the conflict.
+- TEAM-7 · *(rev 18)* Team move works by drag and Move to…, excludes self/descendants, previews subtree effects and preserves identity. Undo is deferred; concurrent cycle/revision failure refreshes current state without applying the edit.
+- TEAM-8 · *(rev 18)* Projects have a required single accountable owner and optional contributors, editable from project/team entry points. Owner removal requires a replacement; changing owner updates task accountability/history together and leaves assignments unchanged.
+- TEAM-9 · *(rev 18)* Team deletion is blocked by child teams, home employees, owned projects/tasks and durable references, listing repair actions. Archival preserves historical identity. No cascade produces teamless employees or ownerless projects.
 - TEAM-10 · *(rev 2)* All three views are fully usable from the keyboard (tree navigation, menus, Move to…, Change manager…), and each has a List view.
 - TEAM-11 · *(new)* The org chart has three tabs, Teams, People and Reporting lines, over the same data; switching keeps the search and the selected member, and editing is available from each.
 - TEAM-12 · *(new)* Agents and people are told apart without color: agents have a square tile with the robot glyph, people a round avatar with initials, and screen readers say "agent" or "person" after the name.
-- TEAM-13 · *(new)* A project worked on by several teams shows on each of their cards with a "Shared" badge whose popover lists the other teams.
-- TEAM-14 · *(new)* Projects with no team show under "Unassigned projects" with Assign team…, and a note above the chart counts them; both are hidden when there are none.
-- TEAM-15 · *(new)* The lead picker says the lead also leads the team's projects, and a project shows its lead per team ("No lead" when none).
+- TEAM-13 · *(rev 18)* A participating project appears on owner and contributor cards with distinct badges and a popover linking the accountable owner and other contributors; optional participation never creates additional owners.
+- TEAM-14 · *(rev 18)* New projects cannot omit their owner team. Unresolved legacy ownerless records stay in explicit repair/staging rather than an ordinary Unassigned projects tray.
+- TEAM-15 · *(rev 18)* The lead picker accepts only direct home-team employees and states subtree management, including child leads. Project cards identify accountable ownership without inferring project co-leads.
 
 **Org chart: People (PEOPLE)**
 - PEOPLE-1 · The People view shows the same team tree with only people on the cards; teams without people stay as compact "No people" cards; agents appear only when naming a team's lead, marked "(agent)".
 - PEOPLE-2 · The People view always shows that agents can only reach the people listed in the organization.
-- PEOPLE-3 · Add person (from the toolbar, a team's menu, or "Add a new person" in a member picker) requires a name and takes an optional contact, teams and manager (the owner by default); the person then appears in their teams, or in Not in a team.
-- PEOPLE-4 · *(rev 4)* A name that matches any member's handle ignoring case (a person's name, an agent's messaging name, or `owner`) is refused inline with a suggestion, and Add person stays disabled. An empty or invalid name shows the inline error.
-- PEOPLE-5 · Removing a person confirms first, naming the teams they leave and stop leading, who will report to whom instead (the person's own manager, or the owner if they had none), and that their waiting messages won't be delivered and their open tasks come back for reassignment.
+- PEOPLE-3 · *(rev 18)* Add person requires name, independent handle and one valid home team, with optional contact and explicit employee manager. Team entry points prefill the home team; accepted people appear once there.
+- PEOPLE-4 · *(rev 18)* Duplicate display names are allowed; handles are explicit lowercase identifiers unique across agents/people. Invalid or unavailable handles show inline errors/suggestions and block submission; current reserved routing/ID namespaces remain preserved by the adapter.
+- PEOPLE-5 · *(rev 18)* Deactivation preserves ID, profile, required home team and handle; preview/resolve live leadership, reporting and assignments. History is retained; hard delete requires backend proof of no history/references. Assignment cleanup never erases accountability or automatically changes task status.
 - PEOPLE-6 · People never show an office, and the office filter never highlights them.
 - PEOPLE-7 · When an agent's message or task fails because the recipient isn't in the organization (or was removed), the agent's activity says so in plain words, with Add a person… for an unknown recipient.
-- PEOPLE-8 · *(new, rev 4)* Renaming a person checks the same handle rule, and the rename dialog says agents will address them by the new name from now on.
+- PEOPLE-8 · *(rev 18)* Renaming a person does not change their handle. Explicit handle changes require separate uniqueness/compatibility validation and show the new address before acceptance.
 
 **Org chart: Reporting lines (REPORT)**
-- REPORT-1 · The Reporting lines view draws who reports to whom with the owner at the root; anyone without a manager hangs directly under the owner, and everyone appears exactly once.
-- REPORT-2 · Each node shows the name, Agent or Person (styled as in TEAM-12), their teams and their number of reports.
-- REPORT-3 · Change manager… (and drag, as a shortcut) lists the owner first, never lists the member, and disables everyone who reports to them, directly or through others, with the reason.
-- REPORT-4 · A changed manager shows a toast with Undo for 8 s; a rejection from HQ says nothing changed and shows the current lines.
-- REPORT-5 · The view says reporting lines are separate from teams, and no change to a team or its lead changes anyone's manager.
+- REPORT-1 · *(rev 18)* Reporting view draws explicit reports_to_employee_id; group absent managers under the owner presentation labelled No explicit manager. Every employee, including HR and linked owner employees, appears once without inventing a manager foreign key.
+- REPORT-2 · *(rev 18)* Nodes show name/handle, Agent or Person shape/words, one Home team and explicit-report count; placement/freshness is agent-only.
+- REPORT-3 · *(rev 18)* Change manager and drag offer eligible employees plus No explicit manager, omit self and disable reporting descendants with a reason. A security owner account is not fabricated as an employee reference.
+- REPORT-4 · *(rev 18)* A changed manager keeps focus and shows a toast; conflict/cycle failures retain input and refresh current lines. Undo is deferred rather than a claimed automatic reverse mutation.
+- REPORT-5 · *(rev 18)* The view distinguishes explicit reporting from subtree lead responsibility; changing either graph does not silently rewrite the other. Ordinary ancestor-team membership grants no management authority.
 
 **The owner (OWNER)**
-- OWNER-1 · The owner appears once, above the chart in every view, with "(you)", "Owner", full access and that any agent can message, ask or assign them; never on a team card, in Not in a team, or in team and organization counts.
-- OWNER-2 · The owner is never offered as a team member or lead, and their quick view has no Remove, Add to team or Change manager action.
-- OWNER-3 · The owner is first in every "Reports to" picker and in every recipient and assignee picker agents' work uses, and is the root of Reporting lines.
+- OWNER-1 · *(rev 18)* The owner account bar presents organization access above each chart. A linked owner employee has a required home team and is counted/displayed there; a security account without a profile is not an employee.
+- OWNER-2 · *(rev 18)* Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from is_owner. No blanket teamless-owner exception appears.
+- OWNER-3 · *(rev 18)* Messaging retains the authenticated owner routing contract. Task assignees and employee managers use eligible employee IDs, including a linked owner employee where valid; a sign-in account alone supplies neither reference.
 
 **Retired:** GUILD-1, GUILD-2 (rev 2); MENU-1 through MENU-6 from v1 (rev 12). IDs are not reused.
 
@@ -1344,10 +1157,10 @@ Two directions, same result:
 - ~~A101~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* a waiting create or Add office stays `accepted`, and its lookup and the instance status feed report `waiting_for_idle { sessions: n }`, so the copy gives the number. Cancel uses the original operation ID, as for Create organization. A waiting office isn't in the Offices list yet: it's a pending row driven by the operation, like a waiting organization in the switcher. A satellite join on an instance with running agents waits the same way, and setup shows "Waiting for N running agents to stop…" with "Press Ctrl-C to cancel". There's no longest wait: the person can always cancel, and `agentic-org doctor` shows the wait (§5a, §5c, §6.2; OFC-33 to OFC-38, JOIN-15, JOIN-16).
 - ~~A102~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the status read adds `join_phase: awaiting_approval | initial_sync` under `join_pending`, so the joining instance shows Waiting for approval, then Starting · copying records (§3.1, §5c, OFC-32). `join_cancelled` also covers an invitation the owner cancelled or replaced after it was used (HQ refuses the join). An HQ identity mismatch ends the join as `join_rejected`, a security failure that isn't retried. An unsupported version keeps the join pending until the invitation expires (§5c; JOIN-7, JOIN-13, JOIN-14).
 - A105 · *(rev 15)* A decline at HQ and an HQ identity mismatch both end as `join_rejected` (A102). Setup and `agentic-org service status` need to tell them apart to show the right copy and repair (§5c): a decline asks for a new invitation, a mismatch asks to check HQ's address first. Does the instance's status say which one it was, so setup, `status` and the §3.3 row can say so? Until it does, they show one combined row for both (§3.3, §5c).
-- A106 · *(rev 15, reviews of 02316bb and 0802754)* The wait for running agents names the agents it waits for in organizations the reader owns, and counts the rest by organization (§5a, §5c, §6.2). `waiting_for_idle { sessions: n }` gives only a count. Can a read made with a session (the create's and Add office's lookup, HQ's status feed, and the joining instance's status read by setup with an instance admin signed in) give each running agent's member ID, name, organization, run mode and status for the organizations that account owns, and a count for each other organization, so the browser can link and pause them and setup can name them? And can a read without a session (`agentic-org service status`, `agentic-org doctor`, setup on an instance with no accounts, noninteractive setup) give only a count for each organization, with no names? Until they do, the wait shows its total-only copy, without names, counts by organization or Pause.
+- A106 · *(rev 15, reviews of 02316bb and 0802754)* The wait for running agents names the agents it waits for in organizations the reader owns, and counts the rest by organization (§5a, §5c, §6.2). `waiting_for_idle { sessions: n }` gives only a count. Can a read made with a session (the create's and Add office's lookup, HQ's status feed, and the joining instance's status read by setup with an instance admin signed in) give each affected agent's employee ID, name, organization, active turn/process state, cleanup/drain evidence and observation freshness for the organizations that account owns, and a count for each other organization, so the browser can link and pause them and setup can name them? And can a read without a session (`agentic-org service status`, `agentic-org doctor`, setup on an instance with no accounts, noninteractive setup) give only a count for each organization, with no names? Until they do, the wait shows its total-only copy, without names, counts by organization or Pause.
 - A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether a failed recovery package fails the create, and the HQ machine's name in copy. *(rev 15)* Its A86 is resolved: the admin grant alone opens no organization.
 
-**Resolved in revision 2:** U1 (wording kept for now), U2 (reporting lines stay as their own view), U3 (no departments, no labels), U4 (one optional lead, agent or person; owner in no team; shared projects allowed), A1 (§5.2 warning), A2 (stable code, §5.3), A3 (three wrong codes cancel, §6.3), A4 (unplaced agents, §6.4), A5 (Add office and approval on HQ's Mac, §6.1), A6 (8 Crockford base32 characters in two groups of four).
+**Historical resolutions in revision 2:** U1 (wording), U2 (separate reporting view), U3 (only recursive teams), U4 (old relationship choices superseded by the selected home-team/subtree-lead/project-owner model), A1 (§5.2 warning), A2 (stable code, §5.3), A3 (three wrong codes cancel, §6.3), A4 (unplaced agents, §6.4), A5 (Add office and approval on HQ's Mac, §6.1), A6 (8 Crockford base32 characters in two groups of four).
 
 ## 10. Out of scope here (follow-ups)
 

@@ -1,7 +1,0 @@
-ada (01M7880N) wants ONE joint list by 17:30, owned by me. For every open UI backlog item and bug she named (BUG-146, 112, 113, 118, 107, 131, S1a, S1b, 119, 151, 158, 160, 161, 164, Avery's chart/people/teams items, and Chat/Offices/Org-chart polish), the list marks KEEP (the screen survives in IA v2), RE-POINT (to an IA-nn story) or RETIRE (the screen is replaced and the bug dissolves).
-
-I'm drafting it now at projects/ac/agents/ac-product-manager-emery/knowledge/prds/ia-v2-backlog-triage.md. Please don't edit it, since it's in my home. Send me your notes by 17:15 and I'll fold them in with your name on them.
-- Eden: any item where your v2.2 specs disagree with my call, plus the spec IDs you rewrote or retired.
-- Rowan: any item where code or shared contracts change the call (shared primitives stay KEEP), and what backend or shared contracts must know about nav freeze rev 5. ada asked you for the second part directly, so put it in the list or send it to her yourself, whichever you prefer.
-
-If you've already sent ada your design or technical note, that's fine. Just send me the per-item points.

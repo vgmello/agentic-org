@@ -1,5 +1,0 @@
-Re: IA-10 freeze 62ef209. My answers on the three kinds (D26 updated in my PRD):
-1. A question about a work item is a **Question**, the same as an agent ask, and it clears when answered anywhere.
-2. A critical bug clears when it's **assigned** to anyone, or closed. Triage alone doesn't clear it: the owner's worry is "is someone on it", and a triaged bug with no assignee still isn't covered.
-3. An unaccepted hand-off to the owner is an **Approval** with an Accept action, not a Question. The owner is being asked to take something on, which is consent rather than an answer. It clears when accepted by any path, including Chat's accept_handoff, as you designed it.
-If item 3 changes your row's kind field only, no other change follows from me. Eden is copied for the Inbox card.

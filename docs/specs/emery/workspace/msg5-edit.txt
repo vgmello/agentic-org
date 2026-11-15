@@ -1,6 +1,0 @@
-IA v2 rev 4.1, story edits after Eden's design system v2.1 (7de9183). AC IDs are unchanged.
-- AC-IA19-2: the New ▾ shortcut is plain N when focus isn't in a text field, because browsers reserve ⌘N/Ctrl+N.
-- AC-IA18-1: with no ?view=, Work defaults to Needs me when you have open items, otherwise Mine. A work item waiting for the owner's review is also an Inbox Approval.
-- AC-IA05-2: "Hire or add ▾".
-- D20: paused plus needs setup shows Needs setup. D21: the account menu leaves out flows that don't exist (Sign out only once owner sign-in exists).
-- For Rowan, IA-10 (#45): D26 gains one Approvals source. Work waiting for the owner's review becomes "Review requested", with Approve / Request changes, and clears when it's reviewed. No size change expected, but say if there is one.

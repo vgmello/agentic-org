@@ -35,6 +35,14 @@ erDiagram
         TEXT updated_at "optional"
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
+        TEXT contact "optional"
+        TEXT title "optional"
+        TEXT focus "optional"
+        TEXT role_text "optional"
+        TEXT title_in_team "optional"
+        INTEGER is_owner "required"
+        TEXT agent_status "optional"
+        TEXT offboarded_at "optional"
     }
     agent_placements {
         TEXT organization_id PK, FK "required"
@@ -135,6 +143,16 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   updated_by_id TEXT,
+  contact TEXT,
+  title TEXT,
+  focus TEXT,
+  role_text TEXT,
+  title_in_team TEXT,
+  is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
+  agent_status TEXT CHECK (agent_status IN ('active','paused','offboarded')),
+  offboarded_at TEXT,
+  CHECK (kind='agent' OR (agent_status IS NULL AND offboarded_at IS NULL)),
+  CHECK (offboarded_at IS NULL OR agent_status='offboarded'),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
@@ -176,3 +194,27 @@ CREATE TABLE task_workspaces (
 ```
 
 Direct reporting must be acyclic within an organization, independently of the team tree. The consolidated schema rejects cycles on insertion and update, including deferred-reference imports.
+
+## Employee field reconciliation with v1
+
+The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `is_owner`, `agent_status`, `offboarded_at`. Nullable text remains NULL if not known. `is_owner` defaults to false; `agent_status` is optional legacy operating state (`active`, `paused`, `offboarded`), allowed only for agents. `offboarded_at` requires offboarded state; legacy records without the timestamp remain distinguishable from fabricated dates. `status` still describes active/inactive employment: import maps offboarded to inactive and active/paused to active. Commands/imports reject contradictory new records. Pause preserves employment and history; it is not removal. An offboarded profile keeps its handle.
+
+`role_text` preserves v1's descriptive role independently of the normalized `role_id`; import must not invent a role ID from arbitrary text. `title_in_team` describes the home-team appointment, not a second membership. `is_owner` preserves the v1 organization-owner marker; it does not create a login, grant administrator privileges or replace the host's authenticated ownership record. Import requires at most one owner and reconciles it with that record. Team leadership remains a separate appointment.
+
+V1 members can have several memberships. Import must require an explicit chosen home team; preserve unselected associations in migration staging rather than picking the first or copying all membership titles into one field. Runtime/model move to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
+
+```yaml
+contact: "product@example.invalid"
+title: "Product lead"
+focus: "Guest booking"
+role_text: "Product management"
+title_in_team: "Lead"
+is_owner: false
+agent_status: paused
+```
+
+[Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
+
+[Recovery and office continuity](16-recovery-and-office-continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.
+
+[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.

@@ -1,1 +1,0 @@
-Corrected at 6bf98b5a193c5aafa4b8758a151ab68700d3afd5, following nav freeze rev 5. AC-IA19-4: N ships together with the Single-key shortcuts switch (IA-19). The switch also covers `/`, which ships with IA-13 (Search), and governs it from day one. IA-19 no longer depends on IA-13. This replaces my eccdebd note on the same point.

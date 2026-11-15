@@ -2,7 +2,7 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-15"
@@ -15,7 +15,17 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 
 ## Changelog
 
-**Revision 7 (2026-11-15): owner-approved HQ-only initial setup and executable names.** agentic-org setup downloads/verifies components, creates HQ and registers/starts its service without separate install commands. Satellite invitations/enrollment are initiated later from HQ, never offered by the initial wizard or setup automation. The host entry point is agentic-org serve; worker/web/agent executables are agentic-org-office, agentic-org-web and agent-os. Source/package and wire names remain unchanged until implementation. Updates retain explicit activation policy and offline bundles use the same verifier. SRV-5/7/9/22 are clarified; SRV-33/34 are added.
+**Revision 8 (2026-11-15): selected organization-data setup and recovery.** Rewrites
+wizard inputs, storage/runtime boundaries and bootstrap readiness; adds SRV-35–41
+for remote organization Git, valid home teams, target execution, protected-source
+restore and budget/chat privacy. Existing account, accessibility, recovery-delivery
+and failure criteria remain. Old wire/launch codecs require versioned adaptation;
+setup, services and production browser startup remain unavailable. Offline setup
+validates required remote registration locally with zero external requests and
+reports remote connectivity/publication unverified until authorized online. Earlier revision
+entries below record their historical state rather than current implementation.
+
+**Revision 7 (2026-11-15): owner-approved HQ-only initial setup and executable names.** agentic-org setup downloads/verifies components, creates HQ and registers/starts its service without separate install commands. Satellite invitations/enrollment are initiated later from HQ, never offered by the initial wizard or setup automation. The host entry point is agentic-org serve; worker/web/agent executables are agentic-org-office, agentic-org-web and agent-os. Source/package renames have since landed; published wire names and launch framing remain stable until a reviewed contract change. Updates retain explicit activation policy and offline bundles use the same verifier. SRV-5/7/9/22 are clarified; SRV-33/34 are added.
 
 **Revision 6 (2026-11-10): "You no longer own" after Not now, and the
 unavailable pages.** From the Principal Product Designer's decision of
@@ -166,12 +176,29 @@ cannot create competing identities.
 For a new instance the wizard establishes, in order:
 
 1. Instance name and data location, using platform defaults unless explicitly set.
-2. **Create an organization and its HQ** as the first office. No create-or-join selector, invitation input, satellite role or --hq join option is present. Additional satellite offices are initiated later from HQ, not initial setup.
+2. **Create an organization and its HQ** as the first office. Collect the name,
+   explicit catalog-unique kebab-case slug, remote organization repository and
+   `state_branch`. Refuse a local-only organization repository. Show which branch
+   will hold organization data. Validate URL/branch syntax and local credential
+   references/configuration without logging secrets. In offline mode perform no
+   fetch, remote-auth probe or other external request; keep remote connectivity
+   and publication explicitly **Unverified — offline** or **Pending** until online
+   operation is authorized. The mandatory registration remains remote. Select/create
+   the valid home team required for each bootstrap employee, including HR and any optional owner-person profile. The initial team's
+   name/lead is not inferred. No create-or-join selector, invitation input, satellite
+   role or --hq join option is present; later HQ-issued enrollment is separate.
 3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
    CA escrow/recovery-code provisioning (setup offers the code once the HQ is
    created, before step 5 starts the service, as in X-02 §6.2; collecting it and
    acknowledging its off-HQ retention can be deferred: §4a.2, A94).
-4. Runtime selection, dependency checks and authentication readiness.
+4. Execution readiness: choose the agent's model profile and canonical model;
+   reuse an organization provider connection and save its office-local credential
+   binding. Runnable agents need fresh authentication/model evidence and a permit.
+   Offline setup checks local configuration/prerequisites only, performs no provider
+   auth/model probe and leaves that readiness unverified. Profile connection order
+   is separate from employee identity. Dependency/auth/model/permit failures keep
+   agents in a specific **Needs you** state while HQ can be ready. No automatic
+   scheduling engine is selected.
 5. Automatic service registration/start and an HQ URL/readiness summary. No separate install or service install command is needed. Missing service-manager support reports foreground agentic-org serve instructions without discarding completed setup.
 
 Automation uses the same validation and state transitions, with one stated
@@ -192,23 +219,50 @@ Before-login macOS execution is outside this v1 default.
 
 ## 3. Files, identity and tools
 
-The instance owns its configuration, office folders, encrypted databases, runtime
-state and agent homes. Executables live separately from mutable data. Each agent
-has a stable identity and server-provisioned configuration and workspaces. Local
-paths are resolved on the office machine; no absolute path from another machine
-becomes an agent's identity or a browser-selected storage root.
+The instance resolves configured organization data and protected operational roots;
+executables live separately. Organization Git is remote and its latest content is
+mirrored as ordinary durable files. `organization.yaml` stores stable ID, slug,
+name, repository ID and state branch. Team/employee/project/task paths use stable
+IDs. New IDs use UUIDv7; existing IDs and current operation-ID codecs are preserved.
+Readable task references are scoped T- for every type, never implicit B-/REQ-
+renames. [The storage tree](../design/standalone-server.md#3-instance-selection-and-storage)
+defines durable state, authority, journal, usage archive, bindings and checkpoints
+separately from runtime office projections, one cache per office/repository, and
+employee/task worktrees. Project integration branches belong to each association.
 
-The web UI may display an authorized user's server paths read-only. There is no
-folder picker, directory relocation setting, old-team scanner or automatic file
-upload in v1. The server writes its own data and agents write only their permitted
-workspaces. Instance credentials and another employee's private files are not
-part of an agent's writable configuration. The [employee supervision requirements](employee-supervision-ux.md),
-including bounded delegates and process-driven behavior, apply at the owning office;
-moving access to HTTP does not turn those into browser responsibilities.
+Every employee has one home team. Optional role/reporting and a direct-member lead
+are separate; a lead manages the subtree. HR bootstrap cannot be teamless. An owner
+account's security rights remain host-owned even if it has no employee profile;
+an optional representing person needs the same valid team as any other employee.
+An agent's profile.md is identity, execution.md is runnable configuration, and
+current office placement is a projection backed by durable generation/fencing.
+Home-team changes, office movement and task assignment are distinct operations.
+
+Authorized users may inspect actual server paths read-only. No browser folder
+picker, relocation, scanner or automatic upload is provided. The target task
+workspace hierarchy is scoped by office, employee/team, optional project, task and
+repository IDs; it survives handoff until closure. The current code uses older
+managed homes/office workspaces and encrypted org.db/office.db with durable content.
+A reviewed source extraction and sandbox migration is needed before treating those
+DBs as caches. Re-derive managed-state, Git-metadata, credential and other-task denies
+for target paths; a renamed prefix is not a verified sandbox.
+
+Protected chat/attachments, usage archives, budget policy/history/extensions/holds,
+command receipts, authority and execution/process evidence must survive office
+projection loss. Private notes use a separate durable author-only DB, with no
+administrator exception. Git alone does not restore these sources. Bindings contain
+private local references, never credential bytes in Git. Rebuild verifies trusted
+identity/epochs/digests and retained high-waters, restores legitimate credentials,
+and reconciles owned processes before launch. A copied/restored PID or missing
+cache is not cleanup proof. Missing evidence must report recovery required.
 
 Setup installs `agent-os` from the same release. It locates or installs only the
-selected supported harnesses, checks their versions and reports their sign-in
-state. Git is a prerequisite for coding workflows. GitHub CLI is conditional on
+selected supported harnesses, checks versions, connection account identity and
+model entitlement when online operation is authorized, and reports readiness
+without putting secrets in tool environments. Offline setup uses only local version/
+configuration checks; no external sign-in, model discovery, repository request or
+background update runs. HQ readiness does not assert remote repository publication
+or agent-provider readiness. Git is a prerequisite for coding workflows. GitHub CLI is conditional on
 the GitHub feature, which remains v2 in the existing project design. The old
 `org-relay` alias is not required for a fresh install. Server readiness and runtime
 readiness are distinct: the owner can use HQ to finish setup while agents remain
@@ -310,8 +364,9 @@ shows `--name <instance>` as text to replace (§4a.3).
 
 ### 4a.2 First owner access
 
-Setup creates the account in its step 3 (§2). The transcript shows only the
-lines that matter here; `…` stands for the other steps.
+Setup validates organization Git/slug/branch and required bootstrap home teams in
+step 2, then creates the account in step 3 (§2). This proposed transcript shows
+only the lines that matter here; `…` stands for the other steps.
 
 ```
 $ agentic-org setup
@@ -319,6 +374,11 @@ Setting up instance "default".
 …
 Create your organization. This machine becomes its HQ.
 Organization name: Lumen Labs
+Organization slug: lumen-labs
+Remote organization repository: https://git.example.invalid/lumen-labs/organization.git
+State branch: organization-state
+Home team for bootstrap employees: <explicitly chosen valid team>
+…
 
 Your account
 You'll sign in to HQ in a browser with this account. It will own
@@ -393,12 +453,9 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
     command, `recovery release` or `recovery release --redeliver`, as a repeated
     setup does (below).
 
-  Finishing setup without the acknowledgement is a **deliberate departure** from
-  `standalone-server.md` §6, which says
-  setup "requires acknowledgement": a first-time owner shouldn't be blocked from
-  reaching the browser, and the code stays waiting with a notice until collected.
-  ada decides whether to accept it and update the design, or to make the
-  acknowledgement part of setup (A94).
+  Finishing setup without recovery acknowledgement follows the current standalone
+  design: service readiness and recovery-material collection are distinct. It does
+  not establish supported HQ-loss recovery (REC-1).
 - **A repeated setup** (SRV-2) asks for no account. It ends with "HQ is running.
   Open <address> and sign in as alex." While the code is waiting, it also prints
   the `agentic-org recovery release` command. While it was shown but not
@@ -1215,11 +1272,9 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   (length, groups), so the CLI can ask for its last group?
 - A93 · Which name for the HQ machine does HQ report for "<HQ machine>" in copy:
   the host name, or a configured label?
-- A94 · Setup can finish without the recovery-code acknowledgement (§4a.2), a
-  deliberate departure from `standalone-server.md` §6. Accept it and update the
-  design, or make the acknowledgement part of setup? *(rev 5)* X-02 Q8 accepts
-  the waiting end for noninteractive setup and setup over SSH on a Mac. Answering
-  n in an interactive setup is still this question.
+- ~~A94~~ · Reconciled with standalone-server §6: interactive setup may defer
+  collection/confirmation, as may automation. HQ service readiness does not imply
+  recovery material collected or a supported HQ-loss restore procedure.
 - ~~A99~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the recovery state carries
   when the code was first shown (`released_at`), when it was last shown again
   (`redelivered_at`) with how many times (`redelivery_count`), and when it was
@@ -1241,13 +1296,9 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   any organization on the instance. A command that would leave no instance admin,
   or an organization with no linked account, is refused (§4a.1, §4a.2; SIGN-35
   to SIGN-42).
-- A104 · *(rev 5)* X-02 Q8 (accepted) ends noninteractive setup, and setup over
-  SSH on a Mac, with the recovery code waiting: automation never receives the
-  code. `standalone-server.md` §6 ("CA escrow and the explicit recovery gate")
-  still says "Automation uses separate protected outputs". Can you update that
-  design to match the decision (§2, §4a.2)? *(Rowan, 2026-11-10)* Rowan updates
-  standalone-server.md §6 (agreed), on his next docs branch. Open until it's
-  merged.
+- ~~A104~~ · Reconciled with standalone-server §6: automation receives no code
+  or protected-code output; collect later through the authenticated local release
+  command. This is a documentation reconciliation, not implemented setup evidence.
 
 ## 5. Lifecycle, updates and removal
 
@@ -1271,6 +1322,10 @@ distinct from migrating the undeployed desktop architecture.
 Uninstall unregisters only the selected service and preserves its data by default.
 Data deletion is a separate explicit, instance-scoped operation; active children
 must be stopped first. Shared releases stay while any instance references them.
+Cache deletion additionally requires verified protected-source coverage, rebindable
+credentials, retained unresolved communication and process cleanup/fencing. It
+must preserve local/unpushed code checkpoints. Deliberate deletion of an explicitly
+disposable test instance is a different action from rebuilding a real office cache.
 An office removed from an organization follows the existing revocation/reclaim
 rules, which are distinct from uninstalling software on a machine.
 
@@ -1306,13 +1361,21 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-26 · *(rev 5)* No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user is not claimed in v1.0; a dedicated OS user per instance is a Wave C hardened mode. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; gateway/CLI helpers cannot obtain raw office keys through any interface the product provides.
 - SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
 - SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. Known-offline new goals are rejected without a write/queue; uncertain forwarded replies follow EMP-3.
-- SRV-29 · All create/update home overrides, including home/clear_home, absolute paths and traversal, are rejected before filesystem access. Launch cwd derives from managed instance/office/member IDs and matches the read-only profile path under PROF-4.
-- SRV-30 · Add agent record follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision a member, home or messaging binding before approval. The built-in organization bootstrap exception is explicit.
+- SRV-29 · All create/update home overrides, including home/clear_home, absolute paths and traversal, are rejected before filesystem access. Launch cwd derives from managed IDs and the actual selected office/employee/task/repository workspace. Current legacy paths remain explicit until the separately verified target sandbox migration; response paths stay read-only under PROF-4.
+- SRV-30 · Add agent record follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision an employee, home or messaging binding before approval. The explicit built-in bootstrap exception still requires valid home-team references and separate execution readiness; it cannot create a teamless runnable HR employee.
 - SRV-31 · A fixture-based live Phase A cutover preserves unresolved asks/replies, deadlines and read/triage state across interruption/retry. Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Fresh organizations need no spool import.
 - SRV-32 · The first standalone local API negotiates version 2 and rejects unsupported peers before dispatch; version-1 statements remain historical/additive. HTTP/launch/sync version spaces are independent. Cargo package agentic-org at apps/agentic-org owns the CLI, including setup dispatch; no separate setup package exists, and the retired Tauri member cannot overwrite the staged CLI artifact.
 
 - SRV-33 · Initial HQ setup automatically verifies components and registers/starts one service. No install/service-install prerequisite or create-or-join question appears. Repeating/resuming setup preserves the same HQ and service. Satellite input in unattended initial configuration is refused before provisioning; an existing satellite is never converted into HQ.
-- SRV-34 · setup --bundle <path> --offline verifies a complete local HQ release without external requests or enrollment. Background jobs honor offline policy. Untrusted/incomplete bundles and missing platform prerequisites fail explicitly without fetching. Missing service-manager support reports foreground serve instructions.
+- SRV-34 · setup --bundle <path> --offline verifies a complete local HQ release without any external request or enrollment, including repository fetch/auth probes, provider/model probes and update checks. Validate the mandatory remote organization URL/state branch and local credential references/configuration locally; retain them as remote, with connectivity/publication readiness unverified or pending until online operation is authorized. Background jobs honor offline policy. Untrusted/incomplete bundles and missing local platform prerequisites fail explicitly without fetching. HQ readiness does not assert remote or agent-provider readiness. Missing service-manager support reports foreground serve instructions.
+- SRV-35 · Setup/create persists explicit organization slug, remote repository registration and state branch; rejects local-only organization Git, invalid/duplicate slug, invalid/missing branch and invalid local credential references/configuration with actionable safe errors. Offline setup validates these locally without contacting the repository, and reports remote connectivity/publication unverified or pending. Authorized online validation/publication reports remote credential/connectivity failures separately without fabricating readiness or recreating HQ. Lost replies/repeated setup preserve the same plan/IDs; additional target fields require a reviewed wire/launch adapter, not guessed fields in existing DTOs.
+- SRV-36 · Every committed bootstrap employee has one valid home team, including HR and an optional owner-person; team lead is a direct member. Owner authentication/admin rights remain independent from profile flags. Missing team blocks bootstrap completion without selecting an invented HR team.
+- SRV-37 · Agent identity is independent from execution profile/model, connection order, credentials and placement. Missing config, stale entitlement/auth, absent shared permit or unverified prior cleanup produces explicit not-ready/recovery-required state. Restart does not launch a duplicate process or allocate replacement placement authority from a cache.
+- SRV-38 · A disposable projection rebuild reproduces acknowledged domain/receipt/stream/allocation state from verified Git plus protected sources. Missing/corrupt source, wrong identity/hash/epoch or old high-water fails explicitly; unknown commands are reconciled before retry. Legitimate keys remain necessary; no fabricated usage, receipt, budget capacity or authority.
+- SRV-39 · Restore/import preserves protected chat visibility and original source hashes/codecs. Mixed-recipient directed-thread bodies, counts, previews, attachments and search do not leak across recipients; shared projection access never grants author-private note access or reveals note existence in shared receipts.
+- SRV-40 · Budget policy revisions, one-time extensions, notices and independent manual/security/budget holds survive restart/rebuild. Stop pending remains distinct from acknowledged held; releasing one reason never releases another. Release caps warn only; incomplete usage and cost/amount access scopes (including only the own-agent CLI exception) remain explicit. Runtime evaluation/pausing is unavailable until implemented.
+- SRV-41 · Target runtime path migration proves sandbox denies, one office/repository cache, association-specific integration branch and retained worktrees/checkpoints across handoff/placement change. Deletion cannot erase sole acknowledged protected sources, private stores, live spool or local-only/unpushed code recovery.
+
 
 **Sign in, session and first access (SIGN)** *(new, rev 4, §4a)*
 - SIGN-1 · Opening any HQ page without a session shows the sign-in page, with Username, Password and Sign in. The page and its responses contain no organization data.

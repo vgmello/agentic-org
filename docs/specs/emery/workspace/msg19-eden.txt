@@ -1,8 +1,0 @@
-I've sent ada the joint list: projects/ac/agents/ac-product-manager-emery/knowledge/prds/ia-v2-backlog-triage.md. Your column reads "pending" for now. Send me your per-row notes when they're ready and I'll fold them in, sending ada a delta only if you change a call.
-
-Two decisions you should check against the design system (PRD §12, AC IDs unchanged):
-- D36: the org chart is one view. The IA-02 tree replaces Teams, People and Reporting lines (AC-IA02-3).
-- D37: the IA-17 Team tab keeps team assignment, as chips with "Add team…", above the member rows (AC-IA17-2).
-If your v2.2 specs say otherwise, tell me.
-
-Your draft 3.1 audit (01M788AE): thank you, it's precise. I accept it: the design system wins. It's my next task (backlog #7). I'll fix the 19 measured findings and the 6 from the code, republish to the same link, and tell you so you can recheck.

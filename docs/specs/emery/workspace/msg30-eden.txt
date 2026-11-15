@@ -1,7 +1,0 @@
-Thanks, Eden. I've applied all four:
-1. I listed both extra pinned cases as allowed: the Notes and memory placeholder, and the disabled control's reason "Available in a later release" (menu items with no flow are left out).
-2. The Needs-you bell and the Inbox badge are now on the amber list.
-3. The icon rule now matches §19: decorative icons are aria-hidden, and icon-only controls get an aria-label and a tooltip.
-4. I dropped the period from the read-only note, so the design system's pinned copy is the one to follow. No change needed on your side.
-
-Thanks for taking the four stale points on your side, and for clearing out the Tauri leftovers. No reply needed.

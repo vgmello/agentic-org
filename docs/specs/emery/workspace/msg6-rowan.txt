@@ -1,1 +1,0 @@
-Option (a) for v1.0: "Review requested" is an agent ask about a work item, marked as a review request. Approve and Request changes send the reply and end the wait. It meets the product need with no size change. A real review state (b) goes after v1.0, and we'll revisit it when work review becomes a first-class flow. The D26 table is updated.

@@ -80,6 +80,42 @@ Existing OrgSnapshot and positions are reused. The response's opaque resume
 cursor continues exactly after the snapshot position, without a gap or duplicate;
 a raw Position alone is not a browser resume token.
 
+## Selected target adaptation and compatibility
+
+The wire tables and examples in §§2–9 describe the published HTTP v1 revision 2
+contract, including its current ULID operation admission, native `member` names,
+name-only organization create and multi-membership operations. They are retained
+exactly as protocol evidence. They do not implement the later selected
+[organization-data model](organization-data/README.md). No route below becomes
+available merely because its codec exists. A selected-target adapter needs
+reviewed version/capability negotiation and conformance vectors before enablement;
+never reinterpret an existing command as a different mutation behind the same DTO.
+
+| Published v1 revision 2 surface | Selected target and required adaptation |
+| --- | --- |
+| `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. Publish a validated extended/versioned provisioning contract; offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
+| OrganizationView / OrgSnapshot / `member_id` | Map retained stable member IDs to employee IDs without changing wire spelling. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. Old snapshots must not imply those target fields already exist. |
+| `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Current multi-membership rules remain current wire semantics. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. Preserve unmapped memberships in controlled import staging. |
+| `project.add_team`, `project.remove_team` | Target project requires `owner_team_id` plus optional contributors. Publish a mutation distinguishing transfer of accountability from contributor editing; an old linked-team list does not select an owner or require an Area. Areas remain unselected. |
+| Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. Current command versions/legacy B-/REQ- references cannot be renamed or stripped into selected numbering. |
+| Current ULID operation IDs / plain-ID lookup checks | Preserve current admission and retained IDs. New stable entity IDs use UUIDv7, independently of operation IDs. ID validators, filenames and scoped reference resolvers require explicit versioned adaptation before accepting new IDs through legacy restrictions. |
+| Protected domain views and lookup outcomes | Read only authorized projections of protected chat, usage, budget and recovery sources. Private task notes stay author-only in a separate durable DB, with no owner/admin exception or shared receipt disclosing their existence. Never expose raw paths, source envelopes, amounts or private result blobs through a generic SQL or lookup endpoint. |
+
+Readiness and runtime operations must map to document 11's selected profile/model,
+ordered connection pool, office-local credential binding, connection permits and
+placement generation. Identity creation is distinct from runnable configuration;
+turns, attempts and processes are distinct resources. These are adaptation
+requirements, not additional HTTP commands published here. Budget views must
+retain complete/partial/unavailable usage and the existing cost access scope,
+including only the authenticated agent CLI's own current task/daily/monthly amount
+exception. `stop_pending` is not a completed hold; release caps warn only.
+
+Target `mutation_receipts` may retain `outcome_unknown` reconciliation evidence
+under [document 16](organization-data/16-recovery-and-office-continuity.md).
+That internal source state does not change §5's published lookup rule forbidding
+a stored browser `outcome:"unknown"`: adapt internal state to the existing public
+unresolved behavior without asserting commit or issuing another side effect.
+
 ## 3. Views and command envelope
 
 Session view:
@@ -496,9 +532,10 @@ The classifier consumes a correlated native reply with a numeric native ID:
 
 All fifteen operations remain unavailable until their Layer B routing, captured
 native-dispatch, production gating and session/authorization tests pass. Three
-also retain domain/product gates: member.remove needs the history/people-only
-owner decision; project.add_team and project.remove_team need B1-10's area
-reconciliation. Per-account ownership informs capability display only; the
+also retain current-contract domain/product gates: member.remove needs the history/people-only
+owner decision; project.add_team and project.remove_team require explicit owner-team/contributor
+adaptation and disposition of the earlier area proposal before target enablement. Areas
+remain unselected; an area reconciliation engine is not a selected prerequisite. Per-account ownership informs capability display only; the
 worker enforces authorization. A disabled operation must be refused503 before
 native dispatch even when a client ignores its capability.
 
@@ -513,7 +550,7 @@ Rust's revision constant and pinned public metadata advance together.
 
 B1-05/06 owns Layer B: unknown paths and unsupported methods get JSON404; auth,
 scope, strict decode and production enablement precede captured dispatch. It
-must exercise all mappings, unknown params on every path, all three production
+must exercise all mappings, unknown params on every path, all three current-contract production
 gates, host-session/grant renewal, hidden-scope404, and unchanged operation IDs
 on conflict/replay. No capability may be enabled solely because Layer A passes.
 A worker not_found does not itself mean access was lost; an authoritative

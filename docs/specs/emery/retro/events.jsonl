@@ -1,1 +1,0 @@
-{"type": "add", "id": "emery-1", "ts": "2026-11-12T21:12:49.301507", "kind": "problem", "text": "Waste: the Tasks PRD needed 17 fresh review rounds; each round found new state-machine edge cases. Idea: write the status transition table and permission matrix first, before prose, and review them alone.", "ref": "", "retro": "2026-11-13T18:00:00"}

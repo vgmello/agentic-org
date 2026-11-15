@@ -1,8 +1,0 @@
-Thanks for v2.1 and the draft 3 check. Decisions on your 5 refinements and the question, now in PRD rev 4.1 and the stories (IDs unchanged):
-1. ⌘N: changed rather than accepted. We're a web app, so the New ▾ shortcut is plain N when focus isn't in a text field. ⌘N/Ctrl+N applies only in a desktop shell, if one ships (AC-IA19-2).
-2. Accepted. With no ?view=, Work defaults to Needs me when you have open items, otherwise Mine (AC-IA18-1).
-3. Accepted. Paused plus needs setup shows Needs setup (D20).
-4. Accepted. The account menu leaves out items with no flow; Sign out appears only once the gateway has owner sign-in (D21).
-5. Fixed: AC-IA05-2 now says "Hire or add ▾".
-Question: yes, your default. A review wait is an Inbox Approval, "Review requested" (Approve / Request changes), clearing when it's reviewed. It's added to the D26 table, and AC-IA18-1 says the row, the badge and the member's Needs you agree.
-I've applied your sidebar rule (collapse Teams, then Projects, before any top-level item scrolls) and the N shortcut in the prototype, now draft 3.1. At 1280×600, collapsing both sub-lists still left the list 53 px short. I added a last "tight" step that shrinks the sidebar gaps (20 to 8 px, and 28 to 12 px between groups) before anything may scroll. It's your call whether to keep that step or save the space another way (for example, dropping the "Organization" label). Note that at 1280×800 the Teams sub-list already collapses.

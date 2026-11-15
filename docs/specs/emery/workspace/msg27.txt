@@ -1,5 +1,0 @@
-Story edit (ID unchanged), from Eden's design system §9 at d7308d03. AC-IA18-1 now adds: "Work blocked on the owner always has an open Inbox item: its Approval or Question, or else a 'Blocked on you' Problem. A refusal leaves it blocked and in Needs me, and Blocked on you takes the cleared Approval's place."
-
-The D26 row "Blocked-on-you work" spells out the lifecycle: Blocked on you stands while work is blocked on the owner and no Approval or Question about it is open, and it's withdrawn with no Handled entry when one opens.
-
-Rowan: this is a derived item for IA-10, so please check it fits your freeze. I don't expect a wire change.

@@ -40,6 +40,10 @@ erDiagram
         TEXT updated_at "optional"
         TEXT updated_by_kind "required"
         TEXT updated_by_id FK "optional"
+        TEXT delivered_at "optional"
+        TEXT retired_reason "optional"
+        TEXT replaced_by_feature_id FK "optional"
+        TEXT legacy_definition_path "optional"
     }
     feature_slugs {
         TEXT organization_id "derived"
@@ -253,6 +257,13 @@ project_id TEXT NOT NULL,
   updated_at TEXT,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   updated_by_id TEXT,
+  delivered_at TEXT,
+  retired_reason TEXT,
+  replaced_by_feature_id TEXT,
+  legacy_definition_path TEXT,
+  CHECK (replaced_by_feature_id IS NULL OR replaced_by_feature_id<>id),
+  FOREIGN KEY (organization_id,replaced_by_feature_id,project_id)
+    REFERENCES features(organization_id,id,project_id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, id),
   CHECK (status NOT IN ('in_progress', 'live') OR owner_employee_id IS NOT NULL),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
@@ -360,3 +371,110 @@ SELECT f.organization_id, f.id AS feature_id, f.project_id,
 FROM features AS f
 JOIN projects AS p ON p.organization_id = f.organization_id AND p.id = f.project_id;
 ```
+
+## Detailed task payload and retained feature lifecycle
+
+A task has zero or one `task_details` row, sharing its identity and revision. There are no new bug or request identities/counters. Existing summary fields (type, severity, resolution, priority) stay on `tasks`. Author structured details under `details:` in the same task Markdown front matter; absent optional fields become SQL NULL and absent counters/booleans use the documented defaults. Save details atomically with the task and its activity event. An absent details map produces no row; a present empty map produces a row with defaults.
+
+| Fields | Meaning and import |
+| --- | --- |
+| `definition_of_done`, `branch`, `shortcut_json` | Task acceptance text, task branch (not project integration branch), and structured shortcut provenance from `details.shortcut`: `{type: none}` or `{type: debt, ids: [...]}`; preserve IDs without creating a debt subsystem |
+| `done_anyway_json` | Front matter `details.done_anyway`: object `{reason, steps: [step-id, ...]}`; preserves exceptional completion evidence without implementing that workflow |
+| `what_happened`, `expected`, `steps`, `environment` | Bug reproduction text, kept distinct from the task description |
+| `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure explanation |
+| `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity; validate required target type and cycles at import/command boundary |
+| `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; importer requires the task's project to match the affected feature's project |
+| `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category (`WorkItem.text` → `request_text`) and routing decision; v1 `routed_by` maps to `routing_source: person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
+| `request_outcome_json` | Front matter `details.request_outcome`: object with optional `feature`, `docs`, `draft_tasks`, `estimate`. Preserve v1 variant tags/IDs without execution. `feature` is `{type: new | extends, feature_id}`; each `docs[]` entry is `{project_id, doc_key}`; each `draft_tasks[]` entry has required `draft_id`, `title` and optional `description`, `assignee_id`, `team_id`, `priority`. `estimate` has `effort`, `cost_usd_cents_min`, `cost_usd_cents_max`; amounts are nonnegative and min≤max. This is a proposal estimate, not a budget. Validate nested project/feature/doc/employee references; draft IDs are not created tasks |
+| `suggested_triager_id`, `suggested_verifier_id` | Suggested employees; not assignments or permission grants |
+
+`fixes` relationships are stored once as typed links; derive `fixed_by` by reverse query. Preserve existing link IDs. Do not duplicate those arrays inside details. The file importer validates bug-only/request-only fields against task type, canonical shortcut variant tags/request-kind values against the supported v1 variants, and every nested JSON shape. Unknown legacy values stay in controlled migration staging for review rather than being dropped. A task becoming a tombstone keeps its final details in `record_metadata` alongside the last revision, and existing immutable history remains.
+
+Feature front matter gains `delivered_at`, `retired_reason`, `replaced_by_feature_id`, `legacy_definition_path`. The replacement must be another feature in the same project; import rejects replacement cycles. Preserve the old path as provenance, never as an executable/local filesystem instruction. Current file path still derives from stable identity. Task totals are derived, not stored. These fields preserve lifecycle facts; they do not introduce automatic feature transitions.
+
+```yaml
+details:
+  definition_of_done: "Booking survives a retry."
+  what_happened: "Retry creates two bookings."
+  expected: "Retry returns the original booking."
+  steps: "Submit twice with the same key."
+  environment: "staging"
+  severity_confirmed: true
+  reopen_count: 1
+```
+
+### Task detail table
+
+```sql
+CREATE TABLE task_details (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  definition_of_done TEXT,
+  branch TEXT,
+  shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
+  done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
+  what_happened TEXT,
+  expected TEXT,
+  steps TEXT,
+  environment TEXT,
+  severity_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (severity_confirmed IN (0,1)),
+  reopen_count INTEGER NOT NULL DEFAULT 0 CHECK (reopen_count>=0),
+  duplicate_of_task_id TEXT,
+  closed_reason TEXT,
+  affects_feature_id TEXT,
+  request_kind TEXT,
+  request_text TEXT,
+  route_reason TEXT,
+  routing_source TEXT CHECK (routing_source IN ('person','rule','copilot')),
+  routed_by_employee_id TEXT,
+  request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
+  merged_into_task_id TEXT,
+  decline_reason TEXT,
+  suggested_triager_id TEXT,
+  suggested_verifier_id TEXT,
+  PRIMARY KEY (organization_id,task_id),
+  CHECK (duplicate_of_task_id IS NULL OR duplicate_of_task_id<>task_id),
+  CHECK (merged_into_task_id IS NULL OR merged_into_task_id<>task_id),
+  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,duplicate_of_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,merged_into_task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,affects_feature_id) REFERENCES features(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,routed_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,suggested_triager_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,suggested_verifier_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+```
+
+```mermaid
+erDiagram
+    tasks ||--o| task_details : structured_payload
+    task_details {
+        TEXT organization_id PK, FK "required"
+        TEXT task_id PK, FK "required"
+        TEXT definition_of_done "optional"
+        TEXT branch "optional"
+        TEXT shortcut_json "optional"
+        TEXT done_anyway_json "optional"
+        TEXT what_happened "optional"
+        TEXT expected "optional"
+        TEXT steps "optional"
+        TEXT environment "optional"
+        INTEGER severity_confirmed "required"
+        INTEGER reopen_count "required"
+        TEXT duplicate_of_task_id FK "optional"
+        TEXT closed_reason "optional"
+        TEXT affects_feature_id FK "optional"
+        TEXT request_kind "optional"
+        TEXT request_text "optional"
+        TEXT route_reason "optional"
+        TEXT routing_source "optional"
+        TEXT routed_by_employee_id FK "optional"
+        TEXT request_outcome_json "optional"
+        TEXT merged_into_task_id FK "optional"
+        TEXT decline_reason "optional"
+        TEXT suggested_triager_id FK "optional"
+        TEXT suggested_verifier_id FK "optional"
+    }
+```
+
+[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.

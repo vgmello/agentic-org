@@ -15,8 +15,12 @@ overridable: true
 
 Proposed organization seed for EMP-7 and PROC-27. It is **draft**, so it does not
 enter this repository's effective process set or change its existing review rules.
-Organization provisioning copies approved seeds into its handbook with assigned doc
-identities, using the existing process activation/approval flow.
+A future importer can materialize approved content in the remote organization
+repository as `processes/<document-id>.md`, using the structural fields and stable
+identity rules in [organization structure](../design/organization-data/01-organization-structure.md).
+This file's legacy seed front matter is not that canonical payload. Provisioning
+must not assume an implemented activation engine, memory service or delegate
+workflow merely because the structural record exists.
 
 1. Consider whether a bounded piece of work benefits from independent or specialized
    help. Keep work in the main session when delegation adds no value.

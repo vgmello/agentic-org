@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The thirteen primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 55 tables and 8 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 75 tables and 8 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -19,6 +19,10 @@ The thirteen primary design documents define two SQL artifacts. Load `schema.sql
 | [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts`, `model_profile_model_union` |
 | [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
+| [15](15-messaging-and-chat.md) | [schema.sql](schema.sql) | `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
+| [03: task details](03-features-and-work.md#detailed-task-payload-and-retained-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
+| [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
+| [17](17-budgets-and-controls.md) | [schema.sql](schema.sql) | `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
 
 [Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
 

@@ -1,1 +1,0 @@
-Superseded by 6bf98b5 (sent after your question). Nothing in IA-19 waits for IA-13. The New ▾ button, N, the Single-key shortcuts switch and the Keyboard section of Your preferences all ship with IA-19 in IA-M1. Only `/` waits: it ships with IA-13 (Search), and the switch governs it from day one. That's your freeze as written, so Jules can go ahead.

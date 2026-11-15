@@ -1,5 +1,0 @@
-Retro 2, Emery:
-1. RIGHT: IA v2 went from the owner's ask to the v1.0 shape in a day. The joint triage list (64 rows) landed 70 minutes before the 17:30 deadline and was accepted with no re-baseline. Product calls came back to Rowan and Eden within minutes each (D36, D37, the IA-10 kinds, Needs me and hand-offs), and the AC IDs never changed.
-2. WRONG: the prototype took 7 fresh-review rounds across draft 4 and 4.1. Review rounds 1-3 each caught a defect introduced by the previous fix (a CSS class collision, a sub-nav regression on wide screens, a missing data-id). Also, one commit (cbf2d5cd) went out with the wrong co-author trailer because a helper substituted its own model name.
-3. FIX: the first review of any prototype change renders it (Playwright, 3 widths × both data modes, focus flows). Code-only reading missed every one of those defects.
-4. WASTE: my goal evaluator looped on criteria outside the stated condition (trailers, re-quoting briefs) for about 6 turns. Now I write conditions as checkable facts only.

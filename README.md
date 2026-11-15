@@ -1,24 +1,30 @@
 # Agentic Org
 
-See the [project documentation](docs/README.md) for requirements, UX specs, architecture decisions and supporting knowledge.
+Agentic Org's selected v1 architecture is a standalone Rust server on macOS/Linux
+with a static browser application served by HQ. Offices execute agents and serve
+authorized organization data; teams and projects belong to the organization.
+Tauri is deferred to v2.
 
-**V1 direction changed 2026-11-09:** the target is a standalone Rust server
-on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
-See the [server design](docs/design/standalone-server.md) and [deletion inventory](docs/design/standalone-server-removal-inventory.md).
-This documentation change specifies the pivot; the source described below is the
-inspected pre-pivot implementation. Its Tauri/bundle commands are historical
-development instructions, not installation instructions for the new v1. Do not
-claim the new CLI, HTTP server or remote sync exists until implemented. No migration
-of the undeployed desktop app or its data is required.
+The [organization-data contract](docs/design/organization-data/README.md) is the
+source of truth for selected relationships, fields, canonical storage, execution
+and operational data. Read the [authority map](docs/design/documentation-authority.md)
+for the corresponding design/UX guides and their implementation boundaries.
 
-The same proposal includes [employee supervision and native delegates](docs/specs/employee-supervision-ux.md),
-[process delivery and standards lookup](docs/specs/processes-ux.md), and
-[channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
-belongs to the offices; the browser accesses it through HQ.
+Employees have one home team; projects have an accountable owner team and may
+share registered repositories. Tasks, bugs and requests share one typed task
+model, with independent ownership and assignment. Portable definitions/work files
+live in organization Git. Protected chat, private task notes, usage, budget and
+recovery records have separate durable sources; neither a Git clone nor a fresh
+office cache is a complete organization restore.
+
+The selected data model is a design, not a deployed migration. The executable
+status below identifies available entry points. Automatic scheduling/memory,
+process execution, Areas, Undo and retrospectives remain unselected; their earlier
+proposals do not become shipped capabilities because a related data record exists.
 
 ## Proposed v1 layout
 
-The [organization data documentation](docs/design/organization-data/README.md) defines the proposed durable organization/project/agent data model. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
+The [organization data documentation](docs/design/organization-data/README.md) defines the selected organization/project/employee data model, including messaging, recovery and budget records. The [documentation authority map](docs/design/documentation-authority.md) distinguishes target contracts from current implementation and deferred engines. Its model-profile and agent-execution document is a linked implementation specification; application migrations are not applied by those SQL drafts.
 
 
 Application directories, Cargo packages and executable names now match:
@@ -42,9 +48,12 @@ Follow the [architecture rules](docs/architecture-rules.md) and
 organization, shared code ownership, and the source-to-target implementation plan.
 The application/package naming migration and Tauri-shell removal are implemented. Remaining standalone deployment features are listed above. Browser areas without a gateway adapter show unavailable
 in both ordinary development and release; test fakes require explicit test composition.
-The historical shell commands below no longer run against this tree.
+The historical desktop shell commands are retained in Git history, not as instructions for this tree.
 
 Run the UI checks from `apps/agentic-org-ui`:
+
+See [development tooling](DEVELOPMENT.md) for pinned runtimes, security checks,
+linting, browser security suites, and Codex skills.
 
 ```sh
 cd apps/agentic-org-ui

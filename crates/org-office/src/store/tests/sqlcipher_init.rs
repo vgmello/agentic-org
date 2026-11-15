@@ -517,7 +517,9 @@ fn sqlcipher_policy_scans_source_directories_and_cargo_configuration() {
         "build",
     ] {
         assert!(skip_policy_directory(Path::new(name)));
-        assert!(skip_policy_directory(&Path::new("apps/agentic-org-ui").join(name)));
+        assert!(skip_policy_directory(
+            &Path::new("apps/agentic-org-ui").join(name)
+        ));
         assert!(!skip_policy_directory(
             &Path::new("crates/org-office/src").join(name)
         ));

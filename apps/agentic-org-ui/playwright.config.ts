@@ -7,6 +7,8 @@ const productionPort = port + 1;
 // The default suite continues to work with only Chromium installed.
 const webkit = process.env.PW_WEBKIT === '1';
 
+// The ui-gate guards read this literal layout; preserve it when formatting.
+// prettier-ignore
 export default defineConfig({
 	testDir: 'e2e',
 	fullyParallel: true,
@@ -14,7 +16,7 @@ export default defineConfig({
 	expect: { timeout: 15_000 },
 	forbidOnly: !!process.env.CI,
 	outputDir: 'test-results',
-	use: { viewport: { width: 1440, height: 900 }, screenshot: 'on' },
+	use: { viewport: { width: 1440, height: 900 }, screenshot: 'on', trace: 'retain-on-failure' },
 	projects: [
 		{ name: 'chromium', testIgnore: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}` } },
 		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } },

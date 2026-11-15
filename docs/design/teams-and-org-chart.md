@@ -1,145 +1,112 @@
 # Design: teams and the org chart
 
-Status: **approved by the user** 2026-11-08 (decisions at the end); amended by ada 2026-11-08 (agents as members, `member.move`, one handle namespace); amended by ada 2026-11-08 (offboarding as a state, run modes); amended by ada 2026-11-08 (reserved and refused handles: `office`, `run:` and ULID-shaped handles, the owner's display name exempt). Owner: ada. It follows the user's model (2026-11-08). It builds on `offices-hq-and-satellites.md`: teams are organization data, so HQ owns them and every office has a copy.
+Revision 2, 2026-11-15. Selected target relationships are owned by [organization structure](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md) and [employees](organization-data/04-agent-structure.md). This design applies them to the chart. It does not enact a migration or implement new commands. See the [authority map](documentation-authority.md).
 
 ## The user's model, in short
-- An organization is made of **teams**, and **a team can be owned by another team**: just teams and their sub-teams.
-- **There are only teams** *(the user: "guilds are not a thing, it's just teams"; divisions aren't a concept either)*. A "division" is just a team that owns other teams.
-- **Members are agents or people (humans), and each can be in several teams.** People are tracked and shown differently from agents. Only agents are placed in offices.
-- **Agents can only interact with people who have been added** to the organization.
-- **A lead is optional, and can be an agent or a person.** A team's lead is also the lead of that team's projects.
-- **The owner (you) isn't a member of any team.** You're the organization's special user:
-  - you have full rights everywhere (every team, member and project)
-  - any agent can message you, ask you or assign you work
-  - you're shown separately in the chart, not on team cards
-- **A project is usually worked on by one team, but several teams can share it**, through its own relationship.
-- **Reporting lines stay** *(the user: "reports to is still valid")*: each agent or person can report to someone, with the owner at the top. They're separate from teams: the team chart doesn't replace them.
-- **One chart, three ways to look at it:** the team tree, the same tree showing **only people** (the human org chart), and the **reporting lines**.
+
+- An organization has a recursive forest of teams. A division, portfolio or guild name does not introduce another entity type.
+- Every employee, agent or person, has exactly one required home team. A team can have direct agents, direct people and child teams at once.
+- An optional lead must be a direct employee of the team. The lead manages the entire subtree, including child-team leads. An ordinary ancestor-team member has no automatic management authority.
+- Explicit person-to-person reporting stays separate from the team tree and must be acyclic. A reporting reference does not remove ancestor-lead responsibility.
+- Every project has one accountable owner team and may name contributing teams. Working on a task never requires joining another team.
+- Offices place agents; they own neither teams nor projects. People have no execution placement.
+- The authenticated owner is a security principal. If represented by an employee record, that record obeys the required home-team rule. An owner bar is a presentation of account authority, not an exemption from employee data constraints.
 
 ## The model
-- **Team** `{ id, name, owner_team_id?, lead_member_id?, version }`
-  - `owner_team_id` empty means a top-level team.
-  - **Ownership forms a tree:** each team has at most one owner, and a team can't own itself or any team above it. HQ rejects a move that would create a loop (`cycle`).
-  - **The lead** is optional: an agent or a person who's a member of that team. **The team's lead is also the lead of the team's projects.** A project shared by several teams has each of those teams' leads.
-- **Member** `{ id, kind: agent | person, name, contact?, owner?, office_id? (agents only), agent? (agents only), reports_to_member_id?, created_at?, version }`
-  - `reports_to_member_id`: who they report to (an agent or a person). Empty means directly to the owner. The owner reports to no one.
-  - `created_at`: when HQ created the member. HQ sets it, and it never changes. For an agent, the profile shows "hired on" from it. Records from before it existed don't have it.
-  - **An agent** is an AI employee. Its record also says which office it's placed in.
-  - `agent` is an agent's profile, `AgentProfile { role, title, focus?, runtime, model?, run_mode?, schedule?, home?, messaging_name, status, offboarded_at? }`. In org-proto it's `agent: Option<AgentProfile>`, set for agents and empty for people. (Amended 2026-11-10: X-02 D7, an approved draft not yet in this repo, see the launch v3 note in office-host-boundary.md §3. `home` leaves `AgentProfile` in `org-proto` v2; the owning office reports the managed home as status.)
-    - `model`: the model the runtime uses, if the agent sets one.
-    - `run_mode`: how the agent is run: `always_on`, `on_call` or `scheduled`. Empty (`None`) means the agent isn't office-run. `schedule` (a `spec` and a `time_zone`) is set exactly when `run_mode` is `scheduled`.
-    - `status`: `active`, `paused` or `offboarded`. `offboarded_at` is set exactly when it's `offboarded`.
-  - **A person** is a human added to the organization. `contact` is how they're reached, e.g. an email; that's for later.
-- **The owner** is a person record with `owner: true`, created with the organization. It's the organization's **special user**:
-  - **not a member of any team**, so it's never stored as a membership or counted in a team's members;
-  - it has **full rights everywhere** (every team, member and project);
-  - **any agent can message it, ask it or assign it work**;
-  - it **can't be removed**, added to a team, or made a team's lead. Any of those returns `owner_protected`.
-- **Membership** `{ id, team_id, member_id, title_in_team?, version }`: an agent or a person can be in **any number** of teams. `title_in_team` is a free-text label, e.g. "frontend lead". It's named that way so it isn't confused with the organization's role catalogue.
-- **Project team** `{ id, project_id, team_id, version }`: the teams working on a project. Usually one, sometimes several. A project with none is **unassigned**, e.g. one created before any teams exist; the charts show those in their own group, and the app prompts to assign them.
-- **Who agents may interact with:**
-  - An agent may message, `ask` or assign a task to **another agent** of the organization, or to a **person who's a member** of the organization. The owner is always reachable.
-  - Anyone else is rejected with `unknown_recipient`. This is the only way agents reach humans, and it's what makes adding a person meaningful.
-  - **Where it's checked:** messages and tasks are office-first (offices design), so the **sender's office** checks the recipient against its own copy, at the organization position it has applied, and rejects at once. HQ checks again when it forwards to another office. A recipient removed in between gets the message dead-lettered, and the sender gets a `delivery_failed` notice.
-  - **When a member is removed:** messages still queued for them are dead-lettered the same way. Their open tasks are reclaimed to HQ and become unassigned (offices design, reclaim), and they're shown to the owner for reassignment.
+
+All records use stable IDs, `schema_version`, entity `revision` and common creator/update attribution. New stable IDs are UUIDv7; existing IDs remain unchanged. [Numbering](organization-data/06-identity-and-numbering.md) owns readable references and durable allocation. TEAM- and P- numbers are organization-scoped; names are display text, not IDs.
+
+| Entity | Selected fields and meaning |
+| --- | --- |
+| Team | `id`, `number`, `name`, nullable `parent_team_id`, nullable `lead_employee_id`, `status: active | archived`, `revision`. Null parent means root. `TEAM-<number>` is derived. |
+| Employee | `id`, organization-unique lowercase `handle` stored without `@`, `kind: agent | person`, `name`, required `home_team_id`, optional `role_id`, optional `reports_to_employee_id`, body, `status: active | inactive`, `revision`. |
+| Retained employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team`, plus `is_owner`, optional agent-only `agent_status` and `offboarded_at`. `role_text` does not fabricate a normalized role ID. |
+| Project | `id`, `number`, organization-unique `slug`, `name`, required `owner_team_id`, optional `contributing_team_ids`, repository associations and revision. |
+| Placement | Agent `employee_id`, `office_id`, `placement_generation`; separate from employee identity. Rebuild from durable placement authority, not from a folder's existence. |
+| Execution | Separate `execution.md` selects `model_profile_id`, canonical `model_id`, tools, enabled state and prompt. Profiles contain ordered provider connections; credentials remain office-local. |
+
+An employee has no membership rows in the selected model. `title_in_team` describes its sole home-team appointment. A move changes `home_team_id` and canonical path together, preserving ID/handle/history; it never silently changes task assignment. Null `reports_to_employee_id` means no explicit employee manager recorded. The UI may group these records below an owner bar without inventing an owner employee foreign key.
+
+The owner employee marker preserves historical data; it does not grant login or administrator rights. The built-in HR employee likewise requires a valid home team. Bootstrap must receive or create a valid team through an explicitly chosen setup operation; this design does not choose its name, ID or lead.
 
 ## Rules HQ enforces
-- no ownership loops, and **no reporting loops** (nobody reports to themselves, directly or through others): `cycle`
-- a lead must be a member of the team (`not_a_member` otherwise). **Removing the lead from the team clears the lead**, in the same event, and the team's version goes up.
-- **deleting a team** that owns teams is refused (`not_empty`) until they're moved or deleted.
-  - Its memberships and project links go with it.
-  - A project left with no team becomes unassigned.
-- **removing a member** (an agent or a person) removes their memberships, clears them as lead of any team, and makes whoever reported to them report to the removed member's own manager (or to the owner if it had none), in the same event. This can't create a loop. Each affected team's and member's version goes up. **The owner can't be removed.**
-  - Removing is a **hard delete**, only for a member with no history. HQ can't see history (messages, tasks), so checking that is the caller's duty.
-  - HQ refuses to remove an offboarded agent (`invalid_request`).
-- **offboarding an agent is a state, not a deletion.** It sets the agent's status to `offboarded`, with `offboarded_at`.
-  - It cascades like removing for live relations, in the same event: it removes the agent's memberships, clears it as lead of any team, and makes whoever reported to it report to its own manager (or to the owner if it has none).
-  - It keeps the record and the handle. **An offboarded agent's handle stays reserved for good.** The agent is listed under **Former members**.
-  - Historical references (authorship, activity) keep pointing at it.
-  - Its open tasks are reclaimed, as when a member is removed (see "Who agents may interact with"). Whether it can still receive messages is for ADR-0003 to decide.
-  - Afterwards, `team.add_member`, `team.set_lead` and `member.set_reports_to` that name an offboarded agent return `invalid_request` ("offboarded"). An offboarded agent can't be edited, paused or given a run mode either.
-- **app-only commands:** an org command from a connection that isn't the app's (bound with `app_token`; in `org-proto` v2, a host-made channel with a human `principal`, X-02 §4.4), such as an agent-bound one, is refused with `not_authorized`, unless a row of ADR-0003's call-by-call table (§2.1.4) allows it. Today every org command is app-only: the table has no row for one. That includes `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.set_run_mode`, `member.offboard` and `member.remove`. The office that receives the command (the one the client is bound to) checks this, because it knows the connection. HQ accepts org commands only from its own office's connections or from enrolled offices relaying them (offices design).
-- **names:** a team's name is unique among teams with the same owner, (top-level teams count as siblings of each other). A create, rename or move that would clash returns `already_exists`.
-- **handles:** there's **one handle namespace**, compared ignoring case. It holds agents' `messaging_name`s, people's names and the reserved `owner`, the owner's handle. Adding an agent or a person, changing an agent's `messaging_name` or renaming a person, when the handle is already taken, returns `already_exists`, whichever kind holds it: an agent can't take a person's name, and a person can't take an agent's `messaging_name`. A removed member frees its handle. An offboarded agent never does.
-  - **Member ids:** a member id is exactly 26 ASCII letters or digits (ULID-shaped; client-made for people and agents, server-made for the owner at `--create`); anything else is `invalid_request`. With handles never ULID-shaped, ids and handles can't collide by construction.
-  - **Reserved and refused:** `owner` and `office` are reserved handles (`office` is the server's sender id): taking either is `already_exists`. A handle starting with `run:` (any case; one-off run addresses, `run:<office>/<run>`, are defined in the agent-sessions design, in review) or ULID-shaped (shaped like a member id) is refused with `invalid_name`, for people and agents alike, so a handle never shadows an id or an address. **ULID-shaped** means exactly 26 characters of the Crockford base32 alphabet, compared ignoring case, counting I, L, O and U too (a lenient decoder maps them). **The owner's display name is not a handle**: it's exempt from the namespace, so a person may share it. The owner is addressed only as `owner`.
-- adding someone who's already in the team, or linking a team that already works on the project, returns `already_exists`.
+
+These are target write/import invariants, not claims about existing handlers:
+
+- Reject team and reporting cycles, cross-organization references, path/field mismatches and a lead whose home team is elsewhere.
+- Employee creation, including owner/HR employee bootstrap, requires a valid home team. A runnable agent additionally needs separate valid execution configuration and placement/readiness evidence.
+- A home-team move is one revision-checked, recoverable operation. Resolve an old-team lead appointment before it would become invalid; update paths with the same identity change. An office move requires safe workspace transfer and fencing, independently of membership.
+- A project cannot be created or left without its owner team. Optional contributors do not share accountable ownership. Changing the owner updates project tasks' accountable `team_id` in the same recoverable operation and records history, retaining current assignments.
+- Archive teams to preserve history. A destructive delete must first resolve child teams, home employees, owned projects/tasks and other referenced records; never cascade employees into teamless records or projects into an unassigned group.
+- Inactive/offboarded employees retain profiles, home team, stable ID and handle. Clear/replace live leadership and resolve reporting/assignment references explicitly. New assignment/ownership targets must be active. Do not infer that offboarding deletes files or task worktrees.
+- Assignment is separate: every task has accountable `team_id`, optional project, independently nullable `assigned_team_id` and `assignee_id`. Replace the complete assignment pair atomically with expected revision and durable event history. Clearing an assignee preserves accountability and does not itself change task status.
+- Messaging checks registered participants under [messaging/chat](organization-data/15-messaging-and-chat.md). Employee identity alone grants no tools, repository access or security authority.
+
+Current authorization, reserved messaging addresses and cryptographic identity namespaces remain governed by existing contracts. A data-model migration must preserve them rather than deriving new authority from role text, YAML flags or chart position.
 
 ## How it changes
-These are organization commands, so they go through HQ and every office gets the resulting events (offices design). Every command here is app-only today (see the rules):
-- `team.create { team_id, name, owner_team_id? }`, `team.rename`, `team.move { team_id, owner_team_id? }`, `team.set_lead`, `team.delete`
-- `team.add_member { membership_id, team_id, member_id, title_in_team? }`, `team.remove_member { membership_id }`, `team.set_title { membership_id, title_in_team? }`
-- `project.add_team { project_team_id, project_id, team_id }`, `project.remove_team { project_team_id }`
-- **Members:**
-  - agents are added with **`member.add_agent { member_id, name, office_id, profile }`** (app-only). Hiring (the HR flow, its own design) issues it.
-  - an agent's profile is edited with `member.update_agent` (app-only), and its status set with `member.set_agent_status` (app-only; `active` or `paused`)
-  - **`member.set_run_mode { member_id, expected_version, run_mode?, schedule? }`** (app-only) sets how an agent is run. `schedule` is required for `scheduled` and absent otherwise. Leaving `run_mode` out (`None`) makes the agent not office-run.
-  - people are added with `member.add_person { member_id, name, contact? }` and edited with `member.update_person { member_id, name?, contact?, clear_contact? }`
-  - **`member.set_reports_to { member_id, reports_to_member_id? }`** sets a reporting line (`cycle` on a loop; `owner_protected` for the owner)
-  - **`member.offboard { member_id, expected_version }`** (app-only) offboards an agent: it sets its status to `offboarded`, with `offboarded_at`, and cascades as in the rules above. The record and the handle stay.
-  - **`member.remove { member_id, expected_version }`** (app-only) is only a hard delete, of anyone except the owner, for a member with no history (the caller checks). It refuses an offboarded agent.
-  - **`member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }`** (`title_in_team` is the new membership's title; the old title isn't carried over) moves a member from one team to another **atomically**: one event removes the old membership and adds the new one. If the member led the team they leave, removing them clears the lead, as above.
 
-Each command carries a client-made id for anything it creates, and the version of what it edits, as in the offices design:
-- `team.move` expects the moved team's version. The new owner and the loop check are judged against HQ's current state.
-- `team.rename`, `team.set_lead` and `team.delete` expect the team's version.
-- Membership commands name the membership by its **id** and expect its version (`set_title`, `remove_member`), so a stale queued command never hits a membership that was removed and re-added (that one has a new id). `add_member` needs only that the team and member exist. A membership is its own entity, so adding or removing members doesn't change the team's version (clearing a departing lead does).
-- Project-team links are their own entities too, with ids: `add_team` needs the project and team to exist, and `remove_team` names the link by id and expects its version.
-- `member.remove`, `member.offboard`, `member.update_person`, `member.update_agent`, `member.set_agent_status` and `member.set_run_mode` expect the member's version. `member.move` names the old membership by id and expects its version, like `remove_member`.
+Selected canonical organization Git paths:
 
-A command queued in a satellite's outbox can find its team, owner or member deleted, or its version stale. It's then rejected with `not_found` or `conflict`, and shown as blocked (offices design).
+```text
+organization.yaml
+roles/<role-id>.md
+teams/<root-team-id>/
+├── team.yaml
+├── agents/<employee-id>/
+│   ├── profile.md
+│   └── execution.md
+├── people/<employee-id>/profile.md
+└── teams/<child-team-id>/...
+projects/<project-id>/project.yaml
+```
 
-**Reading:** the app reads from its local office's copy with **`org.snapshot`**, the one read call. It returns the teams, members (with the owner marked), memberships, projects and project-team links, together with the **position** it reflects. `subscribe { from_position }` then resumes from exactly that point, so no change slips in between.
+The organization repository must be remote. Register code repositories once in `repositories.yaml`; each project's repository association supplies its required `integration_branch`. One office cache per repository serves all those associations. Canonical employee files and task history are durable; runtime worktrees and indexed projections are not their sole source. Protected messages, private notes, usage and authority require their own durable sources; Git alone is not a full restore.
+
+Target mutation services must validate revisions, commit recoverable related changes and expose pending/rejected outcomes without silently selecting one old membership as home. Import of legacy multi-membership members requires an explicit home-team choice; preserve unselected associations in staging. Existing task IDs/numbers and history survive; old B-/REQ- references require explicit mappings rather than renaming prefixes.
 
 ## The chart
-One org chart over the same data, with three ways to look at it:
-1. **Teams:** the ownership tree of all teams.
-   - Each team is a card showing its name, lead, members and projects.
-   - **Agents and people look different** on the card: separate rows, different styles.
-   - A member in several teams appears in each, with a "+2 teams" badge listing the others.
-   - A shared project shows on each of its teams' cards, with a "shared" badge.
-   - **The owner isn't on any card.** It appears separately, at the top, as the organization's owner.
-   - Collapse and expand any branch. Drag a team onto another to move it, with a confirmation, and HQ checks for loops.
-   - A filter by office highlights agents placed in a given office.
-2. **People** (the human org chart): the same team tree **showing only people**. It's where you add a person, and it shows plainly that **agents can only reach people listed in the organization**.
-3. **Reporting lines:** who reports to whom, with the owner at the top. Agents and people look different here too. It's where you set someone's manager.
 
-An offboarded agent is in no team and manages no one, so it's on no team card. It's listed under **Former members**.
+One chart has three views:
 
-Editing (create, add member, move, add a person, link a project, set who someone reports to) is available from all three. Changes waiting in an offline satellite's outbox show as **pending**, and rejected ones as **blocked**, as in the offices design.
+1. **Teams:** recursive cards show TEAM- reference/name, direct employees separated into Agents and People, direct lead, child-team count, and projects marked **Owner** or **Contributor**. A person appears once at their home team. A project can appear on several cards with one clear owner; no synthetic set of project co-leads is inferred.
+2. **People:** the same team tree with human employees only. Agent leads may still be named as agent leads; empty teams remain compact cards so hierarchy remains visible.
+3. **Reporting lines:** explicit reporting relationships, distinct from subtree lead responsibility. Records with no explicit manager can appear under the owner presentation with that absence stated. Every employee appears once.
+
+The owner security bar can appear above every view. A linked owner employee still appears/counts at its home team. The built-in HR shortcut can also appear above the chart while its employee remains visible at its required home team. Former members retain historical home-team context in their own view, rather than becoming teamless.
+
+Support collapse/expand, keyboard and list alternatives, search preserving selection across tabs, menus for every drag action, and office highlighting of agents without changing the tree. Forms require a home team or project owner team and explain stale state, failed validation and pending office outbox outcomes. No active **Not in a team** or **Unassigned projects** group is valid; unresolved legacy imports belong to a repair/staging view.
 
 ## In org-proto
-- Types: `Team`, `Member` (with `kind`, an `owner` flag and, for agents, `office_id` and `agent: Option<AgentProfile>`), `AgentProfile`, `RunMode`, `Schedule`, `Membership`, `ProjectTeam`, `Position`, `CommandAccepted` (`committed` with a position, or `queued` while HQ is unreachable).
-- Calls: the commands above, `org.snapshot` (the read, with its position) and `subscribe { from_position }`.
-- Events: one per command.
-- Error codes: `cycle`, `not_empty`, `not_a_member` (a lead who isn't in the team), `owner_protected` (removing the owner, adding them to a team, making them a lead, or giving them someone to report to), `not_authorized` (an app-only org command from a connection that isn't the app's), `invalid_request` ("offboarded": a command that names an offboarded agent where it's refused), `not_found` and `conflict` (both also used by the offices design), `unknown_recipient` (messaging and tasks, ADR-0003), `snapshot_required` (`subscribe` can't resume from the given position), and `expired` / `clock_skew` (any command, offices design), plus the existing ones.
-- Events: `org.changed` (with the `command_id`) and **`org.rejected`** (a queued command HQ rejected, with its `command_id` and error), so a satellite's app can show it as blocked.
-- Names (teams, people, agents) follow the organization-name rules (trimmed, not empty, no control characters: `invalid_name`), and sibling team names compare ignoring case. An agent's `messaging_name` has its own format: 1 to 64 ASCII letters, digits, `-`, `_` and `.`, starting with a letter or digit (`invalid_name` otherwise). `invalid_name` also covers a handle starting with `run:` (any case) and a ULID-shaped handle (see handles above).
-- `already_exists` covers a sibling team name, a membership or project-team link that already exists, and a handle that's already taken (agents' `messaging_name`s, people's names, the reserved `owner` and `office`; one namespace, ignoring case).
-- **The crate (`org_proto::org`) is the reference for the exact shapes.**
-- `project.create` gains `team_ids?` when the projects contract (GitHub design, G1) is written. It isn't in the crate yet.
-- `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`, `AgentProfile` and the handle rule are in the crate on `v1` (server-dev's `proto-agents`). The rules for `office`, `run:` and ULID-shaped handles, and the owner's display-name exemption, are in server-dev's `proto-wording` (in review), not on `v1` yet.
-- Offboarding as a state (`member.offboard`, the `offboarded` status, `offboarded_at`), `model`, `run_mode` and `schedule` on `AgentProfile`, `Member.created_at`, `member.set_run_mode`, the app-only rule and `member.remove`'s re-pointing to the removed member's own manager are in the crate on `v1` too (server-dev's `proto-offboard` and `proto-remove-align`).
-- The crate's "Who may send what" says the agent-sessions design lists the calls agents may make. Those rows go into ADR-0003's call-by-call table, which this design cites.
-- Messaging (ADR-0003) and tasks check recipients against members: agents, and people who've been added.
+
+### Current-contract evidence at c6e520a (pre-migration)
+
+The exact source at this reconciliation's base remains [org_proto::org](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/crates/org-proto/src/org.rs). Existing wire APIs must not be reinterpreted as the target fields:
+
+| Existing contract | Target adaptation required |
+| --- | --- |
+| `Team.owner_team_id`, `lead_member_id`, `version` | Map parent/lead to `parent_team_id`, `lead_employee_id` and revision with validated direct home membership. |
+| `Member`, `Membership`, `team.add_member`, `team.remove_member`, `team.set_title` | Choose one home team explicitly; retained appointment title lives on employee. No direct target counterpart for arbitrary additional memberships or removing the last team. |
+| `member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }` | Preserve current atomic remove/add semantics on this wire; selected target needs an employee-revision home-team move and coordinated file/lead updates. Do not invent a replacement command. |
+| `ProjectTeam`, `project.add_team`, `project.remove_team`, optional team lists | Require an accountable owner plus optional contributors; no current list-order inference of owner is permitted. Areas remain unselected. |
+| `AgentProfile` runtime/model/home/run-mode fields and `office_id` | Separate portable employee identity, execution configuration and placement. Existing managed home remains local server state. Run modes/scheduling are earlier requirements, not selected engines. |
+| `member.offboard` / `member.remove` | Existing offboarding cascades memberships and retains record/handle; target retains required home team. Hard delete remains for records without history only, subject to all references. |
+
+Existing `org.snapshot` returns teams, members, memberships, projects/project links and a position; `subscribe { from_position }` resumes there. Retain no-gap reads, version conflicts, command-ID deduplication, queued/blocked outcomes and `org.changed`/`org.rejected`. `command_id` remains the existing uppercase ULID wire identity; selecting UUIDv7 for new stable domain IDs does not change this protocol or signing namespaces.
+
+Current commands are app-only unless ADR-0003's call-by-call authorization table explicitly permits otherwise. Preserve receiving-office authorization before forwarding, enrolled-office checks, reserved `owner`/`office` and `run:` addresses, handle-vs-ID disambiguation, `owner_protected`, `cycle`, `not_empty`, `not_a_member`, `conflict`, `not_found`, `unknown_recipient`, `snapshot_required`, `expired` and `clock_skew` semantics on that wire. Existing people-name-as-handle behavior needs explicit migration to independent handle/name fields. No target UI may claim that unsupported writes already enforce new constraints.
 
 ## Plan
-| Step | What | Who |
-| --- | --- | --- |
-| T0 | UX for the chart's three views and the editing flows | Eden (product designer), with app-frontend-dev. Her spec needs updating for the owner, people and shared projects |
-| T1 | The contract in `org-proto` (`org_proto::org`). `team_ids?` on `project.create` follows with the projects contract (G1) | ada |
-| T2 | Teams, members (the owner, people, agents with `AgentProfile`), memberships and project-team links as commands, events and apply code in `org-office`, with the rules above and tests (loops, non-empty delete, multi-team membership, the owner can't be removed or lead, `member.move` atomicity and lead clearing, the handle namespace in both directions, offboarding's cascade and its kept handle, the refusals that name an offboarded agent, app-only commands) | server-dev, after the HQ event log |
-| T3 | The app: the chart's teams, people and reporting-lines views, and editing. Built on a mock with the T1 types first, then on the office | app-frontend-dev |
 
-Each step: its own branch, an independent review, my go, then merge into `v1`.
+| Step | Remaining target work | Responsibility |
+| --- | --- | --- |
+| T0 | Chart forms and criteria for home team, subtree leads and accountable projects | Product design / app owner |
+| T1 | Versioned contract and explicit migration mapping from current memberships/project links | Contract owner |
+| T2 | Recoverable domain writes, canonical files, projection and preserved legacy history | Domain/store owners |
+| T3 | Integrate live browser reads, pending outcomes and accessible editing after supported contracts exist | App owner |
+
+Implementation and migration need their own review. No step is claimed complete by this documentation change.
 
 ## Decisions (the user, 2026-11-08)
-- Teams own teams. **There are only teams:** no guilds, no divisions, no labels.
-- Members (agents and people) can be in several teams. **Only agents are placed in offices.**
-- **Leads are optional,** and can be an agent or a person. A team's lead also leads the team's projects.
-- **The owner is the organization's special user:** in no team, full rights everywhere, reachable and assignable by any agent, and shown separately.
-- **People are tracked and shown separately from agents.** Agents can only interact with people who've been added to the organization.
-- **The human org chart is the team chart showing only people.**
-- **Reporting lines stay**, separate from teams, with the owner at the top.
-- **No `Workflows` permission** for the GitHub App (recorded here for completeness; see the GitHub design).
-- **Projects can be shared by several teams** (usually one), through their own relationship.
+
+The earlier decisions established recursive teams, optional human/agent leads, distinct people, three chart views, reporting and shared project participation. Later organization-data decisions replace multi-membership with one home team and replace symmetric project-team links with one owner plus contributors. The earlier teamless owner is superseded for employee records; authenticated owner authority remains separate. Full earlier requirements and wire discussion remain in [the pre-reconciliation design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/teams-and-org-chart.md). No `Workflows` GitHub App permission is selected here; see the GitHub design.

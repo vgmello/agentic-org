@@ -1,94 +1,98 @@
 # Design: processes (how agents work, written down and inherited)
 
-Status: **proposed, rev 3** 2026-11-08. Owner: ada. It implements Eden's spec [`processes-ux.md`](../specs/processes-ux.md) rev 3 (PROC-1 to PROC-19) without redefining its UX, except decision 13, which spec rev 3 adopts, and builds on [`tasks-projects-docs.md`](tasks-projects-docs.md) (W7), [`agent-sessions.md`](agent-sessions.md), [`projects-git-github.md`](projects-git-github.md) and [`teams-and-org-chart.md`](teams-and-org-chart.md). The first process, [`branch-and-merge.md`](../processes/branch-and-merge.md), is the reference shape.
+Revision 5 · 2026-11-15. Owner: ada. [Organization structure](organization-data/01-organization-structure.md), [project structure](organization-data/02-project-structure.md), [identity](organization-data/06-identity-and-numbering.md) and [record contracts](organization-data/08-record-contracts.md) select process/standard **content**, scopes and default-allowed override flags. Effective resolution, approval workflows, private processes, timers, checklist composition and process execution remain unselected/deferred. Existing `org-process` parsing/resolution/branch helpers and read-only UI are implementation evidence of the earlier contract, not a selected end-to-end process service. The [authority map](documentation-authority.md) governs precedence.
 
-**Proposed amendment, rev 4 (2026-11-09, owner request):** §3.5 extends delivery for
-fresh contexts, standards lookup and tool help (spec rev 5, PROC-27..30). The rev 3
-design's existing autonomy/branch-rule differences from spec rev 4 still need
-reconciliation; this amendment does not silently decide them.
-
-**Standalone-v1 integration (2026-11-09):** human controls use the authenticated,
-authorized HQ HTTP boundary in [standalone-server.md](standalone-server.md).
-Process composition, enforcement and handbook access remain office responsibilities;
-closing the browser does not unload instructions or suspend enforcement. Native
-desktop trust is not an authorization mechanism in v1.
-
-A new pure library, **`org-process`**, holds the parsing, the resolution and the one-branch rule; the office does the I/O.
+The detailed delivery/branch algorithms below remain reviewable proposals or versioned library behavior where stated. Selected files cannot be fed to the old parser as though their lifecycles/fields were identical. No new CLI/wire command is claimed implemented by this revision. Human controls use the authenticated HQ boundary; a browser connection or office certificate alone grants no role authority.
 
 ## Decisions
-All decided 2026-11-08, except A55's docs-branch limit, which waits on the user (U28).
-1. **A51 Storage.** Everything persistent lives in repositories. Project processes go in the project repo's `docs/processes/`. Organization and team processes go in the organization's handbook repo (`processes/`, `teams/<team key>/processes/`), created with the organization and changed through the same branch-and-merge flow. HQ keeps only an **index** (process key, level, scope, version, path, commit sha, status, overridable or sealed, overrides), rebuilt from the repos and never holding the text. *Teams have no key, so this design writes `teams/<team id>/` (A60).*
-2. **A52 Private processes** live in the handbook at `agents/<member id>/processes/`. The organization owns them and the owner can see them. They survive offboarding as history. The agent changes them through the merge flow, and the owner approves.
-3. **A53 Resolution.** The office computes the effective set per (agent, project) from default or integration branches only, never a working branch. Order: organization → team(s) → project → agent. Processes match on the `process:` key, the lowest level wins, and a sealed process can't be overridden. The result is cached, keyed by the commit shas involved, and pushed at session start and wake. `process why <key>` reads the same result and shows each layer.
-4. **Multi-team conflict.** If two teams both override the same key for one shared project, and the project doesn't resolve it, the agent follows the organization's version. If the organization has none, neither override applies. The conflict shows in Needs you for the project's lead and the owner. Work isn't blocked.
-5. **Identity.** A process keeps W7's doc identity (`tasks-projects-docs.md` §4.9: a number or `doc-<ULID>`). The match key is separate: `process: <key>`, unique per (level, scope). Overrides match on it; a hand-written `id:` never does.
-6. **A54 Enforcement.** The office refuses `task start` and the creation of a new task branch while the agent has an open task branch that isn't merged, which it knows from the merge flow. The error is `one_branch_open`, naming that branch. The lead or the owner can grant a one-time exception, recorded on the task. Hotfixes follow the same rule.
-7. **A55 Which branches count.** Only the task branch blocks a task start; office-opened docs, process and retro branches don't. *Pending the user (U28):* at most one open docs branch per agent (a second doc change waits or joins it), and one open longer than a day shows in the lead's Needs you.
-8. **A56 Base branch.** Task branches start from the project's `integration_branch` (the default branch when it's empty). No new setting.
-9. **A57 One source for a project's guidance.** Instruction files, guidance files (`docs/.guidance/<moment>.md`) and project processes are all read from the project's `integration_branch` (the default branch when empty), so all three follow merged work.
-10. **A58 Branch cleanup.** After a merge, the office deletes the remote task branch only if its head is an ancestor of `integration_branch` (checked on the mirror), after pushing a `merged/<branch>` tag at that head. A task closed without a merge gets an `archive/<branch>` tag pushed first, then the branch is deleted. The office only deletes `task/*` branches it created: never the default or integration branch, never a force push, never a tag. The local worktree and branch go too. It uses the push's `contents: write` token.
-11. **Own work stays on the agent's plate** (decided 2026-11-08). A task with own unmerged work (judged from its branch copied into `mirror.git`) can be closed other than as merged, reassigned or unassigned only by a project lead or the owner, recorded on the task; the work is then archived and the agent freed. The agent gets `one_branch_open`. A task with no own work moves freely (§4.2).
-12. **Merges are real merges** (decided 2026-11-08). Task branches merge with `--no-ff`, seen by ancestry. Work merged another way is marked "merged by hand" by a project lead or the owner (never the agent), naming the integration commit. A record idle over a day shows in the lead's Needs you (§4.1, §4.3).
-13. **Team seals on shared projects** (decided 2026-11-08; reconciles spec decisions 3 and 6). A seal binds the sealing team's own projects. On a shared project, a sibling team's override or `off` doesn't silently cancel it: it's a conflict in Needs you, the sealed version applies meanwhile, and the project can settle it with its own version, as any conflict (§3.2). This departed from the spec's rev 2 (decisions 3 and 6, PROC-6); spec rev 3 adopts it, including the conflict wording "sealed by <team>; applies until the project decides".
-14. **Start point from the mirror** (decided 2026-11-08). The office starts a task branch at the integration branch's sha in `mirror.git` and records it as `base_sha` (§4.2).
-15. **Lead powers need a trusted binding** (decided 2026-11-08; human binding amended for standalone v1, 2026-11-09). `task.allow_second_branch`, `task.mark_branch_merged`, guarded moves by a non-assignee, `process.approve`/`reject` and any approval that leads to an office merge of a handbook branch require an authorized human principal through HQ, or an authorized agent bound with a live session token (office-run). Existing role and owner-only checks still apply; neither a browser connection nor an office certificate grants lead powers by itself. A hand-run lead's request becomes a Needs you item for the owner instead.
-
-Amended to match: `projects-git-github.md` (A56, A58, decision 14, the push rule) and `agent-sessions.md` (A57). Still to amend: `agent-sessions.md` (the handbook deny; "Git in worktrees": no worktree passes to a new assignee), `projects-git-github.md` ("When a task is done"), W7 (decision 8, `task.branch`), the `work.rs` docs, and ADR-0003 §2.1.4's rows for the decision-15 calls.
+1. **Selected storage:** one remote organization metadata repository; organization processes at `processes/<document-id>.md`, standards at `standards/<document-id>.md`, nested-team variants under the full `teams/<id>/teams/<id>/.../` chain, and project variants at `projects/<project-id>/processes/<document-id>.md` or `standards/`. Canonical reads follow organization `state_branch`, independent of code-repository integration branches.
+2. **Selected identity:** immutable stable document ID, UUIDv7 for new records, preserved IDs for existing records; optional `key` is separate. TEAM- and P- references are readable labels, not folder names. An override is a separate content record with its own stable ID.
+3. **Selected metadata:** kind process/standard; title, lifecycle Draft/Current/Deprecated, optional accountable employee (required active owner for Current), common attribution and revision. `team_id` or `project_id` supplies the scope, never both. Both null means organization scope. Overrides default allowed; an explicitly prohibited override cannot be defeated by a lower-level project edit.
+4. **Deferred resolution:** organization → accountable team's ancestor chain → optional project is a candidate resolution order. Employees have one home team; tasks have one accountable team, independent assigned team/individual. Optional contributing teams are not extra owning teams and grant no managerial/process authority. Whether contributor chains participate is an unresolved policy, not an inferred multi-team engine.
+5. **Deferred private processes:** the earlier personal layer, owner-read access and agent folder proposal are not selected. Storage/privacy and offboarding retention need a separate decision; shared Git cannot enforce restricted readership. This is distinct from author-only private task notes, which have no owner/admin read exception.
+6. **Deferred enforcement/branch policy:** retain the proposed one-open-task-branch guard, explicit one-time exceptions, review/merge and safe cleanup algorithms below. They do not follow merely from storing a process document. Current repository development rules remain governed by AGENTS.md, not this proposed product engine.
+7. **Code branch bases:** every project/repository association requires integration_branch. A task targets zero or more repositories, so branch/base/cleanup state must be repository-specific. There is no single project branch or empty fallback. Projectless tasks need explicitly admitted repository bases; policy remains open.
+8. **Handoff preserves work:** reassignment is an atomic revision-checked team/individual assignment pair with durable activity history. It is not task closure and must not archive/delete worktrees. Agent/office transfer needs safe workspace migration and execution cleanup/fencing. Guarded branch review may block transfer; it cannot silently discard or archive ongoing task work.
+9. **Deferred approvals:** authorize the actual human/agent subject through existing boundaries, validate scope and expected commit/revision, and retain actor-bound decisions before acknowledging. Editable owner/status fields and co-author trailers do not grant powers. Exact private-layer rights and contributor approvers remain open.
+10. **Deferred delivery:** bounded process guidance, tool help and standards lookup preserve whole entries and source versions; fresh contexts must receive governing content or retrieval instructions. Automatic wakes, checklist composition and retrospective actions are separate deferred engines, not selected by these content fields.
 
 ## 1. Where each thing lives
-| Thing | Where | Changed by |
-| --- | --- | --- |
-| Organization processes | handbook, `processes/<key>.md` | docs branch → owner (U27) → merge (PROC-11) |
-| Team processes | handbook, `teams/<team id>/processes/<key>.md` | docs branch → team lead or owner → merge |
-| Project processes | project repo, `docs/processes/<key>.md` | docs branch → a project lead or owner → merge |
-| Private processes | handbook, `agents/<member id>/processes/<key>.md` | docs branch → owner → merge (A52) |
-| Process index | HQ's `office.db`, a cache | rebuilt from git after each fetch or merge |
-| Effective sets, last reads | `office.db` of the agent's office, derived caches (not the index) | the office (§3.3, §3.4) |
-| Task branch records, exceptions | `office.db` of the office that owns the task (HQ in phase 1) | the office (§4) |
-| The handbook's record | organization data: `OrgSnapshot.handbook` | HQ, at organization create |
+| Thing | Selected source / implementation boundary |
+| --- | --- |
+| Organization process/standard | Organization Git `processes/<id>.md` / `standards/<id>.md` |
+| Team process/standard | Organization Git recursive team path and explicit team_id |
+| Project process/standard | Organization Git `projects/<project-id>/processes/<id>.md` / `standards/<id>.md` |
+| Employee home team | Employee profile; separate from assignment/placement |
+| Process index | Rebuildable SQL/query projection of authored content; no independent lifecycle authority |
+| Effective sets, delivery acknowledgements | Deferred resolver/delivery contract; current library outputs are not durable authored facts |
+| Task branch records/exceptions | Existing helper shapes need per-repository and durable accepted-write design before target use |
+| Private processes | Unselected storage/access proposal; no canonical shared-Git location |
 
-**The handbook repo.** HQ creates it with the organization (or at first start for an older one): one office-only bare repository, `workspace/handbook/handbook.git`, seeded with `README.md`, `.templates/process.md` and `processes/branch-and-merge.md`, on by default (spec §4). Only the office reads and writes it (W7's write path); agents read processes through §6. Its record has no `path`, so its location isn't published.
-- **Required:** a fixed read and write deny on `offices/*/workspace/handbook/**` in `agent-sessions.md`, or any agent at HQ could read private processes with git. R3 doesn't ship without it.
+The separate `workspace/handbook/handbook.git` and `OrgSnapshot.handbook` design is superseded for selected content by organization repository registration and state_branch. Its old fixed `offices/*/workspace/handbook/**` sandbox deny remains **legacy security evidence**: removing that directory name must not remove protection. Re-derive target organization-metadata, credential, Git-metadata and other-task denies for the actual runtime layout and validate before launch. No agent-owned working branch/ref may substitute for the trusted publication source.
 
 ## 2. The model
 
 ### 2.1 The process file (PROC-1)
-The front matter is the spec's §1. This design adds:
-- `process`: 1–64 of `[a-z0-9-]`, starting with a letter or digit. `summary`: one line, ≤ 200 characters. `moments`: ≤ 500 characters each. `checklist`: ≤ 50 steps.
-- `applies_to` is required: one line, ≤ 200 characters.
-- `level` and `scope` must match the location (§2.2). Only `active` and `off` resolve. `overrides: <key>@<version>` is for drift only.
 
-Parsing uses W7's front-matter rules and `org-docs`' parser. Invalid front matter never fails a read: the file is listed with a problem naming the field and left out of every set until fixed (PROC-16).
+Selected authored envelope (illustrative retained IDs):
+
+```yaml
+schema_version: 1
+id: existing-process-id
+key: review-and-merge
+revision: 3
+kind: process
+title: Review and merge
+status: current
+owner_employee_id: existing-employee-id
+team_id: null
+project_id: null
+overridable: true
+created_at: "2026-11-15T10:00:00Z"
+created_by_kind: employee
+created_by_id: existing-employee-id
+updated_at: "2026-11-15T10:00:00Z"
+updated_by_kind: employee
+updated_by_id: existing-employee-id
+```
+
+The Markdown body explains the procedure. Standards use the same structural envelope with `kind: standard` and describe required constraints. Current requires an active owner; Draft can be unassigned. Content does not enact an approval or inherited resolution engine.
+
+**Versioned earlier library contract:** `org-process`/`org-docs` parsing helpers use `process`, `name`, `level`, `scope`, `version`, `owner`, `summary`, `applies_to`, statuses active/off/retired, `overrides`, `moments` and `checklist`. Those are not aliases that may be blindly serialized as selected fields. Target adaptation maps identity/key/title/owner/revision/scope explicitly; current→active is only a candidate resolver input mapping, not authority to overwrite selected file status. Off, drift metadata, moments and checklist merge rules need separately selected extension contracts. Preserve existing helper tests until an intentional compatibility change.
+
+Retained parser limits for the earlier proposal: key 1–64 ASCII lowercase letters/digits/hyphens starting alphanumeric; summary and applies_to one line ≤200 characters; moment prompt ≤500 characters; checklist ≤50 steps. Invalid metadata names the field and leaves readable content available; a future resolver must visibly exclude invalid content rather than invent rules.
 
 ### 2.2 Levels, scopes and paths
-| Level | Scope | Repo, branch, folder |
+| Scope | Authored fields | Organization-Git folder |
 | --- | --- | --- |
-| `organization` | none | handbook, default branch, `processes/` |
-| `team` | team id | handbook, default branch, `teams/<team id>/processes/` |
-| `project` | project key | project repo, `integration_branch` (else default), `docs/processes/` |
-| `agent` | member id | handbook, default branch, `agents/<member id>/processes/` |
+| Organization | team_id=null, project_id=null | processes/ or standards/ |
+| Team | stable team_id, project_id=null | teams/<root-id>/teams/<child-id>/.../processes/ or standards/ |
+| Project | team_id=null, stable project_id | projects/<project-id>/processes/ or standards/ |
+| Private agent | not selected | no selected path |
 
-Only regular `*.md` blobs directly in those folders count (no symlinks or submodules); the front-matter key matches, not the file name (PROC-1). In a project repo, a process file whose name is refused (a leading `-`, whitespace, control or invisible characters, or a backslash) is listed with a "file name" problem and left out of every set (PROC-16); in the handbook, which only the tool writes, such names aren't process files. **Reads never use `work.git`**, whose refs agents can move: project files are read in `mirror.git` (W7 §4.9), handbook files in `handbook.git` (no `work.git`, so no sync step). W7's path rules apply, with the handbook's roots (`processes/`, `teams/`, `agents/`, `.templates/`, `README.md`), and its id reservations gain a repository key.
+Use `<document-id>.md` and require path/scope agreement. Reads admit regular Markdown blobs, never symlinks/submodules/traversal. No `work.git` ref chooses canonical content. Read the trusted organization cache/ref at state_branch; the concrete publication/cache interface still needs implementation. Resolve code guidance per explicitly selected repository integration branch, not from this document store.
 
 ### 2.3 The index (HQ)
-One row per file on a source branch: `{ repo, path, commit, blob, doc id, key, level, scope, version, status, overridable, overrides, problems }`. No text: names and summaries come from the blob. Old rows stay as a history (key, level, scope, version → commit) for drift diffs (PROC-9). It's rebuilt after each change to a source branch; while the handbook can't be read, reads answer from it with `stale_since` (PROC-16).
+For the earlier resolver proposal, an index row may carry: `{ repo, path, commit, blob, doc id, key, level, scope, version, status, overridable, overrides, problems }`. No text: names and summaries come from the blob. Old rows stay as a history (key, level, scope, version → commit) for drift diffs (PROC-9). It's rebuilt after each change to a source branch; while the organization repository can't be read, reads answer from it with `stale_since` (PROC-16).
 
 ## 3. Resolution (A53)
 
-### 3.1 Inputs
-For (agent A, project P): **O**, the organization's; **T**, for each team linked to P, its chain from the outermost parent down (a linked ancestor of another linked team is dropped); **J**, P's, from its integration branch (A57); **G**, A's private ones.
+**Deferred engine / earlier helper algorithm.** Preserve these detailed behaviors for review, with the selected constraints below. active/off/version names in this section are earlier resolver input vocabulary (§2.1), not the authored lifecycle.
 
-With no current work, it's **O ⊕ G** (PROC-2). The home session uses the current task (`work.set_current`), a task session its task. No repository means an empty J.
+### 3.1 Inputs
+**Deferred resolver inputs:** O is organization content; T is the task's accountable team's ancestor chain (project owner's team for project work, task team for projectless work); J is optional project content, all from organization state_branch. Assignment and employee home team do not silently alter this scope. G is the earlier private-layer proposal and remains disabled pending storage/access selection. Contributor-chain participation and no-current-task behavior require a policy decision. They cannot be inferred from project_contributing_teams or ordinary ancestor-team membership.
+
+The existing library's multi-chain input supports its old linked-team proposal. Keep it as versioned helper behavior while adapting the target; it does not establish that projects have multiple owner teams.
 
 ### 3.2 Rules, in order (`org_process::resolve`, pure)
 1. **Valid files only.** Invalid front matter or a level or scope mismatch: left out, with a problem. A `draft` or `retired` file is left out silently: it is a normal state, not a problem (amended 2026-11-09: ada, from the Processes screens' review).
 2. **Key clash.** Two files with one key at one (level, scope): both left out, with the clash problem (PROC-1). Seals fail closed: if a file left out for invalid front matter, a mismatch or a clash is sealed (or can't be read far enough to tell), the key stays sealed below. `draft` and `retired` files never seal.
    A file whose key can't be read (no front matter, bad YAML or no valid `process`) seals every key below its place unless its `overridable` value can be read and is `true`, or it is a `draft` or `retired` one (ruled 2026-11-13: ada, R2b); what it refuses, and a private file whose key it might use, show "can't tell: <path> can't be read", not "sealed by" (ruled 2026-11-13: ada, R2). In rule 5 it counts as its chain's seal, as a seal does, but a conflict names it ("can't tell: <path> can't be read"), not its team, as sealing the key (ruled 2026-11-13: ada); the outermost team lower in that chain whose own file seals the key is named as sealing it too, beside the unreadable path (2026-11-13, from P3's review; how its name reaches a cached set: §3.3).
-3. **Seals inside a chain.** A file that overrides or turns off a key sealed by the organization, or by a team above it in its own chain, is refused, with the sealing level (PROC-3). A project file is refused if the organization sealed the key, or a team seal binds it and rule 5 finds no team-level conflict on the key (that check runs after rule 5). Otherwise this runs first, so a refused file never makes a conflict. The write path refuses these too (§5).
+3. **Seals inside a chain.** A file that overrides or turns off a key sealed by the organization, or by a team above it in its own chain, is refused, with the sealing level (PROC-3). A project file is refused if the organization sealed the key, or an applicable ancestor team seal binds it (a sibling/contributor conflict does not remove that prohibition). Otherwise this runs first, so a refused file never makes a conflict. The write path refuses these too (§5).
 4. **Fold each team chain**, outermost first, the nearer team winning.
-5. **Combine the chains** (decision 4, PROC-6). Only team-level winners count. One distinct winning team file applies. Two or more are a **conflict**: the organization's version applies, or nothing if it has none, except that a **sealed** team winner applies meanwhile (decision 13; two different seals: the organization's version, else the first by team id that isn't an `off`, A71). A sibling team's override or `off` never silently cancels a seal.
+5. **Combine the chains** (decision 4, PROC-6). Only team-level winners count. One distinct winning team file applies. Two or more are a **conflict**: the organization's version applies, or nothing if it has none, except that a **sealed** team winner applies meanwhile (decision 13; two different seals: the organization's version, else a visible unresolved conflict requiring policy resolution; no arbitrary team-ID ordering grants authority). A sibling team's override or `off` never silently cancels a seal.
    In a diamond, a sub-team's override that differs from a sibling chain's version is a conflict; only the same team reached twice is not (ruled 2026-11-13: ada, R1).
-6. **Project.** J's version wins over the result unless the key is sealed (rule 3). It settles any conflict on the key, a sealed one included (decision 13).
+6. **Project.** J's version wins over the result unless the key is sealed (rule 3). It may settle an ordinary conflict only when every applicable ancestor permits overriding. The earlier project-settles-sealed-conflict rule is superseded; lifting a prohibition requires an authorized change to its source, not a lower-level bypass.
 7. **Turned off.** A surviving `off` removes the key and records "Turned off for <team or project name>: <reason>" (PROC-4).
 8. **Private only adds** (PROC-5). A private file isn't applied, and is flagged, if it sets `overrides` or `status: off`, or if its key appears in **any** O, T or J file of this project, whatever that file's state.
 9. **Drift** (PROC-9). An override whose `overrides: key@v` is below the parent's current version is marked "Parent changed"; without `overrides`, its drift shows as unknown.
@@ -96,7 +100,7 @@ With no current work, it's **O ⊕ G** (PROC-2). The home session uses the curre
 **Output:** `EffectiveSet { inputs, entries, turned_off, conflicts, problems }`: per key, the winning file (with its kind: inherited, override or addition) and its **chain** of layers and what happened to each, which `process why` prints (PROC-8).
 
 ### 3.3 Caching and project-wide checks
-Sets are cached under a fingerprint of the handbook commit, the project's integration commit and the team chains (teams are org data). Any change to those drops the sets that used it. Place names (the "Turned off for <name>", conflict and summary lines) are not in the fingerprint: when a team or project is renamed, the cache's owner drops the sets that name it (ruled 2026-11-13: ada). Dropped sets are recomputed at the next start, wake or read. The last good set per (agent, project) is kept with its time.
+Sets are cached under a fingerprint of the organization state commit, accountable scope/team ancestry and any separately admitted legacy-layer input commits (teams are org data). Any change to those drops the sets that used it. Place names (the "Turned off for <name>", conflict and summary lines) are not in the fingerprint: when a team or project is renamed, the cache's owner drops the sets that name it (ruled 2026-11-13: ada). Dropped sets are recomputed at the next start, wake or read. The last good set per (agent, project) is kept with its time.
 
 **Conflicts belong to the project.** After each index or org change, HQ resolves O ⊕ T ⊕ J per affected project and keeps one Needs you item per (project, key) for its leads and the owner; clashes, invalid files and drift likewise. Agent leads and approvers get Needs you items in their inbox (spec decision 11).
 
@@ -155,10 +159,12 @@ See [`employee-supervision.md`](employee-supervision.md). The draft
 [`delegation-and-consultation.md`](../processes/delegation-and-consultation.md)
 is an organization seed proposal, not a newly active repository rule.
 
+The following branch algorithms retain legacy mirror.git/work.git role names and single-repository helper shapes. Target integration must execute them per explicitly targeted repository using one office/repository cache and task-specific worktrees. They are **deferred product enforcement**, not a promise of a completed service. Task handoff/reassignment preserves worktrees; only confirmed task closure can enter closure cleanup. Existing sandbox commit-path and credential-separation evidence remains valid for the old layout.
+
 ## 4. Enforcement: one open task branch (A54, A55)
 
 ### 4.1 Task branch records
-The task's owning office keeps one record per task branch: `{ task_id, member_id, project_id, branch, base_sha, own_tip?, state: reserved | open | closing | merged | archived, merged_by_hand?, stage?, opened_at, last_moved_at, closed_at? }`. Phase 1 has one office, so records don't move; in phase 2 they follow their task on a handover or reclaim (A66).
+The earlier single-repository helper record is: `{ task_id, member_id, project_id, branch, base_sha, own_tip?, state: reserved | open | closing | merged | archived, merged_by_hand?, stage?, opened_at, last_moved_at, closed_at? }`. Target records need explicit repository_id, optional project_id and a separately designed durable operation/history source. Task handoff transfers safe workspace custody only after fencing/cleanup; do not infer it from office ownership or copy a cache row as authority.
 - **Reserved** at `task start`, before any git; **open** once the branch exists. Nothing is reserved without a repository.
 - **Branch names.** `task/<ref>-<slug>` (W7), with a `-2`, `-3`… suffix whenever a record, a `merged/` or `archive/` tag, a remote branch or a local `work.git` branch already has the name (never `-B`).
 - **`own_tip`** (decided 2026-11-08) is the latest tip the office has seen on the branch (through `org-agent push`, or a fetch into `mirror.git`) that descends from `base_sha` and is reachable from no ref in `mirror.git` other than this branch's own copies (`refs/heads/task/<b>` as fetched, `refs/office/task/<b>`, `refs/office/task-head/<b>`). A fast-forward or reset onto the integration branch or someone else's branch never sets it. Residual: agents share `work.git`'s objects, so one could push another's commits first; review catches it.
@@ -177,29 +183,29 @@ It runs at A54's two points, each in one write transaction with the record it cr
 1. `task.set_status { in_progress }` by the assignee agent (`org-agent task start`), when the task has no reserved or open record for that assignee: check, then reserve.
 2. The creation of a task branch, whoever triggered it (an app move, a task session start, a hotfix): check and reserve (or reuse the task's own reservation), then create the branch (below). A refused creation ends that session's run as `blocked`.
 
-**Creating the branch** (decision 14), as one locked operation on the repository (the name's suffix included; the mirror fetch takes the same lock): the office resolves the branch the task names, else `integration_branch`, else the default branch, to a sha in `mirror.git`, fetches that sha into an office-made ref in `work.git` (`refs/office/base/<task>`, deleted after the add; an agent could move it, but the add uses the sha), runs `git worktree add -b task/… -- <path> <sha>` (it fails rather than overwrite a planted ref) and records the sha as `base_sha`. A missing `integration_branch` refuses the creation (`unavailable`, reason `integration_branch_missing`).
+**Creating the branch** (decision 14), as one locked operation on the repository (the name's suffix included; the mirror fetch takes the same lock): the office resolves the branch the task names, else that repository association's required `integration_branch`, to a sha in `mirror.git`, fetches that sha into an office-made ref in `work.git` (`refs/office/base/<task>`, deleted after the add; an agent could move it, but the add uses the sha), runs `git worktree add -b task/… -- <path> <sha>` (it fails rather than overwrite a planted ref) and records the sha as `base_sha`. A missing `integration_branch` refuses the creation (`unavailable`, reason `integration_branch_missing`).
 
 **Guarded moves** (decision 11). When a task is set to Done (either resolution) while its record is open, or reassigned or unassigned (a reassignment to no one), the office first checks the caller's role and binding (decision 15), then marks the record closing (pushes refused) and, under the repository's lock, fetches the integration branch (a failed fetch is `unavailable`) and force-copies the `work.git` branch to `refs/office/task/<b>` and the worktree's HEAD to `refs/office/task-head/<b>` in `mirror.git`. **Own unmerged work** means any of those copies, the recorded `own_tip` or the remote head descends from `base_sha`, differs from it and isn't in the integration branch, or the worktree has uncommitted changes (untracked files that aren't ignored included). A missing branch, an unreadable HEAD or a failed copy counts as own work. So does a copy that neither descends from `base_sha` nor is in the integration branch (a reset onto another branch's history), while a missing `own_tip` or remote head (none yet) doesn't (ruled 2026-11-13: ada). So a reset or a detached HEAD hides nothing; work only in `git stash` or on another local branch is a residual. The record is merged instead only if `own_tip` is in the integration branch and no copy has work beyond it.
 - **Sessions** (decided 2026-11-08), for every caller: the office answers first. A refusal clears closing and ends nothing; an accepted move ends the task's sessions gracefully after the answer. This is safe because the push freeze keeps the remote head still, the copies are refs only the office writes, and commits made after the copy are caught by §4.5's local checks.
 - **Re-check.** The record's version, `own_tip`, the remote head and the stored copy shas go into the work write, which refuses (`conflict`) if any changed. The owner's cascades that unassign or close tasks (offboarding, `work.delete`, a retired feature's tasks) are guarded moves by the owner. Uncommitted work now blocks the assignee's own Done (W7 open question 2).
-- With own unmerged work, the move needs a project lead (not the assignee) or the owner, also on the owner's own task; a lead who is the assignee counts as the assignee (ruled 2026-11-13: ada): from the assignee it's `one_branch_open`, naming the branch; from anyone else, `not_authorized`. When a lead or the owner makes it, it's recorded on the task, the branch is archived (§4.5) and the agent freed. A new assignee starts a new branch; the work stays at `archive/<b>`.
-- With no own work, the move goes through and the record is archived (or merged, above).
+- With own unmerged work, the move needs a project lead (not the assignee) or the owner, also on the owner's own task; a lead who is the assignee counts as the assignee (ruled 2026-11-13: ada): from the assignee it's `one_branch_open`, naming the branch; from anyone else, `not_authorized`. On confirmed closure, preserve/archive the branch before closure cleanup (§4.5). On reassignment, record the full old/new assignment pair atomically with expected revision and preserve the worktree/branches; require a verified workspace transfer before any replacement process starts. The earlier helper archiving every guarded move is legacy behavior requiring adaptation, not the selected handoff rule.
+- With no own work, an authorized revision-checked assignment can proceed while retaining the task workspace. Only a separately confirmed closure enters archive/merge cleanup.
 
 These permission checks, and those of §4.3, amend W7 decision 8 ("no permissions in phase 1") for these calls only. A non-assignee's guarded move, a grant and a mark need a trusted binding (decision 15).
 
 **Refusals** use the spec §4 wording. The office keeps one open refusal per (agent, target task), a bookkeeping event that doesn't change the task's version, in the project leads' and owner's Needs you with **Allow once…** and **Open chk-T-17** (PROC-14), until the branch merges or an exception is granted.
 
 ### 4.3 Exceptions and merged by hand
-- `task.allow_second_branch { change_id, item, reason }`, from the app or `org-agent task allow-second-branch`. The caller is a lead of one of the project's teams or the owner (a project with no lead: the owner only), and never for their own task (PROC-11), except the owner. The reason is required (1–1,000). It's recorded as `BranchExceptionGranted { reason, open_branch, assignee }` with the actor, covers one record for that task and assignee, and a reassignment voids it.
+- `task.allow_second_branch { change_id, item, reason }`, from the app or `org-agent task allow-second-branch`. The caller is an explicitly authorized project approver or authenticated owner; contributor-team membership alone confers no grant, and never for their own task (PROC-11), except the owner. The reason is required (1–1,000). It's recorded as `BranchExceptionGranted { reason, open_branch, assignee }` with the actor, covers one record for that task and assignee, and a reassignment voids it.
 - `task.mark_branch_merged { change_id, item, integration_commit, reason }` (decision 12): the same callers; never the record's own agent. The office checks that the commit is on the integration branch in `mirror.git`, records `BranchMergedByHand` and marks the record merged. If its head isn't an ancestor of the integration branch, A58 deletes nothing remote: the office pushes `merged/<b>` at the head, removes the local worktree and branch (§4.5's local checks), and leaves the remote branch to a person.
 
 ### 4.4 Docs branches (pending U28)
-If the user picks the limit: at most one open office-made docs branch per agent for the changes it starts itself; a second change waits or joins it. One open more than a day shows in the lead's Needs you. Docs branches are listed in the work state ("Also waiting: 1 docs branch", PROC-19).
+The retained UX proposal has no docs-branch cap (U28); one open more than a day is shown to the lead. Automatic reminders remain deferred. Docs branches are listed in the work state ("Also waiting: 1 docs branch", PROC-19).
 
 **Reviewer** (spec §4, R3). Project settings name the project's reviewer (an agent). A review request unanswered for 30 minutes starts a one-off reviewer run (`agent-sessions.md`) and tells the leads.
 
 ### 4.5 Cleanup (A58)
-In `org-git`'s hardened push path, with the push's `contents: write` token. "The head" is the remote's `refs/heads/task/<b>` as last fetched into `mirror.git`.
+Closure only: reassignment/handoff never enters this cleanup path. In `org-git`'s hardened push path, with the push's `contents: write` token. "The head" is the remote's `refs/heads/task/<b>` as last fetched into `mirror.git`.
 - **Nothing local is lost.** The office ends any live task session first (a checkpoint turn), unless a guarded move already did. It stops, keeping the worktree, if the HEAD copy holds commits not reachable from the head or the integration branch; `refs/office/task*/<b>` are kept with the record. For an archive, it copies the `work.git` branch into `mirror.git`, pushes it and refreshes the head; if the push is refused (pushed history was rewritten), it keeps the worktree and branch and raises Needs you. A merged record isn't pushed. On either path, local commits beyond the head or uncommitted changes stop the cleanup: the worktree stays and the leads get a Needs you item, as for offboarding (`agent-sessions.md`).
 - **Merged:** if the head is an ancestor of the integration branch, push `merged/<b>` at the head, then delete. Otherwise nothing remote is deleted (merged by hand, §4.3), and later commits on the remote raise Needs you.
 - **Archived:** push `archive/<b>` at the head, then delete. With no own work and no remote branch, there's nothing to push or tag.
@@ -207,19 +213,23 @@ In `org-git`'s hardened push path, with the push's `contents: write` token. "The
 - Then the worktree goes, and the local branch with a compare-and-swap (`update-ref -d refs/heads/task/<b> <copied sha>`). Only `task/*` branches with a record are deleted, never a tag. Tags keep everything forever; only a person removes one.
 
 ## 5. Changing processes (PROC-11)
+
+**Deferred approval/write protocol.** The exact calls below are earlier sketches. For selected content, publish in organization Git with stable IDs, selected lifecycle and revisions; organization/team/project content no longer chooses different code/handbook repositories. Private storage and old process-only extension fields remain unselected.
 Process files are docs written with W7's write path (office-made `docs/…` branches, the owner as author, the agent as co-author): `doc.new`/`doc.save` with kind `process` for a project, `process.save` for the handbook. Every write checks: valid front matter matching the path; a key unique at that (level, scope) (`already_exists`); no override or `off` of a sealed key (`invalid_request`, reason `sealed`); a private file with no `overrides`, `status: off` or organization key (reason `private_only_adds`; team and project keys are checked at resolution); an agent writing only its own private folder (`not_authorized`); sealing an organization process (`overridable: false`) only by the owner (`not_authorized`, spec decision 3); and `branch?` naming an unmerged office-made branch for that file, opened by the caller.
 
 **Only through the tool.** `doc.render`, `doc new --here`, `doc.set_status`, `doc.rename` and `doc.delete` refuse kind `process`. In the handbook only the office commits: the index follows its last recorded commit, and any other commit is ignored and raised to the owner. In a project repo, a process changed by plain git is shown "from git" and still applies, except that an unapproved `off` of the enforced key doesn't turn the rule off (A72).
 
 **Approval** (spec decisions 8, 10, 11). `process.approve` and `process.reject` name the changed file's doc id and the exact branch commit the approver saw; a moved branch is `conflict`, and a later save voids an approval. The caller is the level's approver, on a trusted binding (decision 15), and none of the change's authors (everyone who saved on the branch), except the owner. *Interim (A62):* an approved handbook branch is merged by the office with a real merge, since nothing else can reach the handbook; if it doesn't merge cleanly, it's `conflict` and re-proposed. A project branch's approval is recorded, and the merge flow merges it (A62). Retro items are approved by the owner's approval of the retro (spec decision 10).
 
-**Version.** Each save writes `version: <base> + 1`; if another change merged first, the branch needs a new save and approval.
+**Version.** Selected files advance `revision`; the older protocol uses `version: <base> + 1` as a compatibility input, not a second authored counter; if another change merged first, the branch needs a new save and approval.
 
 **Drift fixes** (PROC-9): **Keep my override** rewrites `overrides` to the parent's version; **Take the new version** sets `status: retired`; **Edit**, **Fix** and **Rename…** are ordinary changes for the level's approver.
 
 **Residual risk.** The handbook deny binds office-run agents only. Hand-run agents (no `run_mode`, no session token) and other same-user programs can still read `handbook.git` and forge hand-run agent identities (ADR-0003, M-A), but can't use lead powers over the rules, which need a trusted binding (decision 15), short of stealing a live token from another process's environment (`agent-sessions.md`, Security). The tampering check limits handbook writes; real isolation is v2.
 
 ## 6. The contract (additive)
+
+**Versioned legacy protocol proposal, not target wire commands.** Check org-proto support before claiming availability. Target commands must use selected document identity/scope/revision and organization repository publication; repository-specific branch operations need explicit target IDs. Private-layer access, approval receipts and durable branch/exception history require separate design.
 A new module, `crates/org-proto/src/process.rs`. The historical sketch was additive under API_VERSION 1; the first standalone release uses local API_VERSION 2 under ADR-0001, with additive evolution within that version. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
 
 `For`: `current` (default) · `none` (O ⊕ G) · `project { project_id }` · `item { item }`.
@@ -240,7 +250,7 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 
 `ProcessRow` carries the key, name, per-level versions, winner, kind, drift, conflicts, problems and pending branches. **Existing calls gain `one_branch_open` and `not_authorized`:** `task.set_status` (a start, or a guarded close) and `task.assign` (a guarded move), §4.2.
 
-**Project rule.** `project.create` and `project.update` refuse an `integration_branch` starting with `task/`, `docs/`, `merged/` or `archive/` (`invalid_request`), since it's now the trusted source of instructions, processes and merges. (amended 2026-11-08: proto follow-ups) The office reads the integration branch as `refs/heads/<name>`, never through git's short-name lookup, so the name can't reach a tag or another ref. As defence in depth, the prefix is compared ignoring ASCII case and through one leading `refs/heads/` or `heads/`. The office and the app's mocks are to share the rule as `org_proto::has_reserved_branch_prefix`.
+**Earlier project-rule contract:** `project.create` and `project.update` used a single `integration_branch`; target validation must apply the same reserved-ref safety to each project/repository association's required branch. The earlier calls refuse a branch starting with `task/`, `docs/`, `merged/` or `archive/` (`invalid_request`), to keep code-instruction and merge refs distinct from managed task/archive refs; selected process content instead uses organization state_branch. (amended 2026-11-08: proto follow-ups) The office reads the integration branch as `refs/heads/<name>`, never through git's short-name lookup, so the name can't reach a tag or another ref. As defence in depth, the prefix is compared ignoring ASCII case and through one leading `refs/heads/` or `heads/`. The office and the app's mocks are to share the rule as `org_proto::has_reserved_branch_prefix`.
 
 **Events.** `process.changed { repo, commit, levels_and_scopes }` (agent scopes only to the owner and that agent); `work.changed` gains `StartRefused` (bookkeeping), `BranchExceptionGranted`, `BranchMergedByHand`, `GuardedMove { by, archived_branch }` and `WorkChange::BranchState { member_id, state }`. Unknown values decode as `Unknown`.
 
@@ -248,9 +258,11 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 
 **Errors.** One new code, **`one_branch_open`**; its message names the branch, task and stage, and `work.branch_state` gives them as data. Reused: `invalid_request`, `already_exists`, `not_found`, `not_authorized`, `conflict`, `unavailable` (reasons `handbook_unreachable`, `repository_busy`, `integration_branch_missing`, `forwarded_to_owner`, `sealed` and `private_only_adds` on `ApiError.reason`, which the agent-sessions contract adds; R1 and R2 depend on that field landing in `org-proto` first).
 
-**Organization data.** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
+**Obsolete organization-data sketch (retained for compatibility review only).** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
 
 ## 7. Where the code lives
+
+The package names below are historical implementation ownership/proposals: current executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Existing org-process/org-docs/org-work helpers are partial evidence only; proposed adapters, services and commands must be verified separately.
 - **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 2` for the proposed internal package graph, or 3 including `serde`; calculate I only after identifying consumers at the same level.
 - **`org-office`** (server-dev): the index, caches, project-wide items, last reads, records, exceptions, the calls and the checks inside the work write; one new stable-ward edge, to `org-process`.
 - **`org-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
@@ -261,6 +273,8 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 One new library, three stable-ward dependencies, no cycle.
 
 ## 8. Phases
+
+Every R phase is deferred product integration/earlier planning, not a selected rollout or proof that storing the data implements its engine. Preserve existing helper code/tests while designing explicit target adapters.
 | Phase | What | Owners |
 | --- | --- | --- |
 | **R1** | The contract (§6). `org-process` with its tests (Appendix C). Needs `org-docs`' parser first (A70). | ada; `org-process` owner |
@@ -272,43 +286,44 @@ One new library, three stable-ward dependencies, no cycle.
 Each step: its own branch, an independent review, the reviewer's READY, my go, a merge into `v1`.
 
 ## 9. Open questions
-- **A60** · Team folders: A51 says `teams/<team key>/`, but teams have no key. This design uses the team id, as the spec does. Confirm, or add team keys.
-- **A61** · The handbook's record and layout (`OrgSnapshot.handbook` without a path; `workspace/handbook/handbook.git` at HQ). River and server-dev to confirm.
-- **A62** · The merge flow (W7 open question 10) also carries process approvals and version bumps. Confirm the interim office merge of handbook branches (§5).
-- **A63** · Branch stages come from the merge flow; until then open or merged only (§4.1). Acceptable for R2?
-- **A64** · The rule is judged in the target task's project: on unless an approved `off` applies there (§4.2). If U26 splits `branch-and-merge`, it binds to `one-open-branch`.
-- **A65** · Closed by decision 11 (reassignment).
-- **A66** · Phase 2: do satellites compute their agents' sets, or does HQ send them? And records across offices.
-- **A67** · The checks inside the work write: the office calls `org_process::one_branch` in `WorkStore::transact`'s closure, or `org-work` owns it with "rule on" as an input. server-dev and the `org-work` owner pick.
-- **A68** · Two teams with byte-identical overrides of one key: still a conflict (this design), or not?
-- **A69** · Can a project's leads read members' private processes, or only the owner and the agent (this design)?
-- **A70** · Build `org-docs`' front-matter parser before R1, or let R1 wait?
-- **A71** · Two teams of a shared project seal different versions of one key. *Interim:* a conflict, with the organization's version applying, else the first seal by team id that isn't an `off`, until the project settles it. (One seal is decision 13.)
-- **A72** · Project process changes made with plain git still apply, shown "from git", except an unapproved `off` of the enforced key. Keep that, or ignore every unapproved change?
-
-For the user (spec): U25, U26, U27, U28.
+- A60 · Resolved structurally: TEAM- references exist; all canonical paths use stable IDs and recursive ancestry.
+- A61 · Superseded: selected process/standard content uses the registered remote organization repository and state_branch, not a second handbook record.
+- A62 / A63 / A67 · Deferred approval, branch-stage, transaction and merge services need concrete durable contracts before integration.
+- A64 · Deferred enforcement selection; selected process content alone does not turn a rule on. Existing AGENTS.md repository rules remain separately applicable.
+- A65 / A66 · Assignment, office placement and workspace transfer must preserve task work/history and execution fencing; caches cannot be the accepted-write authority.
+- A68 / A71 · Contributor-chain conflict resolution remains open. One owner team is required; no sibling/project edit can defeat an explicit applicable ancestor prohibition.
+- A69 · Private process storage/access is unselected; do not infer owner read access to author-only private task notes.
+- A70 · Existing parser helpers must be adapted through explicit selected-envelope mappings, preserving legacy IDs/tests.
+- A72 · Import/direct Git publication validation and approval provenance remain design work; invalid authored content must be visible without granting powers.
+- U25–U28 · Earlier UX preferences remain proposal context. They do not select process/branch/autonomy engines or override selected structure.
 
 ## Appendix A. Migration
+
+**Deferred legacy migration sketch.** No backfill or data move is authorized/enacted by this document. Preserve stable IDs and evidence, and preview exact mappings before any future migration.
 - **R2 backfill.** Records come from each task's `branch`: `base_sha` is its merge base with the integration branch, `own_tip` its tip when not in the integration branch. Merged when the tip is in the integration branch and the task is Done · Completed; archived (with its tag) for a cancelled or deleted task, or a closed one with no own work; open otherwise. An existing `integration_branch` with a reserved prefix goes to the owner's Needs you. A squash-merged Done task shows as stuck, for **Mark merged…**.
-- **This repository's `branch-and-merge.md`** has `level: organization` in a project repo, a stand-in until the handbook exists. R3 moves the generic text into the handbook seed, keeps ours (`v1`, ada as lead) as a project override, and updates `AGENTS.md` rule 2's link.
+- **Software repository documentation remains here.** Earlier plans to move branch-and-merge.md into a handbook are superseded for selected storage. A future explicit organization import may map generic/project-specific content to selected scoped process records; this documentation reconciliation moves no files and changes no AGENTS.md rules.
 
 ## Appendix B. The CLI (PROC-8)
+
+**Deferred legacy CLI proposal:** these org-agent command names are not claims of implemented agent-os entry points.
 `process list` is `process.effective` (`--level`: `process.view`); `why`, `show`, `ack`, `approve` and `reject` are their calls. `new`, `override`, `off`, `edit`, `rename`, `keep` and `take-parent` build the content and send it with `process.save` (handbook) or `doc.save` (project). `new --private "<name>"` slugs the key from the name, with a clash check, as for doc keys. `task allow-second-branch` and `task mark-merged` are the work calls.
 
 ## Appendix C. Tests that prove the rules
+
+**Earlier helper tests / deferred integration checks.** Existing tests are evidence of that versioned contract. Target checks must additionally cover canonical fields, state_branch reads, recursive scope, required per-repository integration branches and preservation across handoff; listed product integration tests are requirements, not results run here.
 Each test must fail without its rule.
 
 **`org-process`, table-driven:**
 - Matching by key, never `id`; level order; nearer team wins; no current work gives O ⊕ G.
-- Seals: an org seal refuses lower overrides and `off` without a conflict; a team seal refuses its sub-teams' and projects'; on a shared project, a sibling's override is a conflict with the sealed version applying, and a project version settles it; two team seals give the A71 interim; a clashed sealed key stays sealed.
-- Conflicts: two team overrides give the org version (or none); one team's version applies; a project version settles it; a parent-and-sub-team link or a diamond isn't a conflict (the same team reached twice), but a sub-team's override in a diamond is (R1).
+- Seals: an org seal refuses lower overrides and `off` without a conflict; a team seal refuses its sub-teams' and projects'; on a shared project, a sibling's override is a conflict with the sealed version applying, and a project version cannot defeat an explicit ancestor prohibition; multiple-seal policy remains unresolved; a clashed sealed key stays sealed.
+- Conflicts: two team overrides give the org version (or none); one team's version applies; an ordinary overridable conflict may be settled by project content; a parent-and-sub-team link or a diamond isn't a conflict (the same team reached twice), but a sub-team's override in a diamond is (R1).
 - Turned off, private only adds, validity, drift, the fingerprint, the render cap and order, the checklist merge.
 - One branch: another task's record blocks, its own and docs branches don't; an exception is used once; only an approved `off` turns the rule off; can't compute counts as on. Own work: a tip at `base_sha` or in the integration branch is none; a commit beyond it, or uncommitted changes, is some.
 
 **Office and store:**
 - Concurrency: of two starts or branch creations for one agent, exactly one succeeds; a failed `git worktree add` leaves no reservation and restores the exception.
 - Records: one own commit sets `own_tip` (its own `refs/office/task/<b>` copy doesn't hide it); a fast-forward or reset onto another branch doesn't; a `--no-ff` merge closes it, also after a delete; pushes after a merge or without a record are refused; reused names get a suffix; an idle record reaches Needs you.
-- Guarded moves with own unmerged work: the assignee's `task done --cancelled`, `task done` without a push, `task assign` and `task assign --none` are `one_branch_open`; by another lead or the owner they archive and free the agent; with no own work they go through.
+- Legacy helper guarded-move tests (target handoff semantics differ): the assignee's `task done --cancelled`, `task done` without a push, `task assign` and `task assign --none` are `one_branch_open`; by another lead or the owner they archive and free the agent; with no own work they go through.
 - Merged by hand: by the record's agent, `not_authorized`; by a lead with a commit not on the integration branch, `invalid_request`; otherwise recorded and merged, with a `merged/` tag and the remote branch kept.
 - Bindings (decision 15): a hand-run lead's `allow_second_branch`, `mark_branch_merged`, guarded move or `approve` answers `forwarded_to_owner`, changes nothing and kills no session, and the owner's Needs you item appears; a token-bound lead's is accepted.
 - Guarded-move copies: an unpushed commit on the branch with HEAD detached at `base_sha` is own work, and so is a branch at `base_sha` with an own commit only on a detached HEAD or another checked-out branch; a merged `own_tip` with a later local commit stays guarded; a failed copy counts as own work; an accepted Done ends the session only after the answer; a refused Done keeps the session and clears closing; a change between judgement and write is `conflict`; a fetch showing `own_tip` merged marks the record merged.

@@ -1,3 +1,0 @@
-Story edits after nav freeze rev 5 and design system 92071d4, with IDs unchanged (committed at eccdebd63860315d70624f6f8178b81e3ef372eb):
-- AC-IA03-3 quotes the pinned in-shell copy. Roles, Members and access, and Updates show "Not in this release". General and Agent setup show "{Title} isn't built yet / It's coming in this release." until their stories land. Processes keeps its sub-nav link and, in production, shows the root Unavailable page "Processes isn't available yet".
-- AC-IA19-4: `/` isn't shipping yet (IA-13). `/`, N and the Single-key shortcuts switch ship together, so IA-19 now ships with IA-13. Your preferences shows the "isn't built yet" copy until then.

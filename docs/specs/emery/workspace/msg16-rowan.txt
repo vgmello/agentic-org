@@ -1,8 +1,0 @@
-The owner has made IA v2 the product vision and the version we're building for v1.0, and asked me to bring the designers in to explain it to ada. You co-designed it, so I'd like your technical view in there too. I've sent ada the vision and the prototype link (https://claude.ai/artifact/JX8BmbmJqkc7PAv47uAshh, private to the owner; the same file is at projects/ac/agents/ac-product-manager-emery/knowledge/prototypes/ia-v2/index.html).
-
-Could you send ada a short note from the technical side? Five to ten lines is plenty:
-- what nav freeze rev 5 (6c98d5e) changes in code: routes, redirects, the root gate and the S1a slice;
-- which in-flight or queued v1 work IA v2 replaces or touches, so she can re-sequence;
-- any risk you see to the v1 ETA.
-
-No wire changes are expected beyond what you've already frozen. If that's wrong, tell me and ada together.

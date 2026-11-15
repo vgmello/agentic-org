@@ -1,49 +1,91 @@
 # Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
-**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
+Status: **current launch-v2 evidence plus selected target adaptation**, reconciled
+2026-11-15. The host library is `crates/org-host`, composed by `agentic-org serve`;
+the office executable is `agentic-org-office`. [Executable migration](executable-migration.md)
+records implemented versus unavailable commands. No key-store namespace, signing
+identifier, grant namespace or persisted identity is renamed by those filenames.
 
+## Selected provisioning and storage responsibilities
 
-**Browser HTTP separation (standalone-v1 review):** `agentic-org-web` is a
-separate supervised child for the instance browser listener. The host retains key
-custody and admits only typed, scoped local operations; it does not parse browser
-HTTP. The gateway has no office-key entitlement or raw-key return operation, and
-organization creation requires an instance-admin grant. See
-[standalone-server.md](standalone-server.md#browser-listener-and-privilege-boundary).
+The [organization-data contracts](organization-data/README.md) own the target
+sources. The host retains keys, instance/catalog locks, typed administration and
+private worker launch. A separate `agentic-org-web` owns browser HTTP and has no
+office DB key/entitlement. Creation requires an authenticated instance administrator,
+including during initial HQ-only setup; an organization owner or office certificate
+alone cannot create another organization. Browser requests never select a raw local
+RPC method or managed storage path.
 
-**Naming amendment (2026-11-15):** the worker app/package/binary is
-`apps/agentic-org-office` / `agentic-org-office`;
-the retained browser application is `apps/agentic-org-ui` / `agentic-org-ui`. See
-[project structure](project-structure.md). Host custody, private launch and one worker
-per office remain. Executable/build references use the renamed worker without merging process roles.
+| Source/resource | Target owner and durability |
+| --- | --- |
+| Organization identity and HQ bootstrap | Typed provisioning plan records explicit slug, remote organization repository registration and `state_branch`, office definition and initial team choices. Every bootstrap employee, including HR and any owner-person, needs a valid home team; identity is distinct from execution config. See [create flow](create-organization.md). |
+| `durable/state/` | Ordinary organization Git files, stable-ID hierarchy. Current organization/office markers remain local catalog evidence, not replacements for those files. |
+| `durable/journal/`, `durable/authority/`, accounting and code checkpoints | Protected acknowledged unpublished changes, allocations, usage streams and local/unpushed work recovery. Preserve before acknowledging; Git publication alone is insufficient. |
+| Operational messaging/recovery/budget roots | Worker/domain-owned durable source envelopes, attachments, receipts/results, streams/high-waters, snapshots/cleanup, policy versions/periods/extensions/holds. Resolve/configure protected roots before opening caches; never put their only copies in disposable SQLite or shared Git. |
+| Private notes and credentials | Separate durable author-private notes DB with no administrator read exception; host/private authentication stores and local credential bindings stay protected. Shared receipts must not reveal private-note existence. |
+| `runtime/<office-id>/office.db` and repository caches | Rebuildable projection/transient state only after complete source verification. One bare cache per office/repository, no project integration-branch policy embedded in the cache. |
+| Task workspaces | Employee/team hierarchy from [document 04](organization-data/04-agent-structure.md#runtime-location), project/task/repository stable IDs; retained through handoff until closure, with explicit safe migration when placement changes. |
 
-**Standalone-v1 precedence (2026-11-09):**
-[standalone-server.md](standalone-server.md) and
-[ADR-0005](../adr/0005-standalone-server-v1.md) amend this boundary for a named
-macOS/Linux instance. The catalog, locks, private launch channels, office process
-ownership, key custody and child cleanup remain. `<home>` is now `office-state/`
-under the selected instance's persisted data root; employee homes are siblings
-under `agents/<office id>/<member id>/`, as the server design specifies. Runtime
-sockets use short instance-scoped paths. Service
-names, credential namespaces and orphan-key sweeps cannot affect another instance.
+The current worker's encrypted `org.db`/`office.db` still contain authoritative
+records and machine credentials. They are **not currently disposable target
+projections**. Adopting the target requires lossless source extraction, verified
+restore and separately reviewed paths/sandbox policies. Preserve Git-metadata,
+credential, other-task and managed-state denies; do not relabel an old allowlist.
+Instance roots, service names, sockets and orphan-key sweeps must be scoped without
+rewriting the existing credential service/signature identifiers. Cross-instance
+catalog loss is never proof of orphaned credentials.
 
-The app-only `office.app_token`/signed-Tauri-client contract, bundle-relative helper
-location, one pinned account-wide home and SMAppService installation are retired
-as v1 public contracts. Replace them with browser principal authorization and
-verified standalone helper/platform adapters; do not bypass their security
-invariants. The detailed phase-1 protocol below documents the inspected code until
-the implementation changes it. No old desktop caller requires compatibility.
+## Target launch and recovery gate
 
-Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). Amended by ada 2026-11-08 for the boundary review (adopt vs discard, `not_ready` at startup, the give-up count, the status-reason mapping, the stdin and `--discard` wording, `org-supervise`). Amended by ada 2026-11-08 for key custody (the host creates and holds every office's database key; launch version 2). Amended 2026-11-10 (PR #5 post-merge design fixes, awaiting ada's approval): the satellite `state` in `office.json`, `join_pending` and the terminal joins, the discard exception for `office.remove_pending`, and the "Pending: launch v3" note in §3. It implements
-`docs/design/offices-hq-and-satellites.md` ("Processes in one instance") and the `org-proto` host calls.
+Launch-v2 examples in §§1–6 below preserve the exact baseline protocol and security
+review. Their `org-server`/`org-office-host` names identify historical executables;
+current filenames are `agentic-org-office`/`agentic-org` and reusable host code is
+`org-host`. `office.json` v1 and launch v2 are independent of organization-data
+`schema_version`/`revision`. No extra slug/repository/home-team fields are added to
+the v2 first line by this documentation change. A reviewed versioned provisioner
+must bridge the full selected create plan and current stored-marker adoption rules
+before enabling target creation. Initial setup and production web handoff remain
+unavailable; launch v3 and satellite create remain separate pending contracts.
 
-**Implementation status** (2026-11-08): `org-office-host` implements this design: the catalog, the supervisor, `hello` (with its capabilities), `organization.create` (with `not_ready` at startup and at most 4 creates in flight), `organization.list`, `office.list`, `subscribe`, `office.app_token` behind the peer code-signature check, `office.restart`, `office.status_changed` with `status_reason` / `next_restart_at`, and the give-up rule (River: `river/office-host`, merged at `7c34096`, and `river/host-contract`). Spawning through `org-supervise` comes later; until then the host clears the environment and serializes spawns, binds and accepts under one lock.
-The contract crate `crates/org-office-launch` holds the exact shapes. **This design is the reference:**
-where this design and `crates/org-office-launch` differ, this design wins until River's next commit
-updates the crate.
+Restart/rebuild verifies trusted org/HQ/CA identity, journal envelope hashes,
+contiguous streams/incarnations, highest authority epoch, completed snapshot bytes
+and actor/fingerprint-bound command outcomes. `outcome_unknown` is reconciled before
+any side effect repeats. Preserve the existing combined messaging allocator and its
+high-water, independent work stream, opaque/native/base snapshot evidence and
+acknowledged numbering allocations. A copied checkpoint cannot promote an office.
+
+Before launching an agent, restore HQ's durable placement generation and execution
+journals, rebind legitimate credentials, and verify old-process cleanup or an explicit
+machine fence. Never kill a restored PID without ownership mark/generation and
+machine/boot/start checks. Cache deletion does not prove the old process stopped;
+missing evidence means recovery required. Document 11's permits and placement
+generations are separate from process-cleanup generations and task transport
+ownership generations. Host EOF, descriptor isolation, key-missing refusal,
+adopt/discard quarantine and bounded owned-child cleanup below still apply.
+
+## Current launch-v2 evidence
+
+Current `crates/org-host/src/service/mod.rs` dispatches only registered-instance
+hello and count-only instance.status, refusing unregistered instances. The old
+sessionless host methods below are historical requirements, not currently exposed
+operations or a workaround for unavailable setup. The launch-v2 framing itself
+remains in crates/org-office-launch.
+
+The remaining numbered sections record the inspected phase-1 host/worker contract
+and its review constraints, including the macOS app-token caller path. Retain exact
+wire/key/signature values for compatibility and implementation review. The retired
+signed-Tauri public caller, account-wide home and bundle-relative installation are
+not target installation requirements; standalone principal grants, scoped instances
+and verified packaged helper admission replace those roles without relaxing custody.
+Where code differs, describe it as implementation evidence and resolve/version the
+contract explicitly; this documentation does not enact a migration or override code.
 
 ## 1. Who owns what on disk
 
-`<home>` = the office home, from `org_proto::location` (`$ORG_OFFICE_HOME` or `~/Library/Application Support/agentic.org`).
+For this **current launch-v2 baseline**, `<home>` is resolved by `org_proto::location`
+(`$ORG_OFFICE_HOME` or `~/Library/Application Support/agentic.org`). Target instance
+provisioning must map/protect this control subtree without moving durable sources
+or changing credential identities implicitly.
 
 | Path | Written by | Read by |
 | --- | --- | --- |
@@ -347,7 +389,7 @@ first line is `invalid_request`.
     Closing that needs the key handed only to an authenticated reader (e.g. a per-spawn socket
     whose peer audit token must equal the admitted one): a launch-contract and server change.
     Debug builds don't check (their servers are unsigned; logged at startup).
-  - **No migration:** no real office existed before this; development offices are re-created by hand.
+  - **Historical no-desktop-migration decision:** no compatibility import is required from the undeployed desktop. This does not authorize discarding real local office state, protected source journals, credentials or live spool. Use disposable development fixtures only.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,

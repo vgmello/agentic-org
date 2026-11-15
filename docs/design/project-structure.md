@@ -15,6 +15,12 @@ product scope, process/security boundaries, and deletion acceptance.
 
 **Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve; pending bootstrap/HTTP authentication remains explicit.
 
+## Selected data and source ownership
+
+The [documentation authority map](documentation-authority.md) and [organization-data index](organization-data/README.md) own target entity/file relationships, including the messaging, recovery and budget contracts. The domain/vertical-slice layout here is code organization, not permission to infer a new database, public API or executable for every table. Earlier bug/request handler names can remain implementation details while target identities become typed tasks; public references follow document 06.
+
+Repository registrations/caches are organization-wide; project/repository associations own integration branches. Runtime task worktrees follow document 04's employee hierarchy. Protected operational sources and private data are separate from code repository checkouts. These are target ownership rules; actual module/storage migrations remain pending.
+
 ## 1. Names and process boundaries
 
 | Source / Cargo package | Executable / output | Responsibility |
@@ -43,16 +49,17 @@ handler/repository/interface files.
 
 | Capability | Rules and ownership | Proposed implementation home |
 | --- | --- | --- |
-| Organization | Membership, teams, roles, projects, authoritative placement | Organization module inside `org-office` |
-| Work | Task/bug transitions, checklists, numbering, idempotency, conflicts | Existing `org-work`, with office-owned implementations of its ports |
+| Organization | Single home-team membership, recursive teams/leads, roles, accountable project ownership and repository registrations | Organization module inside `org-office` |
+| Work | Typed tasks, independent assignment, immutable reporter/history, scoped numbering and conflict handling; private notes use a distinct author-only store | Existing `org-work`, with office-owned implementations of its ports; migration and private-note service remain pending |
 | Messaging | Conversations, channels, membership, delivery and authorization rules | Existing `org-mailbox`, with office storage/session implementations |
-| Employees | Goals, desired state, health/recovery rules, internal-job budgets and checkpoints | Employee policy/state inside `org-office`; session coordination through the planned runtime integration |
-| Processes | Approved definitions, scope resolution, revisions, instruction delivery | Planned pure `org-process` (using `org-docs` parsing); `org-office::processes` owns indexing, persistence, approvals and I/O integration, as specified in [processes.md](processes.md#7-where-the-code-lives) |
+| Employees | Execution configuration, ordered model profiles/connections, permits, turns/attempts, fenced placement and verified process cleanup; employment and pause/hold states remain separate | Employee policy/state inside `org-office`; runtime adapters and supervision integrate documents 04/11/14/16/17 |
+| Processes | Selected process/standard definitions, scope metadata and override flags; inherited resolution/execution remains deferred for the target | Existing `org-process`/`org-docs` provide earlier implementation evidence; office integration and target disposition follow [processes.md](processes.md#7-where-the-code-lives) |
 | Instance lifecycle | Setup, catalogs, service registration, release pins, key custody | Host/platform implementation composed by applications |
 | Federation | Enrollment, replication, reconnect, ownership generations | Proposed sync/PKI components under their existing design ownership |
 
-Organization membership/placement remains authoritative; an employee runtime record
-does not become a second membership source of truth. Workflows spanning modules
+Employee identity/profile is canonical organization data; current office placement
+is a projection of the durable placement-generation authority. A recreated runtime
+record does not become a second membership source or permission to launch. Workflows spanning modules
 call small public capabilities. Keep intermodule source dependencies acyclic.
 
 ## 3. Proposed Rust layout
@@ -77,13 +84,13 @@ crates/
       features/
         set_goal.rs
         pause_employee.rs
-        request_checkpoint.rs
+        request_checkpoint.rs        # Proposed memory use case; not selected by data model
       policy.rs                      # Health, recovery, budget rules
       model.rs
     processes/
       mod.rs
       features/
-        resolve_effective.rs
+        resolve_effective.rs         # Deferred target engine, not selected structural data
         publish_revision.rs
       policy.rs                      # Office integration; pure rules in org-process
     store/                           # Private SQLCipher/transaction adapters
@@ -113,32 +120,34 @@ crates/
   org-copilot/                       # Existing bounded draft-only capability
   org-spool/                         # Explicitly retained offline CLI behavior
 
-  # Planned components, absent from the inspected workspace:
-  org-process/                      # Pure process rules/resolution; see processes.md
-  org-docs/                         # Pure document/front-matter support
-  org-git/                          # Local Git adapter; needed v1 workflows
-  org-office-sessions/               # Office session coordination
-  org-supervise/                     # OS process ownership and cleanup
-  org-runtime-claude/                # Harness adapters behind org-runtime
+  # Present crates; existence does not establish selected-target integration:
+  org-process/                      # Earlier process rules/resolution; target engine deferred
+  org-docs/                         # Document/front-matter support
+  org-supervise/                    # OS process ownership and cleanup
+  org-sync/                         # Replication library; target source adaptation pending
+  org-sync-proto/                   # Versioned sync contracts
+  # Planned components, absent from this revision:
+  org-git/                          # Local Git adapter
+  org-office-sessions/              # Office session coordination
+  org-runtime-claude/               # Harness adapters behind org-runtime
   org-runtime-codex/
   org-runtime-agy/
-  org-sync/
-  org-sync-proto/
   org-pki/
   # Deferred v2 integration, not a standalone-v1 dependency:
   org-github/
 
 apps/
   agentic-org-office/                        # Per-office worker: domain/IPC/runtime composition
-  agentic-org-web/                       # Planned instance browser HTTP/TLS helper
-  agentic-org/                         # Planned setup CLI; binary agentic-org adapters
+  agentic-org-web/                       # HTTP library/executable; production handoff pending
+  agentic-org/                         # CLI/serve; protected setup remains unavailable
   # Host lifecycle is a library at crates/org-host, not a separate app.
   agent-os/                         # Small employee CLI
   agentic-org-ui/                            # Static browser application; see below
 ```
 
-The planned crate names record the existing designs' proposed responsibilities;
-they are not evidence of implemented runtime or replication behavior. Reassess
+The sketch distinguishes present libraries from proposed packages. Present code
+and its tests describe the implemented contract, not completion of the selected
+organization-data schema, runtime routing or replication-source migration. Reassess
 physical extraction during implementation rather than creating empty packages.
 The agentic-org application composes org-host. Its setup command and serve process share library behavior; there is no additional host/updater daemon.
 

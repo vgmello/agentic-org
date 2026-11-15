@@ -1,18 +1,11 @@
 # ADR-0002 · Storage: SQLite with SQLCipher, one writer
 
-**Amendment for standalone v1 (2026-11-09):**
-[ADR-0005](0005-standalone-server-v1.md) and
-[standalone-server.md](../design/standalone-server.md#6-authentication-keys-and-platform-gates)
-extend this decision to Linux and named instances. One writer, encrypted storage,
-private SQL and host key custody remain. Key identities and cleanup are scoped to
-the instance and office; the single-home/account-wide sweep assumption is retired.
-App-bundle-specific signing is replaced by proven standalone helper identities.
-Linux production key storage and crypto linkage are required release work, with
-no plaintext-development-store fallback. The historical macOS details below apply
-only where consistent with this amendment; neither platform support nor recovery
-has been verified by this documentation change.
-
-Status: **accepted** 2026-11-08 (the user). Owner: ada. Refines ADR-0001 decision 2. (amended 2026-11-08, ada: key creation tied to --create) (amended 2026-11-08: key custody)
+Status: accepted 2026-11-08; reconciled 2026-11-15. Owner: ada.
+Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md). Standalone platform
+and instance boundaries follow [ADR-0005](0005-standalone-server-v1.md).
+The selected source/storage contract follows the
+[authority map](../design/documentation-authority.md); no schema migration or
+production recovery implementation is performed by this decision.
 
 ## Context
 - Many agents will talk to an office server at once, and their writes must not fail or stall each other.
@@ -20,21 +13,113 @@ Status: **accepted** 2026-11-08 (the user). Owner: ada. Refines ADR-0001 decisio
 - We looked at [Turso](https://github.com/tursodatabase/turso), a Rust rewrite of SQLite. It has concurrent writes (MVCC, `BEGIN CONCURRENT`) and encryption at rest. As of November 2026 both are marked **experimental**: its manual says encryption is not production ready and shouldn't hold critical data. Its Rust API is async-only and pre-1.0 (0.4.x).
 
 ## Decisions
-1. **Engine: SQLite through `rusqlite`, built with SQLCipher** (AES-256, feature `bundled-sqlcipher`, exact pin). On macOS this uses Apple's CommonCrypto, so there's no OpenSSL to build or ship, as long as none of `OPENSSL_DIR`, `OPENSSL_LIB_DIR` + `OPENSSL_INCLUDE_DIR`, or their target-prefixed forms (e.g. `AARCH64_APPLE_DARWIN_OPENSSL_DIR`) are set at build time (otherwise it links `libcrypto` dynamically). Release builds clear them, and CI checks the server binary with `otool -L` to confirm it links no `libcrypto`. The standalone v1 Linux build must choose and validate its SQLCipher crypto linkage (including whether to use `bundled-sqlcipher-vendored-openssl`) before release. Only the office server opens the database (ADR-0001).
-2. **Key:** a random 256-bit key per office, kept in the **macOS Keychain** (a generic password, service `org.agentic.office`, account = the office id). The key is created only by `org-server --create`. An `--office` start never creates one: a missing key is `key_missing` (fatal). If the database exists but the key is missing, the server fails loudly and never creates a new key over existing data. The key is passed raw (`PRAGMA key = "x'<64 hex digits>'"`) to every connection, writer and readers, which skips SQLCipher's per-open passphrase derivation. It never appears in logs, errors or files. `org-office` takes the key from a key provider passed in when the office is opened. The server binary wires in the Keychain, and tests pass a fixed in-memory key. If the Keychain item is lost, the database can't be read, so backups and recovery get their own decision later.
-   - (amended 2026-11-08: key custody) **The host creates and holds the keys**, not the server. `org-office-host` makes each office's key for a create, before the office's first `--create`, and keeps it in the **Data Protection keychain**: a generic password with service `org.agentic.office-key` (the server's `org.agentic.office` is no longer used), account = the office id, in the access group from the signed host's `keychain-access-groups` entitlement, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and not synchronizable, so other code gets `errSecItemNotFound`, never a prompt. The host sends the key on the first line of the launch pipe for every create, start and discard (`org-office-launch` version 2). The server never creates, stores, loads or deletes a key and never touches the Keychain: it keys SQLCipher with the key from its first line, and a key that doesn't open existing databases is `key_missing`. The host never makes a key for an existing office, and deletes one only after that office's `--discard` reports `discarded`. Debug builds and tests use a dev-keys file store. **Keys stay on this Mac** (ThisDeviceOnly; the user's decision): they never follow a backup restore or a migration to another Mac. A "move this office" export, protected by the owner's recovery code, comes later as a feature. Why: a same-user process could stop the host and run the signed server itself with its own app token, and a Keychain item owned by the server would trust it; with the host holding the keys, a server started by anyone else gets no key. Details: [`office-host-boundary.md`](../design/office-host-boundary.md) ("Key custody").
+1. **Engine: SQLite through `rusqlite`, built with SQLCipher** (AES-256, feature `bundled-sqlcipher`, exact pin). On macOS this uses Apple's CommonCrypto, so there's no OpenSSL to build or ship, as long as none of `OPENSSL_DIR`, `OPENSSL_LIB_DIR` + `OPENSSL_INCLUDE_DIR`, or their target-prefixed forms (e.g. `AARCH64_APPLE_DARWIN_OPENSSL_DIR`) are set at build time (otherwise it links `libcrypto` dynamically). Release builds clear them, and CI checks the server binary with `otool -L` to confirm it links no `libcrypto`. The standalone v1 Linux build must choose and validate its SQLCipher crypto linkage (including whether to use `bundled-sqlcipher-vendored-openssl`) before release. Only the authorized storage service opens its database; browser and agent clients use its domain operations (ADR-0001). The separate private-note service/store must enforce author-only access rather than reusing broad shared-task reads.
+2. **Key custody belongs to the host.** The worker never creates, stores, loads
+   or deletes a database key and never accesses the platform key store. The host
+   provisions a random 256-bit office key only for a new office, passes it through
+   the private authenticated launch contract, and refuses to synthesize a key for
+   an existing office. A missing or unusable key is `key_missing`; existing data
+   must never be overwritten to make startup succeed. Every reader/writer keys
+   SQLCipher with the raw key (`PRAGMA key = "x'<64 hex digits>'"`); keys never
+   enter logs, ordinary files, organization Git or browser responses. Tests use
+   explicit in-memory keys; the debug-only dev-keys store is not a production
+   fallback.
+
+   The inspected macOS custody contract uses the Data Protection keychain,
+   generic-password service `org.agentic.office-key`, account = office ID,
+   the signed host's `keychain-access-groups` entitlement,
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and no synchronization.
+   The earlier worker-owned `org.agentic.office` service is retired. These are
+   persisted security namespaces, not executable names to rename. The existing
+   first-line launch/key and discard acknowledgement contract is retained in
+   [office-host-boundary.md](../design/office-host-boundary.md). The host removes
+   a key only after the matching office's verified discard; it never sweeps keys
+   for unrelated offices or instances. Standalone instance scoping and Linux
+   production custody require their reviewed implementations, not a guessed
+   namespace or a plaintext fallback.
+
+   Device-bound keys do not follow an ordinary backup onto another machine.
+   Restoring canonical sources, restoring legitimate key access and reconciling
+   owned processes are separate recovery obligations. CA escrow/recovery-code
+   delivery does not by itself prove database-key or private-note recovery.
+   REC-1 and document 16 retain the unresolved production recovery evidence.
 3. **Concurrency: one writer.** The server keeps one write connection on one thread and sends every write to it through a channel. Reads use their own connections (WAL) with a `busy_timeout`. So any number of client connections can write at the same time without contending for the write lock. Separate offices each have their own database and never share a file.
 4. **Durability:** WAL with `PRAGMA synchronous = FULL` and `PRAGMA fullfsync = ON`. On macOS a plain fsync doesn't flush the drive's cache, so this is what makes a committed write survive a power loss. A full flush is slow per commit, so the writer thread **batches**: it runs everything queued in one transaction, each request inside its own `SAVEPOINT` so an ordinary failure (a broken rule, a constraint) rolls back only that request, commits once, and only then reports each request's result. After each failed request the writer checks whether the transaction is still open (`is_autocommit()`). SQLite can end it on its own (e.g. some disk-full, I/O, out-of-memory or busy errors, an interrupt, `ON CONFLICT ROLLBACK`, `RAISE(ROLLBACK)`), which also undoes requests that already succeeded. If it's gone, the failed request gets its error, and every other request in the batch, including those that had succeeded, is re-run in a new transaction. If the commit itself fails, the writer rolls back if the transaction is still open, and every request that had succeeded gets the error. Requests that had already failed keep their own error.
-5. **One swap point:** all SQL and every `rusqlite` type stay in one private module of `org-office` (`store.rs`). The rest of the code sees only the office's own operations.
+5. **Private persistence adapters.** The inspected office keeps SQL and
+   `rusqlite` types in its private `store.rs`; domain-module extraction may split
+   that implementation without exposing SQL or weakening transaction ownership.
+   Domain callers use typed operations. The target shared projection and separate
+   private-note database retain distinct access and durability boundaries; the
+   consolidated draft schema does not combine their writers or permissions.
 6. **Turso later:** we look again when Turso's MVCC and encryption leave experimental. Changing engines means rewriting `store.rs` and migrating the data. A SQLCipher file can't be opened by stock SQLite or Turso, so the migration copies the data in-process from the SQLCipher connection straight into a new database encrypted by the new engine. Decrypted data never lands on disk in between.
 
+## Canonical sources and acknowledgement
+
+| Data | Durable authority | Role of SQLite |
+| --- | --- | --- |
+| Organization/team/employee/project definitions, task and feature records | Organization Git content mirrored as durable files; acknowledged unpublished mutations also need the durable journal | Indexed shared projection |
+| Published task activity | Immutable `work-history/tasks/<task-id>/<revision>.json` plus the journal for acknowledged unpublished events | Ordered history projection |
+| Usage observations and corrections | Durable accounting archive/checkpoints; immutable used price versions remain in organization Git | Derived totals and event indexes |
+| Chat, recipient state and attachments | Protected messaging sources under document 15 | Authorized shared projection, not the sole recoverable copy |
+| Budget policies, extensions, notices and holds | Protected budget sources and recoverable mutation receipts under document 17 | Evaluation/read projection; retained decisions are not regenerated from spend |
+| Number allocations, command receipts, placement generations and process evidence | Durable authority/recovery/supervisor journals under documents 06/11/16 | Rebuildable indexes where specified; cache recreation grants no launch authority |
+| Author-private task notes | Separate durable private database, protected mirrors/receipts and retention policy under document 05 | Canonical private store, not a disposable shared cache |
+| Credentials and authentication state | Existing protected host/office credential subsystem | Not made disposable or public by the organization-data schema |
+
+The shared draft requires `foreign_keys` and `recursive_triggers` on every write
+connection. Its tables and structural tests do not implement an application
+migration, authorization or a cross-file transaction. An accepted mutation must
+have one recoverable commit boundary covering its domain change, required journal
+and receipt/outcome. Independent file and SQL writes are not atomic merely because
+they share an operation ID. Document 16 requires evidence before acknowledgement;
+document 11 specifies complete-envelope checksums, temporary-file publication,
+file/directory flushes and gap detection. Apply equivalent platform power-loss
+guarantees to those journals, including macOS full flush; ordinary fsync alone
+is insufficient there.
+
+A rebuild inventories verified sources and fails explicitly for missing coverage.
+Git alone cannot restore chat, usage, budget decisions, private notes or execution
+authority. Existing processes must be reconciled or fenced before replacement
+launch. A task handoff does not authorize deleting its workspace. Code that is
+local-only or unpushed needs the protected recovery checkpoints defined by
+document 16 before its runtime cache can be discarded.
+
 ## Not covered here
-- **The workspace files are not encrypted by this.** They are ordinary files, protected only if FileVault (full-disk encryption) is turned on, which nothing checks today. Whether some organization data needs encryption beyond FileVault is a separate decision.
-- Backups, key rotation and key recovery.
+
+- **Ordinary files are not encrypted by SQLCipher.** Organization Git content and
+  runtime checkouts are ordinary files; platform disk encryption and protected
+  file/access policies are separate obligations. Never put secrets, chat bodies,
+  private notes or budget amounts in shared Git to obtain recoverability.
+- Automatic backup/restore, key rotation and new-machine key recovery remain
+  implementation work. The selected data contracts specify what must survive;
+  they do not establish a completed service or an encryption scheme for every file.
+- Historical storage/API layout is retained as implementation evidence, not an
+  instruction to load the draft SQL into an existing office database.
 
 ## Consequences
-- SQLCipher is compiled into the server (bundled), so the first build is a little slower. No system SQLite or OpenSSL is needed on macOS (see decision 1 for the build condition).
-- Writes go through one thread. With batched commits, that's far beyond our expected load, and it removes lock-contention bugs. Each request waits for its batch's flush, a few milliseconds.
-- Getting the key requires the Keychain, so the server needs the user's login session. A login service has it. (amended 2026-11-08: key custody) It's the host that reads the Keychain now; the item is readable after the first unlock since boot.
-- **Code signing:** a Keychain item's access is tied to the code signature of the program that created it. Release builds must be signed with a stable Developer ID, or an update would make macOS ask the user for access, which a background service can't answer. Unsigned dev builds may see that prompt when run by hand. How dev and test runs get a key without the Keychain is the server agent's call, and it must never reach release builds.
-  - (amended 2026-11-08: key custody) The item now belongs to the host's Keychain access group, not to the server's code signature. The release prerequisite is the host's `keychain-access-groups` entitlement on a stable Developer ID signature (ADR-0003 §2.1). Dev and test runs use the host's dev-keys file store, which release builds don't have.
+
+- SQLCipher remains bundled. macOS CommonCrypto linkage and Linux production
+  crypto linkage must be verified separately; no production plaintext fallback.
+- Each database has one writer. Readers use WAL; request acknowledgements follow
+  the durable commit and failures never manufacture successful receipts.
+- The host accesses macOS credentials after the first unlock since boot. Stable
+  Developer ID signing and its keychain access-group entitlement remain release
+  prerequisites. A filename change does not change a signing identity or grant.
+- The private-note store adds a distinct authorization and recovery boundary.
+  Administrator, owner, assignee or team-lead status grants no implicit note access.
+- Recovery tests must cover preserved message visibility, accounting gaps, consumed
+  budget extensions, independent holds, numbering allocations and live processes,
+  as well as successful SQL replay.
+
+## Earlier requirements and implementation evidence
+
+The [pre-reconciliation ADR](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md)
+records the superseded worker-owned key and desktop packaging discussion. The
+current host custody, SQLCipher, batching and platform flush obligations above
+retain their security meaning. Full source contracts are
+[private notes](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks),
+[accounting](../design/organization-data/10-usage-and-cost-accounting.md),
+[execution](../design/organization-data/11-model-profiles-and-agent-execution.md),
+[messaging](../design/organization-data/15-messaging-and-chat.md),
+[recovery](../design/organization-data/16-recovery-and-office-continuity.md) and
+[budgets](../design/organization-data/17-budgets-and-controls.md).

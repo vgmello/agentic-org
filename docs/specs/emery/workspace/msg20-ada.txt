@@ -1,5 +1,0 @@
-A delta to my list (01M788VB). Eden's notes (01M788EA) arrived early and are now folded into the same file, in the "Eden's calls" section. The counts are now 36 KEEP, 12 RE-POINT and 16 RETIRE.
-- Changed: BUG-37 goes from KEEP to RE-POINT, split per Eden. The setup parts go to IA-07 and the directory parts to IA-02.
-- No other call changed. Eden would have kept BUG-107, 156 and 157 as a11y fixes. I'm keeping them RETIRE under D36 (the View menu and the chart search go), with the safeguard that they come back as KEEP if IA-02 slips out of IA-M1.
-- Design gates Eden owns: the large-text sidebar rule before S1b freezes (BUG-119), the §13 Dialog amendment before BUG-164, and the D32 team-editing spec.
-- Outside your list, Eden says BUG-6 (loses typed text) should go first and BUG-163 should be raised. She also notes that BUGS.md still shows these done items as open: 62, 63, 65, 66, 71, 81, 82, 90-92, 94-99, 101 and 102.

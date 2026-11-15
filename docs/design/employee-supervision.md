@@ -1,14 +1,16 @@
 # Design: employee supervision, native identity and internal work
 
-**Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
-
-
-Status: **proposed, rev 1** 2026-11-09. Requested by the owner. Reviewers: ada,
-Eden, River, server-dev, Remy and codex-dev for their existing boundaries.
-Implements [`employee-supervision-ux.md`](../specs/employee-supervision-ux.md)
-(EMP-1..14), with [`agent-sessions.md`](agent-sessions.md),
-[`processes.md`](processes.md) and ADR-0003. Documentation only; no contract or
-runtime implementation is added here.
+Status: **execution integration requirements and deferred behavior proposals,
+rev 2** (2026-11-15). Documentation only. [Document 04](organization-data/04-agent-structure.md)
+owns employees; [11](organization-data/11-model-profiles-and-agent-execution.md)
+and [14](organization-data/14-model-providers-and-connection-pools.md) own
+execution/profile/pool contracts, [16](organization-data/16-recovery-and-office-continuity.md)
+recovery evidence and [17](organization-data/17-budgets-and-controls.md) budgets.
+See the [authority map](documentation-authority.md). Those selected data/control
+contracts do not select automatic schedules, semantic goals/reminders, native
+delegates, private memory or checkpoint-extraction engines. Earlier behavior is
+retained below with its specific scope rather than made a prerequisite for turns.
+The UX traceability remains [EMP-1..14](../specs/employee-supervision-ux.md).
 
 In standalone v1, the [server design](standalone-server.md) owns instance paths and
 access: browser controls arrive through authenticated HQ operations and are routed
@@ -19,60 +21,83 @@ proof that an offline satellite completed a control operation.
 
 ## Decisions (proposed)
 
-1. **One supervisor record per employee, not per delegate.** The office's existing
-   deterministic scheduler/pump hosts the control loop. `org-supervise` continues to
-   own OS process control only. No second model supervises the main model by default,
-   and a per-employee daemon is an implementation option, not a requirement.
-2. **Preserve the current dependency direction.** `org-office` owns goal, health,
-   budget and checkpoint rules as domain state. `org-office-sessions` observes
-   runtime events and executes those rules through `SessionControl` and adapters.
-   `org-supervise` handles spawn, ownership, stop and reap. Adapters translate native
-   protocols behind `org-runtime`; they never pick a delegation strategy.
-3. **Provision identity deterministically; choose work through processes.** The
-   generated employee replica is mandatory. Choosing a delegate, creating specialists,
-   consulting, deciding what to remember and moving channel questions to DMs are
-   agent behavior guided by versioned processes. Enforcement is reserved for
-   lifecycle, access, resource bounds and existing explicit enforced process rules.
-4. **The current single-main-session invariant stays.** At most one employee main
-   session runs at a time. Owned internal jobs may coexist only when the runtime
-   proves isolation and accounting. Otherwise helpers serialize through the same
-   slot or are unavailable; they never start an untracked second employee session.
-5. **Do not enable unsafe native tools merely to support delegation.** The previous
-   prohibition remains the fallback. Native delegate tools are enabled only after
-   the adapter passes the checks in §6, or a supervised office capability provides
-   the equivalent. General-purpose native delegates must pass the same checks.
+1. **One office worker owns execution.** The agentic-org-office process contains
+   the supervisor, router and session runner. There is no employee supervisor
+   daemon. org-supervise remains the OS-control library; org-runtime adapters
+   plan/translate, and org-office-sessions is the planned integration layer.
+   Domain modules do not acquire process-control dependencies.
+2. **Use existing employee identity.** One required home_team_id, optional role
+   and reports_to belong to profile.md; model/profile/tools/prompt belong to
+   execution.md. Placement/generation, local credentials and workspaces are
+   separate authorities. People have no agent execution. A lead must be a direct
+   home-team member and manages its subtree; ancestor-team membership alone
+   grants no control. Owner account authority is separate from employee flags.
+3. **One open logical turn and main-process slot.** A runnable agent selects one
+   model profile (ordered pool) and one canonical model. Connections use private
+   office-local bindings and shared HQ permits. Warm verified-idle reuse is allowed
+   only with the same launch digest. Unknown cleanup retains the slot. A proposed
+   helper/delegate is not an exception to the selected invariant.
+4. **Explicit work first.** Current selected execution accepts explicit turns;
+   it does not automatically choose work, queue messages, remind goals, extract
+   memory or spawn specialists. Later behavior must use the same admission,
+   fencing, budget and recovery contracts. Missing native capabilities stay
+   unavailable; restrictive tools are never enabled merely to support delegation.
+5. **Mechanism does not grant authority.** Generated prompts are projections of
+   admitted identity/role/policy. An execution file, editable memory or specialist
+   cannot grant permissions. The native replica and process-driven delegation
+   proposals in §§2–5 remain deferred independently of core execution.
 
 ## 1. Control loop and durable records
 
-Sketches below are domain requirements, not final wire shapes. Shared contract
-changes remain additive and require their existing owners' review.
+The selected records are the same records as document 11, not a parallel employee
+supervisor schema. Durable journals are authoritative; SQL is an indexed projection.
 
-| Record | Minimum facts |
+| Record | Minimum selected facts and authority |
 | --- | --- |
-| Employee supervisor | member, placement/generation, desired run state, active main run, goal version, health evidence/deadlines, recovery attempts, effective resource policy |
-| Goal | member, text, optional work reference, version, authorized actor/time, supersedes; per-session last accepted delivery version |
-| Internal job | id, employee, parent run/job, purpose, kind (delegate/checkpoint), definition revision, context mode, runtime id, lifecycle, deadline, grants, usage/unknowns |
-| Checkpoint | employee, source session/run and event watermark, base memory revision, candidate id, validation/commit outcome, resulting revision |
+| Employee/execution config | Existing identity/home team; optional config required before runnable with model_profile_id, canonical model_id, tools and prompt. Portable definitions live in organization Git. |
+| Placement | HQ's protected monotonically increasing placement_generation and office; replacement requires old verified cleanup or an explicit machine fence. |
+| Profile/connection/binding | Ordered connections, subscription identity shared organization-wide, local private credentials; fresh auth/model probes and compatible policy qualify routes. |
+| Turn/attempt/process | Frozen input/pool/model/workspace/policy; actual connection/permit/usage per attempt; mark and boot/start identity before input. One open turn and not-gone main process. |
+| Execution checkpoint/tool receipt | Immutable admitted context and verified effect outcomes. Unknown in-flight effects prohibit blind replay. Native portability must be verified by the destination driver. |
+| Holds | Manual/security and each budget independently; stop_pending is requested stop, held requires acknowledgement. Policy/period/used-extension history survives restart. |
 
-The supervisor survives session eviction. Offboarding and placement changes use the
-existing authoritative member state. Startup reconciles records against marked live
-processes and native jobs before any restart. Old placement/generation jobs never
-attach to a newly placed employee. Internal jobs have no Member, independent home
-schedule, inbox identity or top-level supervisor.
+The protected sources include immutable input/checkpoint/tool files, execution
+journal/receipts and HQ permit/placement authority. Losing SQLite does not erase
+these; losing the sources while a child may exist returns RECOVERY_REQUIRED.
+Git alone does not restore protected chat, private notes, usage or budget history.
+Task workspaces follow document 04's runtime employee/task/repository tree with one
+cache per office/repository. Handoff, turn end and process exit do not close a task
+or authorize removal of its worktree. Recompute sandbox/Git/credential/other-task
+denies before using the target layout.
 
-The loop consumes facts and time, not model judgments:
+The selected control path consumes facts and explicit commands:
 
-1. Check authoritative desired state and lease. Paused/offboarded means stop, not
-   recover. Take-over suspends automatic prompt injection and helper launches.
-2. Observe main and child lifecycle, transport, tool/approval/message waits and
-   resource meters. Persist coarse transitions; avoid per-token database writes.
-3. At a safe boundary, deliver changed goals/process guidance and bounded reminders
-   once per version or configured interval. The office sends normal encoded control
-   input with its header, never a runtime slash command or a second simultaneous turn.
-4. When eligible, schedule a bounded checkpoint job; coalesce duplicate requests.
-5. On a real deadline violation, probe where supported, interrupt, stop/reap and
-   recover under the existing run-mode rules and retry budget. Record evidence and
-   raise Needs you when exhausted. Healthy sleeps require no live model process.
+1. Validate caller scope, current config/placement and every active hold. Admit
+   no new work while recovering/stopping. Resolve lost acknowledgements through
+   the original operation receipt; an unknown response is not a failed mutation.
+2. Choose eligible same-model connections in frozen order; obtain the shared HQ
+   permit. Observe known wait/protocol/tool facts without interpreting silence as
+   failure. A local cache cannot grant quota or override stale authority.
+3. Persist ownership before spawn/input, pump a single turn and record actual-route
+   usage and tool outcomes. Retry each connection at most once per dispatch cycle.
+4. On failure stop/reconcile; replay only with proof of no effects or resume a
+   verified compatible checkpoint with completed receipts. Missing evidence means
+   recovery_required, retaining slot/workspace/evidence until explicit recovery.
+5. Release permit/process ownership only after verified terminal/idle/cleanup facts.
+   Expired permits remain release_pending and consume capacity. Worker startup
+   reconciles journals/owned processes before any replacement; host recovery does
+   not race a live worker. No crash-trigger automatic rerun is implied.
+
+### Deferred goal, health-reminder and memory control proposals
+
+A separate future behavior contract may retain desired run policy, goal version,
+reminder/deadline history, native job ownership and memory candidate/base revisions.
+These sketches are not selected tables or a scheduler already in the worker.
+A future loop must preserve pauses/takeover exclusivity, rate-limit reminders,
+coalesce extraction requests and retain retry/backoff evidence across restarts.
+It must use explicit execution turns and never recover unknown effects by issuing
+a fresh “check your state” prompt. Health investigation remains bounded and cannot
+invent side-effect completion from a model summary.
 
 Health is orthogonal to desired state and presence. Track last protocol event,
 active operation, known wait and deadline, probe result and process identity.
@@ -84,7 +109,7 @@ transport/operation deadlines. Retry counts and backoff survive office restarts 
 a crash loop cannot reset its allowance. Goal reminders are rate-limited and contain
 only current relevant text, not a growing history of previous reminders.
 
-**Goal authority.** An authenticated owner authorized through HQ's HTTP boundary
+**Deferred goal authority proposal.** An authenticated owner authorized through HQ's HTTP boundary
 can set the employee goal; an office certificate alone grants no human authority.
 An agent may
 propose an update or set an objective through a tool only when already authorized
@@ -105,15 +130,23 @@ until office lookup/retry resolves it. The office durably stores the goal, actor
 expected-version result and deduplication record atomically before acknowledging.
 An expired lookup window is explicit and never silently resubmits a fresh command.
 
-These are office-owned goal changes, distinct from HQ-authoritative Pause. HQ can
-commit paused organization status while runtime stop acknowledgement is pending;
-reconciliation applies current member state before new work. EMP-3 covers offline
+These proposed office-owned goal changes are distinct from HQ-authoritative manual Pause.
+HQ can commit the desired pause while runtime stop acknowledgement is pending;
+reconciliation applies current authority and all independent holds before new work.
+Resume releases its manual reason only; no goal update or recovery releases a
+security/budget hold. Raising, clearing or extending a budget releases only the
+holds satisfied by that policy change. Unknown usage remains explicitly incomplete;
+known reported amounts can still reach limits, and release caps warn only. EMP-3 covers offline
 rejection, ambiguous replies, same-ID retry and conflict. No unbounded goal queue
 or new goal authority at a relaying satellite is implied.
 
 ## 2. Native harness definitions
 
-Keep one canonical employee identity/profile and process manifest; render native
+**Deferred native replica/specialist proposal.** No automatic provisioning, native
+delegation or memory service is selected by document 11. Its launch-generated
+configuration is distinct from the additional reusable-persona behavior below.
+
+Keep employee profile.md separate from execution.md and the admitted policy/process snapshot; render native
 artifacts from that source. Generated replica content and employee-authored
 specialists are distinct. Reserve `org-<lowercase member id>` for the replica;
 scope specialist names to the employee, reject collisions and path traversal, and
@@ -153,10 +186,16 @@ revise them through scoped file/tool access; the office validates and renders a
 launch snapshot. Only approved prompt/metadata fields pass through: no hooks,
 arbitrary MCP servers, credential paths, bypass modes or policy widening. A private
 specialist is not a private process: it has no power to override inherited processes
-or the owner-approval rules for handbook changes. The owner can inspect it. Record
+or the owner-approval rules for handbook changes. This proposed owner inspection applies to specialist definitions only; author-only
+private task notes have no owner/admin exception and must never be copied into a
+specialist or helper snapshot without the author's authorized disclosure. Record
 history and retain provenance on offboarding; never reuse another employee's scope.
 
 ## 3. Delegation lifecycle and resource ownership
+
+**Deferred.** The selected execution service has no native-delegate orchestration.
+The following requirements apply only after a separately selected compatible job
+model, shared permit integration and driver conformance establish safe ownership.
 
 The main agent selects fresh self, private specialist or general purpose using its
 effective process and task brief. A fresh-self launch defaults to an empty history;
@@ -173,7 +212,9 @@ employee. Output is returned to the parent for evaluation. Nested delegates, if
 allowed, remain owned by the original employee and consume the same depth/concurrency
 and aggregate budget. A checkpoint helper cannot delegate.
 
-Aggregate main, delegate and helper usage without double counting native parent
+A future extension must obtain shared connection permits for chargeable child work;
+a local aggregate allowance cannot create subscription capacity. Aggregate main,
+delegate and helper usage without double counting native parent
 totals that already include children. Expose missing measurements as unknown.
 Limits cover concurrent model jobs, descendant count/depth, wall time, token/spend
 where available and observable OS resources. Reserve capacity atomically before
@@ -181,7 +222,7 @@ launch; release it after confirmed termination, not just after a timeout respons
 Quota denial defers optional helpers instead of consuming an emergency second slot.
 The organization can configure hard ceilings; process text cannot raise them.
 
-Pause, main-run completion, offboarding, placement transfer, lease transfer and
+Pause, parent-turn/run completion, offboarding, placement transfer, lease transfer and
 office shutdown cancel/drain internal jobs according to a bounded stop policy.
 No detached delegate survives a parent run unless an explicit future durable-job
 design establishes ownership; this proposal provides no such exception. Reconcile
@@ -191,6 +232,11 @@ The known same-user process-containment limitations in agent-sessions still appl
 adapters must report incomplete cleanup rather than claiming every process is gone.
 
 ## 4. Memory checkpoints without occupying the main conversation
+
+**Deferred memory-consolidation proposal.** These model-generated memory summaries
+are distinct from document 11's execution checkpoints/tool receipts. A summary
+cannot prove effects, confer resume portability or substitute for recovery evidence.
+No memory file/schema/commit service is selected here.
 
 Checkpoint triggers are deterministic lifecycle events or configured intervals:
 safe turn boundary, before eviction, after a meaningful run, or an explicit request.
@@ -224,9 +270,12 @@ deadline always wins over extraction; recover from the last committed checkpoint
 [`processes.md`](processes.md) §3.4 owns the bounded delivery mechanism. The effective
 process set, short behavioral instructions, changed text and deferred-body retrieval
 are composed into the harness's main instructions and required child guidance.
-Org/team/project resolution and private-only-adds semantics are unchanged.
+Structural process/standard files and override flags are selected; inherited
+resolution/injection engines remain deferred. Where applicable, overrides default
+to allowed unless explicitly prohibited by the owning definition; this proposal
+cannot silently impose universal private-only-adds semantics.
 
-Seed overridable processes for **delegation and consultation**, **memory hygiene**
+The deferred behavior proposal would seed overridable processes for **delegation and consultation**, **memory hygiene**
 and **channel questions and follow-up**. They provide defaults for choosing children,
 briefing/reviewing them, curating memories and taking a team question into a DM.
 The parent makes these decisions; the tools merely enable the operations. Existing
@@ -239,6 +288,14 @@ behavioral process text, with progressive help for detailed arguments. No proces
 edit invents commands or changes tool permissions.
 
 ## 6. Capability checks, implementation slices and validation
+
+Core execution follows AE-01..18 in document 11, durable recovery in 16 and
+independent budget controls in 17; those are selected requirements with services
+still to implement. E0–E5 and EMP entries concerning goals/delegates/memory below
+are deferred proposals, not launch prerequisites for explicit turns. Capability
+research never substitutes for authenticated production composition or application
+migrations. EMP-1/2/9/10/12/13 retain their compatible execution evidence as scoped
+in the UX table; other EMP behavior remains individually deferred there.
 
 ### Requirement traceability
 

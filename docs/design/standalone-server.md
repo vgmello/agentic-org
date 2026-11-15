@@ -3,7 +3,8 @@
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
 
-Status: **proposed implementation design**, 2026-11-09. The product decisions were
+Status: **selected target implementation design**, reconciled 2026-11-15; original
+standalone proposal 2026-11-09. The product decisions were
 made by the owner in the architecture discussion; wire formats, platform adapters
 and release mechanics still require review and implementation. Owner: ada.
 Base inspected: `v1` at `7a8827875e41cac45b75cbf170d6703417652379`.
@@ -167,17 +168,62 @@ Setup may accept an explicit absolute data directory. It saves the resolved path
 services and agents never infer it from a later shell's cwd or HOME. Instance
 configuration is server-managed and readable only by authorized local users. It
 names office IDs, release pin, endpoints and references to credentials, not inline
-private keys. SQLCipher databases, workspaces, logs and setup journal live under
-the selected root; binaries live outside it. File modes remain private.
+private keys. Binaries live outside mutable data and file modes remain private.
 
-Keep office control state in `<instance root>/office-state/`, with each office at
-`office-state/offices/<office id>/`. This subtree is `<office home>` (or `<home>`)
-in the retained host/session contracts. Employee homes are server-provisioned
-siblings at `<instance root>/agents/<office id>/<member id>/`. Both belong to the
-instance, while employee homes remain outside the control-state subtree as the
-session security rules require. Task worktrees keep their existing office-owned
-`workspace/projects/` layout. The instance lock protects the full root; the host
-and office locks also protect their own state. None of these paths is browser-editable.
+The instance resolver must provision each organization's selected data root and a
+protected organization operational root. The [authority map](documentation-authority.md)
+links the owning contracts. The target hierarchy is:
+
+```text
+<organization-data-root>/<organization-id>/
+├── durable/
+│   ├── state/                # ordinary organization Git files
+│   ├── journal/              # acknowledged unpublished changes
+│   ├── authority/            # numbering and recovery evidence
+│   ├── accounting/           # durable usage streams/checkpoints
+│   ├── local/offices/        # private local bindings, never Git
+│   └── checkpoints/          # local/unpushed code recovery
+└── runtime/<office-id>/
+    ├── office.db             # projections and explicitly transient state
+    ├── repositories/<repository-id>.git/
+    └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
+        ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
+        └── tasks/<task-id>/repositories/<repository-id>/
+<organization-operational-root>/
+├── messaging/                # protected envelopes and attachments (15)
+├── recovery/                 # receipts, streams, snapshots, cleanup (16)
+└── budgets/                  # policies, periods, events, extensions/holds (17)
+```
+
+Private task notes are a separate durable author-private database, with no owner
+or administrator read exception. Authentication/CA pins, local credentials and
+execution journals retain their protected stores outside Git. The operational
+root and private stores cannot be children whose only copies disappear on cache
+cleanup. Organization Git must be remote, using explicit organization slug,
+repository ID and state branch. Code repositories may be local-only. Projects
+associate many registered repos, each with required integration branch; each
+office caches a repo once regardless of how many projects use it.
+
+Current implementation evidence remains `office-state/offices/<office-id>/`
+with `org.db`, `office.db`, `office.json` and legacy `workspace/projects/`, plus
+managed employee homes at `<instance root>/agents/<office-id>/<member-id>/` in
+retained session contracts. Those DBs are not disposable: selected source
+extraction, verified restore and the target runtime/sandbox migration are pending.
+Re-derive Git-metadata, credential, other-task and managed-state denies against
+the target hierarchy before launch. Never turn a renamed directory into a broad
+agent allowlist. Task worktrees survive handoff until closure; placement changes
+require explicit safe migration and checkpointing of local/unpushed edits.
+
+Rebuild verifies Git plus all authorized protected sources, actor/fingerprint-bound
+receipts, stream/incarnation high-waters, snapshot hashes/epochs and allocation
+ledger. Rebind credentials and reconcile marked processes before execution.
+A restored PID alone never authorizes a signal; require matching ownership mark,
+generation and machine/boot/start identity. Only restored placement authority and
+verified prior cleanup/fencing permit a new process. Git alone cannot reconstruct
+chat, usage, budget history/extensions/holds or authority. Missing source coverage
+must block affected recovery rather than fabricate a successful restore. No
+backup/restore or budget pause engine is implemented by this storage specification.
+The instance, host and office locks retain their single-writer invariants.
 
 Do not put long data-root paths directly into macOS Unix-socket names: the existing
 103-byte limit still applies. A private short runtime directory uses an opaque
@@ -210,7 +256,7 @@ Initial installation is HQ-only. After obtaining the platform executable, the us
 agentic-org setup
 ```
 
-Setup is one resumable workflow: select/reserve default or --name <name>; verify a complete platform release; collect HQ organization/listener configuration; establish the instance administrator; provision HQ using protected host operations and the existing recovery-code flow; register/start the per-user service; probe and show the HQ browser URL. Service registration is automatic; users do not run a separate install or service install step. Preserve the recovery delivery/deferred-collection behavior in the installation UX spec. Repeating setup resumes the same operation and reuses identity/data/configuration/service without changing roles, silently upgrading or duplicating HQ. Existing satellite-only state is not converted into HQ by rerunning setup.
+Setup is one resumable workflow: select/reserve default or --name <name>; verify a complete platform release; collect HQ organization name/slug, remote organization repository/state branch, valid bootstrap home-team choices and listener configuration; establish the instance administrator; provision HQ using protected host operations and the existing recovery-code flow; register/start the per-user service; probe local HQ service readiness and show its browser URL. Service registration is automatic; users do not run a separate install or service install step. Preserve the recovery delivery/deferred-collection behavior in the installation UX spec. Repeating setup resumes the same operation and reuses identity/data/configuration/service without changing roles, silently upgrading or duplicating HQ. Existing satellite-only state is not converted into HQ by rerunning setup.
 
 The initial wizard and noninteractive setup schema offer no satellite role, invitation or --hq join option. Requests to use initial setup for joining are rejected before provisioning and direct the user to HQ's Add office flow. Satellite creation is initiated separately from HQ's authenticated UI or an HQ-issued onboarding command. That destination flow can ensure missing release/service prerequisites through the same internal foundation, but is not a mode of agentic-org setup. Its public command spelling is outside this initial-setup contract; do not invent a setup join flag.
 
@@ -220,7 +266,16 @@ For offline HQ installation:
 agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
 ```
 
-Verify the complete local bundle with the same trust as online installation; perform no external fetches or update checks. Persist offline policy for background jobs until online operation is explicitly enabled. Local IPC remains available. Missing platform prerequisites produce actionable errors instead of downloads. Offline setup creates HQ only and does not attempt remote enrollment. Provider access/authentication remains distinct from framework readiness.
+Verify the complete local bundle with the same trust as online installation; perform no external fetches or update checks. Persist offline policy for background jobs until online operation is explicitly enabled. Local IPC remains available. Missing platform prerequisites produce actionable errors instead of downloads. Offline setup creates HQ only and does not attempt remote enrollment. It still
+requires the organization repository to be registered as remote with a valid URL
+and state branch; validate syntax and local credential references/configuration
+only. Do not fetch, probe remote Git authentication, discover provider models or
+make another external request. Save the remote registration and locally authored
+state with remote connectivity/publication explicitly unverified or pending until
+online operation is authorized. Provider access/authentication also stays
+unverified without external probes. Local HQ service readiness is distinct from
+remote repository publication and agent-provider readiness; no local-only
+organization repository fallback is introduced.
 
 ### Satellite enrollment is a separate HQ-initiated flow
 
@@ -266,7 +321,9 @@ Never roll back only the executable after an incompatible schema change. Shared
 release garbage collection checks all instance pins and running references. No
 desktop-data migration or old IPC support is built. Uninstall preserves data;
 explicit deletion is scoped, checks the stopped state and cannot remove another
-instance's directory or shared release.
+instance's directory or shared release. Cache cleanup additionally verifies source
+coverage, private stores, credentials, unresolved communication and code checkpoints;
+it is distinct from deliberate deletion of a disposable test instance.
 
 ## 5. HTTP and browser contract
 
@@ -437,7 +494,7 @@ Retain the offices design's organization single writer, deterministic apply,
 origin incarnations, acknowledgements, deduplication, scoped backfill, ownership
 generations, handover/reclaim rules and protocol negotiation. Local work can commit
 while HQ is unreachable; cross-office messages and org commands keep separate
-outboxes. HQ holds every task/message, satellites only relevant work. Runtime
+outboxes. HQ retains authorized routing copies of tasks/messages; satellites retain relevant permitted work. Copies do not grant message, private-note or amount access. Runtime
 processes, secret credentials and local workspace files are not replicated as UI data.
 
 Enrollment keeps one-time invitations, pinned HQ identity, owner approval, office
@@ -447,22 +504,37 @@ identity model in v1 (plan B2-10; 2026-11-10); a proven equivalent private capab
 is post-v1. Same UID alone is not proof of enrollment. Headless enrollment replaces desktop deep links. Approvals
 happen in an authenticated HQ browser, independent of the browser's machine.
 
-The existing project design currently uses local bare Git in v1 and defers real
-GitHub to v2. A remote satellite cannot use an HQ filesystem path as a Git remote.
-This pivot adds no folder sync or new Git hosting service. Cross-office coding must
-declare a reachable supported repository transport before it is advertised. The
-first satellite acceptance run can use a non-repository task; shared-repository
-execution remains an explicit feature gate until that contract is resolved.
+The selected project model registers repositories organization-wide and associates
+zero or more code repositories per project, each with an integration branch.
+Local-only code repos remain supported; they cannot become another host's remote
+by copying an HQ filesystem path. Organization metadata Git must be remote.
+This pivot adds neither folder sync nor Git hosting. A cross-office coding claim
+requires a reachable supported transport, verified checkout/push/fetch and source
+recovery evidence. A non-repository satellite task proves execution only, not that
+transport. Preserve unpushed/local-only work via protected checkpoints.
 
-The [employee requirements](../specs/employee-supervision-ux.md) and
-[runtime design](employee-supervision.md) remain responsibilities of the local
-office: a deterministic supervisor per employee, owned internal delegates/helpers,
-aggregate resource limits and cleanup, and native harness persona provisioning.
-[Processes](processes.md#35-context-bounds-fresh-contexts-and-standards-proposed-2026-11-09)
-provide bounded instruction delivery and overridable delegation guidance, with
-standards retrieved on demand. [Channels](../specs/chat-ux.md) extend office-first
-messaging for authorized team questions and DM follow-up; membership does not wake
-every employee. A browser connection is never the lifetime owner of this work.
+[Document 11](organization-data/11-model-profiles-and-agent-execution.md) owns
+execution: one office worker's internal supervisor, a logical controller and main
+process slot per agent, selected profile/model, ordered connection candidates,
+local bindings, shared connection permits, logical turns/attempts/processes and
+durable placement fencing. Employee identity/home team remains in profile.md;
+execution.md is separate and required to be runnable. A completed turn or handoff
+does not close a task. Reuse verified idle processes only with matching launch
+context; account actual connection/attempt usage without fabricating missing data.
+The [employee UX](../specs/employee-supervision-ux.md) retains bounded helpers,
+resource limits and cleanup. Existing supervision implementation is evidence,
+not proof the selected pool/runner backend is wired.
+
+Process/standard content and overridable structural scopes are selected; inherited
+resolution/execution, automatic scheduling/memory and delegated-employee engines
+remain deferred. [Chat](organization-data/15-messaging-and-chat.md) defines protected
+conversation membership/per-message visibility; membership does not wake everyone.
+[Budgets](organization-data/17-budgets-and-controls.md) selects data/control records,
+not a running evaluator: preserve incomplete usage, independent manual/security/
+budget holds, pending stop versus acknowledged held state and durable one-time
+extensions. Release caps warn only. Preserve cost access scopes and the own-agent
+CLI amount exception; never expose amounts/history to a replica just because it
+has an SQL projection. A browser connection never owns durable work's lifetime.
 
 ## 8. Implementation order and release evidence
 
