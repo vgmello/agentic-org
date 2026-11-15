@@ -47,8 +47,10 @@ sandbox. Save a short prompt referencing the original request, decision revision
 and relevant source, then run (create the ignored output folder first):
 
 ```bash
+HINDSIGHT_DISABLED=true AGENT_KIT_MEMORY_ACCESS=review \
 codex exec -m gpt-6.1-sol -c 'model_reasoning_effort="xhigh"' \
-  -c 'agents.enabled=false' -c 'approval_policy="never"' -s read-only --json \
+  -c 'agents.enabled=false' -c 'features.hooks=false' \
+  -c 'mcp_servers.hindsight.enabled=false' -c 'approval_policy="never"' -s read-only --json \
   --output-schema .agent-kit/templates/PLAN_REVIEW_SCHEMA.json \
   --output-last-message .agent-kit/logs/plan-review/result.json \
   - < .agent-kit/logs/plan-review/prompt.txt > .agent-kit/logs/plan-review/events.jsonl
@@ -58,5 +60,9 @@ Use a unique folder per pass; save its observed thread ID and actual completion
 status. Do not fork implementation history, use --last, or infer READY from process
 exit alone. Missing auth/evidence stays INCOMPLETE. The lead evaluates findings and
 records readiness on the actual decision/plan revision; this is not an authenticated
-approval service. Codex native architecture-reviewer is available for an already
-read-only parent, but its role instructions cannot change inherited permissions.
+approval service. Codex native architecture-reviewer is available only when the parent already
+enforces read-only execution, disables native Hindsight hooks/MCP, and restricts
+kit memory to review-phase bounded recall. Otherwise use the fresh CLI above.
+Custom roles inherit parent MCP servers; role TOML cannot override that MCP or
+permission configuration. Do not infer memory isolation from a read-only shell.
+Reference: https://learn.chatgpt.com/docs/agent-configuration/subagents .

@@ -110,6 +110,35 @@ class ReviewIsolationTests(unittest.TestCase):
                 self.assertEqual(popen.call_args.kwargs['env']['HINDSIGHT_DISABLED'], 'true')
                 self.assertEqual(popen.call_args.kwargs['env']['AGENT_KIT_MEMORY_ACCESS'], 'review')
 
+    def test_documented_plan_review_command_is_memory_isolated(self):
+        import os
+        import subprocess
+        recipe = (Path(__file__).resolve().parents[2] / '.agents/skills/plan-review/SKILL.md').read_text()
+        command = recipe.split('```bash\n', 1)[1].split('```', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            output = root / '.agent-kit/logs/plan-review'
+            output.mkdir(parents=True)
+            (output / 'prompt.txt').write_text('Review this design independently')
+            binary = root / 'bin'
+            binary.mkdir()
+            executable = binary / 'codex'
+            executable.write_text('#!' + str(Path(sys.executable).resolve()) + '\n'
+                                  'import os,sys,json\n'
+                                  'print(json.dumps({"args":sys.argv[1:],"disabled":os.environ.get("HINDSIGHT_DISABLED"),'
+                                  '"phase":os.environ.get("AGENT_KIT_MEMORY_ACCESS")}))\n')
+            executable.chmod(0o700)
+            subprocess.run(['bash', '-c', command], cwd=root,
+                           env={**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH']}, check=True)
+            captured = json.loads((output / 'events.jsonl').read_text())
+        args = captured['args']
+        overrides = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-c']
+        self.assertEqual(captured['disabled'], 'true')
+        self.assertEqual(captured['phase'], 'review')
+        self.assertIn('features.hooks=false', overrides)
+        self.assertIn('mcp_servers.hindsight.enabled=false', overrides)
+        self.assertIn('read-only', args)
+
 
 if __name__ == '__main__':
     unittest.main()

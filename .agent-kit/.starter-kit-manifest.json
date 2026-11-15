@@ -55,7 +55,7 @@
     ".agents/skills/code-navigation/SKILL.md": "194ffe11f756fef9003ef4019f62601d8d6a7d9ebe409b638af504b7f191916c",
     ".agents/skills/cost-aware-execution/SKILL.md": "2ea7639a3bec786f6efd7d7e09bfd3b03aeb2d530844051ed00b41d0a1ac75cc",
     ".agents/skills/indexed-context/SKILL.md": "91cb55b720ee1ddc720c7ecf3a67832e844686435ff49613ea11abf4123b5799",
-    ".agents/skills/plan-review/SKILL.md": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
+    ".agents/skills/plan-review/SKILL.md": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577",
     ".agents/skills/process-improvement/SKILL.md": "350ac236bb1e0fe9a7193a88871732cd1455e934c07dd21fc44385316fcd5708",
     ".agents/skills/project-capabilities/SKILL.md": "2c80679ba5f55bb5b6e40abe9cdb65f12bfc6b616c295c2bda8a720a824c2af9",
     ".agents/skills/project-memory/SKILL.md": "3406a79fa1a0e612f5c6b3f779b4f5f44c3c275b128bbd14005ed7e5770a0490",
@@ -63,7 +63,7 @@
     ".agents/skills/setup-health/SKILL.md": "bea1808fc4917fb3cc2868f73f7ef40d741f0d13c2dd3bfaefabf19f0f0754e5",
     ".agents/skills/skill-routing/SKILL.md": "451a87e1b7c8fe733ad735402fee8d0ed89d2d6de5a89a56308929cdf727cb06",
     ".agents/skills/task-routing/SKILL.md": "630b45ca6cce995e9a7e524e9f670f41e6e2a2622cc29d0bc91e67307a1bce9c",
-    ".codex/agents/architecture-reviewer.toml": "e26421b2f2aed013c0cce96705df398e4cf88bfd6b5d1202d2af1f3c31557dcc",
+    ".codex/agents/architecture-reviewer.toml": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002",
     ".codex/agents/code-reviewer.toml": "a3601c4805b20207f5a1ff8c1d002b5276415275dbffcc36b9831db4b14714dd",
     ".codex/agents/codebase-scout.toml": "0edfb177190ab952e1c8e42932392cb979c7f87108f01287e7b4b7e2d9bdb94b",
     ".codex/agents/fullstack-engineer.toml": "48bd08838e056a7874162b75c0dfbea0e3fdb135aadb534257d54a1d40148685",
@@ -78,7 +78,7 @@
   "mode": "codex-only",
   "version": 1,
   "local_adaptations": {
-    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation.",
+    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process.",
     "source_revision": "01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1",
     "files": {
       ".agent-kit/runtime/kit_hindsight.py": {
@@ -100,6 +100,14 @@
       ".agent-kit/runtime/kit_codex.py": {
         "upstream_sha256": "730b2ae4f14611886d9ed5f8cbaabf1daec3aeac52b5f53a9e0950c6fbccf878",
         "local_sha256": "d22fdc642d69b6be0dc602164e67fea26d285a930539cc48d6e4da601ecc8f9a"
+      },
+      ".agents/skills/plan-review/SKILL.md": {
+        "upstream_sha256": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
+        "local_sha256": "89d73828bbbfab5183eaae92b83b00620b40157bb052b57c42d557cb48a6e577"
+      },
+      ".codex/agents/architecture-reviewer.toml": {
+        "upstream_sha256": "e26421b2f2aed013c0cce96705df398e4cf88bfd6b5d1202d2af1f3c31557dcc",
+        "local_sha256": "a1cb9d199b8bf2616cecd581052b2f2bfb5586e5e65a2934ca8aa628674d1002"
       }
     }
   }
