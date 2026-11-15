@@ -1,4 +1,6 @@
 PRAGMA foreign_keys = ON;
+-- Required on every write connection: REPLACE must run immutable-row DELETE guards.
+PRAGMA recursive_triggers = ON;
 
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
@@ -267,7 +269,7 @@ CREATE TABLE release_repository_commits (
   PRIMARY KEY (organization_id, release_id, repository_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, project_id, repository_id) REFERENCES project_repositories(organization_id, project_id, repository_id)
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -720,7 +722,7 @@ CREATE TABLE deployment_repository_commits (
   PRIMARY KEY (organization_id, deployment_id, repository_id),
   FOREIGN KEY (organization_id, deployment_id, project_id) REFERENCES deployments(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, project_id, repository_id) REFERENCES project_repositories(organization_id, project_id, repository_id)
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -1210,8 +1212,8 @@ BEGIN
     OR f.value_type = 'json')
   );
 END;
-CREATE TRIGGER used_flag_identity_immutable BEFORE UPDATE OF key, value_type, project_id ON feature_flags
-WHEN NEW.key <> OLD.key OR NEW.value_type <> OLD.value_type OR NEW.project_id <> OLD.project_id
+CREATE TRIGGER used_flag_identity_immutable BEFORE UPDATE OF organization_id, id, key, value_type, project_id ON feature_flags
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.id <> OLD.id OR NEW.key <> OLD.key OR NEW.value_type <> OLD.value_type OR NEW.project_id <> OLD.project_id
 BEGIN
   SELECT RAISE(ABORT, 'used flag identity is immutable') WHERE
     EXISTS (SELECT 1 FROM release_flag_settings s WHERE s.organization_id = OLD.organization_id AND s.flag_id = OLD.id)
@@ -1274,7 +1276,68 @@ BEGIN
 END;
 
 CREATE TRIGGER usage_checkpoint_monotonic BEFORE UPDATE ON usage_stream_checkpoints
-WHEN NEW.high_water_sequence < OLD.high_water_sequence
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.origin_office_id <> OLD.origin_office_id
+  OR NEW.producer_id <> OLD.producer_id OR NEW.high_water_sequence < OLD.high_water_sequence
   OR (NEW.high_water_sequence = OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
   OR (OLD.state = 'sealed' AND (NEW.state <> 'sealed' OR NEW.high_water_sequence <> OLD.high_water_sequence))
 BEGIN SELECT RAISE(ABORT, 'usage checkpoint regressed, forked or reopened'); END;
+
+CREATE TRIGGER usage_checkpoint_no_delete BEFORE DELETE ON usage_stream_checkpoints
+BEGIN SELECT RAISE(ABORT, 'usage checkpoint identity and coverage must be retained'); END;
+
+CREATE TRIGGER used_model_price_no_delete BEFORE DELETE ON model_prices
+WHEN EXISTS (SELECT 1 FROM usage_records u WHERE u.organization_id=OLD.organization_id AND u.price_id=OLD.id)
+BEGIN SELECT RAISE(ABORT, 'used price versions must be retained'); END;
+
+CREATE TRIGGER used_flag_no_delete BEFORE DELETE ON feature_flags
+WHEN EXISTS (SELECT 1 FROM release_flag_settings s WHERE s.organization_id=OLD.organization_id AND s.flag_id=OLD.id)
+  OR EXISTS (SELECT 1 FROM deployment_flag_settings s WHERE s.organization_id=OLD.organization_id AND s.flag_id=OLD.id)
+BEGIN SELECT RAISE(ABORT, 'used flag identity must be retained'); END;
+
+-- Validate the parent as well as the setting, so deferred-FK load order is safe.
+CREATE TRIGGER inserted_flag_checks_existing_settings AFTER INSERT ON feature_flags
+BEGIN
+  SELECT RAISE(ABORT, 'flag value type mismatch') WHERE EXISTS (
+    SELECT 1 FROM (
+      SELECT value_json FROM release_flag_settings WHERE organization_id=NEW.organization_id AND flag_id=NEW.id
+      UNION ALL
+      SELECT value_json FROM deployment_flag_settings WHERE organization_id=NEW.organization_id AND flag_id=NEW.id
+    ) s WHERE NOT (
+      (NEW.value_type='boolean' AND json_type(s.value_json) IN ('true','false'))
+      OR (NEW.value_type='string' AND json_type(s.value_json)='text')
+      OR (NEW.value_type='number' AND json_type(s.value_json) IN ('integer','real'))
+      OR NEW.value_type='json')
+  );
+END;
+
+CREATE TRIGGER employees_no_reporting_cycle_insert AFTER INSERT ON employees
+WHEN NEW.reports_to_employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'employee reporting cycle') WHERE EXISTS (
+    WITH RECURSIVE managers(id) AS (
+      SELECT NEW.reports_to_employee_id UNION
+      SELECT e.reports_to_employee_id FROM employees e JOIN managers m ON e.id=m.id
+      WHERE e.organization_id=NEW.organization_id AND e.reports_to_employee_id IS NOT NULL
+    ) SELECT 1 FROM managers WHERE id=NEW.id
+  );
+END;
+CREATE TRIGGER employees_no_reporting_cycle_update AFTER UPDATE ON employees
+WHEN NEW.reports_to_employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'employee reporting cycle') WHERE EXISTS (
+    WITH RECURSIVE managers(id) AS (
+      SELECT NEW.reports_to_employee_id UNION
+      SELECT e.reports_to_employee_id FROM employees e JOIN managers m ON e.id=m.id
+      WHERE e.organization_id=NEW.organization_id AND e.reports_to_employee_id IS NOT NULL
+    ) SELECT 1 FROM managers WHERE id=NEW.id
+  );
+END;
+
+CREATE TRIGGER employee_usage_kind_insert AFTER INSERT ON employees
+WHEN NEW.kind <> 'agent' AND EXISTS (
+  SELECT 1 FROM usage_records u WHERE u.organization_id=NEW.organization_id AND u.employee_id=NEW.id AND u.actor_kind='agent')
+BEGIN SELECT RAISE(ABORT, 'historical usage consumer must remain an agent'); END;
+CREATE TRIGGER employee_usage_kind_update BEFORE UPDATE OF kind ON employees
+WHEN NEW.kind <> 'agent' AND EXISTS (
+  SELECT 1 FROM usage_records u WHERE u.organization_id=NEW.organization_id AND u.employee_id=NEW.id AND u.actor_kind='agent')
+BEGIN SELECT RAISE(ABORT, 'historical usage consumer must remain an agent'); END;

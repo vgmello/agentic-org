@@ -245,7 +245,7 @@ erDiagram
 
 Status values represent data. This document does not implement v1's triage, Undo, checklist promotion, automatic feature transitions or request-approval engine. Those migration choices remain open. Do not discard existing v1 fields absent from this selected-scope draft; preserve them in staging until their disposition is chosen.
 
-Private notes attached to tasks are a required, separate capability defined by [document 12](12-task-assignment-and-history.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. The shared `comments` table below does not satisfy that requirement; private storage/schema and access controls are still missing from this draft.
+Private notes attached to tasks are a required, separate capability defined by [document 12](12-task-assignment-and-history.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. The shared `comments` table below does not satisfy that requirement; [document 13](13-private-task-notes.md) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
 An eventual import maps existing bug/request records into tasks with the corresponding `type`, preserving their stable IDs and mapping child references to entity kind `task`. It must detect collisions between previously separate entity namespaces before publishing anything. Existing readable references need an explicit mapping; this draft neither silently renumbers records nor implements that migration.
 

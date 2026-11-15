@@ -168,3 +168,5 @@ CREATE TABLE task_workspaces (
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)
 ) STRICT;
 ```
+
+Direct reporting must be acyclic within an organization, independently of the team tree. The consolidated schema rejects cycles on insertion and update, including deferred-reference imports.

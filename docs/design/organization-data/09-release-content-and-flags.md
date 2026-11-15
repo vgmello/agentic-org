@@ -323,3 +323,5 @@ CREATE TABLE deployment_flag_settings (
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```
+
+The consolidated schema validates flag values both when settings arrive and when a deferred definition arrives, so import order cannot bypass type checks. Used flag identity cannot be deleted or replaced. Every write connection enables recursive triggers so SQL replacement operations run the deletion guards.

@@ -15,7 +15,7 @@ erDiagram
     releases ||--o{ milestones : owns
     releases ||--o{ deployments : records_delivery
     releases ||--o{ release_repository_commits : pins
-    project_repositories ||--o{ release_repository_commits : supplies
+    repositories ||--o{ release_repository_commits : historical_identity
     milestones o|--o{ tasks : groups
     projects ||--o{ documents : preserves
     features o|--o{ documents : scopes
@@ -335,7 +335,7 @@ CREATE TABLE release_repository_commits (
   PRIMARY KEY (organization_id, release_id, repository_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, project_id, repository_id) REFERENCES project_repositories(organization_id, project_id, repository_id)
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -411,3 +411,5 @@ CREATE TABLE documents (
   FOREIGN KEY (organization_id, updated_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```
+
+Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; import validates recorded historical provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.

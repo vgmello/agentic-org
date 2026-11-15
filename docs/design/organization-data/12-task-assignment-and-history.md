@@ -1,6 +1,6 @@
 # Task ownership, assignment, reporter and activity history
 
-Structural draft for v1. Document revision 2. This selects task activity history, separate team/individual assignment and private notes attached to tasks as requirements for the proposed data model. It changes documentation and draft SQL only; the application migration, command handlers and UI remain implementation work. The private-note requirement is not yet represented in the draft SQL or implemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Structural draft for v1. Document revision 3. This selects task activity history, separate team/individual assignment and private notes attached to tasks as requirements for the proposed data model. It changes documentation and draft SQL only; the application migration, command handlers and UI remain implementation work. The private-note data structure is defined in [document 13](13-private-task-notes.md) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
 ## Ownership and current responsibility
 
@@ -81,7 +81,7 @@ Where only a snapshot survives, retain it with an explicit `history_baseline` ev
 
 ## Private notes attached to tasks
 
-**Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** This is part of the selected requirements. Its absence from v1 and the current SQL draft is a tracked design/implementation gap, not a reason to defer the capability out of scope.
+**Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** This is part of the selected requirements. Its absence from v1 is an implementation gap. [Document 13](13-private-task-notes.md) supplies its data structure and private storage contract.
 
 Private task notes are **not implemented in the inspected v1 source**. Its [`CommentKind::Note`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L287) is an ordinary shared comment. [`work.comment` parameters](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L1514) have no note visibility or private owner field. The [comment handler](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/items.rs#L25) stores its body in a regular `WorkEventKind::Comment`; the [change feed](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/feed.rs#L15) emits that event. The [activity read contract](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/ports.rs#L177) has no per-note reader restriction.
 
@@ -104,7 +104,7 @@ Acceptance criteria for the required capability:
 | PN-05 | Only an explicit author action publishes a shared comment; ordinary note saves never publish, and the private original retains its visibility. |
 | PN-06 | Note deletion and task deletion follow the documented private retention/backup policy without exposing note content through shared history. |
 
-Completion remains blocked on the private storage/schema, authorization/API and UI implementation and these acceptance checks. The existing draft-schema tests do not validate this feature. V1's shared `note` comments alone cannot count as satisfying it.
+The [private schema](private-notes-schema.sql) now defines its data structure. Completion still requires the private store, authorization/API and UI implementation and these acceptance checks. Draft-schema tests check structural constraints, not end-to-end privacy. V1's shared `note` comments alone cannot count as satisfying it.
 
 ## Relationships
 

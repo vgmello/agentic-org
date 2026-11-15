@@ -10,7 +10,7 @@ erDiagram
     releases ||--o{ deployments : records_attempts
     deployments o|--o{ deployments : rollback_of_id
     deployments ||--o{ deployment_repository_commits : snapshots
-    project_repositories ||--o{ deployment_repository_commits : targets
+    repositories ||--o{ deployment_repository_commits : historical_identity
     deployments {
         TEXT organization_id PK, FK "required"
         TEXT id PK "required"
@@ -163,7 +163,9 @@ CREATE TABLE deployment_repository_commits (
   PRIMARY KEY (organization_id, deployment_id, repository_id),
   FOREIGN KEY (organization_id, deployment_id, project_id) REFERENCES deployments(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, project_id, repository_id) REFERENCES project_repositories(organization_id, project_id, repository_id)
+  FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 ```
+
+Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; import validates recorded historical provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.
