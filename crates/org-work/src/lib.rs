@@ -31,6 +31,9 @@
 //!
 //! [`check_task_history_coverage`] separately checks selected task-history header coverage;
 //! payload verification and persistence remain the caller's responsibility.
+//! [`selected_assignment`] separately plans the selected complete team/employee assignment
+//! pair and its change payload; service authorization and recoverable acceptance remain the
+//! caller's responsibility. Legacy commands and storage ports retain their existing behavior.
 //!
 //! ## What phase 2 adds: bugs
 //! - `bug.report`, `bug.update`, `bug.triage`, `bug.assign`, `bug.mark_fixed`, `bug.verify`,
@@ -73,6 +76,7 @@ mod kpi;
 mod model;
 mod ports;
 mod refs;
+pub mod selected_assignment;
 mod service;
 mod states;
 mod tasks;

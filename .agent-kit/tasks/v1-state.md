@@ -8,33 +8,43 @@ Integration target: `v1-integration` for all v1 features, per the owner's latest
 instruction. Review locally before integration; do not wait for a PR. Release
 `v1` remains separate. Preserve existing live messaging and user organization data.
 
-Baseline: `884856559b946ac17129088b2416e40d2d0c1bc4`.
+Current integration baseline: `4dd45f5ccd616cb5c54900196bd88b56ebe30011`.
 
 ## Current delivery
 
-- Branch `codex/v1-task-history`, stable contract
-  [v1-history-coverage-contract.md](v1-history-coverage-contract.md).
-- Active contract: [v1-history-coverage-contract.md](v1-history-coverage-contract.md),
-  Codex-owned `org-work` revision-coverage prerequisite. Existing event/store
-  formats remain unchanged. Full vertical integration is still required.
-- Active metrics journal: `343bdbc564d7483aad95eb7b36fdc9f7`. Original full-codec
-  journal `65b3bc1bb55d47658be48f419fa908b4` closed abandoned before implementation:
-  numeric hash semantics require a document-owner decision. Its full requirements
-  remain outstanding; no narrower result is claimed to satisfy them.
-- Architecture/routing: conservative Sol Xhigh. [TH-01 revision 2](../decisions/TH-01-task-history-validation.md)
-  scopes independent coverage only; fresh architecture review is READY. The
-  original Sol Xhigh architecture-author session implemented that contract. Its
-  186 existing and 21 new org-work tests, formatting and targeted Clippy passed.
-  Full workspace Rust formatting, Clippy and tests and the kit checks (including
-  UI check/tests/build) passed. The workspace source-inventory guard required
-  staging new Rust files before its successful rerun. Exact-source local review
-  and integration evidence live in ignored check/review artifacts and Git; this
-  checkpoint is not an acceptance receipt.
-- The full [selected-history contract](v1-task-history-contract.md) remains
-  outstanding, including portable hashes and vertical API/storage/UI delivery.
-- UI/server/shared-contract owners were contacted about coordinated vertical
-  work. No owner response observed yet. A scope clarification is pending with
-  the user; do not infer authorization from elapsed time.
+- User directed moving to another feature when blocked. Current branch:
+  `codex/v1-task-assignment`; stable contract
+  [v1-task-assignment-contract.md](v1-task-assignment-contract.md).
+- Implement the Codex-owned selected complete-pair assignment domain behavior:
+  explicit nullable fields, exact revision, active same-organization targets and
+  old/new event payload. Existing legacy commands/store interfaces stay intact.
+  API, durable commit and UI integration remain required follow-up layers, not
+  implied by a pure domain result.
+- Metrics journal `081df96c0d874a85914acd41a2fb55bd`; actual author session
+  `01a1dee0-f635-7b11-8050-b8d7113b45f7`, observed Sol Xhigh. TA-01 r1 received
+  fresh independent architecture READY. The same author implemented the module
+  and 18 public-API tests; all 225 org-work tests, targeted Clippy and formatting
+  pass. Child-sandbox sccache failures were resolved with process-local wrapper
+  bypasses, with no repository configuration change. Full workspace formatting,
+  Clippy with denied warnings and tests also pass. Exact-source local review and
+  configured kit checks remain the acceptance steps; this is a checkpoint, not a
+  receipt or a claim that task assignment is available through the product.
+
+## Parked work and previous delivery
+
+- Native runtime work is preserved on `codex/v1-codex-runtime`; its uncommitted
+  task/decision records are in stash `3d07327070a89a20004b5dd242e3c871e863369e`.
+  Private evidence remains in `.agent-kit/logs/v1-codex-runtime/`. Do not drop the
+  stash or claim the adapter implemented. Ada/River's selected authentication/
+  environment boundary remains a prerequisite. This does not block assignment.
+- Task-history metadata coverage was reviewed and integrated at `4dd45f5c`
+  (feature `43604eb3`); Rust workspace and kit/UI checks passed, both local reviews
+  were clean and original-author validation accepted. Journal
+  `343bdbc564d7483aad95eb7b36fdc9f7` is accepted and closed; exact-source
+  historical acceptance remains in the review/journal artifacts and Git.
+- The full [selected-history contract](v1-task-history-contract.md) remains open:
+  portable numeric hashing requires an owning-contract decision. TH-01 preserves
+  that distinction. Domain revision coverage is not full history or v1 completion.
 
 ## Selected-model coverage to implement and verify
 
