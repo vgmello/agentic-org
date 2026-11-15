@@ -8,6 +8,7 @@ Repository ownership and architecture remain authoritative. Canonical ADRs stay 
 - Coordination: ADR-0003 live Phase A section and AGENTS.md; preserve installed org-agent, spool state, pending asks/replies/triage.
 - Ownership/merge: AGENTS.md and docs/processes/branch-and-merge.md; one unmerged branch per agent, independent own review, reviewer READY for exact commit, required checks and ada's go.
 - Owner's integration override (2026-11-15): review completed features locally and then merge into `v1-integration`, the shared integration branch for all v1 features. Do not wait for a PR. This does not change area ownership or authorize a release-v1 merge.
+- Owner's blocked-work direction: move to another feature when blocked. Preserve the blocked branch/checkpoint, then start independent work from the integration branch; do not stop all delivery on one unresolved prerequisite.
 - UI licensing: Tailwind Plus stays inside apps/agentic-org-ui, never a published kit or crate.
 - Adoption: user explicitly selected codex-only on 2026-11-15. Kit 0.10.0 at 01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1 supplies Sol routing, Repowise 0.61.0 and Hindsight 1.2.1. Separate readiness claims/evidence live in ADOPTION.md.
 
@@ -16,3 +17,6 @@ No new product architecture is selected. Read applicable full primary documents 
 Task-specific implementation premises: [TH-01](decisions/TH-01-task-history-validation.md)
 tracks selected task-history validation and its independent coverage prerequisite;
 it does not replace the product decisions in documents 05/12.
+
+[TA-01](decisions/TA-01-explicit-task-assignment.md) preserves the selected complete
+assignment-pair domain boundary and its separate service-acceptance obligations.
