@@ -462,6 +462,77 @@ describe('P6a session ownership', () => {
 		expect(s.states.at(-1)?.kind).toBe('update-required');
 	});
 
+	it.each(['signIn', 'refresh'] as const)('a dispatched %s recovers after a compatible boot rejects the old proof', async operation => {
+		const s = setup(); await s.controller.boot();
+		const response = deferred<typeof view & { proof: string }>(); s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100);
+		await tick(); expect(s.gateway[operation]).toHaveBeenCalledTimes(1);
+		s.gateway.get.mockRejectedValueOnce(unauthorized()); await s.controller.boot();
+		expect(s.gateway.get).toHaveBeenLastCalledWith(proof); expect(s.states.at(-1)?.kind).toBe('signed-out');
+		response.resolve({ ...view, proof: rotated }); await pending;
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view });
+		expect(s.postMessage.mock.calls).toEqual([[operation === 'signIn' ? { kind: 'signed-in', account_id: record.account_id } : { kind: 'rotated' }]]);
+		await s.controller.read('/api/v1/capabilities'); expect(s.http.mock.calls[0][0].proof).toBe(rotated);
+	});
+	it.each(['signIn', 'refresh'] as const)('a %s storage completion supersedes an overlapping compatible boot recovery', async operation => {
+		const s = setup(); await s.controller.boot(); const write = deferred<void>();
+		s.store.write.mockImplementationOnce(async value => { await write.promise; s.replace(value); });
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		const recovery = deferred<typeof view>(); s.gateway.get.mockReturnValueOnce(recovery.promise);
+		const boot = s.controller.boot(); await tick(); expect(s.gateway.get).toHaveBeenLastCalledWith(proof);
+		write.resolve(); await pending; recovery.reject(unauthorized()); await boot;
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view });
+		expect(s.states.every(state => state.kind === 'signed-in')).toBe(true); expect(s.postMessage).toHaveBeenCalledTimes(1);
+	});
+	it.each(['signIn', 'refresh'] as const)('a completed %s waits for a newer compatible boot negotiation before publication', async operation => {
+		const s = setup(); await s.controller.boot(); const response = deferred<typeof view & { proof: string }>();
+		s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		const version = deferred<{ api_version: number; contract_revision: number }>(); s.gateway.version.mockReturnValueOnce(version.promise);
+		const boot = s.controller.boot(); response.resolve({ ...view, proof: rotated }); await tick();
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states).toHaveLength(1); expect(s.postMessage).not.toHaveBeenCalled();
+		version.resolve({ api_version: 1, contract_revision: 2 }); await Promise.all([boot, pending]);
+		expect(s.states.at(-1)).toEqual({ kind: 'signed-in', session: view }); expect(s.postMessage).toHaveBeenCalledTimes(1);
+	});
+	it.each(['signIn', 'refresh'] as const)('a completed %s follows the latest boot without waiting for a superseded negotiation', async operation => {
+		const s = setup(); await s.controller.boot(); const response = deferred<typeof view & { proof: string }>();
+		s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		const old = deferred<{ api_version: number; contract_revision: number }>(); s.gateway.version.mockReturnValueOnce(old.promise);
+		const oldBoot = s.controller.boot(); response.resolve({ ...view, proof: rotated }); await tick();
+		expect(s.stored()?.proof).toBe(rotated); expect(s.postMessage).not.toHaveBeenCalled();
+		await s.controller.boot(); await tick();
+		expect(s.postMessage.mock.calls).toEqual([[operation === 'signIn' ? { kind: 'signed-in', account_id: record.account_id } : { kind: 'rotated' }]]);
+		await pending; await s.controller.signOut(); expect(s.gateway.signOut).toHaveBeenCalledWith(rotated, undefined);
+		old.resolve({ api_version: 1, contract_revision: 1 }); await oldBoot;
+		expect(s.states.at(-1)).toMatchObject({ kind: 'signed-out', reason: 'signed-out' });
+	});
+	it.each(['signIn', 'refresh'] as const)('a completed %s cannot publish after a newer boot negotiation fails', async operation => {
+		const s = setup(); await s.controller.boot(); const response = deferred<typeof view & { proof: string }>();
+		s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		const version = deferred<{ api_version: number; contract_revision: number }>(); s.gateway.version.mockReturnValueOnce(version.promise);
+		const boot = s.controller.boot(); const failed = expect(boot).rejects.toThrow('offline');
+		response.resolve({ ...view, proof: rotated }); await tick(); version.reject(new Error('offline')); await failed; await pending;
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states).toHaveLength(1); expect(s.postMessage).not.toHaveBeenCalled();
+	});
+	it.each(['signIn', 'refresh'] as const)('a dispatched %s persists without publication after disposal', async operation => {
+		const s = setup(); await s.controller.boot(); const response = deferred<typeof view & { proof: string }>();
+		s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		s.controller.dispose(); response.resolve({ ...view, proof: rotated }); await pending;
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states).toHaveLength(1); expect(s.postMessage).not.toHaveBeenCalled();
+	});
+	it.each(['signIn', 'refresh'] as const)('disposal releases a completed %s waiting for boot negotiation', async operation => {
+		const s = setup(); await s.controller.boot(); const response = deferred<typeof view & { proof: string }>();
+		s.gateway[operation].mockReturnValueOnce(response.promise);
+		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();
+		const version = deferred<{ api_version: number; contract_revision: number }>(); s.gateway.version.mockReturnValueOnce(version.promise);
+		const boot = s.controller.boot(); response.resolve({ ...view, proof: rotated }); await tick();
+		s.controller.dispose(); await pending;
+		expect(s.stored()?.proof).toBe(rotated); expect(s.states).toHaveLength(1); expect(s.postMessage).not.toHaveBeenCalled();
+		version.resolve({ api_version: 1, contract_revision: 2 }); await boot;
+	});
 	it.each(['signIn', 'refresh'] as const)('a dispatched %s persists its pair but cannot override newer version rejection', async operation => {
 		const s = setup(); await s.controller.boot(); const old = deferred<typeof view & { proof: string }>(); s.gateway[operation].mockReturnValueOnce(old.promise);
 		const pending = operation === 'signIn' ? s.controller.signIn({ login: 'alex', password: 'private' }) : s.controller.refresh(100); await tick();

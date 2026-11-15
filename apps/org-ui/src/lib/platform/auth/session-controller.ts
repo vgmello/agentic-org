@@ -24,7 +24,11 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 	let recovery = 0;
 	// Notifications share the latest negotiation; they never race past an unknown/rejected version.
 	let versionReady: ReturnType<SessionGateway['version']> | undefined;
-	const negotiate = (signal?: AbortSignal) => (versionReady = gateway.version(signal));
+	// Only the pair operation holding the session lock waits here.
+	let versionChanged: (() => void) | undefined;
+	const negotiate = (signal?: AbortSignal) => {
+		versionReady = gateway.version(signal); versionChanged?.(); return versionReady;
+	};
 	const authoritative = (version: typeof versionReady) => !disposed && version === versionReady;
 	let disposed = false;
 	const publish = (next: SessionState) => { state = Object.freeze(next); if (!disposed) changed(state); };
@@ -45,6 +49,25 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 	const notify = (message: { kind: 'signed-in'; account_id: string } | { kind: 'rotated' | 'signed-out' }) => {
 		if (!disposed) channel.postMessage(message);
 	};
+	async function publishEstablished(session: EstablishedSession, next: SessionRecord, message: Parameters<typeof notify>[0]) {
+		// A dispatched pair change must persist even if boot renegotiates. Publish it
+		// against the latest negotiation so a compatible boot cannot strand its view.
+		while (!disposed) {
+			const version = versionReady;
+			if (!version) return;
+			const superseded = new Promise<void>(resolve => { versionChanged = resolve; });
+			try {
+				const info = await Promise.race([version, superseded]);
+				if (!authoritative(version)) continue;
+				if (!info || !versionCompatible(info)) return;
+				recovery++;
+				if (record && !sameAccount(record, next)) generation++;
+				record = next; publish({ kind: 'signed-in', session: viewOf(session) });
+				notify(message); return;
+			} catch { if (authoritative(version)) return; }
+			finally { versionChanged = undefined; }
+		}
+	}
 	const accountChanged = (stored: SessionRecord) => (record && !sameAccount(record, stored)) || (state.kind === 'signed-out' && state.reason === 'changed-account');
 	async function boot() {
 		ensureOpen();
@@ -110,11 +133,7 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 				const session = await gateway.signIn(credentials, signal);
 				const next = accept(session);
 				await store.write(next);
-				if (!authoritative(version)) return;
-				recovery++;
-				if (record && !sameAccount(record, next)) generation++;
-				if (!disposed) { record = next; publish({ kind: 'signed-in', session: viewOf(session) }); }
-				notify({ kind: 'signed-in', account_id: next.account_id });
+				await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
 			});
 		},
 		async refresh(triggered_at_ms: number, signal?: AbortSignal) {
@@ -136,10 +155,7 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 					if (!matches(session, stored)) { if (authoritative(version)) ended('ended'); return; }
 					const next = accept(session);
 					await store.write(next);
-					if (!authoritative(version)) return;
-					recovery++;
-					if (!disposed) { record = next; publish({ kind: 'signed-in', session: viewOf(session) }); }
-					notify({ kind: 'rotated' });
+					await publishEstablished(session, next, { kind: 'rotated' });
 				} catch (error) {
 					if (authoritative(version) && error instanceof SessionRequestError && error.status === 401) reauth(error.sessionReason);
 					throw error;
@@ -182,6 +198,6 @@ export function createSessionController({ store, gateway, http, locks, channel, 
 			reauth(reason);
 			return response;
 		},
-		dispose() { disposed = true; generation++; recovery++; record = undefined; channel.removeEventListener('message', received); }
+		dispose() { disposed = true; versionChanged?.(); generation++; recovery++; record = undefined; channel.removeEventListener('message', received); }
 	});
 }
