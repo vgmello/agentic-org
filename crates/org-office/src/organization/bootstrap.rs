@@ -57,7 +57,8 @@ impl Office {
                 Some(_)=>Err(invalid()),None=>Ok(false)
             }
         })? {return Ok(());}
-        let (source, artifacts) = materialize(&prepared, &self.info().created_at)?;
+        let (source, artifacts) =
+            materialize(&prepared, &self.info().office_name, &self.info().created_at)?;
         let parsed = codec::parse(&source).map_err(storage)?;
         let source = String::from_utf8(source).map_err(storage)?;
         self.local_store().selected_transaction(move |db, id| {
@@ -186,7 +187,7 @@ fn verify_initial_numbering(
     }
     Ok(())
 }
-fn materialize(p: &PreparedV1, at: &str) -> Result<Materialized, OfficeError> {
+fn materialize(p: &PreparedV1, office_name: &str, at: &str) -> Result<Materialized, OfficeError> {
     if !p.valid() {
         return Err(invalid());
     }
@@ -201,7 +202,7 @@ fn materialize(p: &PreparedV1, at: &str) -> Result<Materialized, OfficeError> {
     );
     let office = with(
         provenance(at, "owner"),
-        json!({"id":p.office_id,"slug":"hq","name":"HQ","role":"hq"}),
+        json!({"id":p.office_id,"slug":"hq","name":office_name,"role":"hq"}),
     );
     let team = with(
         provenance(at, "owner"),

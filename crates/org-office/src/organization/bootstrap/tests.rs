@@ -56,7 +56,7 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
         office_id: p.office_id.clone(),
         org_id: p.organization_id.clone(),
         org_name: p.plan.name.clone(),
-        office_name: "HQ".into(),
+        office_name: "London HQ".into(),
         role: OfficeRole::Hq,
     };
     let folder = root.join(&p.office_id);
@@ -88,7 +88,15 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     office.install_selected_acceptance(config.clone()).unwrap();
     office.bind_selected_owner(Arc::new(Owner)).unwrap();
     office.finish_selected_bootstrap(Arc::new(Owner)).unwrap();
-    let files = materialize(&p, &office.info().created_at).unwrap().1;
+    let office_path = public.join(format!("offices/{}.yaml", p.office_id));
+    let office_bytes = std::fs::read(&office_path).unwrap();
+    let marker: Value =
+        serde_json::from_slice(&std::fs::read(folder.join("office.json")).unwrap()).unwrap();
+    assert_eq!(marker["office_name"], new.office_name);
+    assert_eq!(yaml_value(&office_bytes)["name"], marker["office_name"]);
+    let files = materialize(&p, &office.info().office_name, &office.info().created_at)
+        .unwrap()
+        .1;
     for (path, bytes) in files {
         assert_eq!(std::fs::read(public.join(path)).unwrap(), bytes);
     }
@@ -134,6 +142,7 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     );
     office.finish_selected_bootstrap(Arc::new(Owner)).unwrap();
     assert_eq!(read(&office), before);
+    assert_eq!(std::fs::read(&office_path).unwrap(), office_bytes);
     // Construct a later acknowledged directory/numbering transaction. This is
     // a fixture for existing later state, not a claim that team-creation ships.
     let later_team = "01900000-0000-7000-8000-000000000006".to_owned();
@@ -233,6 +242,8 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     reopened.bind_selected_owner(Arc::new(Owner)).unwrap();
     reopened.finish_selected_bootstrap(Arc::new(Owner)).unwrap();
     assert_eq!(read(&reopened), advanced);
+    assert_eq!(reopened.info().office_name, new.office_name);
+    assert_eq!(std::fs::read(&office_path).unwrap(), office_bytes);
     assert_eq!(
         std::fs::read(public.join(&counter_path)).unwrap(),
         counter_bytes
