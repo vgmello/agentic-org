@@ -115,6 +115,97 @@ fn hq_creation_retries_before_after_atomic_material_and_created_marker() {
     }
 }
 #[test]
+fn hq_creation_retry_preserves_sidecars_beside_empty_or_missing_databases() {
+    for completed in [false, true] {
+        for database in [OFFICE_DB, ORG_DB] {
+            for empty in [true, false] {
+                for suffix in ["-wal", "-shm"] {
+                    let dir = tempfile::tempdir().unwrap();
+                    let folder = dir.path().join("HQ");
+                    let key = Key::from_bytes([8; 32]);
+                    let bound = binding(dir.path());
+                    FAIL_AT.set((!completed).then_some("hq_after_intent"));
+                    let initial = Office::provision_hq_for_instance(
+                        &folder,
+                        &new(),
+                        key.clone(),
+                        INSTANCE,
+                        &bound,
+                        material,
+                    );
+                    FAIL_AT.set(None);
+                    assert_eq!(initial.is_ok(), completed);
+                    drop(initial);
+                    let path = folder.join(database);
+                    if path.exists() {
+                        fs::remove_file(&path).unwrap();
+                    }
+                    if empty {
+                        fs::write(&path, b"").unwrap();
+                    }
+                    let sidecar = folder.join(format!("{database}{suffix}"));
+                    fs::write(&sidecar, b"retained recovery evidence").unwrap();
+                    let intent = fs::read(folder.join(INTENT)).unwrap();
+                    let marker = fs::read(folder.join(office_file::FILE_NAME)).ok();
+                    let mut material_called = false;
+                    let retry = Office::provision_hq_for_instance(
+                        &folder,
+                        &new(),
+                        key,
+                        INSTANCE,
+                        &bound,
+                        |prior| {
+                            material_called = true;
+                            material(prior)
+                        },
+                    );
+                    assert!(
+                        fs::read(&sidecar).ok().as_deref()
+                            == Some(b"retained recovery evidence".as_slice()),
+                        "{database}{suffix}: completed={completed}, empty={empty}"
+                    );
+                    assert!(retry.is_err());
+                    assert!(!material_called);
+                    assert_eq!(fs::read(&path).ok(), empty.then(Vec::new));
+                    assert_eq!(fs::read(folder.join(INTENT)).unwrap(), intent);
+                    assert_eq!(fs::read(folder.join(office_file::FILE_NAME)).ok(), marker);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn hq_creation_finishes_empty_main_files_without_sidecars() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("HQ");
+    let key = Key::from_bytes([8; 32]);
+    let bound = binding(dir.path());
+    FAIL_AT.set(Some("hq_after_intent"));
+    assert!(Office::provision_hq_for_instance(
+        &folder,
+        &new(),
+        key.clone(),
+        INSTANCE,
+        &bound,
+        material,
+    )
+    .is_err());
+    FAIL_AT.set(None);
+    for database in [OFFICE_DB, ORG_DB] {
+        fs::write(folder.join(database), b"").unwrap();
+    }
+    let office =
+        Office::provision_hq_for_instance(&folder, &new(), key, INSTANCE, &bound, material)
+            .unwrap();
+    assert_eq!(office.org_snapshot().unwrap().position.seq, 1);
+    assert_eq!(
+        office.hq_creation_record().unwrap().unwrap().package,
+        vec![7; 140]
+    );
+}
+
+#[test]
 fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_reinitializing() {
     for damage in ["missing", "preschema", "empty"] {
         let dir = tempfile::tempdir().unwrap();

@@ -109,17 +109,38 @@ pub(crate) fn initialize(store: &Store, record: LocalRecord) -> Result<(), Offic
     })
 }
 
+/// An empty or missing main file is finishable only without retained sidecars.
+/// SQLite can delete its WAL on the first read or overwrite it during creation.
+/// Return whether there are main-file pages safe to inspect.
+fn preflight_database(path: &std::path::Path) -> Result<bool, OfficeError> {
+    let has_pages = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => meta.len() > 0,
+        Ok(_) => return Err(invalid()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(OfficeError::storage(e)),
+    };
+    if !has_pages {
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            match std::fs::symlink_metadata(sidecar) {
+                Ok(_) => return Err(invalid()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(OfficeError::storage(e)),
+            }
+        }
+    }
+    Ok(has_pages)
+}
+
 /// Admission only follows completed creation. Inspect its retained cursor before
 /// preparation can recreate missing organization storage or the Created marker.
 pub(crate) fn has_selected_history(
     path: &std::path::Path,
     key: &crate::Key,
 ) -> Result<bool, OfficeError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {}
-        Ok(_) => return Err(invalid()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(OfficeError::storage(e)),
+    if !preflight_database(path)? {
+        return Ok(false);
     }
     Store::inspect(path, key, |db| {
         let has_cursor: bool = db
@@ -152,48 +173,41 @@ fn open_preparing_store(
     office: &str,
     org: Option<&str>,
 ) -> Result<Store, OfficeError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => {
-            if !meta.is_file() || meta.file_type().is_symlink() {
+    if preflight_database(path)? {
+        Store::inspect(path, key, |db| {
+            let version: i64 = db
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .map_err(OfficeError::storage)?;
+            if version == 0 {
+                let count: i64 = db
+                    .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+                    .map_err(OfficeError::storage)?;
+                return if count == 0 { Ok(()) } else { Err(invalid()) };
+            }
+            if version != schema.version {
                 return Err(invalid());
             }
-            Store::inspect(path, key, |db| {
-                let version: i64 = db
-                    .pragma_query_value(None, "user_version", |r| r.get(0))
+            for (name, expected) in [
+                ("office_id", Some(office)),
+                ("organization_id", org),
+                ("instance_id", instance),
+            ] {
+                let value: Option<String> = db
+                    .query_row("SELECT value FROM meta WHERE key=?1", [name], |r| r.get(0))
+                    .optional()
                     .map_err(OfficeError::storage)?;
-                if version == 0 {
-                    let count: i64 = db
-                        .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
-                        .map_err(OfficeError::storage)?;
-                    return if count == 0 { Ok(()) } else { Err(invalid()) };
-                }
-                if version != schema.version {
+                if value
+                    .as_deref()
+                    .is_some_and(|value| Some(value) != expected)
+                {
                     return Err(invalid());
                 }
-                for (name, expected) in [
-                    ("office_id", Some(office)),
-                    ("organization_id", org),
-                    ("instance_id", instance),
-                ] {
-                    let value: Option<String> = db
-                        .query_row("SELECT value FROM meta WHERE key=?1", [name], |r| r.get(0))
-                        .optional()
-                        .map_err(OfficeError::storage)?;
-                    if value
-                        .as_deref()
-                        .is_some_and(|value| Some(value) != expected)
-                    {
-                        return Err(invalid());
-                    }
-                    if name == "instance_id" && expected.is_some() && value.is_none() {
-                        return Err(invalid());
-                    }
+                if name == "instance_id" && expected.is_some() && value.is_none() {
+                    return Err(invalid());
                 }
-                Ok(())
-            })?;
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(OfficeError::storage(e)),
+            }
+            Ok(())
+        })?;
     }
     Store::open_bound(path, key, super::Opening::New, schema, instance)
 }
