@@ -165,12 +165,20 @@ independent socket unit was accepted at d6dbf8ee after confirmed Linux cfg repai
 full checks/retained-author intent and clean fresh initial/separate final reviews;
 merged/pushed as ac20f099. Real macOS example/all69tests and Linux cross-Clippy pass;
 raw blocked report and sandbox failures remain retained. No platform/runtime waiver.
-Current independent acceptance unit codex/v1-source-codec starts from ac20f099:
-root owns eight immutable source/test/vector imports, two library registration/
-export hunks and metadata; retained fullstack author validates intent/repairs.
-The fingerprint integration test stays deferred with its actual U5 consumers.
-One writer is preferable for this coupled extraction; read-only author validation
-may overlap frozen checks. No new mechanism/interface design or broad plan review.
+F2a was accepted at 2fe7c3d3 and merged/pushed as 1b911da2: eight immutable
+source/test/vector imports, two minimal registration/export hunks, unchanged
+Cargo/lock, full current gates, retained-author exact-tree validation and clean
+fresh initial/separate final reviews. The fingerprint integration test stays
+preserved with its actual U5 consumers. Pure source/integrity helpers only.
+
+The owner's pinned upstream documentation batch at 6f02ae95 is now being reconciled
+on codex/v1-documentation-sync from 1b911da2, before F2b. Most F0 document bytes
+already match it, but equivalent bytes did not establish merged ancestry. Root
+alone preserves current solo/local-review/security rules, incoming requirement/
+audit history and accepted scoped evidence. One writer is preferable for these
+coupled resolutions; no source worker or broad plan review. This documentation unit
+still needs its current checks and independent/final acceptance before integration.
+F2b's durable journal follows; bootstrap actually depends on it.
 This boundary refinement follows actual compiler dependencies and changes no
 selected architecture, security policy or U1 acceptance. A new broad plan review
 is unnecessary; material contract changes still receive focused review first.
