@@ -66,10 +66,10 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// Version 5 adds change results, number counters and a clock, and is closed.
 /// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
 /// reads (B1-12). Work number keys are unique; pre-final v6 files are admitted atomically.
-/// Version 6 stays open until B1-11's final slice.
+/// Version 7 adds selected projections and gates; the protected journal remains authoritative.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     admit: Some(work::admit_v6),
-    version: 6,
+    version: 7,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
@@ -77,7 +77,8 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         origin::create_tables(tx)?;
         work::create_tables(tx)?;
         work::create_v5_tables(tx)?;
-        crate::store::owned_processes::create_table(tx)
+        crate::store::owned_processes::create_table(tx)?;
+        crate::store::acceptance::schema::create(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -97,6 +98,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 6 {
             crate::store::owned_processes::create_table(tx)?;
+        }
+        if from < 7 {
+            crate::store::acceptance::schema::create(tx)?;
         }
         Ok(())
     },
@@ -200,6 +204,21 @@ impl OrgStore for Office {
 }
 
 impl Office {
+    /// Install host-issued recovery configuration before exposing selected work.
+    /// The composition root must verify its protected writer lease first.
+    pub fn install_selected_acceptance(
+        &self,
+        config: crate::AcceptanceConfig,
+    ) -> Result<(), OfficeError> {
+        if config.identity.office_id != self.info.office_id
+            || config.identity.organization_id != self.info.org_id
+            || !self.is_replication_hq()?
+        {
+            return Err(OfficeError::Invalid("work acceptance scope mismatch"));
+        }
+        self.stores.local.install_acceptance(config)
+    }
+
     /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
     /// office id) and opens it with `key`, **which the host made and holds** (ADR-0002, key
     /// custody): the office never makes, stores or deletes a key. The host saves the key before

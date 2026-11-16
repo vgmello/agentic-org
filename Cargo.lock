@@ -629,6 +629,7 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "org-mailbox",
  "org-proto",
  "org-sync",

@@ -72,26 +72,19 @@ fn never_stored(code: ErrorCode) -> bool {
     )
 }
 
-/// Runs one work write as the body of [`crate::WorkStore::transact`]: decide, then write.
-/// `office_id` is the office running it (the owner of what it creates, phase 1).
-///
-/// The order (§2.3): `not_authorized` (app-only calls on another connection); the change-id
-/// lookup (the same id and params hash get the stored answer without re-validating; the same id
-/// with other params is `invalid_request`); `expired`; `clock_skew`; then the call's own rules
-/// in the design's error order, with `too_large` right after `not_found`.
-pub fn execute(
+/// Read-only authorization and original-result prefix, shared with native replay.
+/// `None` alone permits a new decision. No clock, allocation or write is performed.
+pub fn lookup_existing(
     org: &dyn OrgView,
-    txn: &mut dyn WorkTxn,
-    clock: &dyn Clock,
-    office_id: &str,
     caller: &Caller,
     call: &WorkCall,
-) -> Result<TxnOutput, StoreError> {
+    lookup: impl FnOnce(&str) -> Result<Option<StoredResult>, StoreError>,
+) -> Result<Option<TxnOutput>, StoreError> {
     if call.app_only() && !caller.via_app {
-        return Ok(TxnOutput::Refused(ApiError::new(
+        return Ok(Some(TxnOutput::Refused(ApiError::new(
             ErrorCode::NotAuthorized,
             format!("`{}` can only be made from the app", call.method()),
-        )));
+        ))));
     }
     // An agent's connection acts as an agent that isn't offboarded, and only the app's acts as
     // the owner or a person (§2.2). The office binds connections; this keeps the rule true
@@ -109,23 +102,47 @@ pub fn execute(
         None => false,
     };
     if !may_act {
-        return Ok(TxnOutput::Refused(ApiError::new(
+        return Ok(Some(TxnOutput::Refused(ApiError::new(
             ErrorCode::NotAuthorized,
             "this connection can't act as that member",
-        )));
+        ))));
     }
     let params = call.params_json();
     let hash = params_hash(call.method(), &caller.member_id, &params);
     let change_id = call.change_id();
-    if let Some(stored) = txn.change_result(change_id)? {
+    if let Some(stored) = lookup(change_id)? {
         if stored.params_hash == hash {
-            return Ok(TxnOutput::Replayed(stored.answer));
+            return Ok(Some(TxnOutput::Replayed(stored.answer)));
         }
-        return Ok(TxnOutput::Refused(ApiError::new(
+        return Ok(Some(TxnOutput::Refused(ApiError::new(
             ErrorCode::InvalidRequest,
             "change id reused with other params",
-        )));
+        ))));
     }
+    Ok(None)
+}
+
+/// Runs one work write as the body of [`crate::WorkStore::transact`]: decide, then write.
+/// `office_id` is the office running it (the owner of what it creates, phase 1).
+///
+/// The order (§2.3): `not_authorized` (app-only calls on another connection); the change-id
+/// lookup (the same id and params hash get the stored answer without re-validating; the same id
+/// with other params is `invalid_request`); `expired`; `clock_skew`; then the call's own rules
+/// in the design's error order, with `too_large` right after `not_found`.
+pub fn execute(
+    org: &dyn OrgView,
+    txn: &mut dyn WorkTxn,
+    clock: &dyn Clock,
+    office_id: &str,
+    caller: &Caller,
+    call: &WorkCall,
+) -> Result<TxnOutput, StoreError> {
+    if let Some(output) = lookup_existing(org, caller, call, |id| txn.change_result(id))? {
+        return Ok(output);
+    }
+    let params = call.params_json();
+    let hash = params_hash(call.method(), &caller.member_id, &params);
+    let change_id = call.change_id();
     let Some(made_ms) = ulid_time_ms(change_id) else {
         return Ok(TxnOutput::Refused(ApiError::new(
             ErrorCode::InvalidRequest,

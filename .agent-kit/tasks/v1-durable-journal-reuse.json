@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "unit": "F2b",
+  "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "base": "0fdb9723375dcf56a8887aaa22eee159d6c4c3a4",
+  "author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+  "architecture_owner": "root",
+  "interface_revision": 2,
+  "reviewed_interface_sha256": "666f213fafa78b15fa98db219cebb9a2e1f70f57188f85b88b95de79305585ad",
+  "interface_review_verdict": "READY",
+  "review_session": "01a1e546-f737-74e1-926f-cfd395e590d6",
+  "review_artifacts": ".agent-kit/logs/v1-durable-journal/interface-review-recheck-1",
+  "requested_model": "gpt-6.1-sol",
+  "requested_effort": "xhigh",
+  "actual_model_effort": "not exposed",
+  "scope_paths": [
+    "crates/org-office/src/store/acceptance.rs",
+    "crates/org-office/src/store/acceptance/crash.rs",
+    "crates/org-office/src/store/acceptance/durable.rs",
+    "crates/org-office/src/store/acceptance/rows.rs",
+    "crates/org-office/src/store/acceptance/schema.rs",
+    "crates/org-office/src/store/acceptance/tests.rs",
+    "crates/org-office/src/store/acceptance/tests/crash_reopen.rs",
+    "crates/org-office/src/store/origin.rs",
+    "crates/org-office/src/store/origin/tests.rs",
+    "crates/org-office/src/store/work/assembly.rs",
+    "crates/org-office/src/store/work/call.rs",
+    "crates/org-office/src/store/work/tests.rs",
+    "crates/org-office/src/store/work/tests/assembly.rs",
+    "crates/org-office/src/store/work/tests/call.rs",
+    "crates/org-office/src/store/work/tests/metadata.rs",
+    "crates/org-office/src/store.rs",
+    "crates/org-office/src/lib.rs",
+    "crates/org-office/src/office.rs",
+    "crates/org-office/src/office/tests/instance.rs",
+    "crates/org-proto/src/work.rs",
+    "crates/org-office/Cargo.toml",
+    "Cargo.lock",
+    "crates/org-office/src/messaging.rs",
+    "crates/org-office/src/status.rs",
+    "crates/org-work/src/ports.rs",
+    "crates/org-work/src/testkit.rs",
+    "crates/org-work/src/service.rs",
+    "crates/org-work/src/engine.rs",
+    "crates/org-work/src/lib.rs"
+  ],
+  "root_grant": "Shared two-record placement, direct retained installation exports, instance migration correction, storage-only ten-hook crash harness, and libc-only office manifest/lock dependency-list delta. Sole source writer; root tracked writes pause at dispatch. No changed fields/mechanism or production capability.",
+  "mandatory_correction": "Retained b77 v6 fixture is inaccurate. Independently freeze/reconstruct accepted v6 schema/admission and validate pre-migration schema/rows, schema7/reopen preservation, genuine v1\u2013v5 controls and future-version refusal.",
+  "compiler_acceptance": "Prior07572 full3020pass/5ignore accepted only for checks/author intent, not independent acceptance. Current F1 fixes scoped green; native success/refusal RED remains. Full current gates and fresh acceptance pending typed interface/fix.",
+  "source_guard_files": "All six unchanged; no future host/web/native inventories imported",
+  "deferred_coverage": [
+    {
+      "consumer": "F3/F5/U5",
+      "source": "crates/org-office/src/store/acceptance.rs",
+      "obligation": "Remove only the two cfg(test) attributes when real production selected_transaction/selected_read consumers extract. Bodies retained unchanged; see author-deferred-entrypoints-1.json."
+    },
+    {
+      "consumer": "F3/F5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/store/acceptance/tests.rs:671-729",
+      "obligation": "Restore owner-authority/directory binding and generation assertions with real corresponding consumer. Actual run_job ordinal exhaustion and original receipt read retained and passing here."
+    },
+    {
+      "consumer": "F5/U5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/office/tests/selected_legacy.rs",
+      "sha256": "db1683dce1d7865b666a24ca8606c0460f25671f823724e133831ca2646140ce",
+      "obligation": "Service-level adoption/legacy mutation coverage remains intact in immutable source, not replaced by synthetic storage SQL fences."
+    },
+    {
+      "consumer": "U5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/selected_tasks/service/tests/crash_reopen.rs",
+      "sha256": "dc703561e842f887ef125c3e9f3be28e750bedf05aa26893072d7529e9d4c16b",
+      "obligation": "Restore real service crash/retry/authentication coverage; the storage-only 28-vector SIGKILL test is additional and not a replacement."
+    },
+    {
+      "consumer": "F3/F5/U5 and corresponding host/web consumers",
+      "source": ".agent-kit/logs/v1-durable-journal/allocated-source-files.json",
+      "allocation_sha256": "fbb5cdda67a0170d675c83d3da4239e1b79bb688215f95208479e7b9ebff6811",
+      "obligation": "All21 immutable original allocation records retained, including deferred sourceguard inventories and selected origin/opaque-ID consumer hunks. Future selected_tasks re-exports must refer to the same canonical org_proto::work records. No future service/host/web/HQ/session/UI imports or guard extensions extracted."
+    }
+  ],
+  "extraction_checkpoint": "Author actual ready checkpoint17:31:19 saved before terminal600.025s timeout; consumed/validated by root, raw CLI final missing. No accepted feature claim.",
+  "bounded_repairs": [
+    "The two private selected_transaction/selected_read methods have only test consumers on this base. Add cfg(test) to these test entry points until their real F3/F5/U5 consumer is extracted; preserve exact future production code/source locations and remove cfg with actual consumer, not fake calls/exports or dead_code allows. Legacy Work run_job remains production.",
+    "Restore the failed json_set write from acceptance-tests-2 as a regression and reproduce RED on existing capture. Literal SQL substitution in tests-3 is not resolution. Investigate actual SQLCipher JSON subtype reaching json_array and enforce Cell::Text for SQLite TEXT without parsing/reserializing contents. Verify exact bytes on prepare/publish/reopen, plus ordinary text/blob/null/integer controls, embedded NUL and lexical JSON/Unicode where relevant. Any subtype stripping must retain all text bytes; printf/substr approaches can truncate NUL, so prove behavior rather than assume.",
+    "Root staged exact22source paths after the author process was actually terminal. Repeat actual sourceguard now Git inventory includes all7new files. Leave all6guardbytes unchanged.",
+    "Catalog reassessed exact libc dependency-list delta and refreshed2evidence hashes; guidance/roles/rules/policy unchanged. Use new implementation-packet-2 and actual preflight.",
+    "Original 900s timeout, all failures and partial checks remain preserved; no completed-turn usage known. Resume SAME author, never fresh. Root pauses tracked writes for this bounded repair."
+  ],
+  "focused_counts": {
+    "acceptance": 26,
+    "instance": 12,
+    "work_passed": 103,
+    "work_existing_ignored": 1,
+    "origin": 19,
+    "writer": 25,
+    "proto": 212,
+    "source_guard": 1,
+    "sigkill_vectors": 28,
+    "sigkill_hooks": 10
+  },
+  "repair_evidence": "Actual SQLCipher JSON subtype RED/GREEN; ordinary TEXT/embedded NUL/Unicode/lexical JSON frozen exactly through journal, projection/reopen and lost-SQL rebuild. Earlier literal-fixture substitution rejected/restored. Both process timeouts and failures retained; no completed-turn usage claimed.",
+  "root_migration_test_handoff": {
+    "owner": "root",
+    "other_source_writers": 0,
+    "at": "2026-11-16T17:42:50.009206+00:00",
+    "paths": [
+      "crates/org-office/src/messaging.rs",
+      "crates/org-office/src/status.rs"
+    ],
+    "reason": "Actual full workspace run1 has only two org-office failures: stale current-version assertion and fake v2 fixture produced by lowering a current database version. Retained author extraction processes are terminal; preserve exact original author context.",
+    "repairs": "Use current OFFICE_SCHEMA.version in messaging; rebuild status fixture from independent released office-v2.sql in TempDir, verify historical preconditions/current migration and usable status/reopen. No production migration changes, table-drop additions or admission bypass.",
+    "red_evidence": ".agent-kit/logs/v1-durable-journal/workspace-tests-1.log",
+    "baseline_hashes": {
+      "crates/org-office/src/messaging.rs": "c5b99c44d1863833cc9a89c4954e5fca0f42b73d5de366cfaf5ccc39ac33852d",
+      "crates/org-office/src/status.rs": "7e3be088c001e1ceceaac4c44801030386eb39374ff4b6ca78449541e2e656e1"
+    },
+    "required": "Targeted regressions, repeat full gates, independent initial and final reviews and retained-author exact-tree validation.",
+    "targeted_result": {
+      "passed": 2,
+      "failed": 0,
+      "evidence": ".agent-kit/logs/v1-durable-journal/root-migration-regressions-2.json",
+      "prior_compile_error": "First targeted attempt used u32 against i64 schema.version; corrected test row type, failure retained."
+    },
+    "source_hashes": {
+      "crates/org-office/src/messaging.rs": "4ecc0de2f08c38369da7c37525cda1f529298b661f28e9c3dabd4ab724e2e8ef",
+      "crates/org-office/src/status.rs": "80a67d5133123eba2bc84cdd0561075a602e2f01a8dc7644fda60f2b9c1d9571"
+    }
+  },
+  "code_review_repair": {
+    "at": "2026-11-16T17:58:58.436234+00:00",
+    "owner": "original-fullstack-author01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+    "root_source_writes": "Root may update metadata after terminal author handoff; no active source writer.",
+    "run": ".agent-kit/reviews/1284422c150a4a70aa81031d1221c9e1",
+    "run_status": "BLOCKED due absolute finding paths; raw two substantive findings retained, no source repair by runner",
+    "review_session": "01a1e57b-302d-71d2-8182-da37aad6da23",
+    "root_confirmation": "Existing verified anchor/prefix reads lack reflush before authority.confirm; native work callback always raises clock, ordinal exhaustion rejects before saved-result lookup. Both are real gaps in selected recoverability/idempotency contract. No architecture replacement approved.",
+    "owned": [
+      "crates/org-office/src/store/acceptance.rs",
+      "crates/org-office/src/store/acceptance/durable.rs",
+      "crates/org-office/src/store/acceptance/crash.rs",
+      "crates/org-office/src/store/acceptance/tests.rs",
+      "crates/org-office/src/store/acceptance/tests/crash_reopen.rs",
+      "crates/org-office/src/store/work/assembly.rs",
+      "crates/org-office/src/store/work/tests/assembly.rs"
+    ],
+    "held_interfaces": [
+      "crates/org-office/src/store.rs",
+      "crates/org-office/src/store/work/call.rs",
+      "crates/org-office/src/store/work/metadata.rs"
+    ],
+    "contract": "Re-establish file/directory durability of interrupted anchor and manifest publication BEFORE authority confirmation, with real pre-parent-flush SIGKILL window and sync-before-confirm evidence. Exact native replay with later wall clock returns original receipt without ordinal/origin/clock/filesystem mutation, including exhausted journal, while new writes still refuse safely and authority checks remain live. Never simply bypass journal at exhaustion or rerun accepted decision. Preserve generic write pre-decision exhaustion assertions; escalate an actual contradiction or material private writer contract change before dependent code.",
+    "required": "Actual RED/GREEN regressions for both findings; scoped checks; root repeats full gates; every blocked review run retained/collected; prior-tree author intent remains historical and requires final-tree refresh.",
+    "status": "Original author terminal0/784.55s partial; F1 source/check handoff validated by root, F2 typed boundary pending independent architecture review before dependent implementation.",
+    "F1_intake": {
+      "receipt": ".agent-kit/logs/v1-durable-journal/original-fullstack-author/code-review-repair-1/root-intake-1.json",
+      "acceptance_passes": 30,
+      "sigkill_cases": 32,
+      "sigkill_hooks": 12,
+      "nonowned_and_guards_unchanged": true,
+      "scoped_checks": "Acceptance/origin/writer/sourceguard/Clippy/fmt/diff pass; work103existing pass/1existingignore and2new deliberately RED regressions."
+    },
+    "F2_proposal": {
+      "path": ".agent-kit/logs/v1-durable-journal/original-fullstack-author/code-review-repair-1/f2-interface-proposal-1.json",
+      "sha256": "db8bffd81573115924aac4ec7ee9a0bff0298ad4f0392ea207d673509c262aed",
+      "candidate": ".agent-kit/logs/v1-durable-journal/native-replay-interface-review-1/candidate.json",
+      "candidate_sha256": "3f1e499097b50934ed149a791eea52099858afffbdb3649b88a8d06b79869c09",
+      "status": "Independently READY; root activated exact interface addendum and29source closure, original21provenance allocation unchanged."
+    }
+  },
+  "native_replay_interface": {
+    "status": "ROOT_ACTIVATED_READY",
+    "revision": 1,
+    "canonical_path": ".agent-kit/tasks/v1-native-replay-interface.md",
+    "canonical_sha256": "71fd7c5c31aec618ac5f37d244eaac469c6c6b4430e09f1f408e94256f5f2d53",
+    "candidate_sha256": "3f1e499097b50934ed149a791eea52099858afffbdb3649b88a8d06b79869c09",
+    "proposal_sha256": "db8bffd81573115924aac4ec7ee9a0bff0298ad4f0392ea207d673509c262aed",
+    "review_session": "01a1e58f-384f-7261-809c-73fa88e7dba7",
+    "review_evidence": ".agent-kit/logs/v1-durable-journal/native-replay-interface-review-1/root-activation-1.json",
+    "minimum_additional_paths": [
+      "crates/org-work/src/ports.rs",
+      "crates/org-work/src/testkit.rs",
+      "crates/org-work/src/service.rs",
+      "crates/org-work/src/engine.rs",
+      "crates/org-work/src/lib.rs"
+    ],
+    "correction": "Review confirmed existing Arc forwarding lives in testkit.rs336; grant includes this actual adapter path. All source-linked READY obligations adopted. No architecture replacement, new crate edge, wire/schema/receipt identity or security-policy change.",
+    "owned_for_next_author_turn": [
+      "crates/org-work/src/ports.rs",
+      "crates/org-work/src/testkit.rs",
+      "crates/org-work/src/service.rs",
+      "crates/org-work/src/engine.rs",
+      "crates/org-work/src/lib.rs",
+      "crates/org-office/src/store.rs",
+      "crates/org-office/src/store/work/call.rs",
+      "crates/org-office/src/store/work/assembly.rs",
+      "crates/org-office/src/store/acceptance.rs",
+      "crates/org-office/src/store/work/tests/assembly.rs"
+    ],
+    "held": [
+      "crates/org-office/src/store/work/metadata.rs",
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/org-office/Cargo.toml",
+      "all6sourceguard files",
+      "F1 durable/crash/acceptance-tests source"
+    ],
+    "root_tracked_writes": "Author terminal; root owns frozen checkout for metadata, checks and acceptance. No other source writer."
+  },
+  "native_replay_repair": {
+    "status": "SOURCE_FROZEN_ROOT_INTAKE_READY",
+    "author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+    "author_execution_seconds": 817.716,
+    "author_exit": 0,
+    "author_checkpoint": ".agent-kit/logs/v1-durable-journal/original-fullstack-author/native-replay-repair-1/author-checkpoint-1.json",
+    "author_checkpoint_sha256": "fca95447ff45d1e262f1faf6bfac16776c21f9412c4b48bfe46ebb59ee5350f4",
+    "root_intake": ".agent-kit/logs/v1-durable-journal/root-native-replay-intake-1.json",
+    "source_hashes": {
+      "crates/org-office/src/store/acceptance.rs": "85b0e2362681d9e835cd15fca76f17e71ac12aa56a95cebc644e5a7a4a608527",
+      "crates/org-office/src/store/acceptance/crash.rs": "e94e64981a78584c094dd70a56cd261184ebf3c7991627e9795865a052c51e54",
+      "crates/org-office/src/store/acceptance/durable.rs": "edbb2e2a7d0f063397fca3f90753a20b526d18607a6ba5a91c045e39ced6a11f",
+      "crates/org-office/src/store/acceptance/rows.rs": "493b9310d9edfb2697930540d5f02b871313b351c5819c42e20e401c0559f765",
+      "crates/org-office/src/store/acceptance/schema.rs": "68fd06db94580cacaab0b1af3bc249997fa3cd743a559ddc9201df4cea742b5d",
+      "crates/org-office/src/store/acceptance/tests.rs": "9e1a72fc0fdd2adbe58c531f6b7e9746dc4e2f90939bc9e8eee0fac4c4dd9a69",
+      "crates/org-office/src/store/acceptance/tests/crash_reopen.rs": "9c36caab33fca3b3562f13d38b59f064f9e045e6a18079fb5bcadd7410dc719b",
+      "crates/org-office/src/store/origin.rs": "cdad34dbbe7c6bbd5d90bb0b5a51f769613a33dac69e6486cd09b02e274d7719",
+      "crates/org-office/src/store/origin/tests.rs": "9cb31d5f848e69cc0a05e5249023e6fbb2bc64bd37b0e4ec8536dcb0e0f4ac7b",
+      "crates/org-office/src/store/work/assembly.rs": "237a6fdb01af15d192fae32aaf4f2699a8d3da44fc4251eb6d0927ba679e43c3",
+      "crates/org-office/src/store/work/call.rs": "ea3954de673f634cbf40cf3304ad3b92920d9fb034de3ff0db323348919d2cd1",
+      "crates/org-office/src/store/work/tests.rs": "baeb75d431dfe75f7ac3c1b3c640205cb1454a8ff192d9a71c5cbd8859943453",
+      "crates/org-office/src/store/work/tests/assembly.rs": "9be9446aed54914d96b9936b274358e0f5d9ab4e41348d6eb350d97b96bd1146",
+      "crates/org-office/src/store/work/tests/call.rs": "8a13e05164b3cf17f9b47e377bf76fbea580fd994eea81feb0564bdc725d8e23",
+      "crates/org-office/src/store/work/tests/metadata.rs": "561c5ab299af415642d4c3d0de88d3e33ba200b3598da18895c87dfcf935ec9b",
+      "crates/org-office/src/store.rs": "cd0695c91fce28846c7389f381c93769378a878d3d7a071c5a95b3a7ff7af157",
+      "crates/org-office/src/lib.rs": "3dd30302b5a590a59dd8b17c4d6facb13275e44c74993e28bd2e8f1a69e6ec05",
+      "crates/org-office/src/office.rs": "8e6c27bcc671e444c53cefdeca606c519200232f851b57dc4dca8f7931f7f89a",
+      "crates/org-office/src/office/tests/instance.rs": "a8f8cc4549ac25ae8280b82978a5a050af0989de0145a8931339ebef40b2c5fc",
+      "crates/org-proto/src/work.rs": "485ee1303ad62a3b218164bc7f77ae3c511ec21c9d21735c9b77c9ee36e353e2",
+      "crates/org-office/Cargo.toml": "17e1f03a76bbdd324f9621eea7befa6d26910ffd266b5a0d50c64cf6aad842fe",
+      "Cargo.lock": "997c8874369c0b7e3b3aee3842a5704204bcf09c2c525946601181de94b48219",
+      "crates/org-office/src/messaging.rs": "4ecc0de2f08c38369da7c37525cda1f529298b661f28e9c3dabd4ab724e2e8ef",
+      "crates/org-office/src/status.rs": "80a67d5133123eba2bc84cdd0561075a602e2f01a8dc7644fda60f2b9c1d9571",
+      "crates/org-work/src/ports.rs": "ad47b44759d72fa747573e7ae58e8bb136e050780437a1d65a76d06ca44e2196",
+      "crates/org-work/src/testkit.rs": "cab4067fb1f718e4b2dab1eb6fdce5e17df259b1c816190ddac3dc43f5c35cfa",
+      "crates/org-work/src/service.rs": "3243b22e48142f353c22a9b4273825d1c985c269c0bfca988091525c1c9a1d81",
+      "crates/org-work/src/engine.rs": "0f338a8582547ff8bd93022bd05776c98ae2622ec63e17369eb92cc840a8267c",
+      "crates/org-work/src/lib.rs": "5cd1d6b4e1d9d5c4af67981376c09827dfa661fcae1cb56de999c12e005ba322"
+    },
+    "nonowned_inputs_verified": 1404,
+    "source_guards_unchanged": 6,
+    "focused_coverage": {
+      "domain": "238passed:199unit+21history+18assignment;0failed",
+      "native_work": "111passed,0failed,1existingignored; two retained RED tests now GREEN with unchanged/later clocks and artifact bytes/count/mtime. Six added tests cover MAX/Arc/new predecision refusal, caller/hash ordering, protected revocation, readonly/error/panic/real SQLite rollback cleanup failure/no saved value/later writer fence, duplicate race/unrelated write/reopen, and forced private Miss executing genuine domain fallback Replayed without publication.",
+      "journal": "30passed;32SIGKILLvectors/12hooks incl F1 sync/failure ordering and byte/device/inode/mtime evidence",
+      "origin": "19passed",
+      "writer": "25passed",
+      "sourceguard": "1passed/all6files byte-unchanged",
+      "scoped_clippy_fmt_diff": "all passed"
+    },
+    "remaining": "Full current workspace/kit/hook gates, NEW independent initial review, exact final-tree retained-author validation and separate fresh final ACCEPTED; no usable/production host/signing claim."
+  }
+}

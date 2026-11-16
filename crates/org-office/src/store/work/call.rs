@@ -11,7 +11,7 @@ use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
 use crate::store::origin::{self, OriginRef};
-use crate::store::{Store, WriteJob};
+use crate::store::{ReplayJob, Store, WriteJob};
 use crate::OfficeError;
 
 pub(super) const ROLLBACK: &str = "internal work call rollback";
@@ -108,7 +108,7 @@ pub(super) fn transact_with_abort<T: Send + 'static>(
     abort_batch: fn(&OfficeError) -> bool,
 ) -> Result<T, WorkCallError> {
     let (job, reply) = transact_job(move |db| run(db, &callback), abort_batch);
-    store.send_job(job).map_err(WorkCallError::Store)?;
+    store.send_work_job(job).map_err(WorkCallError::Store)?;
     reply.recv()
 }
 
@@ -121,6 +121,20 @@ pub(super) fn transact_job<T: Send + 'static>(
     let (job, answer) = Store::job_with_batch_abort(
         move |db| bridge(&attempt_slot, || callback(db)).map(|value| (value, None)),
         abort_batch,
+    );
+    (job, Reply { answer, slot })
+}
+
+pub(super) fn replay_job<T: Send + 'static>(
+    callback: impl Fn(&Connection) -> Result<T, WorkCallError> + Send + 'static,
+    probe: impl FnOnce(&Connection) -> Result<Option<T>, WorkCallError> + Send + 'static,
+) -> (ReplayJob, Reply<T>) {
+    let slot = Arc::new(Mutex::new(None));
+    let attempt_slot = slot.clone();
+    let probe_slot = slot.clone();
+    let (job, answer) = Store::job_with_replay(
+        move |db| bridge(&attempt_slot, || callback(db)).map(|value| (value, None)),
+        move |db| bridge(&probe_slot, || probe(db)),
     );
     (job, Reply { answer, slot })
 }
