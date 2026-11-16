@@ -2,7 +2,7 @@
 
 The single product feature/status index, categorized by the [documented feature areas](FEATURE-AREAS.md). Each row is a small capability with a short description linked to its full requirement. Supporting ADRs and data contracts remain authoritative; this file does not duplicate them. **An unchecked row is not complete.**
 
-Reviewed: **2026-11-16**, by Ada. Evidence baseline: `origin/v1` at `b1256c9771b15c0b47198828164e5efe78db2e96`; reconciled requirements at `b4f8e8b3456d1dc9dd5cf43bd3db3dd13d403a6e`. This initial inventory covers all 17 UX specs, the selected organization-data domains and supporting designs, including deferred candidates. It is a capability checklist, not one row per acceptance criterion or database field.
+Reviewed: **2026-11-16**, by Ada. Evidence baseline: `origin/v1` at `b1256c9771b15c0b47198828164e5efe78db2e96`; reconciled requirements at `b4f8e8b3456d1dc9dd5cf43bd3db3dd13d403a6e`. This inventory covers all 17 UX specs, the selected organization-data domains and supporting designs, including deferred candidates. It is a capability checklist, not one row per acceptance criterion or database field.
 
 ## Reading the status
 
@@ -21,16 +21,16 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 
 ## Status totals
 
-[First-five verification audit](verification/2026-11-16-first-five-features.md): three partial implementations and two planned capabilities confirmed on 2026-11-16; none complete. Remaining Needs verification rows: **58**.
+[First-five verification audit](verification/2026-11-16-first-five-features.md): three partial implementations and two planned capabilities confirmed on 2026-11-16; none complete. The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) then established 33 partial implementations and 25 planned capabilities. Remaining Needs verification rows: **0**. All 63 original unknown states have been classified; none became Done. The wider test run has an unresolved office source-guard failure, documented in that record.
 
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 22 |
-| Planned | 26 |
+| In progress | 55 |
+| Planned | 51 |
 | Blocked | 3 |
 | Deferred | 40 |
-| Needs verification | 58 |
+| Needs verification | 0 |
 | **Total** | **158** |
 
 ## Feature tables
@@ -76,9 +76,9 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-018 | [Create and open organization](specs/offices-and-teams-ux.md) | In progress | [browser tests] exercise explicit fakes; [UI] states creation/open gateway adapters unavailable. |
 | [ ] | FC-019 | [Office list, readiness and freshness](specs/offices-and-teams-ux.md) | In progress | Office/status refresh tests exist in [browser tests]; real browser data path remains gated [UI]. |
 | [ ] | FC-020 | [Satellite invite, join approval and repair](specs/offices-and-teams-ux.md) | In progress | [Audit](verification/2026-11-16-first-five-features.md#fc-020): Status/repair-instruction UI exists, but Add office is disabled and worker rejects non-HQ creation; invitation/approval/drain/repair integration remains. |
-| [ ] | FC-021 | [Restart, relocate and remove office](specs/offices-and-teams-ux.md) | Needs verification | Verify authorization, cleanup and workspace preservation against current implementation. |
-| [ ] | FC-022 | [Updates, uninstall and instance lifecycle](specs/server-installation-and-access-ux.md) | Needs verification | Reconcile installer/service lifecycle and retained data behavior; no complete release evidence recorded. |
-| [ ] | FC-023 | [Logs, doctor and support diagnostics](specs/server-installation-and-access-ux.md) | Needs verification | Verify usable commands and secret-safe diagnostics against installation criteria. |
+| [ ] | FC-021 | [Restart, relocate and remove office](specs/offices-and-teams-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-021): Native restart exists; authorized relocate/remove, safe cleanup and workspace preservation remain. |
+| [ ] | FC-022 | [Updates, uninstall and instance lifecycle](specs/server-installation-and-access-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-022): Host instance registry/foreground lifecycle exists; update activation, uninstall and service setup remain. |
+| [ ] | FC-023 | [Logs, doctor and support diagnostics](specs/server-installation-and-access-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-023): Owner-only capped/rotating log files exist; usable logs/doctor/support CLI and end-to-end redaction remain. |
 | [ ] | FC-024 | [Fresh-HQ and satellite release acceptance](specs/dogfood-run.md) | Blocked | Depends on real installation, authenticated browser APIs and both-platform service/recovery validation. |
 | [ ] | FC-153 | [Account administration and organization ownership grants](specs/server-installation-and-access-ux.md) | Planned | Target account create/link/unlink/revoke and owner grants require protected backend; [UI] claims no real sign-in/setup behavior. |
 | [ ] | FC-154 | [Verified downloads and signed offline bundles](specs/server-installation-and-access-ux.md) | Planned | [Executable status] explicitly lists downloads, signed bundles and update activation as pending integration. |
@@ -95,15 +95,15 @@ Full requirements: [Organization, people and teams](specs/offices-and-teams-ux.m
 | [ ] | FC-025 | [Team directory and organization chart](specs/offices-and-teams-ux.md) | In progress | Chart/view tests exist in [browser tests]; selected hierarchy and live adapter require reconciliation [UI]. |
 | [ ] | FC-026 | [Add, edit and remove people](specs/offices-and-teams-ux.md) | In progress | [People tests] cover UI behavior; production adapter and selected membership enforcement remain to verify. |
 | [ ] | FC-027 | [Create, move and archive teams](specs/offices-and-teams-ux.md) | In progress | [Team tests] cover UI behavior; live mutation, cycle checks and lead constraints remain to verify. |
-| [ ] | FC-028 | [Single home team and subtree lead authority](design/organization-data/01-organization-structure.md) | Needs verification | Selected relationship contract; draft schema is not evidence of deployed membership/authorization enforcement. |
-| [ ] | FC-029 | [Reporting lines and owner-linked employee](design/organization-data/04-agent-structure.md) | Needs verification | Verify identity/reporting independently of chart placement; account grants are separate. |
-| [ ] | FC-030 | [Project accountability and contributing teams](design/organization-data/02-project-structure.md) | Needs verification | Audit selected owner/contributor model against current services and UI. |
-| [ ] | FC-031 | [Built-in HR identity and home team](specs/our-org-in-the-app.md) | Needs verification | Verify explicit valid home team during bootstrap; special chart position does not satisfy identity requirements. |
+| [ ] | FC-028 | [Single home team and subtree lead authority](design/organization-data/01-organization-structure.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-028): Team/lead rules exist, but current many-to-many membership conflicts with required single home team. |
+| [ ] | FC-029 | [Reporting lines and owner-linked employee](design/organization-data/04-agent-structure.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-029): Reporting lines/cycle checks exist; owner bootstrap remains teamless and selected account/employee mapping is missing. |
+| [ ] | FC-030 | [Project accountability and contributing teams](design/organization-data/02-project-structure.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-030): Project-team links exist; explicit accountable owner versus contributors and safe ownership transitions remain. |
+| [ ] | FC-031 | [Built-in HR identity and home team](specs/our-org-in-the-app.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-031): No built-in HR bootstrap or required valid home-team provisioning found. |
 | [ ] | FC-032 | [Employee roster, cards and profiles](specs/our-org-in-the-app.md) | In progress | Roster/chart tests exist in [browser tests]; execution, activity and cost adapters remain separate. |
-| [ ] | FC-033 | [Hire proposal, approval and provisioning](specs/our-org-in-the-app.md) | Needs verification | Reconcile manual fallback and authorized approval with real provisioning; UI proposals do not establish execution. |
-| [ ] | FC-034 | [Edit, move, pause, resume and offboard employees](specs/our-org-in-the-app.md) | Needs verification | Verify runtime effects, independent holds and safe placement changes, beyond profile UI. |
-| [ ] | FC-035 | [Home and unified action inbox](specs/our-org-in-the-app.md) | Needs verification | Verify real questions, approvals, problems and correct clearing/dismissal semantics. |
-| [ ] | FC-036 | [Live activity and truthful employee presence](specs/our-org-in-the-app.md) | Needs verification | Historical activity-port work does not prove live aggregate/recency integration; verify data sources and freshness. |
+| [ ] | FC-033 | [Hire proposal, approval and provisioning](specs/our-org-in-the-app.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-033): Profile hiring/upsert exists; reviewed proposal, selected identity and real provisioning remain. |
+| [ ] | FC-034 | [Edit, move, pause, resume and offboard employees](specs/our-org-in-the-app.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-034): Profile/status/offboarding mutations exist; actual execution stop/holds/fencing and safe workspace moves remain. |
+| [ ] | FC-035 | [Home and unified action inbox](specs/our-org-in-the-app.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-035): HQ problem-source inbox backend exists; owner Home/unified browser Inbox and complete source/action semantics remain. |
+| [ ] | FC-036 | [Live activity and truthful employee presence](specs/our-org-in-the-app.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-036): Organization activity/status and UI reducers exist; integrated cross-domain live timeline and production freshness remain. |
 | [x] | FC-037 | [Retired existing-team import is gated](specs/our-org-in-the-app.md) | Done | Import removed from v1 per [UI]; [retired import test] records regression coverage. |
 
 ### Projects, tasks, bugs and requests
@@ -116,22 +116,22 @@ Full requirements: [Projects, tasks, bugs and requests](specs/work-items-ux.md).
 | --- | --- | --- | --- | --- |
 | [ ] | FC-038 | [Project overview, work and team views](specs/work-items-ux.md) | In progress | Project/profile/work tests exist in [browser tests]; [UI] has no production project/work adapter claim. |
 | [ ] | FC-039 | [Task board, list, detail and filters](specs/work-items-ux.md) | In progress | Tasks/work tests exist in [browser tests]; real selected-model mutations remain to verify. |
-| [ ] | FC-040 | [Unified task, bug and request identity](design/organization-data/03-features-and-work.md) | Needs verification | Audit typed T- records and explicit old B-/REQ- mappings; selected schema is not an applied migration. |
-| [ ] | FC-041 | [Accountable team and independent assignment](design/organization-data/12-task-assignment-and-history.md) | Needs verification | Verify nullable team/person assignment and ownership separately against services. |
-| [ ] | FC-042 | [Immutable reporter and task activity history](design/organization-data/12-task-assignment-and-history.md) | Needs verification | Verify preserved creator, ordered durable events and post-archive history against selected contract. |
-| [ ] | FC-043 | [Priority, status and task transition rules](specs/work-items-ux.md) | Needs verification | Verify selected lifecycle service and permissions; tests for older UI flows may cover a different model. |
+| [ ] | FC-040 | [Unified task, bug and request identity](design/organization-data/03-features-and-work.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-040): Legacy task/bug/request entities exist; unified selected typed T- identity and explicit import mappings remain. |
+| [ ] | FC-041 | [Accountable team and independent assignment](design/organization-data/12-task-assignment-and-history.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-041): Individual assignment exists; independent team/person pair and target accountable ownership remain. |
+| [ ] | FC-042 | [Immutable reporter and task activity history](design/organization-data/12-task-assignment-and-history.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-042): Immutable SQL task events/reporter evidence exist; selected durable source/history/receipt migration remains. |
+| [ ] | FC-043 | [Priority, status and task transition rules](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-043): Legacy lifecycle validation exists; selected unified transitions and authorized target adapters remain. |
 | [ ] | FC-044 | [Report bugs with severity and reproduction](specs/work-items-ux.md) | In progress | Bug tests exist in [browser tests]; production adapter and selected task mapping remain open. |
-| [ ] | FC-045 | [Duplicate linking and bug triage](specs/work-items-ux.md) | Needs verification | Verify current transition service, retained provenance and explicit human choices. |
-| [ ] | FC-046 | [Fix task, verification, close and reopen](specs/work-items-ux.md) | Needs verification | Verify authorized real lifecycle and linked fix evidence rather than mock workflow alone. |
+| [ ] | FC-045 | [Duplicate linking and bug triage](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-045): Bug triage/duplicate relationships exist; selected typed-task mapping and end-to-end browser integration remain. |
+| [ ] | FC-046 | [Fix task, verification, close and reopen](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-046): Legacy fix/verify/close/reopen behavior exists; selected history/assignment and live browser integration remain. |
 | [ ] | FC-047 | [Capture and list feature requests](specs/feature-requests-ux.md) | In progress | Request tests exist in [browser tests]; production handler and selected task identity require integration. |
-| [ ] | FC-048 | [Request routing and scoper selection](specs/feature-requests-ux.md) | Needs verification | Verify leading-mention rules, authorized suggestions and labelled manual fallback. |
-| [ ] | FC-049 | [Request approval, decline and merge](specs/feature-requests-ux.md) | Needs verification | Verify lifecycle, identity preservation and immutable outcome history against current service. |
-| [ ] | FC-050 | [Plain task checklists](specs/work-items-ux.md) | Needs verification | Verify persistence and basic step changes separately from deferred advanced execution. |
-| [ ] | FC-051 | [Task output and completion evidence](specs/work-items-ux.md) | Needs verification | Verify linked files/commits/documents and required completion evidence in actual task service. |
-| [ ] | FC-052 | [Task work and waiting time](specs/work-items-ux.md) | Needs verification | Verify durations and waiting spans; distinguish measured work from calendar age. |
+| [ ] | FC-048 | [Request routing and scoper selection](specs/feature-requests-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-048): Request routing/manual fallback UI and legacy request behavior exist; authorized live target routing remains. |
+| [ ] | FC-049 | [Request approval, decline and merge](specs/feature-requests-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-049): Legacy request outcome transitions exist; selected typed identity, durable history and live adapters remain. |
+| [ ] | FC-050 | [Plain task checklists](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-050): Persisted plain checklist operations exist; selected source/identity and production browser integration remain. |
+| [ ] | FC-051 | [Task output and completion evidence](specs/work-items-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-051): No dedicated Output view, deliverable resolver or shared completion explanation; generic links do not satisfy this feature. |
+| [ ] | FC-052 | [Task work and waiting time](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-052): Legacy time/waiting computations exist; revised reopen/baseline/overlap semantics and target live reads remain. |
 | [ ] | FC-053 | [Author-private task notes](design/organization-data/13-private-task-notes.md) | Planned | Data index explicitly states runtime/access/UI unimplemented; shared comments do not satisfy privacy. |
-| [ ] | FC-054 | [Shared comments, watchers and owner questions](design/organization-data/05-operational-data.md) | Needs verification | Verify durable state and access; private notes remain a separate store and capability. |
-| [ ] | FC-055 | [Needs-me and owner-wait views](specs/work-items-ux.md) | Needs verification | Verify authenticated reader scoping and live owner-wait/question sources; tracking/requested-by semantics are separate deferred rows. |
+| [ ] | FC-054 | [Shared comments, watchers and owner questions](design/organization-data/05-operational-data.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-054): Shared comments/watch/question state exists; selected source/receipt durability and authorized browser integration remain. |
+| [ ] | FC-055 | [Needs-me and owner-wait views](specs/work-items-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-055): Needs-you sample view and owner-wait primitives exist; authenticated live aggregation and selected scoping remain. |
 | [ ] | FC-056 | [Areas and advanced checklist execution](specs/work-items-ux.md) | Deferred | Not selected; basic checklist data does not select orchestration or an Areas engine. |
 | [ ] | FC-057 | [Undo and organization-wide event history](design/organization-data/README.md) | Deferred | Explicitly unselected; task history is a distinct selected capability. |
 | [ ] | FC-156 | [Following and requested-by tracking semantics](design/tasks-projects-docs.md) | Deferred | Section 7.2 gates AC-TK1–3 pending decisions and verified attribution; watcher data alone does not select these views. |
@@ -146,19 +146,19 @@ Full requirements: [Feature definitions, knowledge and delivery](specs/features-
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [ ] | FC-058 | [Canonical feature definition and lifecycle](specs/features-ux.md) | Needs verification | Verify feature.md storage, owner, stable identity and planned/in-progress/live/retired states. |
-| [ ] | FC-059 | [Feature list, page and editing](specs/features-ux.md) | Needs verification | Verify current UI/backend against FTR criteria; no feature completion inferred from docs existence. |
-| [ ] | FC-060 | [Feature task membership and affected bugs](specs/features-ux.md) | Needs verification | Verify explicit membership confirmation, typed links and derived progress. |
-| [ ] | FC-061 | [Knowledge library, reader and Markdown editor](specs/decisions-and-tech-debt-ux.md) | Needs verification | Verify authorized real storage, required project scope and optional feature/release/deployment scope. |
-| [ ] | FC-062 | [Knowledge kinds, templates and scoped search](specs/decisions-and-tech-debt-ux.md) | Needs verification | Verify title/ID/body search, metadata and new kind/template behavior against current commands. |
-| [ ] | FC-063 | [Project briefs and capability requirements](specs/decisions-and-tech-debt-ux.md) | Needs verification | Verify canonical authored records and publication; this repository's specs are not product implementation. |
-| [ ] | FC-064 | [ADRs, designs, evaluations and Why links](specs/decisions-and-tech-debt-ux.md) | Needs verification | Verify document publication/history and provenance backlinks in the application. |
-| [ ] | FC-065 | [Debt, limitation and exception records](specs/decisions-and-tech-debt-ux.md) | Needs verification | Structural records selected; verify actual authoring and scope before claiming complete. |
-| [ ] | FC-066 | [Agent document CLI and publication](specs/decisions-and-tech-debt-ux.md) | Needs verification | Verify supported commands against current CLI; legacy UX syntax is not proof of implementation. |
-| [ ] | FC-067 | [Releases, milestones and explicit content manifests](design/organization-data/09-release-content-and-flags.md) | Needs verification | Verify F-/R-/M- identity, explicit membership and release backlinks; no automatic inference from current tasks. |
-| [ ] | FC-068 | [Release product changelogs](design/organization-data/09-release-content-and-flags.md) | Needs verification | Verify authored release content, independently of deployment technical changes. |
-| [ ] | FC-069 | [Deployment records, environments and rollback links](design/organization-data/07-release-deployments.md) | Needs verification | Verify stored attempts, outcomes and actual commit snapshots; no deployment runner implied. |
-| [ ] | FC-070 | [Flag definitions and intended/applied snapshots](design/organization-data/09-release-content-and-flags.md) | Needs verification | Verify record persistence separately from unselected flag evaluation or deployment execution. |
+| [ ] | FC-058 | [Canonical feature definition and lifecycle](specs/features-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-058): No selected feature definition/lifecycle persistence found; draft schemas are not product storage. |
+| [ ] | FC-059 | [Feature list, page and editing](specs/features-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-059): Project feature tab is gated; no feature list/page/editor service or live UI found. |
+| [ ] | FC-060 | [Feature task membership and affected bugs](specs/features-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-060): No persisted feature membership/affected-bug service or selected progress calculation found. |
+| [ ] | FC-061 | [Knowledge library, reader and Markdown editor](specs/decisions-and-tech-debt-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-061): Bounded Markdown/YAML parser exists; knowledge library, real reader/editor and scoped storage/publication remain. |
+| [ ] | FC-062 | [Knowledge kinds, templates and scoped search](specs/decisions-and-tech-debt-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-062): No kind/template catalog or authorized title/ID/body search service found; parser has no kind awareness. |
+| [ ] | FC-063 | [Project briefs and capability requirements](specs/decisions-and-tech-debt-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-063): No canonical project-brief/capability-requirement authoring/publication service found. |
+| [ ] | FC-064 | [ADRs, designs, evaluations and Why links](specs/decisions-and-tech-debt-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-064): No application ADR/design/evaluation publication/history or Why-link behavior found. |
+| [ ] | FC-065 | [Debt, limitation and exception records](specs/decisions-and-tech-debt-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-065): No scoped debt/limitation/exception record service found; required structures remain draft contracts. |
+| [ ] | FC-066 | [Agent document CLI and publication](specs/decisions-and-tech-debt-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-066): Agent CLI has no document/publication commands; do not treat UX command examples as implemented. |
+| [ ] | FC-067 | [Releases, milestones and explicit content manifests](design/organization-data/09-release-content-and-flags.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-067): No release/milestone/content-manifest service found; draft record schema only. |
+| [ ] | FC-068 | [Release product changelogs](design/organization-data/09-release-content-and-flags.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-068): No authored product release-changelog storage/service/UI found. |
+| [ ] | FC-069 | [Deployment records, environments and rollback links](design/organization-data/07-release-deployments.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-069): No deployment-record/rollback-link/actual-snapshot persistence service found; deployment runner is separate. |
+| [ ] | FC-070 | [Flag definitions and intended/applied snapshots](design/organization-data/09-release-content-and-flags.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-070): No flag definition/intent/applied-snapshot service found; evaluation/deployment engines remain separate. |
 | [ ] | FC-071 | [Automatic feature transitions and release automation](specs/features-ux.md) | Deferred | Earlier transition/retro proposals do not activate a lifecycle or deployment engine. |
 
 ### Chat and agent messaging
@@ -174,11 +174,11 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 | [ ] | FC-074 | [Chat layout, threads and readable messages](specs/chat-ux.md) | In progress | Chat/followup/layout/accessibility tests exist in [browser tests]; production conversation adapter remains unavailable [UI]. |
 | [ ] | FC-075 | [Protected conversation sources and memberships](design/organization-data/15-messaging-and-chat.md) | Planned | [Mailbox] lists target durable sources, channel/group admission and safe membership as follow-up adapters. |
 | [ ] | FC-076 | [Channels, group DMs and member read state](specs/chat-ux.md) | Planned | [Mailbox] and [agent CLI] do not implement selected channel/group commands; fake UI is narrower evidence. |
-| [ ] | FC-077 | [Mentions, search, attachments and reactions](specs/chat-ux.md) | Needs verification | Verify visibility-safe live services and durable sources against selected messaging contract. |
-| [ ] | FC-078 | [Drafts, history bounds and conversation performance](specs/chat-ux.md) | Needs verification | Verify retention/pagination and 200-message/large-DM behavior beyond existing layout tests. |
-| [ ] | FC-079 | [Directed asks, answers and withdrawals](specs/chat-ux.md) | Needs verification | Phase A ask/reply exists [agent CLI]; reconcile production cards, resolution and selected protected sources. |
-| [ ] | FC-080 | [Atomic task handoff and system notices](specs/chat-ux.md) | Needs verification | Verify durable assignment/message transaction and privacy against selected task and recovery contracts. |
-| [ ] | FC-081 | [Uninterrupting delivery, pause and waiting](specs/chat-ux.md) | Needs verification | Verify actual execution wake/delivery semantics, not only live-delivery fake tests. |
+| [ ] | FC-077 | [Mentions, search, attachments and reactions](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-077): Sample chat interactions exist; protected visibility-safe search/attachments/reactions and live adapters remain. |
+| [ ] | FC-078 | [Drafts, history bounds and conversation performance](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-078): Sample drafts/history and bounded UI behavior exist; durable retention/pagination and real conversation performance remain. |
+| [ ] | FC-079 | [Directed asks, answers and withdrawals](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-079): Phase A CLI asks/replies and sample cards exist; selected protected-source resolution/withdrawal integration remains. |
+| [ ] | FC-080 | [Atomic task handoff and system notices](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-080): Sample recipient-only handoffs/notices exist; no atomic task/history/protected-message/receipt transaction. |
+| [ ] | FC-081 | [Uninterrupting delivery, pause and waiting](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-081): SQL-backed office mailbox send/inbox/read/held-wait is wired; execution-aware wake/holds/noninterrupting delivery remain. |
 | [ ] | FC-082 | [Live transport cutover with triage preservation](adr/0003-agent-messaging-office-first.md) | Planned | [Agent CLI] explicitly retains installed Phase A tooling/spool until verified replacement; no automatic switch. |
 | [ ] | FC-083 | [External chat bridges](specs/chat-ux.md) | Deferred | Optional bridge engines require separate selection and privacy/identity contracts. |
 
@@ -190,11 +190,11 @@ Full requirements: [Usage, costs and budgets](specs/costs-and-insights-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [ ] | FC-084 | [Immutable durable usage ledger and corrections](design/organization-data/10-usage-and-cost-accounting.md) | Needs verification | Verify collector, protected archive, de-duplication and correction adapters against selected records. |
-| [ ] | FC-085 | [Historical consumer, team, task and release attribution](design/organization-data/10-usage-and-cost-accounting.md) | Needs verification | Verify immutable execution-time snapshots; current assignment is not a valid historical fallback. |
-| [ ] | FC-086 | [Price versions, tokens, USD and coverage states](specs/costs-and-insights-ux.md) | Needs verification | Verify actual route/model pricing and partial/unknown data instead of fabricated totals. |
-| [ ] | FC-087 | [Cost views, scoped permissions and CSV export](specs/costs-and-insights-ux.md) | Needs verification | Verify live authorized reads and export; test row-cost presentation alone does not establish accounting. |
-| [ ] | FC-088 | [Period queries, bucketing and duration formatting](specs/costs-and-insights-ux.md) | Needs verification | Verify account-zone boundaries and rolling calendar semantics against real ledger queries. |
+| [ ] | FC-084 | [Immutable durable usage ledger and corrections](design/organization-data/10-usage-and-cost-accounting.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-084): Only usage event types/fakes found; no real durable ledger, collector, protected archive or correction service. |
+| [ ] | FC-085 | [Historical consumer, team, task and release attribution](design/organization-data/10-usage-and-cost-accounting.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-085): No execution-time consumer/scope/historical-attribution capture service found. |
+| [ ] | FC-086 | [Price versions, tokens, USD and coverage states](specs/costs-and-insights-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-086): Only token/USD event types/fakes found; no real capture, versioned pricing or coverage service. |
+| [ ] | FC-087 | [Cost views, scoped permissions and CSV export](specs/costs-and-insights-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-087): No live ledger cost views, authorized amount reads or CSV export; request estimates are not recorded spend. |
+| [ ] | FC-088 | [Period queries, bucketing and duration formatting](specs/costs-and-insights-ux.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-088): No ledger period/bucket query or persisted account-zone service; generic formatting is insufficient. |
 | [ ] | FC-089 | [Task lifetime and agent daily/monthly budgets](design/organization-data/17-budgets-and-controls.md) | Planned | Data index explicitly states budget runtime service unimplemented; selected definitions are not admission enforcement. |
 | [ ] | FC-090 | [Release warning caps](design/organization-data/17-budgets-and-controls.md) | Planned | Selected warning-only policy; budget runtime service still unimplemented. |
 | [ ] | FC-091 | [Threshold notices and independent execution holds](design/organization-data/17-budgets-and-controls.md) | Planned | Implement 80/100 notices, stop_pending and verified cleanup without clearing manual/security holds. |
@@ -216,9 +216,9 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-098 | [Provider subscriptions and ordered connection pools](design/organization-data/14-model-providers-and-connection-pools.md) | Planned | [Supervisor] excludes ordered pool services; actual routing/bindings must implement the selected contract. |
 | [ ] | FC-099 | [Shared quota permits, cooldown and failover](design/organization-data/11-model-profiles-and-agent-execution.md) | Planned | Requires HQ admission and actual attempt identity; native process primitives do not implement routing. |
 | [ ] | FC-100 | [Single open turn, attempts and placement fencing](design/organization-data/11-model-profiles-and-agent-execution.md) | Planned | Integrate durable generations, occupied unknown cleanup and proof before reassignment [supervisor]. |
-| [ ] | FC-101 | [Claude, Codex and Agy native runtime adapters](design/agent-sessions.md) | Needs verification | Audit each adapter's real launch, streaming, cancellation and sandbox behavior; generic process library is insufficient. |
-| [ ] | FC-102 | [Progress, health, waiting and stale-run detection](specs/employee-supervision-ux.md) | Needs verification | Verify out-of-model observation and truthful stop/cleanup states against real sessions. |
-| [ ] | FC-103 | [Per-task repository workspace isolation](design/organization-data/04-agent-structure.md) | Needs verification | Verify fresh sandbox/credential/other-task denies for target topology; old path allowlists do not prove safety [supervisor]. |
+| [ ] | FC-101 | [Claude, Codex and Agy native runtime adapters](design/agent-sessions.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-101): No native Claude/Codex/Agy adapters or office session runner; generic contracts/process primitives are separate. |
+| [ ] | FC-102 | [Progress, health, waiting and stale-run detection](specs/employee-supervision-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-102): Process health/recovery primitives exist; real-session observation, stale-run detection and supervision view remain. |
+| [ ] | FC-103 | [Per-task repository workspace isolation](design/organization-data/04-agent-structure.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-103): No selected task/repository workspace admission or native sandbox enforcement; generic path/process primitives are separate. |
 | [ ] | FC-104 | [On-call, scheduled and always-on run modes](specs/agent-run-modes-ux.md) | Deferred | Automatic scheduling/wake/sleep engine remains unselected. |
 | [ ] | FC-105 | [Extra model-policy slots and role overrides](specs/agent-run-modes-ux.md) | Deferred | Additional selection/Why policy requires its own contract; data fields do not activate routing policy. |
 | [ ] | FC-106 | [Goals, reminders and automatic memory consolidation](specs/employee-supervision-ux.md) | Deferred | Scheduling/memory engine remains separate pending selection. |
@@ -232,9 +232,9 @@ Full requirements: [Roles, processes and retrospectives](specs/processes-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [ ] | FC-108 | [Role records and employee role assignment](specs/roles-ux.md) | Needs verification | Selected identity data is separate from execution configuration; verify actual authoring/persistence. |
+| [ ] | FC-108 | [Role records and employee role assignment](specs/roles-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-108): Employee free-text role field exists; normalized role catalog/assignment and selected persistence remain. |
 | [ ] | FC-109 | [Role inheritance, overrides and drift approval](specs/roles-ux.md) | Deferred | Earlier composition/injection engine remains deferred; existing role records do not implement it. |
-| [ ] | FC-110 | [Scoped process and standard documents](design/processes.md) | Needs verification | Organization/team/project content is selected; verify persistence without claiming an inheritance engine. |
+| [ ] | FC-110 | [Scoped process and standard documents](design/processes.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-110): Earlier process parser/helpers and sample catalog exist; selected scoped process/standard persistence remains. |
 | [ ] | FC-111 | [Process catalog and editor UI](specs/processes-ux.md) | In progress | [Process tests] exercise UI; production data adapter and selected structural model remain to verify [UI]. |
 | [ ] | FC-112 | [Process resolution, sealed overrides and agent injection](specs/processes-ux.md) | Deferred | Runtime inheritance/execution engine is explicitly unselected. |
 | [ ] | FC-113 | [Asks-first and full-autonomy policy engine](specs/processes-ux.md) | Deferred | Proposed behavior requires a selected authorization/execution contract. |
@@ -290,11 +290,11 @@ Full requirements: [Git, identity, synchronization and recovery](design/organiza
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [ ] | FC-139 | [Shared repository registration and project branches](design/projects-git-github.md) | Needs verification | Verify remote organization Git, local/remote code and per-project repository integration branch associations. |
-| [ ] | FC-140 | [Git worktrees and GitHub integration](design/projects-git-github.md) | Needs verification | Verify actual supported operations and credentials; repository association design does not prove end-to-end delivery. |
-| [ ] | FC-141 | [Durable canonical records and indexed projections](design/organization-data/08-record-contracts.md) | Needs verification | Audit file round-trip, concurrency revisions, tombstones and projection adapters against selected records. |
-| [ ] | FC-142 | [UUIDv7, scoped counters and readable references](design/organization-data/06-identity-and-numbering.md) | Needs verification | Verify durable authority allocation and unresolved local IDs without renumbering/import loss. |
-| [ ] | FC-143 | [Legacy data import mappings and staging](design/organization-data/12-task-assignment-and-history.md) | Needs verification | Preserve stable IDs/provenance and unresolved data; retired existing-team UI import is a different feature. |
+| [ ] | FC-139 | [Shared repository registration and project branches](design/projects-git-github.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-139): No organization repository registration/per-project integration-branch association service found. |
+| [ ] | FC-140 | [Git worktrees and GitHub integration](design/projects-git-github.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-140): No worktree/GitHub credential/push/PR adapters or commands found; path restrictions do not implement Git operations. |
+| [ ] | FC-141 | [Durable canonical records and indexed projections](design/organization-data/08-record-contracts.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-141): SQLite work/event projection exists; selected canonical files, round-trip, revision/tombstone and restore adapters remain. |
+| [ ] | FC-142 | [UUIDv7, scoped counters and readable references](design/organization-data/06-identity-and-numbering.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-142): ULID validation and transactional project T- counters exist; new UUIDv7/scoped authority allocation and mappings remain. |
+| [ ] | FC-143 | [Legacy data import mappings and staging](design/organization-data/12-task-assignment-and-history.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-143): No explicit legacy ID/reference mapping, collision staging or unresolved-record migration workflow found. |
 | [x] | FC-144 | [Replication codecs and storage-independent sync core](../crates/org-sync/README.md) | Done | [Sync core] documents implemented protocol/hash/authority, gap/retry/snapshot and receipt primitives; no network/filesystem I/O. |
 | [ ] | FC-145 | [Durable replication and office continuity integration](design/organization-data/16-recovery-and-office-continuity.md) | In progress | [Sync core] exists; native source adapters, HQ ingest and protected source/recovery composition remain follow-up work. |
 | [ ] | FC-146 | [Actor-bound mutation receipts and recovery journals](design/organization-data/16-recovery-and-office-continuity.md) | Planned | Selected durable command/source contract requires target adapters; core receipt primitives are narrower [sync core]. |
@@ -310,7 +310,7 @@ Full requirements: [Session inspection and private memory](design/agent-sessions
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [ ] | FC-150 | [Inspect sessions and transcripts in browser](specs/our-org-in-the-app.md) | Needs verification | Verify authorized HQ inspection, event history, privacy and freshness against real sessions, beyond profile cards. |
+| [ ] | FC-150 | [Inspect sessions and transcripts in browser](specs/our-org-in-the-app.md) | Planned | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-150): Sessions route is a placeholder; no authorized browser session/transcript inspector found. |
 | [ ] | FC-151 | [Authorized CLI takeover and PTY handback](design/agent-sessions.md) | Planned | [Supervisor] explicitly leaves PTYs for a separate delivery; verify exclusive takeover leases and safe handback before claiming full support. |
 | [ ] | FC-152 | [Private notes and memory profile reader](specs/our-org-in-the-app.md) | Deferred | Deferred human-only read API/UI, confined journal/MEMORY paths, caps and no-symlink/security checks; memory schema/retention remain pending. |
 

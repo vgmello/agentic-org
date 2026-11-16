@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. This preserves the area-by-area explanation alongside the repository requirements.
 
-Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 58 rows needing verification**. Counts reflect the current checklist, not a new implementation audit. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 0 rows needing verification**. Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -19,19 +19,19 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 3 | 3 | 0 | 1 | 0 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 5 | 6 | 3 | 0 | 3 |
-| [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 4 | 0 | 0 | 0 | 8 |
-| [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 4 | 1 | 0 | 5 | 13 |
-| [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 0 | 0 | 0 | 1 | 13 |
-| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks, handoffs and transport cutover | 12 | 2 | 1 | 3 | 0 | 1 | 5 |
-| [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 5 | 0 | 1 | 5 |
-| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 13 | 1 | 1 | 4 | 0 | 4 | 3 |
-| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 1 | 0 | 0 | 6 | 2 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 8 | 6 | 3 | 0 | 0 |
+| [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 11 | 1 | 0 | 0 | 0 |
+| [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
+| [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 1 | 12 | 0 | 1 | 0 |
+| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks, handoffs and transport cutover | 12 | 2 | 6 | 3 | 0 | 1 | 0 |
+| [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
+| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 13 | 1 | 2 | 6 | 0 | 4 | 0 |
+| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 0 | 0 | 6 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
-| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 1 | 3 | 0 | 1 | 5 |
-| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 1 | 1 |
-| **Total** | | **158** | **9** | **22** | **26** | **3** | **40** | **58** |
+| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 3 | 6 | 0 | 1 | 0 |
+| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
+| **Total** | | **158** | **9** | **55** | **51** | **3** | **40** | **0** |
 
 ## AREA-01
 
@@ -53,7 +53,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns service/access/enrollment behavior. Team membership belongs to AREA-03; durable source restoration and process-safe cache rebuild belong to AREA-12. CSP is classified here with production security, even though it affects every screen.
 
-**Verification focus:** Remaining unknown rows concern office restart/relocation/removal, updates/uninstall and usable, secret-safe diagnostics. The [first-five audit](verification/2026-11-16-first-five-features.md) established partial TLS/custody and satellite status/repair UI, with production handoff, CA escrow and invitation/approval integration still missing. Pending account/bootstrap work stays Planned or Blocked, not assumed delivered.
+**Verification focus:** The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) resolved the other three unknown rows here: restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. The [first-five audit](verification/2026-11-16-first-five-features.md) established partial TLS/custody and satellite status/repair UI, with production handoff, CA escrow and invitation/approval integration still missing. Pending account/bootstrap work stays Planned or Blocked, not assumed delivered.
 
 **Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md).
 
@@ -190,6 +190,8 @@ The “Needs verification” column identifies gaps in the implementation audit,
 **Requirements:** [Employee/profile UX](specs/our-org-in-the-app.md), [Session design](design/agent-sessions.md), [Memory/supervision gates](specs/employee-supervision-ux.md).
 
 ## Maintaining the area guide
+
+The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) now classifies every formerly unknown row. Verification focus paragraphs describe checks still required for **completion**, not rows still awaiting their initial status audit. See the record for scoped evidence, lead adjudications and the unresolved source-guard failure.
 
 FEATURES.md remains the single row-level status/evidence record. Update this guide's summary when rows change status or category; update scope/boundaries when a category changes. Add a category only for a distinct capability domain, not to group backlog states. Keep AREA- identifiers stable, and update checklist/category navigation together.
 

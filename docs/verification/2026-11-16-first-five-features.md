@@ -12,7 +12,7 @@ The previous inventory reconciled requirements and documented evidence; it had n
 | [FC-017](#fc-017) · TLS/CA custody/privilege separation | Needs verification | In progress | TLS and custody/admission primitives exist and tests pass; production handoff, CA escrow and platform acceptance are incomplete. |
 | [FC-020](#fc-020) · Satellite invitation/approval/repair | Needs verification | In progress | Status/repair-instruction UI exists; Add office is disabled and worker creation explicitly accepts HQ only. |
 
-All five can leave Needs verification. **None is complete.** The checklist now has 58 remaining Needs verification rows; its statuses and the [area guide](../FEATURE-AREAS.md) are updated together.
+All five can leave Needs verification. **None is complete.** This audit left 58 Needs verification rows. The subsequent [remaining-58 audit](2026-11-16-remaining-feature-audit.md) classified those as well; live totals remain in the checklist and [area guide](../FEATURE-AREAS.md).
 
 ## FC-005
 
