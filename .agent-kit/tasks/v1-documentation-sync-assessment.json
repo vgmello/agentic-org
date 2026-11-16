@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "task_id": "v1-documentation-sync",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": false,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": ["Ordinary pinned documentation merge; exact five content differences inspected. Most upstream requirement/audit bytes already match F0 imports."],
+    "precise_scope": ["Stable contract registered in journal 20051c26ae5940c587ac125242eb8a73 before detailed planning; no source/Cargo/runtime/policy change."],
+    "localized_change": ["Root alone owns five documentation resolutions and bounded task/current-checkpoint metadata. Preserve all prior accepted source bytes and user dirty checkout."],
+    "deterministic_checks": ["Pinned ancestry, exact source/requirement-byte comparisons, checklist/category counts, unchanged explicit kit checks, normal hook and two fresh reviews."],
+    "low_risk": ["Conservative because upstream AGENTS retains superseded offline-owner instructions; accidental resurrection would change execution/acceptance behavior. Preserve current solo rules byte-for-byte."],
+    "no_prior_failure": ["Earlier handoff conflated identical imported documents with merged ancestry; actual fetch/merge-base disproved that claim. Preserve correction, do not qualify familiar low-risk route."],
+    "ambiguity_resolved": ["Incoming origin/v1 pinned 6f02ae95, base 1b911da2. Preserve incoming requirements/audit plus current accepted overlays. No new architectural mechanism or material contract selected; no broad planning review needed."]
+  }
+}

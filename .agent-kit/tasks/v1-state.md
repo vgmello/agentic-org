@@ -8,14 +8,16 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 
 ## Current work
 
-Active acceptance unit: F2a source/codec, `codex/v1-source-codec`, from accepted
-integration ac20f099. Eight exact org-docs/org-work source/test/vector files plus
-minimal module/export hunks; no Cargo, service, auth, UI or assignment transport
-changes. Root owns extraction/integration; original fullstack author retains intent
-and bounded repairs. Compile closure passes independently; focused/full checks and
-fresh independent/final reviews still gate acceptance. Internal only; first usable
-U1 remains actual onboarding/sign-in/create/reopen/restart. The transport-coupled
-selected_fingerprint test stays preserved with its U5 production consumers.
+Active acceptance unit: the owner's pinned `origin/v1` documentation batch at
+`6f02ae95`, on `codex/v1-documentation-sync` from accepted integration `1b911da2`.
+F0 already retained most equivalent document bytes; it did not merge this upstream
+ancestry. Reconcile it now, preserving current solo/local-review rules, incoming
+requirements/audit and accepted evidence. Root alone owns the coupled resolutions;
+no implementation worker or broad replanning is needed. Current documentation/kit
+checks and both fresh reviews still gate this merge. Then extract F2b's durable
+journal, which bootstrap requires. First usable U1 remains actual onboarding/
+sign-in/create/reopen/restart. The transport-coupled selected_fingerprint test stays
+preserved with its U5 production consumers. No source or security-policy change.
 
 The larger host/socket F1b extraction at ace8b29d failed compilation on minimum
 GatewayRelease/static-signing/identifier dependencies. Its branch/source/failed
@@ -48,6 +50,7 @@ Release-store archive/pin/recovery mechanics now have14 focused tests at their c
 
 ## Accepted checkpoints
 
+- F2a source/codec: accepted `2fe7c3d3`, integration `1b911da2`; eight exact retained files/two minimal registration hunks, 259 focused Rust tests plus independent Python corpus, full workspace gates (2992 reported passes/0 failures/5 existing ignored), explicit kit and normal hook passed. Retained-author exact-tree validation, clean fresh initial and separate final accepted. Journal `cf38ef250aef46f79f29cd3b205b1e37` closed before merge; evidence `.agent-kit/logs/v1-source-codec/integration-receipt.json`. Pure helpers only, no durable writer or usable-feature claim.
 - F1b-socket: accepted `d6dbf8ee`, integration `ac20f099`; real macOS kernel vector/all69 socket tests, Linux cross-Clippy, full Rust/kit gates, normal hook, retained-author intent, clean fresh initial and separate final passed. Raw Linux P1/blocked report and child sandbox failures retained. Internal substrate only; no gateway/handoff/Linux confinement/usable feature claim. Journal `6e30816039104e869f84c5b8f18189da` closed before merge; evidence `.agent-kit/logs/v1-socket-admission/integration-receipt.json`.
 - F1a pure release verifier: accepted `cdfed316`, integration `cd777450`; all23 focused tests, full Rust/kit gates, normal hook, retained author intent, fresh initial and separate final review passed. Strict-object repair and its first macro/source-guard failure retained. Library-only; no installer/signing or usable-feature claim. Journal `6ef553bc40824f149757a838d1a7f8fb` closed; private source-bound evidence `.agent-kit/logs/v1-release-verifier/`.
 
