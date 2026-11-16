@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex side conversation; owner-authorized scoped delivery-policy reassessment, not independent code review",
-  "rationale": "Retain the current Rust/static-SvelteKit project capability assessment from integration eacb505d2398fc473d43f45053522e39269434b5. This owner-authorized documentation amendment adds independent delivery/boundary rules in docs/independent-delivery.md, links them from architecture-rules.md and AGENTS handoffs, and selects the focused policy directly in both baseline packet phases. Stack, dependencies, roles, other skill rules, verification and model policy remain unchanged. The complete architecture file exceeds the existing24000byte source limit; the focused document stays bounded without changing any validator. Verify all retained evidence against this base; refresh only AGENTS/architecture evidence and add the focused policy. Prior rationale remains in Git. Existing production tests, independent reviews, original-author validation, writer limit and integration rules remain intact. Documentation branch push is not v1-integration acceptance.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1, F3a exact crypto manifest/capability reassessment2026-11-16",
+  "rationale": "Retain owner c5123221 independent-delivery policy, current Rust/static-SvelteKit roles and verification/model gates. Actual F3a extraction adds only production org-pki leaf adapter under independently READY ADR0007r1, using existing pinned ring0.17.14, argon2 0.5.3 with alloc/zeroize plus existing password-hash and zeroize1.9.1 alloc. Root inspected all five exact b77 source blobs and complete manifest/lock delta; all157 existing package versions/sources/checksums preserved, only new org-pki package plus argon2 existing-zeroize edge. No custom primitives, host/domain/protocol->crypto edge, task/F4 consumer import or new provider/framework/tool. Existing Rust/security guidance covers this mechanism; add focused critical ADR0007 source rule so implementation/review packets directly include exact profile, pre-KDF bounds and secret-lifetime constraints. Preserve all other evidence and existing owner policy; update only assessed manifest evidence and add the new manifest/ADR. Targeted five tests and production library check pass; full workspace/current initial/origin/final gates remain required. This is internal crypto scope, not HQ persistence, delivery, onboarding, physical authentication, genuine signing or v1 acceptance. Prior assessment rationale remains in Git.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "997c8874369c0b7e3b3aee3842a5704204bcf09c2c525946601181de94b48219"
+      "sha256": "350d0219e71972e0c1802ca1a63565e76ccd4f42195b755e44af8e0735d1e492"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "dd16b1a22fd96119b9b0aa13c7e4b24943841b15020814c5a1990152deaa1391"
+      "sha256": "bc2d81cbf0ec85359f846c21f8e51111a4abb2273ab339ae605699ec0bb8bd8b"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -171,6 +171,10 @@
     {
       "path": "docs/independent-delivery.md",
       "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
     }
   ],
   "roles": {
@@ -429,6 +433,24 @@
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
         "docs/adr/0007-hq-creation-escrow.md",
         "docs/adr/0011-protected-recovery-delivery.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "pki-escrow",
+      "description": "REC-ESC-1 fixed CA/code/envelope profiles, pre-KDF parser bounds and application-owned secret lifetime",
+      "paths": [
+        "crates/org-pki",
+        "docs/adr/0007-hq-creation-escrow.md"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md"
       ],
       "critical": true
     }

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "v1-pki-escrow",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": null,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      ".agent-kit/tasks/v1-delivery-source-map.json: F3 source paths retained at b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09; original author preserved"
+    ],
+    "precise_scope": [
+      "v1-pki-escrow-contract.md: exact five retained source files plus two manifest/lock paths"
+    ],
+    "localized_change": [
+      "original-author-intake-1: five-file production library requires only existing pinned crypto dependencies; no consumer import"
+    ],
+    "deterministic_checks": [
+      "retained org-pki tests include exact envelope vector and framing/profile/allocation/signature checks; actual early compile/test pending"
+    ],
+    "low_risk": [
+      "docs/adr/0007-hq-creation-escrow.md and docs/adr/0011-protected-recovery-delivery.md: credentials, owner authorization and durable recovery delivery"
+    ],
+    "no_prior_failure": [],
+    "ambiguity_resolved": [
+      "ADR0007r1 independently READY mechanism unchanged; narrow F3a boundary from actual original-author source intake"
+    ]
+  }
+}

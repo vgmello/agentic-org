@@ -2,11 +2,19 @@
 
 Broader target: the selected organization-data model in vertical UI/backend/database slices. A prerequisite or domain-only delivery does not complete v1.
 
-Current owner direction (2026-11-16, plan17): preserve active bounded repairs through safe handoff, then extract smaller **separate acceptance and merge units** from the existing reservoir. Deliver onboarding/sign-in with its necessary first-organization creation/reopen, teams, people, daily tasks, assignment and one useful Codex runtime in dependency order. Internal foundations do not count as usable deliveries. No entire-assignment-bundle-first gate; the assignment contract itself is unchanged for its eventual unit. See [current delivery boundaries and exact source inventory](v1-incremental-delivery.md). Signing setup/authentic signed-release verification remains last; security enforcement and other production requirements remain intact.
+Current owner direction (2026-11-16, plan18): preserve active bounded repairs through safe handoff, then extract smaller **separate acceptance and merge units** from the existing reservoir. Deliver onboarding/sign-in with its necessary first-organization creation/reopen, teams, people, daily tasks, assignment and one useful Codex runtime in dependency order. Internal foundations do not count as usable deliveries. No entire-assignment-bundle-first gate; the assignment contract itself is unchanged for its eventual unit. See [current delivery boundaries and exact source inventory](v1-incremental-delivery.md). Signing setup/authentic signed-release verification remains last; security enforcement and other production requirements remain intact.
 
 Integrate reviewed features into `v1-integration`; review locally without waiting for a PR. Release `v1` is separate. Codex owns every repository area and uses local kit workers/reviewers. Do not message or wait for Ada, offline developers or an external reviewer. Preserve genuinely blocked work and continue independent features. Preserve live CLI/spool and user organization data.
 
 ## Current work
+
+F2b is independently accepted at d55e3c25 and merged/pushed to v1-integration eacb505d. Current full checks passed3036 Rust tests, zero failures/five existing ignored; original author intent and fresh initial/separate final reviews accepted. Source and logs retain all real repairs/failures. This internal storage unit does not complete its feature row or v1.
+
+Active unit F3a production CA escrow library on codex/v1-hq-escrow; stable contract v1-pki-escrow-contract.md and separate journal c4d5a35cf9fb4ae2946d59390be8bbed. Original fullstack author completed safe handoff319.157s/exit0. All five source blobs match b77, two manifest/lock changes preserve157 existing package versions/sources/checksums, all1418 nonowned inputs and six guards unchanged. Actual library compilation/five tests/fmt/scoped Clippy pass. Root reassesses catalog/serial metadata, then full current checks, structural checkpoint, independent initial/original-author/fresh-final acceptance remain. No source writer active after handoff.
+
+Owner independent-delivery policy c5123221 is merged in working checkpoint fc379304, included in current review scope and packets, not yet accepted into integration. Plan18 splits F3a from genuinely coupled F3b after original author source intake; root retains architecture/integration, author writes only seven declared paths, root resolves creation/live-owner/directory ownership read-only. Material interface changes need focused review before dependents. U1 actual onboarding/sign-in/create/reopen/restart remains first usable; signing last. Existing-HQ proof/REC-1/physical authentication remain actual requirements.
+
+## Preserved F2b pre-acceptance history
 
 Active acceptance unit: F2b durable journal, `codex/v1-durable-journal`, from
 accepted integration `0fdb9723`. The registered acceptance contract and revision-2

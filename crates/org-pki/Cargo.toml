@@ -1,0 +1,12 @@
+[package]
+name = "org-pki"
+description = "HQ-local CA creation escrow adapter, REC-ESC-1; no enrollment orchestration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ring = "=0.17.14"
+argon2.workspace = true
+zeroize = { version = "=1.9.1", features = ["alloc"] }

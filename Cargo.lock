@@ -84,6 +84,7 @@ dependencies = [
  "blake2",
  "cpufeatures",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -652,6 +653,15 @@ dependencies = [
  "org-proto",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-pki"
+version = "0.0.0"
+dependencies = [
+ "argon2",
+ "ring",
+ "zeroize",
 ]
 
 [[package]]
