@@ -1,6 +1,6 @@
 # Design: teams and the org chart
 
-Revision 2, 2026-11-15. Selected target relationships are owned by [organization structure](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md) and [employees](organization-data/04-agent-structure.md). This design applies them to the chart. It does not enact a migration or implement new commands. See the [authority map](documentation-authority.md).
+Revision 3, 2026-11-15. Selected target relationships are owned by [organization structure](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md) and [employees](organization-data/04-agent-structure.md). This design applies them to the chart. It does not enact a migration or implement new commands. See the [authority map](documentation-authority.md).
 
 ## The user's model, in short
 
@@ -65,17 +65,28 @@ The organization repository must be remote. Register code repositories once in `
 
 Target mutation services must validate revisions, commit recoverable related changes and expose pending/rejected outcomes without silently selecting one old membership as home. Import of legacy multi-membership members requires an explicit home-team choice; preserve unselected associations in staging. Existing task IDs/numbers and history survive; old B-/REQ- references require explicit mappings rather than renaming prefixes.
 
-## The chart
+## Teams, Members and Org chart
 
-One chart has three views:
+The shared Teams area has an indented Teams index, a mixed Members directory
+(All · People · Agents), and one vertical reporting tree. `/teams`,
+`/teams/members`, `/teams/org-chart`, `/teams/:teamId` and `/members/:memberId`
+use stable IDs. The earlier Teams/People/Reporting lines canvases and their
+View menu, Fit/zoom and chart-specific search are replaced. Employee discovery
+uses Members and the shell search. [The UX specification](../specs/offices-and-teams-ux.md)
+owns row fields, team-page tabs, keyboard interaction and acceptance.
 
-1. **Teams:** recursive cards show TEAM- reference/name, direct employees separated into Agents and People, direct lead, child-team count, and projects marked **Owner** or **Contributor**. A person appears once at their home team. A project can appear on several cards with one clear owner; no synthetic set of project co-leads is inferred.
-2. **People:** the same team tree with human employees only. Agent leads may still be named as agent leads; empty teams remain compact cards so hierarchy remains visible.
-3. **Reporting lines:** explicit reporting relationships, distinct from subtree lead responsibility. Records with no explicit manager can appear under the owner presentation with that absence stated. Every employee appears once.
+Team rows retain recursive hierarchy, direct employee counts/lead and project
+Owner/Contributor roles. Reporting nodes retain explicit reporting, home team
+and distinct subtree-lead responsibility. An owner account card is a visual
+root, never an employee foreign key; any linked owner employee remains in its
+real home team/reporting position. HR is likewise a home-team employee.
 
-The owner security bar can appear above every view. A linked owner employee still appears/counts at its home team. The built-in HR shortcut can also appear above the chart while its employee remains visible at its required home team. Former members retain historical home-team context in their own view, rather than becoming teamless.
-
-Support collapse/expand, keyboard and list alternatives, search preserving selection across tabs, menus for every drag action, and office highlighting of agents without changing the tree. Forms require a home team or project owner team and explain stale state, failed validation and pending office outbox outcomes. No active **Not in a team** or **Unassigned projects** group is valid; unresolved legacy imports belong to a repair/staging view.
+Preserve New team, Move team, Move home team, Change manager and accountable
+project owner/contributor editing under the selected rules above. Every drag
+shortcut has a menu/dialog equivalent. View-switch navigation focuses its
+heading; removal focuses a surviving neighbor or stable ancestor. Invalid
+home-team/ownership data stays in explicit repair, never a teamless tray.
+Offices move to Organization settings and still place agents only.
 
 ## In org-proto
 
@@ -109,4 +120,4 @@ Implementation and migration need their own review. No step is claimed complete 
 
 ## Decisions (the user, 2026-11-08)
 
-The earlier decisions established recursive teams, optional human/agent leads, distinct people, three chart views, reporting and shared project participation. Later organization-data decisions replace multi-membership with one home team and replace symmetric project-team links with one owner plus contributors. The earlier teamless owner is superseded for employee records; authenticated owner authority remains separate. Full earlier requirements and wire discussion remain in [the pre-reconciliation design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/teams-and-org-chart.md). No `Workflows` GitHub App permission is selected here; see the GitHub design.
+The earlier decisions established recursive teams, optional human/agent leads, distinct people, reporting and shared project participation. The later IA replaces three chart views with the Teams index, Members directory and one reporting tree. Later organization-data decisions replace multi-membership with one home team and replace symmetric project-team links with one owner plus contributors. The earlier teamless owner is superseded for employee records; authenticated owner authority remains separate. Full earlier requirements and wire discussion remain in [the pre-reconciliation design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/teams-and-org-chart.md). No `Workflows` GitHub App permission is selected here; see the GitHub design.

@@ -1,0 +1,3023 @@
+{
+  "version": 1,
+  "plan_revision": 17,
+  "architecture_integration_owner": "root",
+  "base": "73a39c58d683b00ad8620d05f7d5ae10fdc17bc9",
+  "reservoir_checkpoint": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "meaning": "Exact existing changed-path allocation; no whole-file copy approval or compilation/acceptance claim. Shared files are root-owned serial hunk extraction. Current active worker may add only the separate listed paths at safe handoff. No future feature is implemented by this map.",
+  "source_authors": {
+    "original-fullstack-author": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+    "preserved-browser-author": "/root/assignment_browser"
+  },
+  "files": [
+    {
+      "path": ".agent-kit/ADOPTION.md",
+      "source_sha256": "58c0cf8a4ba5ba23ea44ba033c813c85dfdb1fb637cc4f4f762de67f248a8b79",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/DECISIONS.md",
+      "source_sha256": "18790c2e85b8dfdad9916e41c12aa5d446b6e246b062c2a24d4b21e031b21d85",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/PROJECT_MAP.md",
+      "source_sha256": "043b6c43a352d8034e0e14f699bddfc9a76a5c6dd7f860fdbd12c1c5284e616b",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
+      "source_sha256": "008313093f494ad03206c53764bbe74732764fc5c0dbefcbae5e5ffe17e76bbe",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/skill-catalog.json",
+      "source_sha256": "755df88272ee0e93ec6a311990d488d1a64c756defa8dd3b01f4f9b325ce2219",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-assignment-integration-assessment.json",
+      "source_sha256": "8a26e568e872350b026638b6e6c7ef06674fe741df8eccfdc44cba90d55a440a",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-assignment-integration-contract.md",
+      "source_sha256": "54ad87c87e5d8aabf274b8a7a257cb3399e30d76ebbfd8bd6890bbb21dae9c0b",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-assignment-integration-plan.md",
+      "source_sha256": "5e7936b177a346aff4342938d51b794cedd008745debcd6b40539b13777ab39e",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-assignment-production-readiness.md",
+      "source_sha256": "0f06cc75fa55fb4a02dfb163a7acc946223317c75c07a4d23fe6df4d977b15e4",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-incremental-delivery.md",
+      "source_sha256": "a8ce3813b9a351f40774506f485f67f9bbad7636dd48e8b71962f5eabf365dd3",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-release-signing-deferral.md",
+      "source_sha256": "2c2745e7211d0bc0a82ef237728ec7b90ea917118587ee660416c246f1d45c2e",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-state.md",
+      "source_sha256": "e5790ee6012a7a36336c1403e7aaa22e6bddc28c921384ed05ab8d4c62df8f06",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": ".agents/skills/caveman/SKILL.md",
+      "source_sha256": "d59325d69f2da932f525ca69dd42a3dba6abb0c6e07c3908b941c7be6ece4fb6",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "AGENTS.md",
+      "source_sha256": "6d3d8a901fe5343eb2c2668ac87bfaf3ccb753fbe1b0ee6e47cdc7bc1737abb3",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "Cargo.lock",
+      "source_sha256": "d40834edec14eb5bd0fc4600cf0be269c10ad3249c2a4a9f0c07cb39b257f753",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "Cargo.toml",
+      "source_sha256": "3770bc88b9eb7dcf960ad2accbe4c4ced6fe20202a4572ca833916b079b4ea0b",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "README.md",
+      "source_sha256": "b21f7bde93223820b7588eaa3033e644642e4d167718396d2aef433b9700e809",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/Cargo.toml",
+      "source_sha256": "b7f9f4f94d4ade2fb0a5d79ca36b0b9b86e30622268422ab68a6459a71ec2c9d",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/hq_creation.rs",
+      "source_sha256": "e7ef3a29f7409e8cfb627c0c92df122dc0e96d1cc9eaf21bc8022fb755c125fb",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/hq_creation/tests.rs",
+      "source_sha256": "17b305cba2c1af7933359ea73e99a3db10af6fae5deb6efcd3237af337c780dd",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/launch.rs",
+      "source_sha256": "77cca35f31e867c4a072062147e45671f32d15fc69713ed258379dc1e71bc848",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/launch/tests.rs",
+      "source_sha256": "71fdd2726ea5e3c3ea9fb5fd2238729f4fc29cc7920f2de38be567c2a6e5af15",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/lib.rs",
+      "source_sha256": "d975c1dd1463d1978a0ad22d58e2fb0bffc64f4c9af51eae0ee26aa342d2d491",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve.rs",
+      "source_sha256": "435e1d030b0ba8a3de857b3c551b175b709020d7e57f3e5cf70a42b381b2d30a",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve/host.rs",
+      "source_sha256": "bc94c7bb0d33f11a119d52d3a9fdddccf8befc73231785ee3b42b37d19c7b52d",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve/host/operations.json",
+      "source_sha256": "c12d7ae46821f25141953af69cbfd79a4e14c206657f8ff5f67957fe29efd0c5",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve/host/selected.rs",
+      "source_sha256": "b9efcbe193ab5f343c016cdbe534c5a275bc1d5ca14022fa6969529c4bf9dcae",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve/host/tests/inventory.rs",
+      "source_sha256": "dc04f621b167470b606b353f008ba8795607625174bd2dcf3c8958d1fe333a1d",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/serve/host/tests/policy.rs",
+      "source_sha256": "ab91b084c60d57c97d04685fe7219996b44c987b022a57a9e3c59f639bea83d9",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/startup.rs",
+      "source_sha256": "af054bacc51b13a9d5c96bdf4eacc4357b85167c1ccf0a08ddf534c7a99da5a7",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/startup/tests.rs",
+      "source_sha256": "1cc2d32942c97a9943d40710685e0ded148691017e68f969daead6c13fa8bd0f",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/tests/transfer_composition.rs",
+      "source_sha256": "d0da035db60c707bca1e1b45729845becf75323cfb0338bcbeff6c7633f0dfe2",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/transfer.rs",
+      "source_sha256": "64591ecfecf65f50bfff9bcc2aa62674949e9eb11f567da15b31735286e4a5eb",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/transfer/channels.rs",
+      "source_sha256": "a1d801a48ca1c319bee3abb294aba53a5c0040f09004fe6b06d66abab707e7da",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/transfer/channels/tests.rs",
+      "source_sha256": "c8d15014be994815bdade586f641b94a0bbee3aab1f64ab818acdb90a88468ba",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/transfer/recovery.rs",
+      "source_sha256": "446f21b9232b30edcbc7229d7a6f834817213119b1442f57b1d54edbe21a2488",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/src/transfer/writer.rs",
+      "source_sha256": "d0e59e645ddbeaa1d12ced4489b936620dffc1a06566ca07c80c143798907857",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-office/tests/launch/v3_activation.rs",
+      "source_sha256": "24413d8e3a75eb95df60402e7c26a5d4fe8ae69b286423341822ce2777715043",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/e2e-selected/README.md",
+      "source_sha256": "eb042197d33b71db12e01eea6ff93429d6db8e69eb995f2a824ad08a000a8975",
+      "primary_unit": "U5",
+      "owner": "preserved-browser-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/e2e-selected/assignment.spec.ts",
+      "source_sha256": "fd8b4b8d2841c5016fa9b6b3a40e30634a1cca9c245ce00241e5d263ff17a53d",
+      "primary_unit": "U5",
+      "owner": "preserved-browser-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/e2e-selected/support.ts",
+      "source_sha256": "398f7090367a0380bea4de30546e6afcb19cbded633fa65527de156bb5cd6955",
+      "primary_unit": "U5",
+      "owner": "preserved-browser-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/e2e/gate-manifest.json",
+      "source_sha256": "9023c070031731c34abc1f1553ce98029374cf2ce2f599b173115d4d68f3d9ba",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/playwright.selected.config.ts",
+      "source_sha256": "915f1cb271dad4ae140407a52d30b2883207b0997a025d94231fb607dcc3ce46",
+      "primary_unit": "U5",
+      "owner": "preserved-browser-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/AssignmentSheet.svelte",
+      "source_sha256": "a2e492e6691fcc50b7181549947f47bb294fc7bf7ede5fe843dbf6baf0357904",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/browser.ts",
+      "source_sha256": "373da69896cbd69172563aefdb4de36ead2d603ab2928cd0c94b388ca3d317af",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/feature.ts",
+      "source_sha256": "bf2b814cf73214e251c2810dbc7ac402d776821ad9f64ae28dd477e260d78be0",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/gateway.test.ts",
+      "source_sha256": "036cb18971f9cad42e9c2d32ad17967dd6ae10032ca4082f11aff808edb7e128",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/gateway.ts",
+      "source_sha256": "fe379f116b60988023f057427fc34593e773f8172c5005aba5e180f240bebbd7",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/history.test.ts",
+      "source_sha256": "82588112123d9328b42c1859ff85ed22ef91b46583597ecd1757f1c078282fb0",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/history.ts",
+      "source_sha256": "71efa9e037cff9f2e3f1e613ff02f6287ee6afc75d0745204f6a802d1d44aabf",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/features/task-assignment/wire.ts",
+      "source_sha256": "68f3e908b1048b41c02ca558a421491d3db0d8232b92a553e84d4425aa845584",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/nav.ts",
+      "source_sha256": "84cbe60a3579632d4e3ad05a6a5c70dcf6f4b80db83f0aa9f5ec54f52137beb9",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/platform/auth/session-controller.test.ts",
+      "source_sha256": "c3ab47f0fe45e95849f8058f097d8adb4c0a75ae3152f47d643af1caf14f461f",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/platform/auth/session-controller.ts",
+      "source_sha256": "1b6062ef0d6c45763cd428ef9ec84c41a3bdd44cf5b72439545112508b5e79ef",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/lib/platform/http/client.ts",
+      "source_sha256": "305b36aa71aab1123a2c21c0ff6e1a54cfb23ccec6e45c7c9acb0c7e4510d52f",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/routes/+layout.svelte",
+      "source_sha256": "1ddc4537311eeb4c32a53a8781becb379b4e4e439f42d6f2bdc9fe8acbd9e10c",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-ui/src/routes/tasks/+page.svelte",
+      "source_sha256": "c0432519de08dd0b059d8e3c8c1cf9b17b7c5f4c726ae8f87ee76bb08b7c410e",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/Cargo.toml",
+      "source_sha256": "adf10a83044cf928c774ab2e9111bf4776c9981c045b9d859cbc6b49c2459174",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/build.rs",
+      "source_sha256": "09425d545bc68bf5ae58ff577067a905ca1c4f7b98b415620c1fe80c801c4abc",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/assets.rs",
+      "source_sha256": "6a0a93e0f32b6fba29924732bc553f87f1d93f2349861cea152b2c2c523d9b58",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/lib.rs",
+      "source_sha256": "aabade100811348a69a137747b436238b7748abef7521dbdba1d4cb87059a39b",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/main.rs",
+      "source_sha256": "96e13afaf10cedd6335904ab9a06cd3c8f6dde40dd0a7423c734944d76a1cdb0",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/path.rs",
+      "source_sha256": "793fdc8a392d517958937c12cb83e6b4431657b29d411585e54af93e7fe026a3",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/process.rs",
+      "source_sha256": "5b1332cd4e0e7951d234b62f99a9e7ea58a331ffc7258efb193f4991bafee7ae",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release.rs",
+      "source_sha256": "4683601596a78854306361b4a96a15bd87549fcb53f15606128eb7cf2ec214eb",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/files.rs",
+      "source_sha256": "3aa4333cf6121153fbcea6f46c641fe97424cf186c7d24e01cc7a4a0affc7f1f",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/README.md",
+      "source_sha256": "e03de77b21206ed78e61396594e24b05753ab86c108d9fa220d217c9a81e9abf",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/a.js",
+      "source_sha256": "ddf066ee341c060cca67ed6faa462602690b490d98c6fecdf607c447754e14bb",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/index.html",
+      "source_sha256": "c749607a5ec7ff1cbfb09e4d845bfb7e44eb2c7ac2610b566c154d2c20652dcb",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/registry.json",
+      "source_sha256": "2f34c07916a826c70ea84c34c1ed23275b0093c9c28d5559f696f5a3a82eb16a",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/release.v1.json",
+      "source_sha256": "564c25c7112e9ec2aa87fd6e45ba223ba9577892e8be8abe0ac7bead2f665302",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/fixtures/release.v1.sig",
+      "source_sha256": "dc3af40a26f0456628be3085d1f7779ce5cf2320045cdf69973fc90c5fca52aa",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/release/tests.rs",
+      "source_sha256": "2226ea00e52d1a541e31ffa0d510f703b651b225e3065b31d6e115706296319f",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/selected.rs",
+      "source_sha256": "9bd92d7ee1841de3d9d4b69ee4f797b6c8d661105598ee668997ba4aec8dc94d",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/selected/query.rs",
+      "source_sha256": "da7526eca1deb959613f36c5efc92172ad093a926a42bdcfdaa781ece7db963a",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/selected/tests.rs",
+      "source_sha256": "7df3788cda1cd4456cd9e6835ce614b8a45e82dc92fcae3ff04e0137edde37cf",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/selected/tests/lookup.rs",
+      "source_sha256": "fd72531d7380e0b7f798cd530d3383dd49deaa92e3bb9421e1f1e57a6d1e7444",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/service.rs",
+      "source_sha256": "54d2c0c70a99a5f73a15dfe3515e16d996b58ee3634921a1b2110ebdc63f2fe5",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions.rs",
+      "source_sha256": "d5be9b37033a5b0f893aaf5eb35cfb890fe05cedce1e5c9dd7311912d6aae737",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/control.rs",
+      "source_sha256": "5940a21e57fdf2b7ffa19b8446ae06c2d413d49e7cedc9b0e4a538f33754226d",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/control/tests.rs",
+      "source_sha256": "709757c5c0468427d0fd1758f624ee88210a06090d4f60ade547a3e85fbea93e",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/http.rs",
+      "source_sha256": "caa4c7b1520ca0e320286d149f0b9a113da9c0b57c89fe7093a0f4fe11a2b726",
+      "primary_unit": "F4",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/ingress.rs",
+      "source_sha256": "6e6f38c75f07dc0a714e258cc6a09cfa007548f291cd9287c0ddc4cbf589e5d6",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/tests.rs",
+      "source_sha256": "826965cce2634adfe288f3bf995a3dec2a243d69e3fbfc54a0c02b0e91acea3f",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/src/sessions/time.rs",
+      "source_sha256": "b5b92f1a6c8495da274f942feb8627866e0f1f1fd17f20fab921373f81b6be3f",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org-web/tests/process.rs",
+      "source_sha256": "c5f831d2ba14da0ae74a44d83b123e53fdf4e5d6c3ac5e976a62fede2387e5a7",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org/src/lib.rs",
+      "source_sha256": "0618455875a8607eb2f45dce39bd17dd9367c3087f311f3c381acab25d47bcae",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org/src/serve.rs",
+      "source_sha256": "e31fc4d760811a939e9ed88ab6ccc64798b8731d3d480b83f1a426aae685ac63",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "apps/agentic-org/tests/host_control.rs",
+      "source_sha256": "2b79dc1fe5255bc468035d775d1c62de2731d937f0655851657e00acdf1d6260",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-client/src/lib.rs",
+      "source_sha256": "349dd5bbf3d8993b45f8d8f6cdb63dbada2043196a35bce25962004b9b3eabd6",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-client/src/selected.rs",
+      "source_sha256": "8fb3836f3a23fbe2b238c0bbd58768024c304cae07808a866f6db34f40823648",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-docs/src/lib.rs",
+      "source_sha256": "8b701c30e590d1a2b13f5c945774636c6829d2a995d9016264b648a7e325b3c7",
+      "primary_unit": "F2a",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-docs/src/source.rs",
+      "source_sha256": "66a7a3ad86c20b8b8fc6981f2ba0162316211e0018554ac8cb12232d8c08c54f",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-docs/src/source/tests.rs",
+      "source_sha256": "42a1974f25dde7c35aba5cce43d6eb606f8deec1b93453273d3ba2b6d86ad2ed",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/gateway.rs",
+      "source_sha256": "2c9ad427022b3c06978ed58ce322671fa5ba7f451ea2b1b24280c3be75d2a865",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/gateway/release_tests.rs",
+      "source_sha256": "e9f262895ea0162ef47d68868999b6319bbaa7e3d4275ac5221b06e8130967b9",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/journal.rs",
+      "source_sha256": "1f75bf8103b6c3f83a7e89f69e3dc14d54dfbf03bf5f385f7c0f01e01afac43a",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/lib.rs",
+      "source_sha256": "c4b3157a4a1bd9838793806d829d0c4249a721485a5aa71d563a515df29a31d3",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/ops.rs",
+      "source_sha256": "ad4e405582c6cd9c77f290e527d522bc8f71c50b73f870ffc54233d7991e5317",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/provision.rs",
+      "source_sha256": "1ee0bbb54b005c0f7fb52e9a9688b615e6571ed750fda2190f1f028eaaa494a3",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/recovery.rs",
+      "source_sha256": "75a73fac8882c8a96f6ac3d2bfa50226fb2fbeec465f028341500fb9cc96f609",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host-control/src/tests.rs",
+      "source_sha256": "7579b35f26ca91c64276a2e1e1faca1a22705c7efc4fedcd3bbeb31c851d6ca7",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/Cargo.toml",
+      "source_sha256": "13e7acfe81cc8df1214261b653bc3801c8f3584a3f101f04f660b267cd4101ce",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/build.rs",
+      "source_sha256": "3ca7c54ce2f76f5bfdcff51b50ddf4dd7f114a24e3fc45226b6cf76171fff3ef",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/app_auth.rs",
+      "source_sha256": "5400a0dd848ef25d047f5bf0bbfed0be280e463bcd65e8a49f79c6d986acee46",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/bootstrap.rs",
+      "source_sha256": "27b4b9589953f1cbad4dbc3452220f68e066b212fcb0fac420065beb6205a53b",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/bootstrap/browser_fixture.rs",
+      "source_sha256": "32c48f41de77f887104d033772c1cfaad65cb77aba48a80d7e3247bc3614f4ba",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/bootstrap/recovery_tests.rs",
+      "source_sha256": "d31b35038c555a478988b0bbcf765df0fee1e8bc5b7b1af079d2720c637cb149",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/bootstrap/release_gate_tests.rs",
+      "source_sha256": "6bd0ee5bc120fec691428536e8c51b00918b5f9433cc3f3c16f6bff07c76ef52",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/bootstrap/tests.rs",
+      "source_sha256": "19811cc24c6565d3cac23b4a556f534bf58bbad91f84de0bf62e5c01eecd0f47",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/catalog.rs",
+      "source_sha256": "f794fe9e25c397e5ff8cc61970da16782e7ea928f48bc0be836f1e2e0bc95b04",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/code_signing.rs",
+      "source_sha256": "074115eb027bee8bc194d762ab6498318b39681d7e576ceb865bf4d8f9e6fad6",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/gateway.rs",
+      "source_sha256": "f81328583094d75287f2e3b5f31139e2a55aa6eb7d53f6dcb7a464cae575e94d",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/gateway/tests.rs",
+      "source_sha256": "5dad49ac4a9220905bb32b2872bfbece6dc5c70a41d5af95eaecb3a734492b79",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/home.rs",
+      "source_sha256": "c6f600959ffd86f1ba3b1a397f34a694b62c8c26200b9dc8595bc6ce6c1f1918",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/host_secrets.rs",
+      "source_sha256": "d2fa1123d8d5800f14835329ab876ee45ba7e77858be99c5aee32b6bb6b686f9",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/host_secrets/dev.rs",
+      "source_sha256": "5f1c45b62179b9c61cd5801f7a5fd754521ff8efb71fe1273c8f3416cd18c588",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/host_secrets/tests.rs",
+      "source_sha256": "00879af6435a0efe2bbf6e7856a38a9302f1ec096cdae15f8f44fc654b384d3b",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb.rs",
+      "source_sha256": "b5edf570fafc205f6860f470b1be659522ec1f5c8db7c4a0a9fe9873a9800c97",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/accounts.rs",
+      "source_sha256": "e4a92d6e036b346c0e085841f875f6fa840911990fcdff9b4a1587c942bb83ed",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/accounts/tests.rs",
+      "source_sha256": "6e63e8c249805491bf49fb45ac3fd7abbbf6af93c805df7db32f3ead771b63b8",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/provisioning.rs",
+      "source_sha256": "2a279a546800a25f0eca20e51c892139708b4a6dcbddc7ab09dbfb395a8fadbc",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/recovery.rs",
+      "source_sha256": "38730ee500549d25184be3de65919f68ab3f0b867e590c437804b1e52e82e4d6",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/recovery/tests.rs",
+      "source_sha256": "24a894eed3186bfee5fef98dbd4a8c63efee4f31bf36178f7c05e421e205afcc",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/recovery/tests/crash.rs",
+      "source_sha256": "2ef162f14b666dd01e642ffabd0e74ba65182ba9d69c132f290c605e866c4cea",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/tests.rs",
+      "source_sha256": "dff37081054fd9b200a16a447056b19354a8fbe279441b1a2ea66006ddf92e94",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/hostdb/tests/first_account.rs",
+      "source_sha256": "25b5e3b0b17edcebe5ef815b3f5210b2d245734573d483dfe0cdf81ec40b862d",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human.rs",
+      "source_sha256": "05a2521908afb01e118fc3b6f75002083f1f70368abcbafa652f83b0b6f009ab",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/native_auth_tests.rs",
+      "source_sha256": "7cbd92434ab6af38b855a700cc184f9b904e6ad15e02e22037caa41fe2e24163",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/recovery.rs",
+      "source_sha256": "2310265ee8a7317695cc0316453fdf5f87d5153c78e2cc4c74abd4f2977878b7",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/recovery/tests.rs",
+      "source_sha256": "27ab422c976a126e547a438dd4b8cc8387cb59dbb28141f321ab9ed06f859225",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/setup.rs",
+      "source_sha256": "cc463b980e1efd2a29bb8baedbfd54885773b0cad2bcd13f7cec2c826b4ae9e5",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/setup/service.rs",
+      "source_sha256": "745a6f77d075e69eec05b4269e230516b08a894309744c28280e3c529f6fa066",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/setup/service/tests.rs",
+      "source_sha256": "6343cb61b30552f58ca4fbec138a80edc450b462dbc1b42cc1c3a81cd4594e23",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/setup/tests.rs",
+      "source_sha256": "2d8a6ac11a3903b6b141aca34ee43aac6bc33524e182b0f249c9b87e9bcc0ee1",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/terminal.rs",
+      "source_sha256": "e795d43de19b0481cab33365cdc4b1c6ce5affdcb10d38240d0aaa5561dc7aa2",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/human/tests.rs",
+      "source_sha256": "1f32483ebe55975ba551f9a6e6d62e1c7be3dd7b151e3683c23a5520c0d7c645",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/ids.rs",
+      "source_sha256": "1b99abb1a4970f4e26536051d8f96f5170dfb83cd195e9a0705f222e53bc3ef1",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/directory.rs",
+      "source_sha256": "ee8d404d6e53f210b7c9b8bae0c7c7ab329a719940f1a000fb07b3f32ccb6090",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/mod.rs",
+      "source_sha256": "a01c871a246dada4372897e875a94f91665bebcb3c22db939c3e79ccf3d32dd3",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/registry.rs",
+      "source_sha256": "7e086c2130827c09343ebb0ad8b58510224bacbf7d8cb748c78f4c3d1a6289dc",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/setup.rs",
+      "source_sha256": "4b25330e7333815dc716fe3d7655d85d6b1067bf92b9a64f07549bfc4249c733",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/setup/tests.rs",
+      "source_sha256": "e3270e6d42c21c304b15f0c67b0c7df9d4a8f8224d2f07bdf07e320f7dc1575c",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/instance/tests.rs",
+      "source_sha256": "5128036df2f9ee7c0651e68e9c3fbb0e2aa07effc14218e22ef08b12da03f181",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/keys/dev.rs",
+      "source_sha256": "9a4f3da0ce5c0e71126315e3ea222bf4fd9616371af8f78973c003fd314c5c28",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/keys/keychain.rs",
+      "source_sha256": "9c4c2130e60b80c309efb70a90deb803005095f81f85d9cb72f02f6e78769d8c",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/keys/memory.rs",
+      "source_sha256": "bdc19301814833d667543c93daf39eab12463b0b280270066ef3f80e0ec435d5",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/keys/sweep.rs",
+      "source_sha256": "8b32452ae51646419640574b33fa7dc380bba62d0472624e0ce69c0ce0743034",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/lib.rs",
+      "source_sha256": "22035c515a7770516a5e9810f725e5660b9768a3a672df0477ca94acbd846bf6",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/offices.rs",
+      "source_sha256": "cab4f64f9a3f202f6ef5b7e2af2f9236b77aaf9bcccb78fa62762798d8702f98",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/peer.rs",
+      "source_sha256": "2c97917358466170e941e6d3adb9de51c5671ced44b3e65844254e4123a3c30e",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/provisioning.rs",
+      "source_sha256": "df8c894749fb701fe6107a1290444a0b4e96724c2f15bd922d1884a53d570d09",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/provisioning/tests.rs",
+      "source_sha256": "701182916e469cdc3c447adbc168412c45dcfb9faddad0dc9b9e6f4d77a1b17f",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/recovery.rs",
+      "source_sha256": "786987a1b67224b11bac03567cbbdaa0032714dccff40973e165b953357cd51e",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/recovery/presence.m",
+      "source_sha256": "d45a8aeacd20a806353bd314daa03ee415fa2f2d70ac625039ee989e32820a47",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/recovery/presence.rs",
+      "source_sha256": "b57d7e17966dab2f60f669101051a0a2893fa07c2312e594f36cf37819c3a81c",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release.rs",
+      "source_sha256": "ce8d6d98049aae7c1eadbfa46ab3b2e6f98bba401d3365d4c1b1706b4fd50202",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/archive.rs",
+      "source_sha256": "390fa1742e761109d8d09ab229d8c727c846fd119c0be2868571369b0a59e567",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/files.rs",
+      "source_sha256": "c51b0588159f7e3463d88b40f458a8e1bf6149b861f78a6f2b38280e991dffd1",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/files/output.rs",
+      "source_sha256": "4cb80ef971d03f82822c15f447896e68b1943475a091df3f1da5571cb498df89",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/platform.rs",
+      "source_sha256": "eb4213e6d71db835bef7935e5b56fe6439f41a213f774b307db449e6c9c9ce66",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/runtime.rs",
+      "source_sha256": "293db2d431c217f29964d4952b245785d97b102b63eb928c47ae7c034df9636b",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/store.rs",
+      "source_sha256": "653d161e2766fc5c195196ab4d8d72a823f3efc98166add58a0bd0c70979fd8d",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/store/tests.rs",
+      "source_sha256": "e2b07458703cb0f40d50dbd2b4ebb9451afd8fa6a85e3cec97713b0a5bc25f91",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/store/tests/process.rs",
+      "source_sha256": "389bb40e9d2eb114c59fc527722fe6471fe3f00066b876eb1e8668311dc83821",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/release/tests.rs",
+      "source_sha256": "5c1d2424d43fb2dc521016327abf0ea7b07f622f4aebede61d818a70c19f0d98",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/server_check.rs",
+      "source_sha256": "187a830cf703e261f8156e8d7b9aa97cab9ff27d03650bf87bea1e9c94de93cc",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/server_check/selected_image_tests.rs",
+      "source_sha256": "e0fec1ec0e1496d095cf8bfd9969bca2f027835e21ea7b609655052db2e7ebb6",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/service/authentication.rs",
+      "source_sha256": "5d51775597e477b3ff6fb1b3f892ca1460b953b51bfb320bf2f717d0a491636e",
+      "primary_unit": "F4",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/service/authentication/tests.rs",
+      "source_sha256": "fb6fc601867edf3ec64f016ea8fde6b0a09bc3fdd04c7b4e114857338c47351a",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/service/listener.rs",
+      "source_sha256": "9f3788cd471c65db624bb9282d571d3eaa9f50d0b0cf5f4fe946381fe37b7989",
+      "primary_unit": "F4",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/service/mod.rs",
+      "source_sha256": "46023d6cce8783b3d2e79bb7736fd97939755f20ce8ef6f53912ab9b86942ebf",
+      "primary_unit": "F4",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/supervisor/channels.rs",
+      "source_sha256": "92fd0388e4c073ab5507221089f203442583d96161f3a46dc14599165cc6c74a",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/supervisor/channels/tests.rs",
+      "source_sha256": "f9593e8a53f524787e57580ebb9c9b4b9f653f9e51e3a45fb7d6e56a20b5cf58",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/supervisor/child.rs",
+      "source_sha256": "c485a58878a62d275ee334635f24d47fad00a239f371a03db5ccb590f4ad36bf",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/supervisor/mod.rs",
+      "source_sha256": "489de6da0cc36147da4b2ed80e8a452d79aaa5520fd2c53485a4ada4814f8be4",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/writer.rs",
+      "source_sha256": "023dd7b6009d8a12816e842cd60a3411e73a41664b321d8fc7c5db7bfa545515",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/src/writer/tests.rs",
+      "source_sha256": "2c46e0f6fa1706659531b0194cd24353d672f4cf4964c4226b527671b8478f9d",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/tests/fixtures/recovery_presence.m",
+      "source_sha256": "038cc95f9b93a6c124ff9fa2c902b877a86c1aa8f28536bc6bb9fb3b64895e38",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-host/tests/recovery_presence.rs",
+      "source_sha256": "1c6d6bec73d08e6bbd58698cbb53e9f3725a8b4a62a0c9632013c10866777384",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/lib.rs",
+      "source_sha256": "4c11d2133256e41795e2c48e3cfb85c72ff3f015c13ae2077b71fb3aadc5f2db",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/recovery.rs",
+      "source_sha256": "e53182a87bf383845e2faabd8893b41f3363b69ac94f63b285f0233ce42bf674",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/recovery/tests.rs",
+      "source_sha256": "ecf5866501e56ab7fdbbdd1e944895573fafff76d313eae44e32c867812df0c7",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/tests.rs",
+      "source_sha256": "04522dc40dda78a3f77ff7e4076c6eab3f8f6567df11a636abc70088df01354f",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/v3.rs",
+      "source_sha256": "a01c52ea2208f64884f0e7ab316fd3dfc4ac52b7cc3a3ee28b38fb99117b93e2",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/v3/tests.rs",
+      "source_sha256": "c231959239c8e9e080b9060435ebdc6b26ef5ed572dc50ba3406154f4fba1f30",
+      "primary_unit": "F4",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office-launch/src/writer.rs",
+      "source_sha256": "36b973a5c921d52cf026e5dbcb3e621af7a7858b669fc8c16d4f5e908114baf3",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/Cargo.toml",
+      "source_sha256": "f11b34e74fd1f78e8657266f837a7803201b53c09cb0d32481d737cdd24d2c1a",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/hq_creation.rs",
+      "source_sha256": "59d3418f2f39ff14196c29400cd4e9f5062ffdb20684792850488642756b20db",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/lib.rs",
+      "source_sha256": "109c41f79d8135f730560332c8981f916d60d845ada37ff533b00a9f9235d8c1",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/messaging.rs",
+      "source_sha256": "4ecc0de2f08c38369da7c37525cda1f529298b661f28e9c3dabd4ab724e2e8ef",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office.rs",
+      "source_sha256": "ec0fde6b789a5ffd550d5bd718d93536722207a1b1035891548bb2b66e403943",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office/hq_creation.rs",
+      "source_sha256": "79461ef64844f55d9001e4fb86435dfd73b827c509d7f6d80f50136737499fc7",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office/hq_creation/tests.rs",
+      "source_sha256": "495680c55855df84bcc96bdf23cad71c3f4ddcd01ad060a082e3a70336d4d897",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office/tests.rs",
+      "source_sha256": "5935eba5f8abae3948a40c74d299cacef1cf06a572a33c2c62a7939c1d45d280",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office/tests/instance.rs",
+      "source_sha256": "795d415290062730ae2ee569f7838791d6d888221669cadb7303ba28907780e7",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office/tests/selected_legacy.rs",
+      "source_sha256": "db1683dce1d7865b666a24ca8606c0460f25671f823724e133831ca2646140ce",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/office_file.rs",
+      "source_sha256": "8d8d43fbf9c79fc392dbe2084e33cbe370f3f5dfc723717b071c0ce4dbcd189b",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks.rs",
+      "source_sha256": "6538afaef8c45cd6fa67c52d7e3dccc65e9c5e45c6f72912e60cf316a37c56bf",
+      "primary_unit": "F5",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/adoption.rs",
+      "source_sha256": "13b34a72f4935e2c1eaaa2c94b2bd6aafcdd8dee314e7efae583f0f287797dcd",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/adoption/directory_import.rs",
+      "source_sha256": "f7b6cf543a61bd122ac8a206d0e47847f86c2dd9e4b92e12077670ee2e8593e2",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/adoption/legacy_import.rs",
+      "source_sha256": "7512c8495d39781b82dfd72f98c045efb894f63630368fa5bad7852e674d8d43",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/bootstrap.rs",
+      "source_sha256": "0b5071ab8ad2edf574f987f4e0b8d55a074ab65de72539f901350040c978f7a2",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/bootstrap/tests.rs",
+      "source_sha256": "3192e5772e269bbb1b219ccd76a5558e72afffc2ffb2c959e724646f3c237294",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/directory.rs",
+      "source_sha256": "6278f24934dfe721807b06030858f2cf2fc4f5e79844c9fd3149b01d8a480342",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/read.rs",
+      "source_sha256": "45f823a6f742b8b2dddda79c6b61836a52b0ed69fa2c77285d405e0809fa07d9",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service.rs",
+      "source_sha256": "03f5db385a0f164972185e295b9a25ec0ffe3726a08363fff6e3391b350357da",
+      "primary_unit": "F5",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests.rs",
+      "source_sha256": "c675c3649a53fc36c1e8cec44a56d1f862949959698601fa55cda98a5e6adf87",
+      "primary_unit": "F5",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/adoption_paths.rs",
+      "source_sha256": "3c7daee9443779e8b2d27e32cb5835312f9ab52bb662654e0c3c24d6706418f7",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/adoption_privacy.rs",
+      "source_sha256": "f5b20472f65d7a73987dacfd9d44cfba983adb959657814b553226d5debf4538",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/adoption_snapshot_privacy.rs",
+      "source_sha256": "f1dc499868230c7ebc7279b4f78f90af69e22a2dc2404678cecbf35866789583",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/crash_reopen.rs",
+      "source_sha256": "dc703561e842f887ef125c3e9f3be28e750bedf05aa26893072d7529e9d4c16b",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/directory_import.rs",
+      "source_sha256": "12fcc05d757ae587a20e17d481d894d28bb552a1cdf1ca5ab450c732b7b04d78",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/legacy_import.rs",
+      "source_sha256": "088e33ae98691e1aa0a1df42080c766f5f6eb7eb5f87cd9b6234c731b6cb120d",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/service/tests/legacy_import/gates.rs",
+      "source_sha256": "aea9ff9ee5ed4b571b679e8c6e12639894a2acd278b7e14f438fa963582fee55",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/staging.rs",
+      "source_sha256": "0c29ad028094b1ed099d45e15e4e516ff7c1c3311923ac97fd074540cdc6597d",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/selected_tasks/tests.rs",
+      "source_sha256": "94466204f6d5c8fabb089229bfd205dfe9b18a7654a82be2a7b3988461351623",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/status.rs",
+      "source_sha256": "ec15a342afa294b11fa90ba2898bbf08d622e390379ca0667911a970118ced86",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store.rs",
+      "source_sha256": "f90826ea6b9cf6b6f1227cf494a30a0cf7389cd1390f43e4dc8660437a254f31",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance.rs",
+      "source_sha256": "d91cb833be24d49ffaf1c17573728cf5d142132e8b98023787c344316a9b309f",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance/crash.rs",
+      "source_sha256": "034a06d3ad5b3c089fd608a2062bfc1c501ac87abddc40aef0ebba0068cbbbae",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance/durable.rs",
+      "source_sha256": "847915040cdd4ed889c68348a730793aa5d846eeb465616544281ba5ecdf59c8",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance/rows.rs",
+      "source_sha256": "c9250fd09f753f9d1d5df093afd8b8033a163d5c7b75a7b34951f2d7a15407f0",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance/schema.rs",
+      "source_sha256": "68fd06db94580cacaab0b1af3bc249997fa3cd743a559ddc9201df4cea742b5d",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/acceptance/tests.rs",
+      "source_sha256": "7df87030f65c84842b7b86654adffea3cd3cd1edc7b67d3f7b32fc4c133d1663",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/hq_creation.rs",
+      "source_sha256": "fcebbe946700d2ed2b55653366fb980ba926604fd680c5df945feeca21c50158",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/org.rs",
+      "source_sha256": "a14ea4efe3d81251d8b3b5b0b09f6c27351b4fac790698b448413fdbc877a352",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/origin.rs",
+      "source_sha256": "8571e9f1719d8bbe49f70469abf3451566f87801b3d193aaebb5e27548abb69c",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/origin/tests.rs",
+      "source_sha256": "9cb31d5f848e69cc0a05e5249023e6fbb2bc64bd37b0e4ec8536dcb0e0f4ac7b",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_build.rs",
+      "source_sha256": "2e1d4a2eb7bce98053a65dde9ce3b4be99d9a136546022cfcf6db9d8131347ea",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_build_pins.rs",
+      "source_sha256": "05b9e947054aa1f19a6b87aed8f77576bd4d567b2eea83185b3aa3af3de8c473",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_build_tests.rs",
+      "source_sha256": "1293b6274c60d090f497f2496d548293096aa494907765c560e5da8d088eabe1",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_inventory.rs",
+      "source_sha256": "299842e5a75b6a0eedc7680a62ccc34fca47ae21962193aa0053d9563f693438",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_scope.rs",
+      "source_sha256": "9aa1efaf705049a21350279647398ce6e3e4719eb3e5020236186259d6ecf179",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/tests/opener_sources.rs",
+      "source_sha256": "7e37007b26be20079d49c2e706b89ea37b31d6fa73422f071fb69501bf6b9081",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/assembly.rs",
+      "source_sha256": "83dc54386a1920c25382661ab5a9cb8ad77c07dacd1ef300a4e4c4c9305fdaf6",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/call.rs",
+      "source_sha256": "da57d099f9489464fb60a4d718c1ee09773797f5093ed4191ff8e7d1967ba71d",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/tests.rs",
+      "source_sha256": "baeb75d431dfe75f7ac3c1b3c640205cb1454a8ff192d9a71c5cbd8859943453",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/tests/assembly.rs",
+      "source_sha256": "516a6a58f7b01ce8ae3febf84ecedd78427c71f9bb901f2d6f8d2cc9edb17d31",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/tests/call.rs",
+      "source_sha256": "8a13e05164b3cf17f9b47e377bf76fbea580fd994eea81feb0564bdc725d8e23",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-office/src/store/work/tests/metadata.rs",
+      "source_sha256": "561c5ab299af415642d4c3d0de88d3e33ba200b3598da18895c87dfcf935ec9b",
+      "primary_unit": "F2b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "source_sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777",
+      "primary_unit": "F3",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-pki/src/code.rs",
+      "source_sha256": "fc5a8780548fed7ed60e71c6a88d25b155b745685ca75b7e03fe583a106a3ca7",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-pki/src/envelope.rs",
+      "source_sha256": "9ac620e0d0cf0e5f67670be4547addfcb01861197cb35d611ccf7733efa27d01",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-pki/src/lib.rs",
+      "source_sha256": "85e891024a8b0a7f5aecf4bf02191ff1299170817e8efa05af8a06db0315fc23",
+      "primary_unit": "F3",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-pki/src/tests.rs",
+      "source_sha256": "1c6e745bba6afe60eca826ba23b3049f4a8137ac8041b1be112debdaf4e058ae",
+      "primary_unit": "F3",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/lib.rs",
+      "source_sha256": "6514716727e25215ca0019415bec9787ef4f0bb142a42c1b3638ca26ca886890",
+      "primary_unit": "U1",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/location.rs",
+      "source_sha256": "77771c3b765143fcb378cc83e54c39b750811a5e7bc96e89206973190eed6605",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_bootstrap.rs",
+      "source_sha256": "cf899772e00d907d6313be71149be0f46d544fe793ed793d744fe6d236ebffa0",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_tasks.rs",
+      "source_sha256": "1c70622da9d878b11e486584101c02d9bfda55fbc22d360e77e522bf92fef499",
+      "primary_unit": "F5",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_tasks/adoption.rs",
+      "source_sha256": "69912cb9755cbb7a9670333bac9c16783d9aa2759683653bf633df9b57e8147f",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_tasks/read.rs",
+      "source_sha256": "d125118925c03ff0015c067213fb1221f9f8c33ffe7e121dcaad3e1fcc336c3e",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_tasks/staging.rs",
+      "source_sha256": "84a9fff61aa64f4a3232106e59a1a1e9cd8723c1070a60ec4c210846f0a79da5",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/src/selected_tasks/tests.rs",
+      "source_sha256": "78174f5f2f274bb30b8c1edadbddc7885fac1fcb56461d0058aa7a9956846052",
+      "primary_unit": "F5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-proto/test-vectors/v2/selected-tasks-v1.json",
+      "source_sha256": "035eb029cb94cb555618b538b0b341e18bc9c1603325a1725e281c351b7ed936",
+      "primary_unit": "U1",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "source_sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a",
+      "primary_unit": "F1a",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/README.md",
+      "source_sha256": "18e06e90515d819dc4f43a49e9808be0226515cb344e109f6a0a53c45168a941",
+      "primary_unit": "F1a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/src/decode.rs",
+      "source_sha256": "1aaaa27f3c3def33f8f9becba3b02c2e2d31ca0787e300026b431a9ca2443d49",
+      "primary_unit": "F1a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/src/lib.rs",
+      "source_sha256": "a5c986c723264dff3070efc93418ea006735bd24e3b9ffcf6f9ba69e64c4e840",
+      "primary_unit": "F1a",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/src/payload.rs",
+      "source_sha256": "6ad9fcba513440e1d32830e6394260ba264ae05915340d765922ac253db10f12",
+      "primary_unit": "F1a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-release/src/tests.rs",
+      "source_sha256": "1986c7aedd577b785e3d1249c74e174c77ca7d2948ead4cb722f5ae6a088d58d",
+      "primary_unit": "F1a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/examples/gateway_confinement.rs",
+      "source_sha256": "f40a49f0af68dfdf15a307208c504ce8fb4a3e424641f7669e1bc28d8d3459b4",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/src/confinement.rs",
+      "source_sha256": "99c8131d70a9f259bc4acdce30d1891e7a6a8fe5ea6ff1b42002e6f258cd7264",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/src/confinement/macos.rs",
+      "source_sha256": "ef0692b19693611f5d73cb09b923d3fd9c96c0e13f3271f1d3a2e788f1b56b75",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/src/image.rs",
+      "source_sha256": "5ac657c6aea1f7591c6fe86bda31db5debdc5bd10eb2ace378f8ad5268ab83a9",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/src/lib.rs",
+      "source_sha256": "6438f514ce76dabdb4b3b44832c80d1b4213d76ecc7ae858ad775736541d2388",
+      "primary_unit": "F1b",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-socket/src/peer.rs",
+      "source_sha256": "bd37a421bbedbc3d4429c719ec17e581811bd948b8b2fcf6d7529e5a44d9a174",
+      "primary_unit": "F1b",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/lib.rs",
+      "source_sha256": "d4a3e7677f0c7d535f66b3c407e3eb10cd7ab500aec99ba21f2ac58b0d0c9b3c",
+      "primary_unit": "F2a",
+      "owner": "root",
+      "extraction": "ROOT_SERIAL_HUNKS",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/selected_assignment.rs",
+      "source_sha256": "01da6bbfe0e4b9864dd4c5275d66405fe5d0a9494949558f98aa1477dc19bbc9",
+      "primary_unit": "U5",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/selected_codec.rs",
+      "source_sha256": "8b421c0c8a1a39c16f46f98b660336b4b6b1e0122a41d97337b4159073a89659",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/selected_codec/tests.rs",
+      "source_sha256": "810e5eec529326c23b33593528e8d52304a342532a530ed21f4cb2670765bf57",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/selected_history.rs",
+      "source_sha256": "0ee43133e781f469356b09e2a58f1dcffb5faa00506cdc21cb60b5ddc5b6e267",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/src/selected_history/tests.rs",
+      "source_sha256": "68d17bc0a104fb8cbc2109b919d89fe391bf7c883f72c28e26a77be16afdad42",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/test-vectors/selected-codec-2.json",
+      "source_sha256": "fa4ca3a6a50eb1f4f0fd7d502e702c4b48508b38bbe81ab0d1342a9967974459",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/test-vectors/verify_selected_codec.py",
+      "source_sha256": "ef6f362706392f01403cbc1ed10d75898e6b5e8a29f4a35836d8726ddf9e90a9",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "crates/org-work/tests/selected_fingerprint.rs",
+      "source_sha256": "7a3966b9a10f97c3a733f6703565d4a28a3b75a6db7e385e7d23943dfb38b9de",
+      "primary_unit": "F2a",
+      "owner": "original-fullstack-author",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/FEATURE-AREAS.md",
+      "source_sha256": "c82ce907425e12f5bca46fa6d3df22207cf5f935c8a562626181c9b0cbb408f7",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/FEATURES.md",
+      "source_sha256": "90857a4eb42e165b9e1ec5da72b00bdbe0334b9c8f7e2f6d96a1809af642693c",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0003-agent-messaging-office-first.md",
+      "source_sha256": "a21c58d4cb2f2547f5b723689eaff88f37dc4291759141fe83651a79ba05956b",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0006-selected-task-acceptance.md",
+      "source_sha256": "3d5e3e6a2d23f91c7d6476494c035c392850bd209dba99632054abecc0c7320a",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0007-hq-creation-escrow.md",
+      "source_sha256": "6751f22ec7f2e74e964fef67557933a5ca16174bafd7b416e6d83f671853fe3f",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0008-gateway-macos-sandbox.md",
+      "source_sha256": "b30a5ef6e0d924d73a8b96f34565564269dd336e5c0296205037e4512aeafa7f",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0009-complete-release-verification.md",
+      "source_sha256": "a6b1a72eab2a70f05012bf52c9302b3097f4368095d7191d711f71f4a22e441d",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0010-legacy-task-adoption.md",
+      "source_sha256": "010d28fff2d1b01a515aa662bd438ec275e2f0b357be0c07d1cd1a4528185f03",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0011-protected-recovery-delivery.md",
+      "source_sha256": "72d87a6af79d0624ac723900f06925bb2dfce0964b94e07a16a44e2a33959457",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/adr/0012-office-channel-lifecycle.md",
+      "source_sha256": "a280ca6e77b3d699fd18e363ed42f26c8e4d90ee0deb7ee0a57b542362152caa",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/agent-sessions.md",
+      "source_sha256": "499e1ffc415ce53e33deec0861fbfa2c4369ea720266871e382a139227f0df54",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/documentation-authority.md",
+      "source_sha256": "667e5bd5d11b4fc5d871c15f963681442148a399a915f5ec5bab3240b9f272b6",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/executable-migration.md",
+      "source_sha256": "ae636b3dcb833df36b8ac8630fddd9201801b6e8da879553e4ba57f8996a3b5f",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/gateway-api-v1.md",
+      "source_sha256": "8e2af66180dc89cec954429f0db5ef18466f9ea6e0b1fbb2897247050f5b678e",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/office-host-boundary.md",
+      "source_sha256": "07722b84a264adaea06aacae18738950bddb7edc7e83135ad10cdc4fb5d39b1b",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/01-organization-structure.md",
+      "source_sha256": "b1135ada988ae98b50c8138ba9748967c10ba0b9f87b09922f596bdc1ff7f6ac",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/03-features-and-work.md",
+      "source_sha256": "cf3b72919ca1f81a493b940615d1b371ec246711f86e53a1e1d52c77e99c6005",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/05-operational-data.md",
+      "source_sha256": "b2ba285caaf07aaf1bfd19feb904407a2cf619a9b67bd70117e6b82716e51cd0",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/10-usage-and-cost-accounting.md",
+      "source_sha256": "630f5823ba0421bd1a91d28f50df19b93364702fefbbac2950a8b84cbd3e9472",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/12-task-assignment-and-history.md",
+      "source_sha256": "33306efb58c46af39e8a99a54a0b976389e402eaa47b8910c6c9b5b6ed0c5da6",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
+      "source_sha256": "662a8a4d032f79aca78cc9f154674741334b7cee908ea2414bf50a71a4acacf5",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/17-budgets-and-controls.md",
+      "source_sha256": "3dcec61b6856a4cb05464cb0ee82aa0ab35145d971c2659b3f9f2146f9ce5363",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/SCHEMA-COVERAGE.md",
+      "source_sha256": "c33a2305329b4ade299f64b1e80eb25cab9adb223ff0d3e83eaf0305c892f3b1",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/schema.sql",
+      "source_sha256": "95f3346adecb17eab40553bfe1a4f24578525c939aa8f5c5c3fe9fd982525a04",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/organization-data/test_schema.py",
+      "source_sha256": "5e5d6de8a69dab6857a4f23e7eb0cc03268d2f6bfb2b8b9e33ac673da746254a",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/smart-features.md",
+      "source_sha256": "f4deba6ca19fbae90580e13fae698471963a3bf033eb8a91f12446454898a288",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/standalone-server.md",
+      "source_sha256": "89f62e26345dec4f1da8a6e905c16bc6319bd73bd8ada0d2f754bac29594a468",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/tasks-projects-docs.md",
+      "source_sha256": "0bae20e65a0935a9df3da434327fe20b92c713b0ee80aa6851741263356b8593",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/design/teams-and-org-chart.md",
+      "source_sha256": "da3a29313b6eee68b267a9776cb1cc75b0a53d1a4da56612e43e8621cffdf515",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/agent-run-modes-ux.md",
+      "source_sha256": "e4a3e388439d46375a85d1830f602f6b9c3a3541a90211c2c553b09476fa54c7",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/app-shell-ux.md",
+      "source_sha256": "02802c6e2a5485d454bd40d58136a3f65d1d45ecfe65dc5f090f0dcfd1fadd98",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/chat-ux.md",
+      "source_sha256": "4f9ae5de64eccbf91a9efd700e9053b37e2c5f4428a4b0d5e027172e2d27e626",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/costs-and-insights-ux.md",
+      "source_sha256": "4baba733677c00c7c2bf7e17a60715499f00eef2fcdfd568b5b27a358901ffcb",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/decisions-and-tech-debt-ux.md",
+      "source_sha256": "6c64bc3a37a178f33187406ea19301d28684d7d59efd5fe98204eed083a97936",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/dogfood-run.md",
+      "source_sha256": "ec759769110b50a8bd475557ec0609b9fc25926c8508080784925476cc785bf4",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/employee-supervision-ux.md",
+      "source_sha256": "1a2b9e821c90318d259c29a1a1c4c97e8154ba6aaf9b3739df5060808e1a916d",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/feature-requests-ux.md",
+      "source_sha256": "11c39b558b7d1e73c176c530d6c1b42a85437331f24be15b0a8f2f6d2b7e5790",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/features-ux.md",
+      "source_sha256": "384f68c948c3ae9b6fe0a1553908b822bbbd82947a5bbdf40411ed6f66dca57c",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/offices-and-teams-ux.md",
+      "source_sha256": "5cad473bc2a1220808693f40f62e8b20982a975336927343e0463f099970a246",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/our-org-in-the-app.md",
+      "source_sha256": "1a3bc2248d94527a4ad7335f1cedd9ff1a50bf8029d867b2face95f5f0284c51",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/project-status-ux.md",
+      "source_sha256": "60f33371336ac0554e9dc40a1b0ba9cb88dc2de848fad8a6dfe1e8429ba5217f",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/retrospectives-ux.md",
+      "source_sha256": "5287c12f350c24b39aae7761a6566a97389a031888203bd8f9276eb60da81fe2",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/roles-ux.md",
+      "source_sha256": "5b68edc36ecf13eb6cb4a105a875921ee60d55e39ce8e3886589294beccd9063",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/server-installation-and-access-ux.md",
+      "source_sha256": "02c311fe6f5f56d371256f739a8989526836e5b140e614e3d9ab64df45a5119c",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/specs/work-items-ux.md",
+      "source_sha256": "e60d74fafa34b895f29b399ad5497189dc509a9b2901c0488b9c9aee89467d31",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/verification/2026-11-16-assignment-branch-checkpoint.md",
+      "source_sha256": "10e5286697fcd98c84d08bbf8680fa46e0abceea9e44811f2ea0d7a396192099",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/verification/2026-11-16-first-five-features.md",
+      "source_sha256": "8c04dd3f24356c25bebb2798202a2763af22ed2f6c03325e06e543965d2e8b76",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    },
+    {
+      "path": "docs/verification/2026-11-16-remaining-feature-audit.md",
+      "source_sha256": "dc324ad2c9f40c9241b12892bde113ee6284596052f26cefd73e186c237dec16",
+      "primary_unit": "F0",
+      "owner": "root",
+      "extraction": "BOUNDED_REUSE_PENDING_UNIT_VALIDATION",
+      "status": "PRESERVED_UNACCEPTED",
+      "origin": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09"
+    }
+  ],
+  "active_channel_repair": {
+    "worktree": "/Users/vgmello/projects/agentic-org-channel-worker",
+    "base": "c3ada005bc045c1a5a4a7c7fd5ef0dc4df1414e1",
+    "assignment": ".agent-kit/logs/v1-assignment-integration/channel-implementation-1/root-assignment.json",
+    "unit": "F4",
+    "state": "SAFE_SOURCE_FROZEN_HANDOFF_NOT_ACCEPTED",
+    "source_hashes": "Actual terminal checkpoint overlay verified by root; preserve original fourteen files without main import. Original 324-file checkpoint inventory unchanged.",
+    "checkpoint_sha256": "b12be6d319c263e89ca0bbfc1c70d57dcafc0fc04da347dcda8a7565853eee66",
+    "source_overlay": [
+      {
+        "path": "crates/org-office-launch/src/v3.rs",
+        "sha256": "81f235bd9b512f549c8fb0d93cbffaac2444283bb35c4508258314ffdb85d20c",
+        "new": false
+      },
+      {
+        "path": "crates/org-office-launch/src/v3/tests.rs",
+        "sha256": "289595e2972c4a833809fe0d6fc72cf1682e4b0a58dfd411eb66737b897d58bf",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/supervisor/channels.rs",
+        "sha256": "4725f843e66b93b2cc7cc2fdfc4b77f3aac76f3249e631208ec6861723a9a1e9",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/supervisor/channels/tests.rs",
+        "sha256": "086b2900a0e93326c6dcee798e3395c0daef843673b08700c2e74fa4dda71419",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/supervisor/channels/registry.rs",
+        "sha256": "1813dbdbb6b74cd4df90b02b5c23b7ba422a53053cdb4f3cff3c6baa809cb7fb",
+        "new": true
+      },
+      {
+        "path": "crates/org-host/src/supervisor/channels/registry/tests.rs",
+        "sha256": "8c9938be58d9b34b7e41b08e340183d3004a5eec05e1b98bb88b8ec319e44e09",
+        "new": true
+      },
+      {
+        "path": "crates/org-host/src/service/authentication.rs",
+        "sha256": "391912d5963f8bbbf2709b9bba00929200b72d4e1f6a3ef61aba8b9985195752",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/service/authentication/tests.rs",
+        "sha256": "f32758ca5e65b9195ed72f09384436de012b98d5b807eefaea41652bdcd54e03",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/service/listener.rs",
+        "sha256": "d8710e8886441c8e644c9997cb4223dc905e9b2a291c9f5a2f0d55d1cffd2dc0",
+        "new": false
+      },
+      {
+        "path": "crates/org-host/src/service/mod.rs",
+        "sha256": "44abeaee68986bbabf9175a242b9ea0aff61ce8da0e82b53b9b628291d32319b",
+        "new": false
+      },
+      {
+        "path": "apps/agentic-org-office/src/transfer/channels.rs",
+        "sha256": "132b615c658ef3fa2f258a113db5fd36120757db103439ae5bc65788eb42b69c",
+        "new": false
+      },
+      {
+        "path": "apps/agentic-org-office/src/transfer/channels/tests.rs",
+        "sha256": "69e10b31c9cf1640cebe63aa1aa794350f552985f914fdc10bc9fa249e57667e",
+        "new": false
+      },
+      {
+        "path": "apps/agentic-org-office/src/transfer/channels/lifecycle.rs",
+        "sha256": "201b48dc074ba532fad4e432452d001281c45ea408576f85e63458b3bcc81994",
+        "new": true
+      },
+      {
+        "path": "apps/agentic-org-office/src/startup/tests.rs",
+        "sha256": "a43dc453233e844c223f9d6dd89c209d42f9705e900e482f003cc9822b5468bc",
+        "new": false
+      }
+    ],
+    "remaining": [
+      "Explicit fixture-scope handoff for tests/launch/v3_activation.rs and v3_activation/transfer.rs",
+      "Bind-dependent executable tests outside child sandbox",
+      "F4 extraction/current full checks/original author/independent/fresh final acceptance"
+    ]
+  },
+  "unimplemented_units": [
+    "U2",
+    "U3",
+    "U4",
+    "U6"
+  ],
+  "gate": "Every accepted unit has a stable scoped contract, compile closure, current checks, independent review, original author validation and fresh final exact-commit review. No aggregate assignment review is a prerequisite for unrelated unit acceptance."
+}

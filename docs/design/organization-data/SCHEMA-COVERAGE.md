@@ -47,6 +47,15 @@ All write connections must set `foreign_keys=ON` and `recursive_triggers=ON`. Th
 
 ## Durable data outside tables
 
+Selected task-event schema 2 adds a recorded resource profile and retained complete
+event bytes alongside lossless change/provenance text. Schema-1 rows/bytes/hashes
+are not recoded. SQL accepts the two structural versions; supported-codec/hash,
+duplicate, header and coverage validation remains admission work, and unsupported
+codecs stay staged/unverified. A nullable retained-schema-1 byte column does not
+prove that missing original source is recoverable. The distinct immutable
+work-acceptance journal ordinal/anchor in document 16 is not an event-source stream
+sequence or evidence of an executable migration. See ADR-0006 for its frozen mapping.
+
 Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, authority journals, and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Credentials and authenticated-subject identities remain in the existing authentication subsystem; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate encrypted database defined by document 05. Document 13 is a compatibility link to that canonical operational-data section.
 
 ## Verification and limits

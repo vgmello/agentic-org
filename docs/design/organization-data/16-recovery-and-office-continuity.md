@@ -25,21 +25,236 @@ Organization domain records live in organization Git; these operational records 
 ├── offices/<office-id>/
 │   ├── streams/<kind>/<incarnation>/journal.jsonl # immutable accepted source changes
 │   ├── streams/<kind>/<incarnation>/head.json     # watermark and digest
+│   ├── journals/work-acceptance/<journal-incarnation>/
+│   │   ├── anchor.json                          # immutable retained continuity evidence
+│   │   └── transactions/<commit-ordinal>.json    # immutable frozen acceptance envelopes
 │   ├── checkpoint.json                          # current verified authority checkpoint
 │   ├── snapshots/<snapshot-id>.json              # transfer metadata and verified content ref
 │   └── cleanup/<cleanup-id>.json                 # process ownership evidence
 └── snapshots/<content-sha256>                    # immutable protected snapshot content
 ```
 
-Every JSON envelope has `schema_version: 1`, positive `revision`, same-named scalar fields and organization/office identity. Projection JSON columns map from objects (`inventory` → `inventory_json`); never store escaped JSON strings inside JSON source files. Journal entries retain source sequence, command/change identity, payload, prior/head digests and v1 codec/version. Keep source payload and codec where no normalized lossless mapping is defined; the projection is not permission to erase it. Use the full-envelope and platform flush guarantees already specified by document 11/ADR-0002. Do not acknowledge a mutation until its domain change, required source journal evidence and receipt/outcome have a single recoverable commit boundary. This document specifies the data obligation; an implementation must demonstrate that boundary rather than treating independent file and SQL writes as atomic.
+Existing recovery JSON envelopes retain `schema_version: 1`, positive `revision`,
+same-named scalar fields and organization/office identity. The selected immutable
+work-acceptance journal below has its own explicit envelope schema/codec, separate
+from existing source-stream codecs and task snapshot/event schemas. Projection JSON
+columns map from objects (`inventory` → `inventory_json`); never store escaped JSON
+strings in place of source objects. Keep original payloads/codecs where no lossless
+mapping is defined. Use document 11/ADR-0002 full-envelope/platform flush guarantees.
+Do not acknowledge until domain change, source evidence and protected receipt/result
+have one recoverable commit boundary; independent SQL/file writes do not establish it.
+
+### Selected immutable work acceptance
+
+[ADR-0006 revision 4](../../adr/0006-selected-task-acceptance.md) distinguishes the
+existing **work-origin event** identity `(office_id, origin_incarnation, origin_seq)`
+from **journal transaction** identity `(organization_id, office_id,
+journal_kind: work-acceptance, journal_incarnation, commit_ordinal)`. A journal
+ordinal is a positive i64, canonical decimal filename starting at 1. One new frozen
+transaction consumes one ordinal, including receipt-only rejection/no-op outcomes.
+Read-only replay and refusals with no durable record consume neither counter.
+Journal ordinals never become replication, feed, client or task-revision positions.
+
+`anchor.json` is immutable, not transaction zero. It binds trusted identity, writer
+fence/authority, retained origin incarnation/high-water, history/import evidence and
+any verified predecessor journal head. Transaction 1 references its digest; each
+later transaction references the preceding ordinal and complete envelope digest.
+Envelope hashes use codec-2 normalization (document 05), omitting only their own
+top-level `payload_sha256`. Filename and envelope identity must agree. Missing
+predecessors, forks, incompatible profiles/codecs or conflicting duplicates stop
+recovery. Heads/SQL cursors and any `journal.jsonl` export are derived projections.
+
+The frozen envelope contains origin high-water before/after and the exact ordered
+allocated entries: original sequence, target identity/generation/version, feed/client
+position, organization position and timestamp, plus complete snapshot/event,
+allocation, protected receipt/result and projection mutations. For n entries at h,
+allocate exactly h+1 through h+n and record after=h+n. At n=0, after=before; never
+append empty origin references or invent a receipt event. Preserve actual legacy put
+order, IDs and semantics. The same office writer allocates both positions together;
+there is no second writer or competing work-origin allocator. Participating legacy
+mutations pass through this boundary as well. Message allocation remains unchanged.
+
+Preparation is effect-free and freezes all decisions outside retryable callbacks.
+Durably flush immutable blobs and anchor first; flush a temporary manifest, install
+atomically without replacement, then durably flush its parent (including required
+macOS full flush). Reconcile uncertain publication before retry. After publication,
+retry only frozen projection, never domain decisions or event allocation. Verify
+chain and prior origin positions, project the full frozen mutations and both cursors
+atomically in SQL, and verify coherent canonical task/event/receipt reads before ACK.
+Matching already-applied identity/digest skips effects; mismatch fails closed.
+
+Installation quiesces/fences writers and anchors retained counters, logs, snapshots,
+receipts and source/import hashes. Start ordinal 1 while retaining existing event
+high-water; never fabricate historical transactions. Restart/cache rebuild continues
+the same incarnation. A new journal incarnation requires verified predecessor head,
+retained watermarks and writer fencing. It does not automatically rotate work/message
+incarnations; restored offices never promote themselves. Missing continuity stops
+acceptance. Check both i64 allocations before publication: event exhaustion may
+produce a zero-event rejection if journal capacity remains; journal exhaustion stops
+new durable transactions while existing receipt lookup stays available. No wrap/reset
+or automatic incarnation change may evade exhaustion.
+
+Manifest profile `selected-task-resources/1` is <=16 MiB, depth <=64, <=200,000
+value/key nodes, <=8 MiB decoded string/key/raw number token. Immutable blobs/chunks
+are <=64 MiB; <=1,024 references and <=64 MiB aggregate bytes per manifest, repeated
+references counted. Validate actual lengths/digests. Recovery retains recorded
+profiles, not silently smaller replacements. Oversized imports remain intact in
+staging. Protected journal blobs and account-bound receipts never enter public Git.
 
 Receipts cover shared domain commands only. Credentials, passwords, login/reset outcomes, private notes and their existence never enter these shared records: retain those in the host/private stores. `result_ref` resolves through the original command's actor/scope checks, never an unrestricted file path or public URL. `actor_id` is an employee ID only; owner/system principals are bound by the existing authentication layer, not guessed from a display name. One command ID with another fingerprint or actor conflicts. Completed/rejected outcomes remain stable. An `outcome_unknown` command is reconciled before any side effect is repeated.
 
 The office message substrate currently shares an incarnation/sequence allocator between content and state operations; importing it must preserve that original allocator and global high-water across the two stream categories, not create independent overlapping counters. Work uses its independent source stream. New incarnation after restore never resets/reuses an old incarnation's identity. Archive old high-water records even when payload retention expires. Persist command retention/expiry deliberately; do not delete a receipt while retries may still be valid. SQL blocks deletion/replacement of retained receipts and watermarks; an eventual reviewed expiry/archive procedure must preserve equivalent retry/tombstone evidence.
 
+For selected task commands, protected receipt metadata also binds the stable owner
+account and issuing instance, command schema/method, checked organization/task/office
+scope and typed fingerprint. Session identity is not the business retry identity.
+Renewing a session can recover the same account's result after live authorization
+checks; another account or fingerprint conflicts without disclosing the old result.
+The owner event still has null employee ID. Neither an assignment nor an imported
+profile flag establishes account authority. This protected binding must be included
+in the executable selected receipt migration and frozen journal; the older generic
+draft receipt columns alone do not supply it. Recovery keeps expiry/tombstone evidence
+and never deletes an eligible retry's only outcome.
+
+Within an office, a work operation ID already retained by either the legacy or
+selected receipt store cannot be admitted again under the other contract. Exact
+legacy retries still use their original receipt and semantics. A versioned lookup
+adapter must distinguish those outcomes without exposing another account's data.
+
 A checkpoint cannot establish authority by itself. Verify organization identity, trusted HQ/CA pins, codec compatibility, contiguous event sequence and digest chain before applying/rebuilding. Host credentials and CA pins stay in existing protected custody; they are not synthesized from Git or these tables. Higher observed epochs fence stale authority; a restored old office never promotes itself. Snapshot bytes must hash-match their transfer metadata before installation; rejected/partial artifacts confer no authority. Import keeps v1 native/base/pending fields and opaque snapshot install payload where needed; SQL is not a lossy replacement for the existing binary/state-machine journal.
 
+The selected local writer admission binds the registered instance/root filesystem
+identity, protected organization/HQ/office binding, writer epoch, device-local
+custody identity and journal incarnation. Its last acknowledged journal digest,
+ordinal and original work-origin high-water live in host custody outside the
+instance/organization root. Release macOS custody is non-synchronizing,
+`ThisDeviceOnly`; the explicit development custody directory is outside that root.
+Startup never creates missing writer custody for an existing selected office.
+Only protected provisioning/adoption may establish its initial unanchored binding.
+Missing custody, a different root identity, changed epoch/incarnation or a journal
+behind its protected checkpoint requires explicit recovery, never automatic
+promotion or a reset of either allocator. Recreating a missing host registry must
+not sweep existing writer authority.
+The protected initial binding records its canonical provisioning/adoption
+operation ID. An exact authenticated replay may finish marker publication while
+retaining its original incarnation, epoch, device and acknowledged checkpoint.
+Changed inputs or a different operation cannot replace that binding. This is
+resumption of its own protected operation, never promotion of an unknown root.
+
+The authenticated host-worker control channel verifies that retained source
+contains the protected checkpoint before recovery modifies projections. It admits
+at most one contiguous unacknowledged successor after that checkpoint. This covers
+process death between immutable publication and host confirmation without rerunning
+the decision. After coherent projection/read verification, the host durably records
+the exact next checkpoint before Office returns completion. Live reads/writes also
+check the current admission; host EOF or an epoch/root mismatch fences acceptance.
+The host checkpoint is continuity/fencing evidence, not another event allocator,
+journal or domain decision. Restoring host custody itself, machine migration and
+handover remain explicit unsupported recovery cases until verified fencing and
+retained-head evidence are supplied; copying files does not authorize them.
+
 Process cleanup is machine-local. Never send a signal based solely on a restored PID: verify the ownership mark, generation, boot and process-start identity through the existing process-control library. A copied record on another machine is unverified. Cleanup and existing fencing must establish the previous process has stopped before the new one runs. These records complement document 11; they do not allocate a second placement generation or authorize launch.
+
+### Office acceptance projection format
+
+The selected office adapter uses additive office schema 7. Its protected journal
+envelope has `schema_version: 1`, `json_codec: 2` and the recorded resource profile;
+these versions are independent of task snapshot/event versions. The immutable
+anchor and each transaction retain ordered table mutations with full column names,
+typed before/after cells (`null`, signed `integer`, exact `text`, hexadecimal
+`blob`), a projection-schema digest and the exact original origin mapping. JSON
+inside SQL text or blob cells is never parsed or regenerated by this projection
+format. A frozen cell larger than 64 KiB uses a verified protected
+`blobs/sha256/<digest>` reference, with byte length and `utf-8` or `hex` encoding;
+the aggregate recorded profile still applies. Public task/event bytes and protected
+account-bound receipts are retained as separate artifact mutations.
+
+Recovery verifies the complete retained prefix before applying SQL projections.
+After rebuilding SQL, it materializes final canonical files directly, rather than
+rewinding a current file through intermediate historical revisions. A mutable file
+may advance from bytes whose hash is a verified predecessor for that same path;
+missing files may be recreated. Unfamiliar bytes or conflicting immutable files
+stop recovery. Verified final SQL/file reads precede readiness or completion.
+
+Protected owner-account registration is separate from directory import. Selected
+directory generations and their exact source JSON pass through the same office
+writer; imported `is_owner` flags grant nothing. These library mechanisms do not
+establish host lease fencing, production session verification or a usable adoption
+workflow by themselves. Their production composition remains required.
+
+### Protected adoption staging interface
+
+The local human command is `agentic-org adopt --host-socket PATH --instance-id ID --org-id ID --office-id ID --login LOGIN --stage-id ULID --operation-id ULID --directory-generation DECIMAL --manifest PATH --sources DIRECTORY`. It requires an explicit already-running instance and preserves the supplied stage/operation IDs on uncertainty. The sources directory contains checksum-named files referenced by the manifest; it is client-local input, never a server filesystem-path capability. The command verifies the host peer before requesting a password on its controlling terminal, opens/receipts a host-approved descriptor, obtains a live scope-bound grant and streams fixed chunks. It prints only a sanitized status, never credentials, grants, opaque source content or recovery material. Local staging and canonical validation do not imply that arbitrary legacy representations are supported.
+
+The additive native `task.selected.stage.v1` interface runs only on an
+authenticated host-approved owner channel. A canonical ULID stage ID binds the
+issuing instance, organization, office, stable owner account and exact manifest
+SHA-256. It is not an event identity or authorization grant. Every resumed
+upload/status request rechecks that protected binding and live owner authority.
+No request supplies a server filesystem path.
+
+Uploads identify immutable blobs by SHA-256 and total byte length, with aligned
+chunks of at most 256 KiB raw bytes (lowercase hex on this native interface).
+The complete encoded frame remains at most 1 MiB. Exact chunk retries preserve
+bytes; conflicting identities fail closed. A stage permits at most 1,024 blob
+references and 64 MiB aggregate declared bytes, with checked bounds before
+allocation. Status returns bounded chunk offsets, not source content.
+
+Original sources, including unsupported/unclassified bytes, remain in owner-only
+office-local staging outside public Git and the work acceptance journal. Stage
+publication uses non-overwriting durable files and retains partial uploads across
+restart. Upload completion establishes no directory facts, history coverage,
+writer admission or task acceptance. An explicit adoption commit must verify the
+whole manifest and actual blob bytes, public classification, canonical directory,
+numbering, history and protected authority before freezing canonical mutations
+and the adoption gate in the existing acceptance transaction. Invalid or
+unsupported inputs remain intact and confer no capability. No automatic cleanup,
+private-source publication or schema-1 recoding is implied by this interface.
+
+`task.selected.adopt.v1` explicitly commits or looks up an owner-bound adoption
+operation. Commit binds a canonical operation ULID, stage ID, manifest digest and
+expected directory generation. Exact original receipts precede fresh validation;
+the operation-ULID time plus 30 days governs retries, as for other work receipts.
+The version-1 canonical-task manifest names the task, exact public snapshot,
+canonical path, explicit history origin and event/blob inventory, plus retained
+number counter/allocation sources where numbered. References identify staged
+bytes by length and SHA-256; they are not server paths or implicit classifications.
+Unsupported/legacy mappings remain staged until their explicit validator is
+implemented. A snapshot-only baseline is allowed only with an explicit absence
+of surviving history; known local or supplied history cannot be concealed.
+
+The same adoption method also accepts `kind: directory_commit`. Its typed fields
+are the original operation/stage IDs, manifest checksum and nullable expected
+directory generation (null means no admitted generation). The local command uses
+the leading `--directory` flag; `--directory-generation none` explicitly selects
+initial admission. This is data import by an already authenticated owner, never
+owner registration or writer promotion. Its version-1 directory manifest records
+the resource profile, a nonnegative source epoch/sequence and a complete inventory
+of explicitly public canonical files. Each entry has `kind`, `canonical_path`
+and a checksum/length blob reference. Supported kinds are organization,
+repositories, team, employee, project, role, counter and allocation. Paths are
+derived from decoded identity/relationship fields and must match the inventory;
+no arbitrary output path is admitted.
+
+The importer retains every admitted file verbatim. Existing strict org-docs YAML
+guards apply before projecting only known directory facts. Unknown extensions,
+numeric spellings and employee-profile bodies are not serialized through that
+projection. Unsupported YAML/numeric representations remain in protected staging.
+The inventory must retain previously admitted team/employee/project identities;
+omission is not deletion. Existing source revisions cannot decrease or acquire
+different bytes at an equal revision. Numbered teams/projects require their
+organization-scope counters and immutable allocations; imported counters cannot
+decrease and allocations cannot be reused. All references, active/archive states,
+hierarchy paths and adopted task locations are checked together. This scoped
+importer refuses an existing team's reparenting, an employee's home-team/kind
+change or a project's ownership change, even without adopted tasks. Those moves
+need a separate recoverable movement workflow; import never leaves a second
+canonical copy or uses a new path to bypass the original revision. Canonical source,
+the next directory generation and the account-bound receipt enter one frozen
+acceptance transaction, allocating no work-origin event positions. Exact retry
+returns the original directory generation even after later advancement. Assignment
+capability still requires a verified directory; staging/adoption capability needs
+the protected writer/owner admission independently of that directory.
 
 ## Loss boundaries
 

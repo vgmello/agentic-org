@@ -2,7 +2,7 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 13
+revision: 14
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,7 +13,7 @@ builds_on: [our-org-in-the-app, costs-and-insights-ux]
 
 # Spec · How agents run: always on, on call, scheduled, one-off (UX)
 
-Revision 13 reconciles identity, execution, recovery and budget controls with
+Revision 14 retains the deferred model-policy requirements below; revision 13 reconciled identity, execution, recovery and budget controls with
 [organization-data 04](../design/organization-data/04-agent-structure.md),
 [11](../design/organization-data/11-model-profiles-and-agent-execution.md),
 [14](../design/organization-data/14-model-providers-and-connection-pools.md),
@@ -32,9 +32,9 @@ import without inventing a selected scheduling schema. See the
 
 Earlier revision history is available in
 [the pre-reconciliation spec](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/agent-run-modes-ux.md).
-The operative cost rules are [COST](costs-and-insights-ux.md) and document 17;
-the referenced costs-and-budgets-v1 PRD is absent and supplies no additional
-authority. One-off labels below are display proposals, without R- prefixes or a
+The operative cost rules are [COST](costs-and-insights-ux.md) and document 17,
+which integrate compatible earlier requirements without adopting superseded rules.
+One-off labels below are display proposals, without R- prefixes or a
 new selected record counter. T- task references are scoped to project or team.
 
 ## 0. Decisions
@@ -193,6 +193,14 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-15 · **Deferred native delegates and memory forks; no exception to selected open-turn/main-process invariant.** *(new, rev 7)* Internal delegates and memory forks are owned work inside an employee's run, with shared aggregate limits and attributed usage, not members, independent run modes or role-based one-offs. A future internal-job contract must preserve the selected main-process slot and shared connection permits; unsupported concurrent helper isolation uses a serialized fallback or reports unavailable.
 
 ## 6. Open questions
+
+### Deferred model-policy proposal
+
+The earlier Models UX proposes owner-edited **Main session**, **Helpers**, **When it's hard** and **Reviews and security** slots, each with a model/effort and Organization → Role → Agent provenance. A future editor would show inherited read-only values, Override, Reset and Why; presets and a short escalation guideline would fill the table, with escalation timing left to agent judgment. Quick view/roster/Hire Review would show the effective summary and origin. This policy, its storage and helper orchestration remain unselected; role association alone supplies no runtime default, tools or credential authority.
+
+Fast/Balanced/Frontier tiers, exact pinning, neutral efforts and presets need a versioned mapping/capability decision before implementation. The current catalog remains discovered under document 14. Preserve requested canonical model/policy when unavailable; show unverified/not entitled/unsupported readiness and require an explicit authorized configuration change. The older automatic inherited-model fallback and silent effort clamping are superseded. Pool failover never changes the chosen model or weakens policy.
+
+Named helpers, escalation recording, per-slot price hints, activity-based estimates and Main/Helpers/Reviews cost breakdowns need selected runtime/helper/accounting evidence. Until then, show them unavailable rather than a functional four-slot editor or estimate. Any future implementation must retain the one-open-turn/main-process exclusion, shared permits, actual consumer attribution, aggregate/component deduplication and cost visibility. Revisioned changes apply to the next admitted turn, never mutate its frozen input. Target checks must prove unavailable models launch nothing and no role/model setting installs helper tools or exposes credentials.
 
 These retained earlier answers document the deferred proposal and legacy v1
 compatibility. A25/A26 do not authorize a target scheduler, automatic fresh-start

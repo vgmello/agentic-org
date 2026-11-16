@@ -2,7 +2,7 @@
 kind: spec
 title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
-revision: 11
+revision: 12
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,13 +13,15 @@ builds_on: [work-items-ux, our-org-in-the-app]
 
 # Spec · Decisions, evaluations, designs and tech debt (UX)
 
-Revision 11 reconciles authored knowledge with [project documents](../design/organization-data/02-project-structure.md), [tasks/features and retained shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This is a UX proposal over selected target data, not implementation of commands, approval engines or a migration. The [authority map](../design/documentation-authority.md) distinguishes current contracts and deferred work.
+Revision 12 reconciles authored knowledge with [project documents](../design/organization-data/02-project-structure.md), [tasks/features and retained shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This is a UX proposal over selected target data, not implementation of commands, approval engines or a migration. The [authority map](../design/documentation-authority.md) distinguishes current contracts and deferred work.
 
 ## The request (the user, 2026-11-08)
 
 > Capture tech debt: every shortcut or quicker implementation an agent takes should be captured. Have a structure for ADRs and design documents in a project, so agents can use them. Help us find **why a decision was made** and **what technology we evaluated**. And bring this project's own designs into the tool that manages it.
 >
 > These are features of the product: agents don't write them in their own folders any more. They write them **through the tool**, which saves them in the project, in a proper structure, in its repository. *(the user, rev 2)*
+
+**Revision 12 (2026-11-15):** sharpens the single living brief/capability requirements model and title/ID/body search coverage; custom kinds, project lifecycle, doc comments and approval handlers remain deferred.
 
 **Revision 11 (2026-11-15):** organization Git stores canonical project knowledge and typed tasks. Stable IDs differ from readable references; supporting documents have required project and at most one same-project feature/release/deployment scope. The body below replaces old code-repository storage and database-only work assumptions. Debt/limitation/exception workflows, custom kinds/templates, areas, Undo, guidance automation and process execution remain individually deferred proposals, while compatible content and accessibility requirements remain intact.
 
@@ -104,9 +106,10 @@ The earlier “persistent in Git, transitional only in SQL” rule is obsolete. 
 | Term | Means | Don't say |
 | --- | --- | --- |
 | Decision (ADR) | A recorded architecture decision: context, decision, consequences | Ruling, RFC |
-| Design | How something will work, written before it's built | Proposal doc, PRD |
+| Design | How a capability will be implemented; links its product requirements | Implementation facts presented as requirements |
 | Evaluation | A comparison or experiment that answers a question with evidence | Spike (the team's word: shown as "Evaluation (spike)"), POC |
-| Spec | Eden's UX specs: flows, states, criteria | Requirements |
+| Capability requirements | Intended users, behavior, rules, limits and acceptance criteria in feature.md | Duplicate PRD record |
+| Spec | UX flows, states and acceptance criteria | A separate selected document kind |
 | Tech debt / Debt | A known shortcut whose proper fix is postponed | Hack, mess, TODO |
 | Pay back | Doing the proper fix | Clean up, refactor (in labels) |
 | Accepted debt | Debt we decided to live with, and why | Won't fix (that's bugs) |
@@ -139,12 +142,16 @@ ADR labels in this example are retained optional display keys; the canonical rec
 - **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release/deployment scope. An Evaluation entry may choose the Report envelope and evaluation body template. Each opens the selected metadata and body template (§3), allocates a stable UUIDv7 ID for a new record, shows the canonical derived path and offers an optional display key. The filename follows immutable identity and is not editable. There is no next ADR/EVAL document-number counter. Save is explicit and import preserves existing IDs/keys.
 - **Header** (reader): selected metadata from front matter (§3.0): kind, optional key, title, lifecycle, owner, creation/update attribution/time and explicit scope. Show authored links as links and the canonical path as read-only. A quoted “accepted by” or “superseded by” statement may appear in the Decision body; it is not inferred as authenticated approval or read from unsupported front-matter fields.
 - **Footer:** **Led to** (items and docs linked from this one, or that link it as their Why) and **Mentioned in**.
-- **Filters:** Status · Owner · search. **Earlier decisions (v0)** is a read-only group with a note: "From ada's notes before offices. Some are superseded by current decisions." (A18).
+- **Filters:** Status · Owner · search. Search matches permitted canonical title, stable ID/display key and body text; feature definitions appear as feature results linked to their single canonical record. Group by record type, include scope/status and label body-match excerpts as excerpts. Declare actual indexed scope/freshness and title-only, truncated-body or unavailable coverage; no matches never proves absent content outside that coverage. Author-private notes, protected chat and inaccessible records never enter these shared results. **Earlier decisions (v0)** is a read-only group with a note: "From ada's notes before offices. Some are superseded by current decisions." (A18).
 - **States:** a doc whose front matter is missing or invalid shows "Details not recognized: <field> <problem>" with **Fix** (opens the Details panel), and the body still shows, and the doc still shows · a duplicate imported display key shows both with scope/provenance and **Resolve key…**; stable IDs and imported numbers are never silently renumbered · everything else as work-items Flow 8 (conflicts, history, git errors).
 
 ## 3. Templates: front matter and sections
 
 Each selected kind has an editor form for its contract fields and useful body sections with hints. An evaluation uses the report envelope; spec/plan content uses design; review content uses report. New documents start from that form/body shape and validation follows the selected contract. Custom schemas and CLI validation commands remain the deferred extensions in §3.1–3.2; they cannot add unsupported fields or kinds to accepted records.
+
+**Project brief**, at `projects/<project-id>/brief.md`: what it is, whom it serves, how it works now, current known version/availability with evidence, and links to capability definitions/release notes. This is the living overview, with one canonical file and no per-version copy. Unknown current version stays unknown; a planned release or Live feature alone does not establish deployed availability.
+
+**Capability requirements** stay in the feature definition's Purpose/How it works/Rules/Known limitations/Non-goals sections, including intended users and acceptance criteria. Supporting designs explain implementation. Shared architecture stays project-wide and links to several capabilities rather than becoming duplicated PRDs. “Overview”/“PRD” are content labels, not new selected document kinds.
 
 **Decision**, at `projects/<project-id>/decisions/<document-id>.md`:
 ```markdown
@@ -354,7 +361,7 @@ When an owner explicitly imports this software project's knowledge into an organ
 Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **EXN-** so they never collide with the records' ids (`DEBT-0012`, `LIM-0003`, `EXC-0002`) *(renamed in rev 7, before any test used them)*.
 
 **Docs and decisions (DEC)**
-- DEC-1 · The Docs tab groups selected document kinds and explicit project/feature/release/deployment scopes, with counts and status badges; proposed specialized categories do not introduce unsupported kinds.
+- DEC-1 · The Docs tab groups selected kinds/scopes with counts/status and one living project brief covering what/who/current behavior/version evidence. Capability requirements stay in feature.md; no duplicate Overview/PRD kind or per-release copy is created.
 - DEC-2 · Each document shows selected front matter as a header card: kind, optional key, title, Draft/Current/Deprecated lifecycle, owner, scope, attribution/dates and authored links. Stable ID/path is read-only, no document number field is assumed, and the section rail follows body headings.
 - DEC-3 · New Decision/Design/Evaluation opens the selected envelope and appropriate body template, derives the stable-ID file path and shows its scope; no numeric document counter is assumed and Save is explicit.
 - DEC-4 · **Deferred specialized approval workflow:** Accept/Reject/Request changes may propose decision-body changes with actor/time evidence and a reason, or use a separately selected authenticated approval extension. They cannot put accepted/rejected in selected document status or invent decided front matter. Proposed publication remains visible until merged.
@@ -367,7 +374,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - WHY-1 · Task, bug and debt pages show a Why block with the linked or mentioning decisions, designs, specs and evaluations, with status, and + Link a decision.
 - WHY-2 · A doc's reader lists Led to (items and docs that link it) and Mentioned in.
 - WHY-3 · Evaluation content is a report. A proposed evaluation view may show cited Question/Verdict body excerpts in one line, distinguishing excerpts from selected metadata; no evaluation kind or verdict front-matter field is assumed.
-- WHY-4 · ⌘K "Why is…" finds decisions, evaluations and designs by text.
+- WHY-4 · Knowledge search finds permitted titles, stable IDs/keys and body text with scope/status and body excerpts; feature results link to their canonical definitions. Declare actual scope/freshness/partial indexing and exclude private notes, protected chat and inaccessible records. A title-only adapter is visibly limited.
 
 **Tech debt (DBT)**
 - DBT-1 · **Deferred debt workflow:** Record debt needs only "What we did". Missing fields show "Needs details" on the item.
@@ -433,3 +440,5 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - A18 / A19 / A23 / A24 · Historical software docs remain import sources. Selected organization files use stable-ID paths, while protected operational records remain outside shared Git.
 - A20 / U14 · Record useful rationale and shortcuts; automatic guidance/capture is independently deferred.
 - U15 · Deferred decision approval/delegation policy must authenticate actors; document owner/status fields grant no security authority.
+
+- Project navigation follows the [integrated IA](work-items-ux.md#3-flow-1--project-page); it does not require a Features/Docs tab before those experiences are served. Project Building/Live transitions, doc comments, approval/Inbox adapters and frozen release-note workflows remain proposals. Selected project/feature/document lifecycles and explicit revision/correction history take precedence; supporting content does not select those engines.

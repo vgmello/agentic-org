@@ -29,6 +29,16 @@ acceptance criteria do not establish that a migration, command or service ships.
 Read the owning primary document before changing a dependent example or rule;
 keep implemented wire/security evidence explicitly scoped to its version.
 
+[`docs/FEATURES.md`](docs/FEATURES.md) is the single feature delivery checklist.
+Update its relevant row when changing implementation or selecting/deferring scope;
+include evidence and remaining work. Mark Done only for the row's full stated scope,
+and keep unknown implementation status explicit. Requirements stay in their owning
+specifications; historical agent task logs do not establish feature completion.
+Assign each checklist row to one primary category defined in
+[`docs/FEATURE-AREAS.md`](docs/FEATURE-AREAS.md). Keep its scope/boundaries and area
+summary consistent with the checklist when changing statuses or categorization;
+cross-area dependencies use links rather than duplicate feature rows.
+
 The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See docs/design/executable-migration.md for implemented versus unavailable entry points.
 
 ## Rules
@@ -60,6 +70,46 @@ Use local subagents through the installed agentic kit when needed. Do not use th
 installed messaging CLI for routine development coordination, status, review or
 approval. Preserve its executable and live spool data for the product cutover;
 this preservation requirement does not require contacting offline developers.
+
+### Architecture ownership and efficient parallel work
+
+- The lead owns one overall plan, acceptance contract, architecture, shared
+  interfaces, dependency order and integration. Keep one fullstack integration
+  owner; return material contract/security/storage changes to the lead before
+  dependent implementation.
+- At planning and meaningful checkpoints, assess ready independent slices. Use
+  parallel work when its expected benefit justifies the handoff; record the split
+  and dependencies, or why serial work is preferable, in the current plan.
+- Allow at most two concurrent source writers across the task, including the
+  lead, with separate worktrees, nonoverlapping files and agreed interfaces.
+  While two workers write, the lead coordinates and verifies without becoming a
+  third writer. Agree an explicit ownership handoff before changing shared files.
+- Before dispatch, specify the worktree/base, exact owned files, interfaces,
+  dependencies, acceptance checks, routed model/effort and escalation conditions.
+  Supply the selected skill packet and bounded context, preserving author sessions.
+- Workers return concise receipts: changed paths/source references, check results
+  and log locations, remaining issues and decisions needed. Keep detailed logs on
+  disk. The lead uses targeted follow-up reads to assess architecture, integration
+  and acceptance; avoid repeating routine worker investigations without a concrete
+  gap, failure or contradiction. Required source inspection, independent reviews,
+  author validation and complete feature checks remain mandatory.
+
+### Communication for the lead and delegates
+
+- The main lead answers concisely in normal prose. Include the evidence, risks
+  and decisions the user needs; expand when clarity or complexity requires it.
+- Every delegated session, including implementation, lookup, architecture and
+  final review, must read and apply `.agents/skills/caveman/SKILL.md` before its
+  first response. The skill applies only to delegate communication, never to the
+  main lead's voice. It does not change task scope, model routing or review gates.
+- The lead includes the skill reference and the delegate-only scope in every
+  dispatch, including fresh-context and nested delegates. The baseline catalog
+  includes it in implementation and review packets. If a delegate cannot read
+  files, supply the skill text with its bounded assignment instead.
+- Keep required review formats, findings, uncertainty and verification evidence
+  complete. Source changes invalidate old packets: resolve and read current
+  guidance before subsequent assignments. Concise reporting never permits
+  shallower implementation, testing or review.
 
 ## Tailwind Plus (licensed UI)
 The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/agentic-org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.

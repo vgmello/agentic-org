@@ -82,6 +82,84 @@ a raw Position alone is not a browser resume token.
 
 ## Selected target adaptation and compatibility
 
+### Selected task assignment capability (additive contract)
+
+ADR-0006 r4 selects `selected_tasks_v1` as a separately negotiated contract. Its
+codecs do not make it available: runtime publication requires verified recovery,
+directory generation, writer admission, host authentication and actual service
+composition. Existing revision-2 routes/validators remain compatible; the gateway
+contract revision must advance when this capability is wired.
+
+Native `task.set_assignment` takes `{change_id,task_id,command}` on an authenticated
+office channel. `command` contains exactly `expected_revision` (positive i64),
+`assigned_team_id` and `assignee_id` (both required, string or explicit null).
+The principal supplies the actor/account; no actor or writer epoch comes from params.
+
+HTTP `POST /api/v1/organizations/{org}/tasks/{task}/assignment` takes the existing
+`{operation_id,scope,params}` shape. Here `scope` is exactly
+`{kind:"office",instance_id,org_id,office_id}` and `params` is the same complete
+command, with `expected_revision` a canonical positive decimal **string** through
+`9223372036854775807`. Decode raw bytes directly into strict object DTOs; never
+collapse duplicate wrapper/scope/command keys through `Value`. Selected IDs are
+opaque, nonempty values resolved by registries; unchanged legacy plain-ID/ULID
+validators are not their policy. Operation IDs keep existing ULID admission rules.
+
+The task namespace also supplies authorized list/detail/history/assignment-target
+reads, task-scoped content-reference chunks, and authenticated adoption staging and
+commit calls. Keep work lookup at `GET /api/v1/operations/work/{id}` with its fixed
+instance/org/office query fields, using the selected scope adapter for selected IDs.
+Completion returns compact revision/event identity, pair and admitting office;
+full revisions are strings. Chunks are <=256 KiB raw and <=1 MiB fully encoded.
+The additive native read adapter is `task.selected.read` with an authenticated
+principal and an object query tagged by `kind`: `status`, `list`, `detail`,
+`history`, `targets` or `chunk`. It never changes legacy work reads. Pages contain
+at most 50 compact cards/references. Queue filters distinguish accountable team,
+assigned team and assigned employee. Snapshot/event content references include
+the authorized task, exact revision, kind, digest and byte length. `chunk` rechecks
+the same task/actor scope and exact reference, returns at most 256 KiB raw bytes
+as hexadecimal (therefore <=512 KiB encoded content), and never accepts a path or
+an unrestricted blob URL. Clients concatenate bytes before UTF-8 decoding.
+Display previews may be shortened explicitly; original source bytes, IDs and
+numeric tokens remain in the referenced content. History coverage comes from
+verified adoption evidence; absence is `unknown`, never invented completeness.
+HTTP adapters preserve decimal-string entity revisions in every card/reference.
+The `selected_tasks_v1` capability requires a live verified host admission,
+coherent journal/files, protected owner binding and admitted directory generation;
+field/configuration presence alone does not enable it.
+
+The selected HTTP adapter uses contract revision 3, separately from retained
+revision-2 vectors. `GET /api/v1/organizations/{org}/tasks` takes exact
+`instance_id`, `office_id`, `kind=status|list`; list additionally takes
+`queue=all|owned|assigned_team|assigned_employee`, an explicit `target_id` for
+non-all queues, optional `after`, and `limit` (1–50). The task path supplies
+`GET .../tasks/{task}` for detail, `/history` (optional decimal `after`, `limit`),
+`/assignment-targets` (`target_kind=team|employee`, optional `after`, `limit`),
+and `/content` (`revision`, `kind=snapshot|event`, `sha256`, `byte_length`,
+`offset`, `limit`). Each retains `instance_id` and `office_id`; the organization
+and task are the decoded path identities. Duplicate, missing, unknown and
+inapplicable query fields are rejected before dispatch. Content revisions are
+decimal strings, byte sizes/offsets bounded nonnegative safe integers. Responses
+are `{result: <selected read result>}`; no native grant enters browser JSON.
+Work lookup retains exact `instance_id`, `org_id`, `office_id` query fields.
+The browser persists only an original operation reference bound to instance,
+account, office and task before possible dispatch, never a replayable command
+outbox or proof. Reload reconciles through lookup; unknown/missing/expired is
+never permission to mint a replacement ID and repeat the original intent.
+
+The selected native outcome uses `status: completed` for a completed assignment,
+or `status: rejected` with `code` and optional `current` assignment state. A
+conflict's current state records organization, office, task, revision and both
+assignment fields at its decision barrier and remains part of the protected
+receipt. Earlier receipts without that coverage retain its absence. Selected
+`operation.get {kind:"work",id}` uses `status: committed` with that result, or
+`status: rejected` with `{code,message,current?}` in `refusal`; the selected
+adapter preserves current state rather than reducing it to legacy `ApiError`.
+Every revision in browser assignment results and lookup refusals is a decimal
+string too. Errors after possible publication are unresolved; clients keep the
+original operation ID for reconciliation.
+All reads/chunks/lookups recheck actor/scope; a content reference is not authority.
+Session cookies/proofs and no-store/error rules below apply unchanged.
+
 The wire tables and examples in §§2–9 describe the published HTTP v1 revision 2
 contract, including its current ULID operation admission, native `member` names,
 name-only organization create and multi-membership operations. They are retained

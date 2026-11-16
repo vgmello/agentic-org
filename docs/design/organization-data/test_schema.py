@@ -352,6 +352,29 @@ class DraftSchemaTests(unittest.TestCase):
             self.db.rollback()
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM task_events").fetchone()[0], 1)
 
+    def test_codec_two_projection_retains_tokens_and_requires_profile_and_source(self):
+        # DDL preservation only: the codec/service independently validates the
+        # hash, header, public classification and source identity before admission.
+        record = event(1, {"type": "future_event"})
+        record.pop("change")
+        record.pop("source_metadata")
+        record.update(schema_version=2,
+                      change_json='{"type":"future_event","n":184467440737095516160001}',
+                      source_metadata_json='{"legacy_event":{"n":-0.000000000000123456789E+009}}',
+                      resource_profile="selected-task-resources/1",
+                      event_bytes=b'{"original":"retained source bytes"}')
+        for missing in ("resource_profile", "event_bytes"):
+            invalid = dict(record)
+            invalid.pop(missing)
+            with self.subTest(missing=missing), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "task_events", **invalid)
+            self.db.rollback()
+        insert(self.db, "task_events", **record)
+        self.db.commit()
+        saved = dict(self.db.execute("SELECT * FROM task_events").fetchone())
+        for key in ("change_json", "source_metadata_json", "event_bytes", "resource_profile"):
+            self.assertEqual(saved[key], record[key])
+
     def test_invalid_assignment_history_payloads_are_rejected(self):
         invalid_changes = [
             {}, {"type": None}, {"type": ""},
