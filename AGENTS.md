@@ -27,6 +27,12 @@ acceptance criteria do not establish that a migration, command or service ships.
 Read the owning primary document before changing a dependent example or rule;
 keep implemented wire/security evidence explicitly scoped to its version.
 
+[`docs/FEATURES.md`](docs/FEATURES.md) is the single feature delivery checklist.
+Update its relevant row when changing implementation or selecting/deferring scope;
+include evidence and remaining work. Mark Done only for the row's full stated scope,
+and keep unknown implementation status explicit. Requirements stay in their owning
+specifications; historical agent task logs do not establish feature completion.
+
 The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See docs/design/executable-migration.md for implemented versus unavailable entry points. Owners above retain the same responsibilities after the renames.
 
 ## Rules
