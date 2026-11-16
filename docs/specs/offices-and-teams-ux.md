@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 18
+revision: 19
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -24,11 +24,13 @@ history and do not reintroduce the desktop flows.
 
 Requested by ada for the user.
 
-**Sources:** ada's `docs/design/offices-hq-and-satellites.md` (approved), `docs/design/teams-and-org-chart.md` (**approved by the user 2026-11-08**) and `docs/design/create-organization.md`. Look and feel: `prototype-agency` and Tailwind Plus application UI (dark sidebar, gray-900 ground, indigo-500 accent), as the app's onboarding screens already use.
+**Sources:** ada's `docs/design/offices-hq-and-satellites.md` (approved), `docs/design/teams-and-org-chart.md` (**approved by the user 2026-11-08**) and `docs/design/create-organization.md`. Look and feel follows the [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules): gray-800 surfaces, flat rows and the accessible indigo accent.
 
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 19 (2026-11-15):** Teams index, mixed Members directory and one reporting tree replace the three canvases; retain selected home-team/accountability/editing rules and move Offices under Organization settings.
 
 **Revision 18 (2026-11-15):** rewrites chart forms, diagrams, model wording and TEAM/PEOPLE/REPORT/OWNER criteria for one home team, subtree leads, independent reporting, required project owner and optional contributors. Owner/HR employee exemptions are removed. Existing wire adapters need an explicit migration; no new commands are introduced. Layout-changing operations wait for verified turn/process quiescence and cleanup, without depending on deferred run modes or automatic restart. Undo remains deferred.
 
@@ -172,7 +174,7 @@ Instance admin and Recovery code. §10 points to the recovery-code screens in
 7. **The invitation is shown once.** HQ retains only its verifier/public material. The screen uses **Copy invitation** and **New invitation**; creating a replacement cancels the old invitation. Destination setup accepts the secret through protected input, not a desktop URL handler.
 8. **The check code identifies the joining request/key.** The CLI displays it on the joining machine; the owner verifies it through a trusted session to that machine. Do not treat terminal copy prevention as a security guarantee.
 9. **Check-code input is one text field**, not one box per character (screen readers, paste, password managers). Case, spaces and dashes are ignored.
-10. **Org chart** is one nav item with three pill tabs: **Teams | People | Reporting lines**. Offices has its own nav item (bottom group, above Settings).
+10. **Teams** contains the Teams index, Members directory and one Org chart reporting tree. Offices lives under Organization settings; the old three canvases and top-level Offices item are replaced (§7).
 11. **There are only teams.** No guilds, no divisions, no labels. A team that owns teams simply shows "3 teams".
 12. **Every edit has a non-drag path** (menu, dialog, keyboard). Drag-to-move and drag-to-change-manager are shortcuts, never the only way.
 13. **Office outboxes report Pending and Blocked.** HQ shows their known outcomes. A disconnected browser marks its view stale and its own unsubmitted text unsaved; it does not become a satellite outbox.
@@ -211,38 +213,34 @@ The owner and the instance admin are often the same account, but they are differ
 
 ## 2. Visual direction (Tailwind Plus application UI)
 
-| Need | Component |
-| --- | --- |
-| Menu-bar dropdown (v2 only) | Deferred native macOS tray menu; v1 organization navigation and Needs you are in-page browser controls |
-| In-app switcher | Sidebar footer button + Tailwind Plus *Dropdown with dividers* |
-| Lists (organizations, offices, members) | *Stacked list* with a status *Badge with dot* (text always present) |
-| Forms (Add office, New team, Add person) | *Slide-over* (right, `max-w-md`) |
-| Confirmations and approval | *Modal dialog* (centered, with icon) |
-| Warnings (join, remove) | *Alert* with yellow left accent border; red for security errors |
-| Details of an office or member | *Description list* inside the slide-over |
-| Pickers (owner team, members, project, manager) | *Combobox* with secondary text |
-| Charts | Cards on `bg-gray-800/50`, `outline-white/10`, rounded-lg; connectors `white/15` (decorative) |
-| View tabs | *Tabs in pills* (Teams, People, Reporting lines) |
-| Owner bar | *Card with header*, `bg-indigo-500/10`, `outline-indigo-500/30` |
+Apply [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules)
+to these flows. Lists use flat divided rows; forms use the shared controls and
+right sheets, confirmations use dialogs, and switchers use modal menus. An owner
+account card uses a neutral white/3 surface and white/10 outline, not an indigo
+fill. A selected chart/profile entity never gains authority from its styling.
+Navigation tabs use links/underline when they have distinct URLs.
 
-Status colors reuse the existing tokens: green = online, blue = starting, gray = offline/invited, amber = needs you / waiting, red = unreachable / stopped.
+Office pills use green for Online, sky for Starting/Checking, gray for Invited,
+an outline for Offline/Unknown, red for Stopped/Unreachable, and amber only when
+an owner action is required (for example approving a join or an update). Words,
+icons and freshness distinguish states; color does not prove readiness.
 
 ## 3. Status vocabulary
 
 ### 3.1 Office status (one at a time, from HQ, with reported location and freshness)
 
-| Label | Icon (Lucide) | Color | When | Secondary text |
+| Label | Icon (Heroicons) | Color | When | Secondary text |
 | --- | --- | --- | --- | --- |
-| Online | `circle` filled | green | The office runs and is in sync with HQ (HQ itself: it runs) | — |
-| Starting | `loader` | blue | Its owning instance reports the office starting | —; for a joining office HQ has approved, "copying records" until its first copy of records completes *(rev 15)* |
-| Offline | `circle` outline | gray | The office is disconnected from HQ; its current execution state is not confirmed | "last seen 2 h ago" |
-| Unreachable | `wifi-off` | red | HQ cannot be reached by the browser or the joining CLI | "last synced 10 min ago" |
-| Stopped | `circle-x` | red | Its owning instance confirms the office is stopped/unavailable | the reason from §3.3, in plain words |
-| Update needed | `circle-arrow-up` | amber | The office's server is too old for the organization's level | "needs Agentic Org 1.4 or later" |
-| Invited | `mail` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
-| Wants to join | `bell-ring` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
-| Waiting for approval | `hourglass` | amber | The selected joining office awaits HQ approval. Only in the joining instance's own view, never in HQ's Offices list *(rev 15)* | "type the code at HQ" |
-| Unknown | `circle-help` | gray | The app has no live status for it, or the status is `unknown` or missing (never shown as healthy) *(rev 6, rev 8)* | "Status unknown" |
+| Online | `check-circle` | green | The office runs and is in sync with HQ (HQ itself: it runs) | — |
+| Starting | `arrow-path` | sky | Its owning instance reports the office starting | —; for a joining office HQ has approved, "copying records" until its first copy of records completes *(rev 15)* |
+| Offline | `signal-slash` | gray | The office is disconnected from HQ; its current execution state is not confirmed | "last seen 2 h ago" |
+| Unreachable | `signal-slash` | red | HQ cannot be reached by the browser or the joining CLI | "last synced 10 min ago" |
+| Stopped | `x-circle` | red | Its owning instance confirms the office is stopped/unavailable | the reason from §3.3, in plain words |
+| Update needed | `arrow-up-circle` | amber | The office's server is too old for the organization's level | "needs Agentic Org 1.4 or later" |
+| Invited | `envelope` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
+| Wants to join | `bell` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
+| Waiting for approval | `clock` | amber | The selected joining office awaits HQ approval. Only in the joining instance's own view, never in HQ's Offices list *(rev 15)* | "type the code at HQ" |
+| Unknown | `question-mark-circle` | gray | The app has no live status for it, or the status is `unknown` or missing (never shown as healthy) *(rev 6, rev 8)* | "Status unknown" |
 
 **From the wire to the label** *(rev 8)*. `OfficeInfo.status` shows as one label:
 
@@ -730,7 +728,7 @@ setup again with the invitation.
 
 ## 6. Flow 3 · Offices and Add office
 
-### 6.1 Offices screen (nav: Offices)
+### 6.1 Offices screen (Organization settings › Offices)
 
 ```
  Offices                                                        [+ Add office]
@@ -858,25 +856,26 @@ is authorized and uses the office protocol's operation IDs. This is distinct fro
 an unsaved browser draft. Local work and shutdown supervision continue without a
 browser connection.
 
-## 7. Flow 4 · Org chart: Teams, People and Reporting lines
+## 7. Flow 4 · Teams, Members and Org chart
 
-Nav **Org chart**, pill tabs **Teams | People | Reporting lines**. Switching preserves search and the selected employee. Toolbar: Search members · **Office: All ▾** (Teams and Reporting lines) · Collapse all / Expand all · zoom (− % + Fit) · List view · **New team** or **Add person**. Every drag action has a menu/dialog and keyboard equivalent. The word Member remains UI copy for the selected `employees` entity.
+`/teams`, `/teams/members` and `/teams/org-chart` share the Teams · Members · Org chart view switch. Selecting a view focuses its heading. Entity routes use stable IDs and old routes redirect with query strings preserved (app-shell-ux.md §0).
 
 ### 7.0 Agents and people
 
-Agents and people differ by shape and words, never color alone:
+Agents and people share the initial-avatar pattern; kind is written as a word,
+not inferred from a robot glyph, color or avatar shape:
 
 | | Agent | Person |
 | --- | --- | --- |
-| Avatar | Rounded square with robot glyph, indigo tint | Circle with initials, neutral gray |
-| Wireframe | `[R]` | `(S)` |
+| Avatar | Circle with initials | Circle with initials |
+| Kind label | Agent | Person |
 | Secondary text | Executing office and freshness, or **Unplaced** | Contact if any; never execution office |
 | Screen reader | “Riley, agent” | “Sam Ortiz, person” |
 | Home-team card | Agents row | People row |
 
 Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employment (`active | inactive`), legacy operating state and observed process status are separate.
 
-### 7.1 The owner, above every view
+### 7.1 The owner account and linked employee
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -890,38 +889,19 @@ Every employee has one required home team and appears once in that tree. Display
 - **Message/Ask** can retain the current owner security-principal recipient route. Task assignment stores an employee ID: list a linked active owner employee if present; do not manufacture one from a sign-in account. Current wire `owner` addressing stays unchanged until explicitly migrated.
 - The built-in HR shortcut may sit beside the bar. Its employee also has a valid home team and appears in the team and reporting views; the shortcut does not hide it from employee counts. Earlier built-in lifecycle/manager restrictions remain a separate UX policy to implement; home membership itself never appoints HR as a lead or manager.
 
-### 7.2 Teams view
+### 7.2 Teams index, Members directory and team pages
 
-```text
-(owner account bar, §7.1)
-                  [Lumen Labs · 4 teams · 5 agents · 3 people]
-                    ┌────────────────┴────────────────┐
-        ┌ Product · TEAM-1 ──────────┐  ┌ Platform · TEAM-2 ─────────┐
-        │ Lead: (S) Sam Ortiz       │  │ Lead: [A] ada              │
-        │ Agents [H] · People (S)   │  │ Agents [A][M] · People —   │
-        │ 2 child teams             │  │ P-8 Agentic Org · Owner    │
-        └────────────┬───────────────┘  └────────────────────────────┘
-               ┌─────┴─────────┐
-     ┌ Checkout · TEAM-3 ─────┐ ┌ Growth · TEAM-4 ───────────┐
-     │ Lead: [R] Riley       │ │ No lead                   │
-     │ Agents [R] · People(J)│ │ Agents [E] · People (P)   │
-     │ P-9 Checkout · Owner  │ │ P-8 Agentic Org · Contributor │
-     └───────────────────────┘ └───────────────────────────┘
-```
+Teams is an indented divided-row index of the recursive team tree, showing TEAM- reference/name, optional direct lead, direct people/agent counts and active projects with accountable Owner/Contributor roles. Keep New team, Move team, home-team moves, Change manager and project owner/contributor editing under their existing revision/authorization/safety rules. Project owner cannot be removed without a replacement.
 
-- **Root:** organization name and real employee/team counts. Count employees once, including any owner/HR employee; exclude security principals without employee profiles. Cards list direct members, keeping child-team counts separate from direct-employee counts.
-- **Card:** TEAM- reference and name · menu · optional direct-member lead · Agents and People rows (up to four avatars, +N and counts, dash when empty) · child teams · first two project chips then +N. Repeated team names remain distinguishable by reference/path.
-- **Expand** (click or Enter): separate Agents/People headings, avatar, name, `@handle`, home-team appointment title. No “+N teams” badge. A lead caption says “Manages this team and its child teams”; ordinary ancestor-team membership conveys no such authority.
-- **Project chips:** **Owner** or **Contributor** badge with words/icons. A contributor popover links the accountable owner and other contributors. Participation never creates co-owners or an inferred project-lead list.
-- Missing required home team/project owner is a validation/import repair issue, not an ordinary **Not in a team** or **Unassigned projects** tray. A repair notice links staged records and blocks admission until resolved; existing invalid data is not silently assigned to a guessed team.
-- **Office filter:** All · each office · Unplaced. Highlight placed agents with a ring and tag; dim others, including people, without hiding them. “Highlighting 3 agents at Studio Mac · Clear.” Keep observed placement freshness visible.
-- **Quick view:** Home team (link), explicit Reports to, and team-lead responsibility as separate facts. The chart is `role="tree"`; connectors are decorative. Arrow keys navigate, Enter expands, Space opens the menu. List view uses the same indented tree.
+Members is the mixed directory, filtered All · People · Agents. Each divided row shows avatar/name/handle/role, kind in words, truthful presence where available and Working on {task} when known. People means human employees. Show the authenticated owner account as an account card, not a manufactured employee. If an owner has a linked employee, that employee remains a normal member in its required home team and appears/counts once. HR's employee obeys the same home-team/count rule.
 
-### 7.3 People view (the human org chart)
+Org chart is one vertical reporting tree, replacing the earlier Teams/People/Reporting lines canvases, their View menu, Fit/zoom and chart-specific search. Put the owner account card above the tree as presentation; records without an explicit employee manager are grouped there as No explicit manager without inventing a manager ID. A linked owner employee keeps its actual reporting position. Team hierarchy lives in Teams rows and employee discovery in Members/top-bar search. Preserve keyboard tree navigation, collapse/expand, employee menus, Change manager and a profile link on every employee node. Reporting and subtree-lead authority remain separate and must not silently rewrite one another.
 
-The same team tree shows only people on each card. An agent lead can still appear as “Lead: Riley (agent)”. Teams with no direct people stay compact (“No people · 3 agents”), preserving hierarchy and **Add person to Platform…**. All people appear at exactly one home team, including a linked owner employee. No teamless tray is offered.
+A team page `/teams/:teamId` shows name/reference, optional lead, real counts, purpose and Hire or add (Hire an agent / Add a person). Above its tabs show at most six member rows and All N members. Tabs are Work, Projects, Activity, Conversations; Work is default. Work rows show reference/title, project · assignee · priority metadata and one trailing work-state pill. Team members do not repeat their team in each row. Missing tab data uses honest empty states. Routines is absent until its engine is selected and served.
 
-The info alert always says: “Agents can reach people registered in this organization. Add someone to make them available as a participant.” **Add person** is its action. With no people, compact cards remain and the action reads **Add your first person**. Registration is not a sign-in, credential or permission grant. Loading, Pending/Blocked and live states follow Teams view.
+Delete/archive on the Teams index moves focus to the next surviving row, else the previous row or index heading; it never returns to a removed control. Project-team removal retains the corresponding next/previous/remove-region focus rule. A view-switch navigation focuses its destination heading.
+
+
 
 ### 7.4 Add, edit and remove a person
 
@@ -984,7 +964,7 @@ The move uses the expected employee revision and updates profile `home_team_id` 
 - Done: “Moved Checkout to Platform.” **Undo is deferred**; no automatic eight-second reverse mutation is claimed. A later reverse move is a new authorized revision-checked operation.
 - A concurrent cycle/revision conflict changes nothing and displays current state: “Platform is now under Checkout. Choose another parent.” Preserve focus/input.
 
-### 7.8 Reporting lines view
+### 7.8 Org chart
 
 Draw `reports_to_employee_id` separately from team hierarchy. The owner bar can act as a visual grouping root for records with no explicit employee manager; label that absence **No explicit manager**, not an inferred foreign key to the owner. A linked owner employee appears exactly once in its recorded reporting position, retaining its home team. Built-in HR is an employee in this view too.
 
@@ -1004,7 +984,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 
 - Prefer **Archive** to preserve team IDs/history. Explain how current employees, owned projects/tasks and live assignments/lead appointments will be resolved before admitting an incompatible lifecycle change.
 - Delete is blocked while child teams, home employees, accountable projects/tasks or other durable references remain. List blockers with links and explicit move/reassign/archive actions. No cascade into teamless employees or ownerless projects; no silent history deletion. “Checkout still has 1 child team and 2 home employees. Resolve them first.”
-- Loading: owner bar/root then skeleton cards/nodes. Large organization (>30 teams or >50 reporting nodes): collapse below level two and Fit. Live updates apply in place, retaining selection; removed/archived card focus goes to its parent or a stable ancestor.
+- Loading: owner bar/root then skeleton cards/nodes. Large organization (>30 teams or >50 reporting nodes): collapse below level two; keep expand/collapse and keyboard navigation, without Fit/zoom. Live updates apply in place, retaining selection; removed/archived card focus goes to its parent or a stable ancestor.
 - Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Riley's home team is Office, so Riley cannot lead Checkout”; “Choose an accountable owner team”). Current-wire `owner_protected` remains a compatibility error, not a target rule forbidding an owner employee from having a team.
 
 ## 8. UX acceptance criteria
@@ -1099,29 +1079,29 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - OFC-48 · *(new, rev 16)* The Offices list's footer reads "Shown from HQ. Statuses include last-seen information."
 
 **Org chart: Teams (TEAM)**
-- TEAM-1 · *(rev 18)* Teams view draws the recursive parent_team_id tree. Cards show TEAM- reference/name, direct lead or No lead, direct Agents/People rows/counts, child-team count and projects marked Owner or Contributor.
-- TEAM-2 · *(rev 18)* Every employee appears exactly once at the required home team. No multiple-membership badge or checklist is offered; name, handle and home-team appointment title remain distinct.
+- TEAM-1 · Teams index uses indented divided rows for the recursive parent_team_id tree, showing TEAM- reference/name, optional direct lead, direct People/Agents counts and projects marked Owner or Contributor.
+- TEAM-2 · Every employee is counted once at the required home team and listed once in Members. No multiple-membership badge or checklist is offered; name, handle and home-team appointment title remain distinct.
 - TEAM-3 · *(rev 18)* Required home-team failures appear as validation or unresolved import repair, never an ordinary Not in a team tray. Owner and HR employee records obey the same constraint.
-- TEAM-4 · *(rev 2)* The office filter (each office, and Unplaced) highlights agents placed there with a ring and a tag, dims everyone else including people, and hides no one.
+- TEAM-4 · Agent rows may show real executing office/Unplaced with freshness; office placement neither owns teams/projects nor changes directory membership. The earlier canvas-highlighting filter is retired with those canvases.
 - TEAM-5 · *(rev 18)* New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Create a valid team before employee/bootstrap admission; preserve current-wire name validation only in its adapter.
 - TEAM-6 · *(rev 18)* Move home team is one employee-revision-checked recoverable operation updating field/path and resolving departed leadership; preserve ID, handle, reporting, history and current task assignments. Stale state keeps input and explains the conflict.
 - TEAM-7 · *(rev 18)* Team move works by drag and Move to…, excludes self/descendants, previews subtree effects and preserves identity. Undo is deferred; concurrent cycle/revision failure refreshes current state without applying the edit.
 - TEAM-8 · *(rev 18)* Projects have a required single accountable owner and optional contributors, editable from project/team entry points. Owner removal requires a replacement; changing owner updates task accountability/history together and leaves assignments unchanged.
 - TEAM-9 · *(rev 18)* Team deletion is blocked by child teams, home employees, owned projects/tasks and durable references, listing repair actions. Archival preserves historical identity. No cascade produces teamless employees or ownerless projects.
-- TEAM-10 · *(rev 2)* All three views are fully usable from the keyboard (tree navigation, menus, Move to…, Change manager…), and each has a List view.
-- TEAM-11 · *(new)* The org chart has three tabs, Teams, People and Reporting lines, over the same data; switching keeps the search and the selected member, and editing is available from each.
-- TEAM-12 · *(new)* Agents and people are told apart without color: agents have a square tile with the robot glyph, people a round avatar with initials, and screen readers say "agent" or "person" after the name.
-- TEAM-13 · *(rev 18)* A participating project appears on owner and contributor cards with distinct badges and a popover linking the accountable owner and other contributors; optional participation never creates additional owners.
+- TEAM-10 · Teams, Members and Org chart are fully usable from the keyboard, including view-switch heading focus, tree navigation/expand/collapse, menus, Move to… and Change manager…. Removing a row/control focuses a surviving neighbor or stable heading.
+- TEAM-11 · Teams · Members · Org chart switch between the index, mixed directory and one vertical reporting tree. The old three canvases, View menu, Fit/zoom and chart search are removed; editing survives in index/directory/tree menus.
+- TEAM-12 · Agents and people use initial avatars and explicit Agent/Person words, including the accessible name; kind is never conveyed by color, shape or robot glyph.
+- TEAM-13 · A participating project appears in owner/contributor team rows with distinct words/badges and links to its accountable owner and other contributors; optional participation never creates additional owners.
 - TEAM-14 · *(rev 18)* New projects cannot omit their owner team. Unresolved legacy ownerless records stay in explicit repair/staging rather than an ordinary Unassigned projects tray.
 - TEAM-15 · *(rev 18)* The lead picker accepts only direct home-team employees and states subtree management, including child leads. Project cards identify accountable ownership without inferring project co-leads.
 
 **Org chart: People (PEOPLE)**
-- PEOPLE-1 · The People view shows the same team tree with only people on the cards; teams without people stay as compact "No people" cards; agents appear only when naming a team's lead, marked "(agent)".
-- PEOPLE-2 · The People view always shows that agents can only reach the people listed in the organization.
+- PEOPLE-1 · Members lists people and agents as divided rows, filtered All · People · Agents, with name/handle/role, kind in words, real presence when available and current task when known.
+- PEOPLE-2 · The directory explains that agents can reach people registered in the organization, with Add a person; registration does not grant sign-in or authority.
 - PEOPLE-3 · *(rev 18)* Add person requires name, independent handle and one valid home team, with optional contact and explicit employee manager. Team entry points prefill the home team; accepted people appear once there.
 - PEOPLE-4 · *(rev 18)* Duplicate display names are allowed; handles are explicit lowercase identifiers unique across agents/people. Invalid or unavailable handles show inline errors/suggestions and block submission; current reserved routing/ID namespaces remain preserved by the adapter.
 - PEOPLE-5 · *(rev 18)* Deactivation preserves ID, profile, required home team and handle; preview/resolve live leadership, reporting and assignments. History is retained; hard delete requires backend proof of no history/references. Assignment cleanup never erases accountability or automatically changes task status.
-- PEOPLE-6 · People never show an office, and the office filter never highlights them.
+- PEOPLE-6 · People never show execution placement or invented runtime presence.
 - PEOPLE-7 · When an agent's message or task fails because the recipient isn't in the organization (or was removed), the agent's activity says so in plain words, with Add a person… for an unknown recipient.
 - PEOPLE-8 · *(rev 18)* Renaming a person does not change their handle. Explicit handle changes require separate uniqueness/compatibility validation and show the new address before acceptance.
 

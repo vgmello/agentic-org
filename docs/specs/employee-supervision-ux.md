@@ -2,7 +2,7 @@
 kind: spec
 title: "Employees: supervision, goals, harness identity and private delegates (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: owner
 created: "2026-11-09"
 updated: "2026-11-15"
@@ -24,6 +24,9 @@ purpose agent. Those choices are driven by organization processes, with defaults
 organization can change. Processes are injected; standards are looked up. Tool help
 teaches the `agent-os` commands separately (the request used the legacy `org-agent` name). Channels let an agent ask a team when it
 doesn't know whom to ask, then continue with the right person in a DM.
+
+Revision 4 retains Eden's unscoped remote-worker coordination question in §5;
+it selects no cloud transport, presence source or additional execution authority.
 
 Revision 3 reconciles the body with organization-data 04/10/11/14/16/17.
 Selected execution uses explicit logical turns/attempts and one main-process slot;
@@ -219,6 +222,16 @@ Unknown usage is incomplete, never zero; release warning caps never stop work.
 - Which installed versions of Claude Code, Codex and Antigravity pass the new native-definition and delegation checks? Vendor documentation is evidence of format, not proof of isolation in our launch configuration.
 - What default probe deadlines, reminder interval, helper size/time caps and aggregate resource ceilings fit the measured runtimes? Keep them explicit, bounded and inspectable; do not invent a per-agent limit editor while RUN-6 exposes organization defaults only.
 - What memory schema and retention rules should checkpoint candidates use? The invariants in §3 and EMP-11/12 apply whichever storage format is chosen.
+
+- **Remote-worker integration (unscoped, deferred):** how should a lead and a
+  remote/cloud worker exchange work and results in both directions with an audit
+  trail and visible remote-state evidence? Define delivery and acknowledgement,
+  access to required project inputs, and how results return. A worker that can
+  see only pushed files must not be presented as having the lead's live checkout
+  or receiving an unimplemented local-to-cloud message path. This is the design
+  need recorded in Eden's backlog, not a selected transport or permission to start
+  an additional employee process; selected placement/fencing and messaging
+  authorization still apply.
 
 These questions remain open for the deferred proposals. They do not authorize a
 scheduler/memory/delegate engine or alter the selected execution data contract.

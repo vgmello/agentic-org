@@ -1,6 +1,6 @@
 # Design: typed tasks, features, projects and project docs (W7)
 
-Status: **selected target integration design, revision 3**, 2026-11-15. Owner: ada. The library remains **`org-work`**. This document reconciles W7 with [organization data](organization-data/README.md); it does not change application code, authorize a migration or claim that the target services exist. The [authority map](documentation-authority.md) separates target data from current runtime evidence.
+Status: **selected target integration design, revision 4**, 2026-11-15. Owner: ada. The library remains **`org-work`**. This document reconciles W7 with [organization data](organization-data/README.md); it does not change application code, authorize a migration or claim that the target services exist. The [authority map](documentation-authority.md) separates target data from current runtime evidence.
 
 ## In one paragraph
 
@@ -85,6 +85,8 @@ Every foreign reference and filename uses the immutable stable ID. New IDs are U
 
 Inside a selected scope use `T-42`; outside use `P-8/T-42` or `TEAM-12/T-42`. Type icons/words distinguish Bug T-42 and Request T-43. Pending records show **Pending number** plus a copyable stable ID; any short display must resolve unambiguously and is not a final reference. Never strip B-/REQ- prefixes to reuse their old number. An approved import must resolve namespace collisions and record explicit historical-reference mappings.
 
+A target resolver requires unambiguous owning scope, not a first match: project/team for T, project for R and project plus release for M. Explicit page/conversation context supplies only the scopes it actually knows. Global lookup lists permitted matches with canonical qualified references; insufficient scope asks for qualification. Echo the resolved qualified reference before a mutation. Case-insensitive/hyphen-less conveniences, legacy text-key/short-ID precedence and reserved-key grammar require a separate adapter decision; they cannot change selected counters or historical mappings.
+
 ### 1.2 The core (every kind)
 
 | Field | Selected meaning |
@@ -145,6 +147,8 @@ updated_by_id: 019a8541-1800-7000-8000-000000000032
 ```
 
 Save at `projects/019a8541-1800-7000-8000-000000000008/work/tasks/019a8541-1800-7000-8000-000000000042.md`; the body explains overlap rejection and concurrency evidence. This is P-8/T-42; creator 031 remains reporter although updater 032 assigned Platform/Ana. A projectless request uses `type: request`, null project/feature/milestone and a valid owning team, with its canonical file under the full team ancestor chain. It does not copy this project's number into the team's scope.
+
+The task-page Output view can collect existing permitted document links and supported repository/branch/commit/file evidence, with unresolved targets explicit. A shared completion explanation remains evidence, never an inferred outcome from private notes/chat. Done does not establish review, merge, validation, release or deployment. A new outcome scalar, arbitrary URL/path targets and completion gates require explicit link/lifecycle contracts.
 
 ### 1.4 Bug
 
@@ -628,11 +632,15 @@ The heading preserves old links. Current executable naming is **`agent-os`**; in
 
 Target UX/CLI adaptation must resolve stable IDs and selected scoped references; distinguish type from reference prefix; show accountable versus assigned team and individual; send atomic assignment pairs with expected revision; retain pending-number records; reuse operation identity on retry; show conflict/unknown outcome without claiming acceptance; and expose private notes only through an authenticated separate author-only capability. Preserve bound-actor checks, app-only restrictions and accepted exit/error contracts for existing methods.
 
+Future adapters should provide compact one-item-per-line default lists, documented JSON output and actionable refusals in a deterministic state/actor/guard order, without leaking inaccessible identities. Preserve existing command support/security and same-operation retry behavior. Old PRD command inventories and flags are not newly available agent-os methods; help must reflect implemented capabilities. Shared comments stay named comments, and mutations do not automatically post private rationale or started/done chatter.
+
 ## 6. Time figures: how they're derived
 
-Task history and saved waiting spans permit durable duration calculations, but data selection does not select the old automatic triage/decision waiting engine or analytics retention. Lead/cycle views must identify lifecycle endpoints and incomplete imported history. A `history_baseline` starts evidence at import; it does not reconstruct missing prior rounds. Count overlapping saved waiting spans once. Never infer a historical fixer from current assignment or infer active work from wall-clock status.
+Use the [shared duration definitions](../specs/costs-and-insights-ux.md#shared-duration-definitions). With complete evidence, Started is first In progress, preserved across reopen; a verified direct To do → Done records both at once and has zero cycle. Lead runs from creation and cycle from first Started to last completion (or now while open), excluding the union of intervening Done/Cancelled spans. Start day 0, Done day 2, reopen day 9, Done day 10 yields three days of cycle time. Sum status intervals from actual events; “picked up” requires an actual start after assignment.
 
-Retain the UX distinction between working time and untracked time: until complete session evidence exists, show **the rest (working time isn't tracked yet)**, never label it idle. Example: lead 1 d 4 h, waiting 3 h, blocked 0, rest 1 d 1 h. Working/idle splits need complete evidence for their reported interval. Usage/cost attribution comes from document 10's durable ledger including helpers/reviewers and historical snapshots, not counters in the task file or joins to current ownership. Budget records/controls in document 17 remain distinct; no runtime budget evaluator is claimed.
+A `history_baseline` starts evidence at import and leaves earlier endpoints/time unavailable, never zero or fabricated. Show coverage and open intervals “so far”. Waiting is measured from saved spans independently of status; overlaps count once. Shared formatting/units follow the cost spec. This selects neither wait creation nor an analytics engine. Never infer a historical fixer or active work from current assignment or wall-clock status.
+
+Retain the UX distinction between working time and untracked time: until complete session evidence exists, show **the rest (working time isn't tracked yet)**, never label it idle. Example: lead 28 h, waiting 3 h, blocked 0 min, rest 25 h. Working/idle splits need complete evidence for their reported interval. Usage/cost attribution comes from document 10's durable ledger including helpers/reviewers and historical snapshots, not counters in the task file or joins to current ownership. Budget records/controls in document 17 remain distinct; no runtime budget evaluator is claimed.
 
 ## 7. Phases and owners
 
@@ -641,6 +649,16 @@ Documentation selects the data target; implementation/migration phases need expl
 ### 7.1 Gaps from Eden's review, as plan items
 
 Preserve useful requirements without automatically selecting their engines: accessible triage/verification, explicit reasons and duplicate evidence, checklist provenance, safely attributed doc editing, live conflict handling and honest incomplete time figures. Areas, Undo, checklist promotion/templates/gates, process-derived steps, automatic fix/feature/debt propagation, retrospective analytics and scheduling remain individually deferred in the UX specs. Their earlier detailed proposals remain in Git history, not current plan phases.
+
+### 7.2 Retained task/planning requirements awaiting decisions
+
+- **Tracking (AC-TK1–2):** Following is distinct from urgent Inbox waits. Specify per-authenticated-reader durable last-seen cursors and manual/automatic follow reasons; count changed tasks, exclude self-caused shared changes and all private-note activity/existence, clear from any task entry point and keep actual owner waits visible through filters. Nested-child rollups need a subtask model. Selected watchers alone implement none of these behaviors.
+- **Verified source attribution (AC-TK3):** keep any future requested-by/message relationship separate from immutable creator/reporter. Verify directly addressed/mentioned source and source access; no caller-supplied sender or arbitrary readable message suffices. Keep protected links/metadata hidden from unauthorized readers and require a sufficient permitted shared brief.
+- **Lifecycle/review (AC-TK4–6):** select supported transitions, reviewer/defaults, no self-approval, outcome guards, reassignment/reset rules and source-derived owner-wait disposition explicitly. Assignment alone changes only the document-12 pair; old project-membership/owner role grants do not govern target authorization. Review never grants private-note access.
+- **Shared brief/comment history (AC-TK7):** preserve change rationale and failed drafts, but select edit/delete/version readers and secret-redaction/backup retention before promising erasure. Immutable shared Git/events cannot be silently rewritten; private notes instead follow document 05, with no owner exception or body-version archive.
+- **Subtasks/steps (AC-TK8):** a future one-level parent model must retain ordinary child IDs/history and define parent completion guards, promotion-derived ticks, closed-parent constraints and correlated cancel/reopen cascades affecting only children changed by that cascade. Current checklist links/required flags are evidence, not that engine.
+- **Planning (AC-PL2–7):** decide stable backlog rank, new-bottom/return-top rules, before/after and ordered batch moves, atomic validation and true no-op behavior. Also decide dates, neutral missed-target display, close/reopen reasons, explicit open-item disposition, planner authorization and honest progress denominators. Keyboard/menu parity must accompany any drag. No rank field, automatic rollover or lifecycle/permission engine is inferred.
+- **Current planning boundary:** task milestone membership remains independent of explicit multi-release manifests; M is release-scoped and all tasks use T. HQ creates releases/milestones. Do not port exclusive release-or-milestone plans, inherited child plans, project-global M/B counters or satellite allocation from historical fixtures. Points, critical-path analysis, recurring schedules and task-template execution remain unselected.
 
 ## 8. Tests that prove the rules
 

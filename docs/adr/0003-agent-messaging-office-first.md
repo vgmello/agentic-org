@@ -12,6 +12,14 @@
 | v1 origin/incarnation/sequence and recipient triage generation | Retain original delivery identities and independent state origin. Content/state share the old allocator/high-water; import must not split it into overlapping sequences. Local cursors remain derived. |
 | Phase A installed `org-agent` and spool cutover | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
 
+The target office/session integration also follows [Chat's noninterrupting
+message-delivery policy](../specs/chat-ux.md#42-system-notices-and-delivery).
+Urgency controls order and visibility, not automatic interruption of a busy
+turn. Existing Phase A wake tags/watchers and urgent runtime-adapter behavior
+below remain versioned compatibility evidence, not the target's permission to
+interrupt. Preserve live transport behavior/state until a separately verified
+cutover; this requirement does not switch installed tooling.
+
 New stable IDs follow document 06 (UUIDv7); old ULIDs/other IDs remain stable. Task links use T- for every task type, qualified outside their scope as `P-8/T-42` or `TEAM-12/T-42`. Retained B-/REQ- references resolve through explicit mappings, never a prefix substitution. Authentication/key namespaces and existing wire method names stay versioned contracts.
 
 **Standalone-v1 amendment (2026-11-09):**

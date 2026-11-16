@@ -2,7 +2,7 @@
 kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,7 +13,9 @@ builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
 
 # Spec · Capture requests and route them to whoever should scope them (UX)
 
-Selected target UX, revision 6. [Organization-data 03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the typed task, durable metadata, references, provenance and assignment contracts. This spec describes capture and queue presentation; it does not implement target services or select all prior request-lifecycle engines. The [authority map](../design/documentation-authority.md) and [W7 current-contract mapping](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) distinguish existing APIs from adaptation work.
+Selected target UX, revision 7. [Organization-data 03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the typed task, durable metadata, references, provenance and assignment contracts. This spec describes capture and queue presentation; it does not implement target services or select all prior request-lifecycle engines. The [authority map](../design/documentation-authority.md) and [W7 current-contract mapping](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) distinguish existing APIs from adaptation work.
+
+**Revision 7 (2026-11-15):** clarifies accessible leading-mention completion, unresolved-prefix routing and exact preservation of request text.
 
 **Revision 6 (2026-11-15):** rewrites capture, queue, assignment, reference/storage examples and RQS criteria around `type: request`, required accountability, optional project, scoped T- references, atomic team/individual assignment, durable history and separate private notes. Earlier `REQ-`/`FEAT-` sequences, office-only persistence and automatic approval/wake claims are retired from target guidance. [Revision 5](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/feature-requests-ux.md) preserves the detailed earlier lifecycle proposal. Stable RQS IDs are retained; deferred criteria are labeled individually.
 
@@ -59,7 +61,7 @@ Submit uses a stable creation ID and durable operation identity. Success require
 
 ### 1.1 Capture details *(rev 3)*
 
-- **@name routing:** only at the start, typing @ opens active-agent completion with display name, handle, role and actual availability. ↑↓ navigates, Enter/Tab selects, Esc closes. Selection chooses the individual; it never infers an assigned team. The leading handle is removed only after a successful selection, and an unknown handle disables Send with a visible field error. An @ elsewhere is ordinary text. Later role changes do not rewrite the saved original requester.
+- **@name routing:** only at the start, typing @ opens an accessible active-agent combobox/listbox with display name, handle, role and actual availability. Expanded state and the active option are exposed to assistive technology. ↑↓ navigates, Enter/Tab selects, Esc closes; moving the caret out of the leading mention dismisses the popup. Selection chooses the individual without inferring assigned team and removes the full selected mention span, including a multiword name; preserve the remaining text and punctuation outside its explicit separator. An unresolved leading prefix disables Send with a described field error and cannot silently fall back to a rule/copilot route. A different explicit route visibly reconciles that prefix rather than merely hiding its error. An @ elsewhere is ordinary text. Later role changes do not rewrite the saved original requester.
 - **Assignment controls:** allow team-only, individual-only, both and unrouted states. On an existing request save the complete pair with explicit nulls and expected revision. On conflict show current versus desired pair and actor/time; retain draft and require explicit retry. Clearing individual returns it to a retained team queue; clearing team never infers another.
 - **Message instead:** uses the chosen recipient and ordinary chat authorization, disabled with Choose who to message when none exists and a connection reason when unavailable. It does not create a request. Protected messaging storage/visibility remains governed by document 15; task history does not become chat storage. Confirmation links to Chat only after delivery acceptance.
 - **Bug hint:** copilot or simple terms such as crash/error/broken can offer **Report a bug instead · Not a bug**. Carry text/project/accountability into bug capture; with no project allow a valid projectless bug. No area/General picker is inserted. Not a bug hides the hint for this capture.
@@ -125,7 +127,7 @@ RQS IDs are criterion identities; requests themselves use scoped T- references. 
 - RQS-1 · New request opens an accessible in-page dialog naming the authorized organization from navigation/command palette. No native/global shortcut or separate capture window is required.
 - RQS-2 · With valid project/team context, text plus ⌘Enter saves a request. Accountable team is always required; absent context asks for one. Project/assignment/classification remain optional. Project selection derives its accountable team.
 - RQS-3 · Suggestions show a valid agent/team and up to two available alternatives with reasons; the user may choose another or save unrouted. Suggestions never silently overwrite explicit assignment or infer assigned team from employee membership.
-- RQS-4 · Leading @ supports keyboard completion, picks the individual without changing assigned team, removes only a successfully selected handle, and shows visible unknown-handle errors. Message instead has explicit recipient/connection errors and confirms accepted ordinary messaging separately from task creation.
+- RQS-4 · Leading @ has accessible combobox/listbox keyboard completion, active-option/expanded state and caret dismissal. Selecting a multiword name removes the complete selected span, preserves all remaining request text and leaves assigned team unchanged. An unresolved prefix blocks Send without rule fallback; an interior @ is ordinary text. Message instead has explicit recipient/connection errors and confirms accepted ordinary messaging separately from task creation.
 - RQS-5 · Available rule suggestions are labeled Suggested by rule; absent configuration leaves a visible choice rather than inventing a project lead or automatic owner fallback.
 - RQS-6 · A bug hint carries text and valid scope into type bug capture, allows projectless bugs, inserts no mandatory area and can be dismissed for this capture.
 - RQS-7 · Requests is a type-filtered task view across project/team scopes, with clear ownership/assignment columns. **Deferred:** Needs you/With agents/Approved/Declined-Merged grouping requires actual lifecycle/acceptance evidence.

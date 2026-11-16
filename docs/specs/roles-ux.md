@@ -2,7 +2,7 @@
 kind: spec
 title: "Roles: what each agent is for, inherited and overridden per agent (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-15"
@@ -17,7 +17,7 @@ Selected role data follows [organization structure](../design/organization-data/
 
 ## Changelog
 
-**Revision 4 (2026-11-15):** stable-ID role files and employee `role_id`; execution separated from identity. The detailed override/approval/composition UX is retained below as a deferred proposal with individually scoped criteria. It is not an alternative selected schema or an implemented CLI.
+**Revision 5 (2026-11-15):** links the retained deferred model-policy proposal. Revision 4 selected stable-ID role files and employee `role_id`, separating execution from identity. The detailed override/approval/composition UX is retained below as a deferred proposal with individually scoped criteria. It is not an alternative selected schema or an implemented CLI.
 
 **Revisions 1–3 (2026-11-09–10), historical:** established the requested role/override experience, generated harness requirements and fallback when HR cannot run. Their slug filenames, extra front-matter fields and `org-agent role` command examples were proposals; selected canonical data is specified below. [Original revision 3](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/roles-ux.md) preserves that discussion.
 
@@ -61,6 +61,7 @@ The user's request remains valuable product direction. Before selecting this fea
 
 - **Override semantics:** replace Mission; add Responsibilities/Working style lines, dropping a line only with a recorded reason; add Boundaries only. The proposed structural check rejects dropping or rewording an inherited boundary. Machines cannot establish arbitrary semantic equivalence of prose.
 - **Settings remain separate:** no override changes autonomy, model, tools, Can approve hires/processes or permission policy. Defaults proposed in older role front matter (`aliases`, `home_directories`, `autonomy_default`, `runtime_default`, `model_default`, `department`, `summary`) are not selected role fields. Role search can use selected name/key/body; defaults need a later versioned configuration decision.
+- **Deferred Models experience:** the [four-slot policy proposal](agent-run-modes-ux.md#deferred-model-policy-proposal) retains Organization → Role → Agent provenance, presets, Override/Reset/Why and a hire/profile summary. It requires its own selected storage/capability contract; no role field, inherited fallback, effort clamp or helper tool is added to current execution.
 - **Proposed precedence:** base role, then approved local override, with applicable procedures/standards taking priority. Proposed composed instruction: “If your role and a process disagree, follow the process and flag it.” A flagged base line routes to HR for a role-change proposal; a flagged override line routes to its author. The owner approves the base-role correction; the manager approves an override correction under the rules below. A superseded line would name its process/version. No automatic semantic conflict detector is implied.
 - **Proposed approvals:** HR drafts a role and the owner approves; anyone can ask HR. An agent proposes its own override and its explicit manager approves; route to the owner when no employee manager is recorded, the change touches Boundaries or the manager authored it. No self-approval except the owner. A hire needing a new role would combine role/hire approval with the owner. Team-lead subtree responsibility and explicit reporting must be reconciled in that future routing contract; do not infer approval rights from a title.
 - **Proposed composition:** office injects merged approved role/process material on start, and changed material on wake. Editable home memory/notes cannot become an authority source or widen permission boundaries. The engine must distinguish portable employee identity and execution prompt from generated output.
