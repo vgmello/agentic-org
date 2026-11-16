@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 24
+revision: 25
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -12,6 +12,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
+
+**Revision 25 (2026-11-15):** separates colleague profiles from Agent setup, integrates Home/Inbox/Activity navigation and truthful presence, and keeps future memory reads confined and security-gated.
 
 **Revision 24 (2026-11-15): selected employee/team/project model.** Home team is required for every employee, including HR and any owner employee; projects have one accountable owner plus contributors. Execution profile/model/connections and office placement are separate from identity. Task ownership and assignment stay independent through moves/offboarding. Roles reference stable IDs. Process/autonomy/scheduling/approval engines remain earlier UX requirements, not services selected by these data records.
 
@@ -136,12 +138,25 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 
 New stable IDs use UUIDv7; existing IDs/handles are preserved. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. `is_owner` preserves a legacy marker, never account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
 
-- **Card:** square agent avatar, name/title, status word/icon, home-team lead badge. No runtime required on cards; observed runtime status never substitutes for employment or hold state.
-- **Quick view:** name/title/status, `@handle` (copy), role, one Home team, explicit Reports to, lead subtree responsibility if any, execution profile/model/driver, office/freshness, current task and last activity. Actions: Message · Assign task · Move home team… · Pause/Resume · Offboard… with supported availability/reasons.
-- **Header:** name/handle/title/focus, configured model profile/model, observed runtime/office/status, View session and Assign task. View session is authorized browser inspection through HQ; interactive takeover needs a supported explicit office-local CLI capability. No native embedded terminal is required.
-- **Tabs:** Overview · Activity · Tasks · Messages (authorized visible messages) · Sessions · Cost · Knowledge (authorized server-provided content) · Role · Settings. The Role tab shows the selected role record; override/composition/Why is deferred under [roles UX](roles-ux.md). Process content may be shown structurally; effective inheritance/autonomy/approval settings appear only when independently selected and implemented.
-- **Cost:** actual consumption comes from durable usage records. Owner sees agent daily/monthly budgets and costs; project managers see cost for their projects only, labelled **in your projects**; others lack this tab. Preserve the own-agent CLI budget/cost access exception, without letting it query other agents. Policy data is selected; evaluators/pause services remain unimplemented. Incomplete usage is labelled incomplete, never zero. The missing costs-and-budgets-v1 PRD supplies no operative rules.
-- **Settings:** identity edits use employee revision; execution edits use execution revision and affect future admissions under document 11. Model/driver are never independently written onto `profile.md`. Managed home is read-only from the same office resolver used by launch, with no picker or `home/clear_home` inputs. Local credential changes stay private to that office.
+The colleague page `/members/:memberId` uses the same layout for people and agents. Its header shows name/role/handle, Agent or Person in words, one Home team and explicit Reports to; an agent has one truthful presence signal and one context line. Message is primary and Assign task outline when supported for that employee. More contains Pause/Resume, Edit, Offboard for agents and Edit for people, with their existing authorization and lifecycle constraints. An owner security account alone cannot be assigned employee work. A 40 px avatar and 16 px name/role use the shared typography rules.
+
+Profile tabs are Overview, Work, Conversations, Activity; agents also have Notes and memory. Overview with no current task says Not working on anything right now. Names in the directory and Org chart open this profile. Agent Setup summary shows selected execution profile/model, observed driver/runtime, how it runs when supported, office and managed home with provenance/freshness, and Open in Agent setup. Paths wrap at narrow widths. Role/process/execution editing lives in Agent setup; structural content does not enable its deferred resolver. The separately authorized Cost tab is additional to these colleague tabs.
+
+`/settings/agents` shows configured runtime/model/profile, supported run mode, office and Health. Below 640 px render divided rows. `/settings/agents/:memberId` contains supported configuration, How it runs, Edit, Pause, Offboard and View profile, preserving the separate execution/employee revisions. Hire an agent opens the existing reviewed Home-team-required hiring flow. Health uses Ready, Needs setup: {reason}, Paused only from actual readiness/configuration facts; Needs setup takes precedence over Paused, while runtime readiness unavailable is explicitly unknown. Missing model uses the strict predicate in Inbox; lack of a selection alone is not missing model. Health is not presence and cannot grant execution.
+
+All member surfaces share one presence vocabulary, in priority order: Needs you, With you, Working, Paused, Available, Asleep, Offline, Status unknown. Each signal has an icon and word, with a matching accessible name/tooltip in dense avatar-only views. Needs you requires an open owner-waiting item; Working/Available/Asleep/With you require live runtime evidence. Before that evidence, show known Paused or Needs you and the independently known current-task line; omit unknown pills in lists, show Status unknown once in an agent's profile header. People have no speculative presence in this release. Paused does not claim who paused the agent. Runtime observation remains separate from employment, manual/security/budget holds and placement admission.
+
+Quick views preserve name/title/focus, copyable `@handle`, role, Home team, explicit Reports to and any lead subtree responsibility, current task/last activity and separately sourced execution/office freshness. Supported actions include Message, Assign task, Move home team, Pause/Resume and Offboard with their existing authorization and reasons. View session opens authorized HQ inspection; interactive takeover requires the supported office-local CLI, never a native embedded terminal.
+
+Notes and memory initially says “Not available yet: notes and memory arrive in a later release.” Its future read API is human-principal-only, read-only, confined to journal/ and memory/MEMORY.md, text-only with entry/size caps, no symlinks, and an explicit security review. It cannot read author-only task notes or expose them to the owner by treating all notes as profile memory. No automatic memory engine is selected.
+
+- AC-IA06-1–5: profile header/actions/tabs, setup summary and reciprocal links, empty current-work copy, and directory/tree profile links behave as above.
+- AC-IA07-1–3: configuration lives under settings, responsive Health rows use real fields, View profile returns to the colleague face, and Hire preserves the existing flow.
+- AC-IA08-1–3: one truthful vocabulary/component is used by profile, directory, team and chat; unknown is omitted in rows and shown once in an agent header.
+- AC-IA14-1–2: the future confined reader must satisfy its security constraints; absent it, only the honest placeholder is served.
+
+- **Cost:** actual consumption comes from durable usage records. Owner sees agent daily/monthly budgets and costs; project managers see cost for their projects only, labelled **in your projects**; others lack this tab. Preserve the own-agent CLI budget/cost access exception, without letting it query other agents. Policy data is selected; evaluators/pause services remain unimplemented. Incomplete usage is labelled incomplete, never zero. Compatible cost and budget requirements are governed by the integrated [cost UX](costs-and-insights-ux.md), [accounting contract](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md).
+- **Agent setup fields:** identity edits use employee revision; execution edits use execution revision and affect future admissions under document 11. Model/driver are never independently written onto `profile.md`. Managed home is read-only from the same office resolver used by launch, with no picker or `home/clear_home` inputs. Local credential changes stay private to that office.
 - **Missing data:** “No role on record”, “Execution not configured”, “Runtime readiness unknown” or “Unplaced”, naming the appropriate fix if supported. Missing home team is an invalid/staged record, never a valid “No team” state. A configured agent can be hired while readiness is unavailable; show why it cannot start.
 
 ### Current-contract mapping (c6e520a, before target migration)
@@ -165,10 +180,10 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
         ── Earlier: 14 more · [Show]
 ```
 
-- **Kinds** (filter, and an icon on each row): Messages · Status · Tasks and bugs · Team changes · Git (merges into the integration branch) · Sessions · **Decisions** only when its separate deferred audit/autonomy capability is selected and implemented (`processes-ux.md` §4a).
+- **Kinds**: All · Work · Conversations · Decisions · Runs · Org changes, with team/member/project filters. Work includes typed tasks and Git merges; Org changes includes team/member changes. Noisy Status rows and separately deferred Decision auditing remain governed by the grouping/privacy rules below.
 - **Authorized messages** are shown as one line with **Open thread**. Authenticated-owner read access follows the existing explicit chat policy; `is_owner` alone grants nothing. Threads open in a side panel with per-message authorization, read-only unless the owner is a participant allowed to reply. Imported directed threads retain each message's original visibility; do not expose a hidden old message through a newer thread membership. Shared activity never contains author-only private task notes, IDs or author associations. Broadcasts are one row ("ada → 7 members").
 - **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy (they live as dots on the cards), and Decisions, which are for auditing (shown with the Decisions filter, and never on Home) *(rev 16)*.
-- **Home** shows: **Needs you** (unchanged), **Working now** (agents with status Working and their current task, one line each), and **Latest** (the top 8 Activity rows, with **All activity**).
+- **Home** follows the section order and Inbox summary below; it retains the Activity live-scroll/freshness rules.
 - **Live:** new rows slide in at the top with a 2-second highlight. When the owner has scrolled down, a pill shows "3 new · Jump to latest" and the list doesn't move.
 - **Live updates paused** *(rev 12)*: when the app isn't getting live changes from the office (the connection to the office ended or couldn't be made, for example while the office restarts, or listening failed), a line shows at the top of every screen, under the title: ⚠ "Live updates paused. Showing what was loaded at 21:51." (the time the organization was last loaded, in the app's 24-hour format; if nothing has loaded yet, the line reads "Live updates paused." alone) with **Retry**, which reconnects now and reads "Retrying…" while it works. The line clears by itself once live changes are back and the latest has loaded. It stays while the owner moves between screens. Word plus icon, never color alone; screen readers announce it once when it appears, not on every retry.
 - **States:**
@@ -176,6 +191,40 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
   - Empty organization: "When your agents start working, everything they do shows up here."
   - Messaging not connected: "Messages aren't connected yet, so agents' conversations don't show here." **How to connect**.
   - A source offline (git or presence): a quiet row "Git activity paused: the project's repository isn't reachable."
+
+### 6.1 Home and the unified Inbox
+
+Home sections are Needs you (the first five open Inbox items and Open Inbox (N)), Projects, Happening now, Recent activity, in that order. The Following card joins between Needs you and Projects when Following ships, hidden when empty. A separately selected away-digest card may precede Needs you without replacing it. Each section has an honest empty state, skeleton and one-line error with Retry. Use Nothing needs you, No projects yet with Create project, Live status isn't available yet when live presence is unavailable, and No activity yet. An observed empty working set may say No one is working right now.
+
+Project cards show real done/total progress, open/blocked counts and members; show lead, health and due date only when those fields exist. Use the same progress definition as the project/work specification. Never infer a project lead from every contributor team's lead. Home has no page primary; its card actions are outline. Happening now has one current-task line per observed working agent without a redundant Working pill.
+
+Inbox (`/inbox`) has All, Approvals, Questions, Decisions, Problems and Handled tabs, with one Show menu for team/project filters. Each card shows who, what, why, recommendation when present, available actions and expiry. List/detail are side by side from 960 px; below 960 an item opens as its own view with an Inbox back link. Reply acts inline on an addressed ask. Approve/Deny invoke exactly the source operation when it exists; otherwise offer Open. A required denial reason is entered inline; failure preserves the open item and displays the server's reason.
+
+Each source yields one item of one kind. Clear it when its owning source resolves anywhere, including another client/CLI, and update Home and badges within two seconds of observing the durable result. Move resolved items to Handled. Only run errors and crashes are dismissible; budget controls are never dismissible. Budget actions and clearing follow the selected budget contract, not an old fixed percentage. Do not create a budget item for a release cap.
+
+| Source, when its service is available | Inbox kind | Resolution |
+| --- | --- | --- |
+| Hire, run, permission or office-join approval; scoped request | Approvals | Source approved/refused |
+| Agent ask / task question | Questions | Tied answer or explicit withdrawal |
+| Unaccepted hand-off addressed to the owner | Approvals, Accept | Owning hand-off resolved |
+| Explicit review request | Approvals | Owning review or tied review ask resolved |
+| Escalation or proposed decision with choices | Decisions | Authorized decision recorded |
+| Work blocked on the owner / goal paused | Problems | Unblocked / resumed |
+| Run error / crash | Problems | Resolved, or explicitly dismissed |
+| Critical bug | Problems, Assign… | Assigned or closed; triage alone does not clear |
+| Unplaced agent / exact configured model unavailable | Problems | Source problem resolved |
+
+Show only supported source kinds. A missing model item requires an exact selected model known absent from the runtime's reported list. An unset model, unreadable model list, missing runtime or unreachable office does not establish that predicate. Clearing/changing the selection or the runtime acquiring it clears the item. A configured fallback is not evidence of a missing selection.
+
+Where structured owner blocking is supported, a blocked task has its open Approval/Question, otherwise one Blocked on you Problem. Refusal leaves the work blocked and the Problem replaces the refused ask. When a new Approval/Question opens, withdraw the derived Problem without a Handled entry. A budget-caused block uses its Budget reached item alone; an independent owner block predating the budget stop retains its own item. This does not select the deferred decision-blocking or budget evaluator engines. Routine Problems remain deferred with routines; Retro ready is not an Inbox item.
+
+Activity uses All, Work, Conversations, Decisions, Runs, Org changes filters, with team/member/project scopes. Merge organization and work events newest first; profiles/team/project tabs reuse the filtered feed. A recorded run expands in place to its trigger, duration, outcome and supported log summary. No fabricated run or presence entries appear before runtime evidence exists. Keep the existing private-note, imported-message, default noisy-status/decision filtering and live-scroll protections.
+
+- AC-IA04-1–4 / LIVE-4: assert Home order, five-item summary/common count, conditional cards, real project fields, section states and outline actions.
+- AC-IA09-1–4: assert Inbox tabs, responsive detail, contextual cards, inline tied Reply, clear-anywhere behavior and the shared count.
+- AC-IA10-1–2: a cross-kind read exposes source identity, kind, member/team/project, summary/context/recommendation/expiry, authorized actions and source clearing rule; durable clearing reaches consumers within two seconds.
+- AC-IA11-1–2: inline approvals call the existing authorized operation and preserve unresolved items on refusal.
+- AC-IA12-1–3: verify merged filtered Activity, truthful run expansion and reuse by scope, with no private-note metadata in shared results.
 
 ## 7. Flow 4 · Hire (the HR flow, on the office)
 
@@ -276,14 +325,14 @@ Task references in cross-project Activity use P-8/T-15 or TEAM-12/T-15. All task
 **Agent record (PROF)**
 - PROF-1 · *(rev 24)* Profile/quick view distinguish employee identity/home team/optional role from execution profile/model/driver and office/readiness/freshness. Missing optional data is named; missing home team blocks admission.
 - PROF-2 · *(rev 18)* View session opens authorized browser status/log inspection through HQ. Interactive takeover requires an explicit supported action on the owning office machine; v1 requires no native embedded terminal or runtime deep link.
-- PROF-3 · Chart cards show status as a dot and a word, with no runtime.
+- PROF-3 · Directory/tree rows use one truthful shared presence signal, omit unknown pills in lists, and link to the colleague profile. Agent configuration lives in Agent setup.
 - PROF-4 · *(rev 24)* Identity settings use employee revision; profile/model/prompt/tools use separate execution revision. Model/driver are not identity fields. Managed home stays read-only through the owning office resolver; home/clear_home and path pickers are unavailable.
 
 **Activity (LIVE)**
 - LIVE-1 · *(rev 24)* Activity lists authorized messages, status, typed tasks (including bugs/requests), team changes, git merges and sessions, newest first, filterable by team/member/project/kind. Decision auditing is deferred with its engine; when available its rows and noisy Status rows stay hidden by default. Cross-scope task references include their project/team scope.
 - LIVE-2 · An authorized visible message appears in Activity within 2 seconds; Open thread, previews and counts preserve per-message directed-thread import visibility and existing explicit authenticated-owner policy. Shared activity never contains private task-note bodies, IDs or author associations.
-- LIVE-3 · The owner can reply in a thread only when the owner is a recipient. Otherwise the thread is read-only and says so.
-- LIVE-4 · Home shows Needs you, Working now (each working agent with its current task) and the latest 8 Activity rows.
+- LIVE-3 · The owner can reply only as an authorized participant/recipient. Otherwise the thread is read-only and says “Reading as the owner. To weigh in, message {agent}”. Reading never grants answer/accept authority.
+- LIVE-4 · Home shows Needs you (first five Inbox items and the common count), Projects, Happening now and Recent activity, with conditional Following/away cards only when separately supported (§6.1). Each section has its own empty/loading/error state.
 - LIVE-5 · New rows never move the list while the owner is scrolled down. A "n new · Jump to latest" pill appears instead.
 - LIVE-6 · A status change shows on the agent's card within 2 seconds, and Status rows are hidden from Activity by default.
 - LIVE-7 · When messaging isn't connected, Activity says so with How to connect instead of looking empty.

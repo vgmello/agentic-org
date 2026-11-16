@@ -1,11 +1,13 @@
 # Documentation authority and selected v1 model
 
-This is the reading map for the selected organization data design and its reconciled design/UX guides (2026-11-15). The owning organization-data documents remain unchanged by that reconciliation. Documentation does not change application behavior, approve a migration or select deferred engines.
+This is the reading map for the selected organization data design and its reconciled design/UX guides (2026-11-15). The owning organization-data documents govern selected contracts; additive requirement refinements are made in their owning documents. Documentation does not change application behavior, approve a migration or select deferred engines.
 
 ## Which document answers which question?
 
 | Question | Authoritative reference |
 | --- | --- |
+| What features are complete, partial, planned, blocked, deferred or awaiting verification? | [Feature checklist](../FEATURES.md), with scoped implementation evidence and links to the requirements below |
+| How are features categorized, and what does each area cover or need verified? | [Feature area guide](../FEATURE-AREAS.md), with category boundaries, requirement links and a summary of checklist statuses |
 | Selected entity relationships, fields, canonical files and draft SQL | [Organization data index](organization-data/README.md) and its owning documents |
 | Teams, home membership, reporting and accountable project ownership | [Organization](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md), [employees](organization-data/04-agent-structure.md) |
 | Typed tasks, retained bug/request detail, feature lifecycle and references | [Tasks/features](organization-data/03-features-and-work.md), [numbering](organization-data/06-identity-and-numbering.md), [assignment](organization-data/12-task-assignment-and-history.md) |
@@ -30,6 +32,7 @@ An old revision's claim that it is approved does not activate its deferred engin
 
 | Concern | Detailed guides | Primary contract |
 | --- | --- | --- |
+| Navigation, shared visual/interaction rules and the owner decision loop | [Shell](../specs/app-shell-ux.md), [Home/Inbox](../specs/our-org-in-the-app.md) | Selected identity/access contracts; individually gated services in those specs |
 | Organization bootstrap, home teams, leads and project accountability | [Creation](create-organization.md), [team model](teams-and-org-chart.md), [office/team UX](../specs/offices-and-teams-ux.md), [hiring/profile UX](../specs/our-org-in-the-app.md), [roles](../specs/roles-ux.md) | 01, 02, 04, 06, 08 |
 | Typed tasks, assignment, reporter, history and private notes | [Task design](tasks-projects-docs.md), [task UX](../specs/work-items-ux.md), [request UX](../specs/feature-requests-ux.md) | 03, 05, 06, 08, 12 |
 | Repository associations, feature/knowledge/release content | [Git design](projects-git-github.md), [features](../specs/features-ux.md), [knowledge](../specs/decisions-and-tech-debt-ux.md), [status reports](../specs/project-status-ux.md) | 02, 03, 07, 08, 09 |
@@ -82,6 +85,19 @@ Deleting an office cache is safe only with protected acknowledged sources, rebin
 
 Areas, Undo, advanced checklist execution, retrospectives, automatic scheduling/memory and the process engine remain unselected. Older UX acceptance criteria for them remain earlier requirements, not approval to port them. Process/standard content and override flags are selected structural data; inherited resolution engines remain separate work. Budgets and recovery are selected as data/control contracts; their runtime evaluators, pause coordination and restore services remain implementation work.
 
-The referenced costs-and-budgets-v1 PRD is not present in this repository. It cannot silently override available reviewed contracts. Preserve its references as historical context; do not invent its absent decision tables. Uncovered rules stay pending explicit decisions.
+Compatible cost/budget, duration and target-reader requirements from earlier
+PRDs are integrated in the existing cost UX and primary documents 10/17. Those
+current documents govern. Older current-assignment fallback, movement of costs
+through current plans, parent-budget aggregation, special refusal of a raise at
+or below spent usage and disconnected per-office allowances remain superseded.
+Detailed analytics, account-zone persistence/digests, additional model-policy
+slots and further smart-feature candidates are individually gated in their
+owning guides. Older PRD release labels do not establish an implemented service.
+
+Implement the semantic changes against the current selected contracts. A new
+acceptance criterion is a target requirement, not evidence of delivery; a deferred
+or unresolved item needs its stated contract/decision before implementation.
+Historical source documents and personal work journals are not additional
+independent implementation checklists.
 
 Historical commit links, retired wire examples, required signing identifiers/key namespaces and installed legacy CLI instructions are evidence, not current source/package naming. Do not rewrite cryptographic identities or switch live tooling through documentation cleanup. Current source/package/executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; org-host is a library. Setup/service/download/update requirements must continue to be distinguished from implemented entry points.
