@@ -7,6 +7,7 @@ This is the reading map for the selected organization data design and its reconc
 | Question | Authoritative reference |
 | --- | --- |
 | What features are complete, partial, planned, blocked, deferred or awaiting verification? | [Feature checklist](../FEATURES.md), with scoped implementation evidence and links to the requirements below |
+| How are features categorized, and what does each area cover or need verified? | [Feature area guide](../FEATURE-AREAS.md), with category boundaries, requirement links and a summary of checklist statuses |
 | Selected entity relationships, fields, canonical files and draft SQL | [Organization data index](organization-data/README.md) and its owning documents |
 | Teams, home membership, reporting and accountable project ownership | [Organization](organization-data/01-organization-structure.md), [projects](organization-data/02-project-structure.md), [employees](organization-data/04-agent-structure.md) |
 | Typed tasks, retained bug/request detail, feature lifecycle and references | [Tasks/features](organization-data/03-features-and-work.md), [numbering](organization-data/06-identity-and-numbering.md), [assignment](organization-data/12-task-assignment-and-history.md) |

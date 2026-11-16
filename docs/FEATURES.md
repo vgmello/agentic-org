@@ -1,6 +1,6 @@
 # Feature checklist
 
-The single product feature/status index. Each row is a small capability with a short description linked to its full requirement. Supporting ADRs and data contracts remain authoritative; this file does not duplicate them. **An unchecked row is not complete.**
+The single product feature/status index, categorized by the [documented feature areas](FEATURE-AREAS.md). Each row is a small capability with a short description linked to its full requirement. Supporting ADRs and data contracts remain authoritative; this file does not duplicate them. **An unchecked row is not complete.**
 
 Reviewed: **2026-11-16**, by Ada. Evidence baseline: `origin/v1` at `b1256c9771b15c0b47198828164e5efe78db2e96`; reconciled requirements at `b4f8e8b3456d1dc9dd5cf43bd3db3dd13d403a6e`. This initial inventory covers all 17 UX specs, the selected organization-data domains and supporting designs, including deferred candidates. It is a capability checklist, not one row per acceptance criterion or database field.
 
@@ -33,9 +33,13 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 
 ## Feature tables
 
-[Application and browser](#application-and-browser) | [Installation, access and office operations](#installation-access-and-office-operations) | [Organization, people and teams](#organization-people-and-teams) | [Projects, tasks, bugs and requests](#projects-tasks-bugs-and-requests) | [Feature definitions, knowledge and delivery](#feature-definitions-knowledge-and-delivery) | [Chat and agent messaging](#chat-and-agent-messaging) | [Usage, costs and budgets](#usage-costs-and-budgets) | [Execution, providers and supervision](#execution-providers-and-supervision) | [Roles, processes and retrospectives](#roles-processes-and-retrospectives) | [Project health and reports](#project-health-and-reports) | [Copilot drafting](#copilot-drafting) | [Git, identity, synchronization and recovery](#git-identity-synchronization-and-recovery) | [Session inspection and private memory](#session-inspection-and-private-memory) | [Access controls and release hardening](#access-controls-and-release-hardening) | [Other deferred work workflows](#other-deferred-work-workflows)
+Features have one primary documentation category. See the [area guide](FEATURE-AREAS.md) for each category's scope, boundaries and verification focus. Categories are independent of delivery status; deferred features stay with their domain.
+
+[Application and browser](#application-and-browser) | [Installation, access and office operations](#installation-access-and-office-operations) | [Organization, people and teams](#organization-people-and-teams) | [Projects, tasks, bugs and requests](#projects-tasks-bugs-and-requests) | [Feature definitions, knowledge and delivery](#feature-definitions-knowledge-and-delivery) | [Chat and agent messaging](#chat-and-agent-messaging) | [Usage, costs and budgets](#usage-costs-and-budgets) | [Execution, providers and supervision](#execution-providers-and-supervision) | [Roles, processes and retrospectives](#roles-processes-and-retrospectives) | [Project health and reports](#project-health-and-reports) | [Copilot drafting](#copilot-drafting) | [Git, identity, synchronization and recovery](#git-identity-synchronization-and-recovery) | [Session inspection and private memory](#session-inspection-and-private-memory)
 
 ### Application and browser
+
+Category: [AREA-01 — scope and verification](FEATURE-AREAS.md#area-01).
 
 Full requirements: [Application and browser](specs/app-shell-ux.md).
 
@@ -52,6 +56,8 @@ Full requirements: [Application and browser](specs/app-shell-ux.md).
 | [ ] | FC-009 | [Native desktop shell](adr/0005-standalone-server-v1.md) | Deferred | Tauri is deferred to v2. |
 
 ### Installation, access and office operations
+
+Category: [AREA-02 — scope and verification](FEATURE-AREAS.md#area-02).
 
 Full requirements: [Installation, access and office operations](specs/server-installation-and-access-ux.md).
 
@@ -72,8 +78,13 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-022 | [Updates, uninstall and instance lifecycle](specs/server-installation-and-access-ux.md) | Needs verification | Reconcile installer/service lifecycle and retained data behavior; no complete release evidence recorded. |
 | [ ] | FC-023 | [Logs, doctor and support diagnostics](specs/server-installation-and-access-ux.md) | Needs verification | Verify usable commands and secret-safe diagnostics against installation criteria. |
 | [ ] | FC-024 | [Fresh-HQ and satellite release acceptance](specs/dogfood-run.md) | Blocked | Depends on real installation, authenticated browser APIs and both-platform service/recovery validation. |
+| [ ] | FC-153 | [Account administration and organization ownership grants](specs/server-installation-and-access-ux.md) | Planned | Target account create/link/unlink/revoke and owner grants require protected backend; [UI] claims no real sign-in/setup behavior. |
+| [ ] | FC-154 | [Verified downloads and signed offline bundles](specs/server-installation-and-access-ux.md) | Planned | [Executable status] explicitly lists downloads, signed bundles and update activation as pending integration. |
+| [ ] | FC-155 | [Browser CSP and production asset security](design/rust-browser-bff-and-static-sveltekit.md) | In progress | [UI] documents production-static CSP harness and browser security checks; authenticated production service remains blocked. |
 
 ### Organization, people and teams
+
+Category: [AREA-03 — scope and verification](FEATURE-AREAS.md#area-03).
 
 Full requirements: [Organization, people and teams](specs/offices-and-teams-ux.md).
 
@@ -94,6 +105,8 @@ Full requirements: [Organization, people and teams](specs/offices-and-teams-ux.m
 | [x] | FC-037 | [Retired existing-team import is gated](specs/our-org-in-the-app.md) | Done | Import removed from v1 per [UI]; [retired import test] records regression coverage. |
 
 ### Projects, tasks, bugs and requests
+
+Category: [AREA-04 — scope and verification](FEATURE-AREAS.md#area-04).
 
 Full requirements: [Projects, tasks, bugs and requests](specs/work-items-ux.md).
 
@@ -119,8 +132,13 @@ Full requirements: [Projects, tasks, bugs and requests](specs/work-items-ux.md).
 | [ ] | FC-055 | [Needs-me and owner-wait views](specs/work-items-ux.md) | Needs verification | Verify authenticated reader scoping and live owner-wait/question sources; tracking/requested-by semantics are separate deferred rows. |
 | [ ] | FC-056 | [Areas and advanced checklist execution](specs/work-items-ux.md) | Deferred | Not selected; basic checklist data does not select orchestration or an Areas engine. |
 | [ ] | FC-057 | [Undo and organization-wide event history](design/organization-data/README.md) | Deferred | Explicitly unselected; task history is a distinct selected capability. |
+| [ ] | FC-156 | [Following and requested-by tracking semantics](design/tasks-projects-docs.md) | Deferred | Section 7.2 gates AC-TK1–3 pending decisions and verified attribution; watcher data alone does not select these views. |
+| [ ] | FC-157 | [Backlog ranking and planning lifecycle](design/tasks-projects-docs.md) | Deferred | Section 7.2 retains planning requirements pending lifecycle/storage decisions. |
+| [ ] | FC-158 | [Subtask and cascade execution engine](design/tasks-projects-docs.md) | Deferred | Section 7.2 requires hierarchy/cascade decisions; simple checklist data does not implement this engine. |
 
 ### Feature definitions, knowledge and delivery
+
+Category: [AREA-05 — scope and verification](FEATURE-AREAS.md#area-05).
 
 Full requirements: [Feature definitions, knowledge and delivery](specs/features-ux.md).
 
@@ -143,6 +161,8 @@ Full requirements: [Feature definitions, knowledge and delivery](specs/features-
 
 ### Chat and agent messaging
 
+Category: [AREA-06 — scope and verification](FEATURE-AREAS.md#area-06).
+
 Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -162,6 +182,8 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 
 ### Usage, costs and budgets
 
+Category: [AREA-07 — scope and verification](FEATURE-AREAS.md#area-07).
+
 Full requirements: [Usage, costs and budgets](specs/costs-and-insights-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -179,6 +201,8 @@ Full requirements: [Usage, costs and budgets](specs/costs-and-insights-ux.md).
 | [ ] | FC-094 | [Detailed analytics and organization Insights](specs/costs-and-insights-ux.md) | Deferred | Separately gated analytics scope; base usage accounting remains selected. |
 
 ### Execution, providers and supervision
+
+Category: [AREA-08 — scope and verification](FEATURE-AREAS.md#area-08).
 
 Full requirements: [Execution, providers and supervision](specs/agent-run-modes-ux.md).
 
@@ -200,6 +224,8 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 
 ### Roles, processes and retrospectives
 
+Category: [AREA-09 — scope and verification](FEATURE-AREAS.md#area-09).
+
 Full requirements: [Roles, processes and retrospectives](specs/processes-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -216,6 +242,8 @@ Full requirements: [Roles, processes and retrospectives](specs/processes-ux.md).
 
 ### Project health and reports
 
+Category: [AREA-10 — scope and verification](FEATURE-AREAS.md#area-10).
+
 Full requirements: [Project health and reports](specs/project-status-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -227,6 +255,8 @@ Full requirements: [Project health and reports](specs/project-status-ux.md).
 | [ ] | FC-121 | [Private away digests and daily summaries](specs/project-status-ux.md) | Deferred | Deferred account-only context, window/threshold/seen-state and retention engine. |
 
 ### Copilot drafting
+
+Category: [AREA-11 — scope and verification](FEATURE-AREAS.md#area-11).
 
 Full requirements: [Copilot drafting](design/smart-features.md).
 
@@ -252,6 +282,8 @@ Full requirements: [Copilot drafting](design/smart-features.md).
 
 ### Git, identity, synchronization and recovery
 
+Category: [AREA-12 — scope and verification](FEATURE-AREAS.md#area-12).
+
 Full requirements: [Git, identity, synchronization and recovery](design/organization-data/README.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -270,6 +302,8 @@ Full requirements: [Git, identity, synchronization and recovery](design/organiza
 
 ### Session inspection and private memory
 
+Category: [AREA-13 — scope and verification](FEATURE-AREAS.md#area-13).
+
 Full requirements: [Session inspection and private memory](design/agent-sessions.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
@@ -278,29 +312,9 @@ Full requirements: [Session inspection and private memory](design/agent-sessions
 | [ ] | FC-151 | [Authorized CLI takeover and PTY handback](design/agent-sessions.md) | Planned | [Supervisor] explicitly leaves PTYs for a separate delivery; verify exclusive takeover leases and safe handback before claiming full support. |
 | [ ] | FC-152 | [Private notes and memory profile reader](specs/our-org-in-the-app.md) | Deferred | Deferred human-only read API/UI, confined journal/MEMORY paths, caps and no-symlink/security checks; memory schema/retention remain pending. |
 
-### Access controls and release hardening
-
-Full requirements: [Access controls and release hardening](specs/server-installation-and-access-ux.md).
-
-| Check | ID | Feature / short description | Status | Evidence / remaining work |
-| --- | --- | --- | --- | --- |
-| [ ] | FC-153 | [Account administration and organization ownership grants](specs/server-installation-and-access-ux.md) | Planned | Target account create/link/unlink/revoke and owner grants require protected backend; [UI] claims no real sign-in/setup behavior. |
-| [ ] | FC-154 | [Verified downloads and signed offline bundles](specs/server-installation-and-access-ux.md) | Planned | [Executable status] explicitly lists downloads, signed bundles and update activation as pending integration. |
-| [ ] | FC-155 | [Browser CSP and production asset security](design/rust-browser-bff-and-static-sveltekit.md) | In progress | [UI] documents production-static CSP harness and browser security checks; authenticated production service remains blocked. |
-
-### Other deferred work workflows
-
-Full requirements: [Other deferred work workflows](design/tasks-projects-docs.md).
-
-| Check | ID | Feature / short description | Status | Evidence / remaining work |
-| --- | --- | --- | --- | --- |
-| [ ] | FC-156 | [Following and requested-by tracking semantics](design/tasks-projects-docs.md) | Deferred | Section 7.2 gates AC-TK1–3 pending decisions and verified attribution; watcher data alone does not select these views. |
-| [ ] | FC-157 | [Backlog ranking and planning lifecycle](design/tasks-projects-docs.md) | Deferred | Section 7.2 retains planning requirements pending lifecycle/storage decisions. |
-| [ ] | FC-158 | [Subtask and cascade execution engine](design/tasks-projects-docs.md) | Deferred | Section 7.2 requires hierarchy/cascade decisions; simple checklist data does not implement this engine. |
-
 ## Keeping this checklist current
 
-Update the relevant row in the same PR that changes implementation or selects/defers scope. Preserve row IDs; add a row when a separately deliverable capability is introduced. Keep acceptance details in the linked owning spec. Ada maintains this index; the implementing area's owner supplies evidence and remaining work.
+Update the relevant row in the same PR that changes implementation or selects/defers scope. Preserve row IDs; add a row when a separately deliverable capability is introduced. Assign it to exactly one primary category in the [area guide](FEATURE-AREAS.md), and update that guide's area totals with any status/category change. Cross-area dependencies belong in links or evidence, not duplicate feature rows. These are documentation categories; they do not select the deferred product Areas feature. Keep acceptance details in the linked owning spec. Ada maintains this index; the implementing area's owner supplies evidence and remaining work.
 
 To mark Done, link the implementation commit/PR or current implementation documentation and the relevant verification result for the row's full scope, including real persistence, authorization and runtime integration where required. A merged PR, a draft schema or a fake-backed screen alone is insufficient. Record any remaining gap as In progress. If evidence is missing or contradictory, use Needs verification and state what must be checked. When implementation changes invalidate an earlier Done claim, reopen it.
 

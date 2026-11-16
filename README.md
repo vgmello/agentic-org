@@ -8,6 +8,8 @@ Tauri is deferred to v2.
 Use the [feature checklist](docs/FEATURES.md) to see every capability's delivery
 status, remaining work and link to its full specification. It distinguishes
 completed foundations from partial UI work, planned integration and deferred scope.
+The [feature area guide](docs/FEATURE-AREAS.md) defines the categories, their scope
+and boundaries, and the implementation checks still needed in each area.
 
 The [organization-data contract](docs/design/organization-data/README.md) is the
 source of truth for selected relationships, fields, canonical storage, execution
