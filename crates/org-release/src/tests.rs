@@ -276,6 +276,83 @@ fn strict_structural_fields_at_every_level() {
 }
 
 #[test]
+fn populated_positional_manifest_array_is_not_an_object() {
+    let fixture = Fixture::new();
+    let object = fixture.manifest();
+    fixture.verify(&object).unwrap();
+    // Declaration order is intentional: a derived Serde struct accepts this
+    // populated array unless the wire decoder explicitly requires a map.
+    let positional = json!([
+        object["format"],
+        object["release_id"],
+        object["sequence"],
+        object["platform"],
+        object["architecture"],
+        object["installer_contract"],
+        object["key_id"],
+        object["files"]
+    ]);
+    // Fixture::verify signs these exact malformed structural bytes with the
+    // trusted key, so rejection cannot be attributed to a bad signature.
+    assert_eq!(
+        fixture.verify(&positional).unwrap_err(),
+        Error::InvalidManifest
+    );
+}
+
+#[test]
+fn populated_positional_file_array_is_not_an_object() {
+    let fixture = Fixture::new();
+    let mut manifest = fixture.manifest();
+    fixture.verify(&manifest).unwrap();
+    let object = manifest["files"][0].clone();
+    manifest["files"][0] = json!([
+        object["path"],
+        object["size"],
+        object["sha256"],
+        object["role"],
+        object["macos_cdhash"]
+    ]);
+    // This also carries a valid trusted signature over the malformed record.
+    assert_eq!(
+        fixture.verify(&manifest).unwrap_err(),
+        Error::InvalidManifest
+    );
+}
+
+#[test]
+fn populated_positional_registry_array_is_not_an_object() {
+    let fixture = Fixture::new();
+    let bytes = fixture.registry(1, None);
+    TrustedKeys::from_registry_bytes(&bytes).unwrap();
+    let object: Value = serde_json::from_slice(&bytes).unwrap();
+    let positional = json!([object["version"], object["keys"]]);
+    assert_eq!(
+        TrustedKeys::from_registry_bytes(&serde_json::to_vec(&positional).unwrap()).unwrap_err(),
+        Error::InvalidRegistry
+    );
+}
+
+#[test]
+fn populated_positional_key_array_is_not_an_object() {
+    let fixture = Fixture::new();
+    let bytes = fixture.registry(1, None);
+    TrustedKeys::from_registry_bytes(&bytes).unwrap();
+    let mut registry: Value = serde_json::from_slice(&bytes).unwrap();
+    let object = registry["keys"][0].clone();
+    registry["keys"][0] = json!([
+        object["key_id"],
+        object["public_key_hex"],
+        object["min_sequence"],
+        object["max_sequence"]
+    ]);
+    assert_eq!(
+        TrustedKeys::from_registry_bytes(&serde_json::to_vec(&registry).unwrap()).unwrap_err(),
+        Error::InvalidRegistry
+    );
+}
+
+#[test]
 fn integer_tokens_are_never_coerced_or_rounded() {
     let fixture = Fixture::new();
     let bytes = literal(&fixture);

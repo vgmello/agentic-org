@@ -206,7 +206,7 @@ impl TrustedKeys {
             return Err(Error::RegistryTooLarge);
         }
         let raw: decode::Registry =
-            serde_json::from_slice(bytes).map_err(|_| Error::InvalidRegistry)?;
+            decode::object_from_slice(bytes).map_err(|_| Error::InvalidRegistry)?;
         if raw.version != 1 || raw.keys.is_empty() || raw.keys.len() > MAX_TRUSTED_KEYS {
             return Err(Error::InvalidRegistry);
         }
@@ -436,7 +436,7 @@ fn authenticate_manifest<'a>(
     // Direct typed decoding rejects unknown/duplicate (including escaped)
     // fields, missing required nullable fields and noninteger numeric tokens.
     let raw: decode::Manifest =
-        serde_json::from_slice(manifest_bytes).map_err(|_| Error::InvalidManifest)?;
+        decode::object_from_slice(manifest_bytes).map_err(|_| Error::InvalidManifest)?;
     decode_hex::<32>(&raw.key_id).map_err(|_| Error::InvalidKeyId)?;
     let key = trusted_keys
         .keys

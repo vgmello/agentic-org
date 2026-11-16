@@ -1,7 +1,9 @@
 //! Private direct wire decoding: never route integers through JSON Value.
 
 use crate::{Architecture, Platform, Role, MAX_FILES, MAX_TRUSTED_KEYS};
-use serde::de::{self, IntoDeserializer, SeqAccess, Visitor};
+use serde::de::{
+    self, value::MapAccessDeserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor,
+};
 use serde::{Deserialize, Deserializer};
 use std::fmt;
 
@@ -36,6 +38,36 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for RequiredNullable<T> {
             }
         }
         deserializer.deserialize_any(Nullable(std::marker::PhantomData))
+    }
+}
+
+/// Decode a root record through the same map-only boundary as sequence members.
+pub(super) fn object_from_slice<'de, T: Deserialize<'de>>(
+    bytes: &'de [u8],
+) -> Result<T, serde_json::Error> {
+    serde_json::from_slice::<Object<T>>(bytes).map(|object| object.0)
+}
+
+// Derived Serde records also accept positional sequences. This wrapper admits
+// only maps, then delegates their typed fields and duplicate/unknown checks to
+// the original derived record without intermediate values or serialization.
+struct Object<T>(T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for ObjectVisitor<T> {
+            type Value = Object<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                T::deserialize(MapAccessDeserializer::new(map)).map(Object)
+            }
+        }
+        deserializer.deserialize_map(ObjectVisitor(std::marker::PhantomData))
     }
 }
 
@@ -88,6 +120,7 @@ fn registry_keys<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Key>,
     bounded_sequence(deserializer, MAX_TRUSTED_KEYS)
 }
 
+// The containing keys/files sequence is an array; every member is an object.
 fn bounded_sequence<'de, D, T>(deserializer: D, limit: usize) -> Result<Vec<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -103,7 +136,7 @@ where
 
         fn visit_seq<S: SeqAccess<'de>>(self, mut sequence: S) -> Result<Vec<T>, S::Error> {
             let mut values = Vec::new();
-            while let Some(value) = sequence.next_element()? {
+            while let Some(Object(value)) = sequence.next_element()? {
                 if values.len() == self.0 {
                     return Err(de::Error::custom("array limit exceeded"));
                 }
