@@ -1,6 +1,18 @@
 # Task ownership, assignment, reporter and activity history
 
-Structural draft for v1. Document revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. Selected assignment integration is in progress under ADR-0006: office schema 7 and library acceptance/recovery consumers now exist. Protected host admission/authentication, actual adoption, public command transport and production UI are still required before runtime availability; storage tests alone are not vertical acceptance. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+Structural draft for v1. Document revision 4. This selects task activity history and separate team/individual assignment for the proposed data model. Private task notes are required operational data owned by document 05. The private-note data structure is defined in [operational data](05-operational-data.md#private-notes-attached-to-tasks) and its separate SQL; it remains unimplemented in v1. It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
+
+**Implementation scope:** F0 imports this contract over integration base
+`73a39c58d683b00ad8620d05f7d5ae10fdc17bc9` without selected-task feature source.
+This checkout retains office schema 6 and legacy work behavior. Office schema 7
+and the selected acceptance/recovery library consumers under ADR-0006 are
+observations of the **unaccepted** `codex/v1-assignment-integration` reservoir at
+`b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09`, not F0 implementation or acceptance
+evidence. The [source map](../../../.agent-kit/tasks/v1-delivery-source-map.json)
+assigns extraction to later units; [executable status](../executable-migration.md#f0-integration-baseline)
+records current availability. Protected host admission/authentication, actual
+adoption, public command transport and production UI require their own integration
+and execution evidence; storage tests alone are not vertical acceptance.
 
 ## Ownership and current responsibility
 

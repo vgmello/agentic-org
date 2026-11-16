@@ -181,9 +181,25 @@ generations are separate from process-cleanup generations and task transport
 ownership generations. Host EOF, descriptor isolation, key-missing refusal,
 adopt/discard quarantine and bounded owned-child cleanup below still apply.
 
-## Current launch-v2 evidence
+## Implementation evidence by source checkpoint
 
-### Selected host-control integration (in progress)
+### F0 integration baseline
+
+F0 imports documentation over integration base
+`73a39c58d683b00ad8620d05f7d5ae10fdc17bc9` without importing the selected
+host-control implementation. In this checkout,
+`crates/org-host/src/service/mod.rs` dispatches only registered-instance hello
+and count-only instance.status; session/channel methods are refused. The web
+executable still refuses service startup because authenticated host handoff and
+the browser backend are not wired. See the [F0 executable status](executable-migration.md#f0-integration-baseline).
+
+### Preserved selected host-control integration (unaccepted)
+
+The following observations describe the **unaccepted**
+`codex/v1-assignment-integration` reservoir at
+`b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09`. They are not implementation or
+verification imported by F0. The [source map](../../.agent-kit/tasks/v1-delivery-source-map.json)
+pins the preserved source; its extraction and acceptance belong to later units.
 
 A registered host with an opened protected account registry uses launch v3 for
 existing office starts. The rendezvous reader must match the admitted child audit
@@ -212,17 +228,19 @@ the host's current wall clock; inspection never resets the absolute lifetime.
 This lets browser session responses report host authority rather than infer
 deadlines or permissions from a prior sign-in. It returns no handle, grant or key.
 
-Account sign-in, renewal and logout now have a production registry-backed
+At that checkpoint, account sign-in, renewal and logout have a registry-backed
 implementation. Protected first bootstrap, selected writer admission, complete
 release/service composition and browser handoff still require their remaining
 integration and execution evidence; this section claims none of them complete.
 
-Current `crates/org-host/src/service/mod.rs` dispatches registered-instance
+At that checkpoint, `crates/org-host/src/service/mod.rs` dispatches registered-instance
 hello, count-only instance.status and the registry-backed session/channel methods
 described above, refusing unregistered instances. The old
 sessionless host methods below are historical requirements, not currently exposed
 operations or a workaround for unavailable setup. The launch-v2 framing itself
 remains in crates/org-office-launch.
+
+### Phase-1 launch-v2 evidence
 
 The remaining numbered sections record the inspected phase-1 host/worker contract
 and its review constraints, including the macOS app-token caller path. Retain exact
