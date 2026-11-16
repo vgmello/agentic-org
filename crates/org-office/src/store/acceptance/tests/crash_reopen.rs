@@ -29,6 +29,8 @@ fn point(n: u8) -> Point {
         10 => Point::BeforeReply,
         11 => Point::AnchorInstalled,
         12 => Point::ManifestInstalled,
+        13 => Point::RootDirectoryCreated,
+        14 => Point::NestedDirectoryCreated,
         _ => panic!("unknown storage crash hook"),
     }
 }
@@ -84,11 +86,11 @@ fn storage_crash_child() {
         .unwrap()
         .parse()
         .unwrap();
-    if selected == 11 {
+    if matches!(selected, 11 | 13 | 14) {
         let store = open(&root, Opening::Existing);
         crash::arm(point(selected));
         store.install_acceptance(config(&root)).unwrap();
-        panic!("armed anchor boundary was never reached");
+        panic!("armed startup boundary was never reached");
     }
     let store = reopen(&root);
     crash::arm(point(selected));
@@ -315,5 +317,47 @@ fn sigkill_after_manifest_hardlink_before_parent_flush_recovers_zero_one_multi_o
         let store = reopen(root.path());
         verify_frozen(&store, &c, n);
         assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn sigkill_after_mkdir_before_parent_flush_reestablishes_root_and_nested_links() {
+    for selected in [13, 14] {
+        let root = TempDir::new().unwrap();
+        let c = config(root.path());
+        drop(fresh(root.path()));
+        kill_at(root.path(), selected, 0);
+        assert!(c.protected_root.is_dir());
+        assert_eq!(c.protected_root.join("offices").exists(), selected == 14);
+        assert!(!c
+            .protected_root
+            .join("offices/office/journals/work-acceptance/journal-one/anchor.json")
+            .exists());
+
+        let store = open(root.path(), Opening::Existing);
+        store
+            .control(|_| {
+                durable::observe_directory_syncs(None);
+                Ok(())
+            })
+            .unwrap();
+        store.install_acceptance(c.clone()).unwrap();
+        let syncs = store
+            .control(|_| Ok(durable::take_directory_syncs()))
+            .unwrap();
+        assert_eq!(syncs.first().unwrap(), root.path());
+        if selected == 14 {
+            assert!(syncs.contains(&c.protected_root));
+        }
+        assert_eq!(cursor(&store), (0, 0));
+        store
+            .selected_write(|db| receipt(db, "after-directory-recovery"))
+            .unwrap();
+        drop(store);
+        let store = reopen(root.path());
+        assert_eq!(cursor(&store), (1, 0));
+        assert_eq!(store.selected_read(|db, _| {
+            db.query_row("SELECT result FROM selected_receipts WHERE operation_id='after-directory-recovery'", [], |r| r.get::<_, Vec<u8>>(0)).map_err(storage)
+        }).unwrap(), b"{}");
     }
 }

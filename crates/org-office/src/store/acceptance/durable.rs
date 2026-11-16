@@ -13,6 +13,34 @@ use std::{
 thread_local! {
     static CALLS:std::cell::Cell<(u64,u64,u64)>=const {std::cell::Cell::new((0,0,0))};
     static FAIL_PARENT:std::cell::Cell<usize>=const {std::cell::Cell::new(0)};
+    static DIRECTORY_PROBE: std::cell::RefCell<Option<DirectoryProbe>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct DirectoryProbe {
+    paths: Vec<PathBuf>,
+    fail_at: Option<PathBuf>,
+}
+
+#[cfg(test)]
+pub(super) fn observe_directory_syncs(fail_at: Option<PathBuf>) {
+    DIRECTORY_PROBE.with(|probe| {
+        *probe.borrow_mut() = Some(DirectoryProbe {
+            paths: Vec::new(),
+            fail_at,
+        });
+    });
+}
+
+#[cfg(test)]
+pub(super) fn take_directory_syncs() -> Vec<PathBuf> {
+    DIRECTORY_PROBE.with(|probe| {
+        probe
+            .borrow_mut()
+            .take()
+            .expect("directory probe armed")
+            .paths
+    })
 }
 
 #[cfg(test)]
@@ -26,11 +54,26 @@ pub(super) fn calls() -> (u64, u64, u64) {
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if DIRECTORY_PROBE.with(|probe| {
+        probe
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.fail_at.as_deref() == Some(path))
+    }) {
+        return Err(io::Error::other("injected directory sync failure"));
+    }
     File::open(path)?.sync_all()?;
     #[cfg(test)]
     CALLS.set({
         let (a, b, c) = CALLS.get();
         (a, b, c + 1)
+    });
+    #[cfg(test)]
+    DIRECTORY_PROBE.with(|probe| {
+        if let Some(probe) = probe.borrow_mut().as_mut() {
+            probe.paths.push(path.to_path_buf());
+        }
     });
     Ok(())
 }
@@ -97,11 +140,19 @@ fn check_directories(root: &Path, path: &Path, create: bool) -> io::Result<()> {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound && create => {
                 fs::DirBuilder::new().mode(0o700).create(&current)?;
-                if let Some(parent) = current.parent() {
-                    sync_directory(parent)?;
-                }
+                #[cfg(test)]
+                super::crash::directory(root, &current);
             }
             Err(e) => return Err(e),
+        }
+        // A prior process may have died between mkdir and its parent flush.
+        // Re-establish every link, including root's, even when it is visible.
+        // Reads only validate the chain; publication performs these flushes
+        // before the final file full flush on the same filesystem.
+        if create {
+            if let Some(parent) = current.parent() {
+                sync_directory(parent)?;
+            }
         }
     }
     Ok(())
@@ -247,4 +298,51 @@ pub(crate) fn publish(
     #[cfg(test)]
     super::crash::file(name, false);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reused_directory_chain_is_synced_but_reads_do_not_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("recovery");
+        let parent = root.join("blobs/sha256");
+        // Visible directories do not prove a prior creator flushed their links.
+        fs::create_dir_all(&parent).unwrap();
+        observe_directory_syncs(None);
+        directories(&root, &parent).unwrap();
+        assert_eq!(
+            take_directory_syncs(),
+            [dir.path().to_path_buf(), root.clone(), root.join("blobs")]
+        );
+
+        fs::write(parent.join("retained"), b"original").unwrap();
+        observe_directory_syncs(None);
+        assert_eq!(
+            read(&root, "blobs/sha256/retained", 100).unwrap(),
+            b"original"
+        );
+        assert!(take_directory_syncs().is_empty());
+    }
+
+    #[test]
+    fn failed_existing_ancestor_sync_refuses_new_and_identical_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("recovery");
+        let parent = root.join("blobs/sha256");
+        fs::create_dir_all(&parent).unwrap();
+        fs::write(parent.join("retained"), b"original").unwrap();
+        for name in ["blobs/sha256/new", "blobs/sha256/retained"] {
+            observe_directory_syncs(Some(root.clone()));
+            let error = publish(&root, name, b"original", true, None).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("injected directory sync failure"));
+            assert_eq!(take_directory_syncs(), [dir.path().to_path_buf()]);
+            assert!(!parent.join("new").exists());
+            assert_eq!(fs::read(parent.join("retained")).unwrap(), b"original");
+        }
+    }
 }

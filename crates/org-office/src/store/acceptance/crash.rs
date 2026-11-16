@@ -16,6 +16,8 @@ pub(crate) enum Point {
     BeforeReply,
     AnchorInstalled = 11,
     ManifestInstalled = 12,
+    RootDirectoryCreated = 13,
+    NestedDirectoryCreated = 14,
 }
 static POINT: AtomicU8 = AtomicU8::new(0);
 pub(crate) fn arm(point: Point) {
@@ -30,6 +32,14 @@ pub(crate) fn hit(point: Point) {
             std::thread::park();
         }
     }
+}
+
+pub(super) fn directory(root: &std::path::Path, created: &std::path::Path) {
+    hit(if root == created {
+        Point::RootDirectoryCreated
+    } else {
+        Point::NestedDirectoryCreated
+    });
 }
 pub(super) fn file(name: &str, flushed_only: bool) {
     let point = if name.starts_with("blobs/sha256/") {

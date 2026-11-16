@@ -1114,3 +1114,64 @@ fn recovery_sync_failure_refuses_before_confirmation_and_keeps_writer_fenced() {
         assert_eq!(cursor(&store), (2, 0));
     }
 }
+
+#[test]
+fn ancestor_sync_failure_fences_initial_and_existing_journals_before_confirmation() {
+    for existing in [false, true] {
+        let root = TempDir::new().unwrap();
+        let authority = Arc::new(RecoveryFailureAuthority {
+            inner: ProtectedCheckpoint::default(),
+            fail: AtomicUsize::new(0),
+            confirmations: AtomicUsize::new(0),
+        });
+        let mut c = config(root.path());
+        c.authority = Some(authority.clone());
+        let store = fresh(root.path());
+        let store = if existing {
+            store.install_acceptance(c.clone()).unwrap();
+            store.selected_write(|db| receipt(db, "retained")).unwrap();
+            drop(store);
+            open(root.path(), Opening::Existing)
+        } else {
+            // Model a root left visible by an interrupted mkdir/parent flush.
+            std::fs::create_dir(&c.protected_root).unwrap();
+            store
+        };
+        let confirmations = authority.confirmations.load(Ordering::SeqCst);
+        let position = authority.inner.position.lock().unwrap().clone();
+        let parent = root.path().to_path_buf();
+        store
+            .control(move |_| {
+                durable::observe_directory_syncs(Some(parent));
+                Ok(())
+            })
+            .unwrap();
+        let error = store.install_acceptance(c.clone()).unwrap_err();
+        assert!(std::error::Error::source(&error)
+            .unwrap()
+            .to_string()
+            .contains("injected directory sync failure"));
+        assert!(store
+            .control(|_| Ok(durable::take_directory_syncs()))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            authority.confirmations.load(Ordering::SeqCst),
+            confirmations
+        );
+        assert_eq!(*authority.inner.position.lock().unwrap(), position);
+        assert!(store
+            .write::<()>(|_| panic!("failed startup must fence legacy writes"))
+            .is_err());
+        let (job, reply) = Store::job_with_batch_abort::<()>(
+            |_| panic!("failed startup must fence work decisions"),
+            |_| false,
+        );
+        store.send_work_job(job).unwrap();
+        assert!(reply.recv().unwrap().is_err());
+        drop(store);
+        let store = open(root.path(), Opening::Existing);
+        store.install_acceptance(c).unwrap();
+        assert_eq!(cursor(&store), (i64::from(existing), 0));
+    }
+}
