@@ -2,7 +2,30 @@
 
 This change migrates implemented executable responsibilities. Application directories, Cargo packages and executable names use the same names. Reusable domain/protocol libraries retain their existing org-* names. It does not complete the separate standalone installer, production web authentication or agent execution/pool designs.
 
-| Executable | Source/package | Implementation status |
+## F0 integration baseline
+
+F0 imports documentation only over integration base
+`73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. It adds no setup, authentication,
+selected-task or release implementation. At this baseline:
+
+| Executable | Implementation status in F0 |
+| --- | --- |
+| agentic-org | Human CLI composes org-host; [setup refuses without changing state](../../apps/agentic-org/src/lib.rs) because protected bootstrap and service registration are not wired. |
+| agentic-org-office | Existing daemon and legacy protocols remain. The selected writer/bootstrap/adoption/task-acceptance and escrow additions below have not been imported. |
+| agentic-org-web | Help/version are available; [service startup refuses without opening a listener](../../apps/agentic-org-web/src/main.rs). Authenticated handoff and the browser backend are not wired. |
+| agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+
+## Preserved reservoir evidence
+
+The table and remaining sections below preserve observations and verification
+requirements from the **unaccepted** `codex/v1-assignment-integration` reservoir at
+`b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09`. They do not describe implementation
+imported or checks executed by F0. The [source map](../../.agent-kit/tasks/v1-delivery-source-map.json)
+pins that source; the [delivery plan](../../.agent-kit/tasks/v1-incremental-delivery.md)
+assigns extraction and acceptance to later units. Revalidate availability against
+the source commit of each delivered unit.
+
+| Executable | Source/package | Preserved reservoir implementation observations |
 | --- | --- | --- |
 | agentic-org | apps/agentic-org / agentic-org | Human CLI composes org-host. Selected HQ setup journals its original inputs/operations, admits a complete pinned release, invokes protected bootstrap/provisioning, reconciles per-user launchd registration and probes local readiness. Missing trusted build inputs or platform prerequisites refuse setup. Recovery collection remains unfinished; end-to-end production setup is not verified. |
 | agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing daemon and legacy protocols retained, with versioned selected writer admission, canonical bootstrap/adoption, durable task acceptance and escrow prerequisites. |
@@ -28,7 +51,7 @@ No database migration, ID change, spool move, namespace reset, service installat
 
 Superseded application directories and package/executable aliases are removed. Cargo build/test commands select the same name as the application directory and production binary. org-host is library-only. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
 
-## Selected integration status
+## Preserved reservoir integration status
 
 Initial agentic-org setup creates HQ only and exposes no satellite choice. Satellite onboarding remains a separate, unavailable HQ-initiated flow. The selected implementation consumes a complete local directory or tar.gz release with build-pinned publisher trust; it never supplies a generated production trust key or an unsigned fallback. Setup resumes its protected original operation IDs and exact installed pin, including when the original input bundle is no longer present. An existing pin without its setup intent requires explicit repair/adoption. The launchd adapter has isolated real bootstrap/replay/conflict/bootout evidence; this does not establish genuine signed-release setup or a deployed user service. See [standalone server](standalone-server.md) and [ADR-0009](../adr/0009-complete-release-verification.md).
 
