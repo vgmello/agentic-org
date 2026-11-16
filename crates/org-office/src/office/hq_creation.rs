@@ -87,6 +87,7 @@ impl Office {
         if completed.as_ref().is_some_and(|prior| prior != &info) {
             return Err(invalid());
         }
+        verify_completed_history(&folder, &key, completed.is_some())?;
         failpoint(&folder, "hq_after_intent")?;
         let (org, local) =
             storage::open_preparing(&folder, &key, instance, &info.office_id, &info.org_id)?;
@@ -142,6 +143,23 @@ impl Office {
             _lock: OfficeLock(lock),
         })
     }
+}
+
+/// Once Created was stored, absent native history requires recovery. Validate
+/// before preparation can create or initialize organization storage again.
+fn verify_completed_history(folder: &Path, key: &Key, completed: bool) -> Result<(), OfficeError> {
+    if !completed {
+        return Ok(());
+    }
+    let path = folder.join(ORG_DB);
+    let metadata = fs::symlink_metadata(&path).map_err(OfficeError::storage)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
+        return Err(invalid());
+    }
+    if !Store::inspect(&path, key, org_db::is_committed)? {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// Validate the complete creation request before inspecting or creating files.

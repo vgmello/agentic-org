@@ -115,6 +115,100 @@ fn hq_creation_retries_before_after_atomic_material_and_created_marker() {
     }
 }
 #[test]
+fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_reinitializing() {
+    for damage in ["missing", "preschema", "empty"] {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("HQ");
+        let key = Key::from_bytes([8; 32]);
+        let bound = binding(dir.path());
+        let office = Office::provision_hq_for_instance(
+            &folder,
+            &new(),
+            key.clone(),
+            INSTANCE,
+            &bound,
+            material,
+        )
+        .unwrap();
+        let command_id = crate::ulid::from_ms(time::now_ms(), 1);
+        office
+            .submit_org(OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: command_id.clone(),
+                team_id: "TEAM".into(),
+                name: "Platform".into(),
+                owner_team_id: None,
+            }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(office.org_snapshot().unwrap().position.seq, 2);
+        assert!(office.org_operation_get(&command_id).unwrap().is_ok());
+        let record = office.hq_creation_record().unwrap().unwrap();
+        drop(office);
+        let office = Office::provision_hq_for_instance(
+            &folder,
+            &new(),
+            key.clone(),
+            INSTANCE,
+            &bound,
+            material,
+        )
+        .unwrap();
+        assert_eq!(office.org_snapshot().unwrap().position.seq, 2);
+        assert!(office.org_operation_get(&command_id).unwrap().is_ok());
+        drop(office);
+        let local = fs::read(folder.join(OFFICE_DB)).unwrap();
+        let marker = fs::read(folder.join(office_file::FILE_NAME)).unwrap();
+        let intent = fs::read(folder.join(INTENT)).unwrap();
+        let org_path = folder.join(ORG_DB);
+        fs::remove_file(&org_path).unwrap();
+        if damage != "missing" {
+            let preschema = Schema {
+                admit: None,
+                version: 0,
+                create: |_| Ok(()),
+                upgrade: |_, _| unreachable!(),
+            };
+            let schema = if damage == "preschema" {
+                &preschema
+            } else {
+                &org_db::SCHEMA
+            };
+            drop(Store::open(&org_path, &key, Opening::New, schema).unwrap());
+        }
+        let damaged_org = fs::read(&org_path).ok();
+        assert!(
+            Office::provision_hq_for_instance(
+                &folder,
+                &new(),
+                key.clone(),
+                INSTANCE,
+                &bound,
+                |_| panic!("lost completed organization must fail before material processing"),
+            )
+            .is_err(),
+            "{damage}"
+        );
+        assert_eq!(fs::read(&org_path).ok(), damaged_org, "{damage}");
+        assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), local);
+        assert_eq!(
+            fs::read(folder.join(office_file::FILE_NAME)).unwrap(),
+            marker
+        );
+        assert_eq!(fs::read(folder.join(INTENT)).unwrap(), intent);
+        assert_eq!(
+            fs::read(bound.public_root.join(PUBLIC_ESCROW)).unwrap(),
+            record.package
+        );
+        let retained = Store::inspect(&folder.join(OFFICE_DB), &key, storage::read)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained.public_key, record.public_key);
+        assert_eq!(retained.package, record.package);
+        assert_eq!(retained.local_der(), record.local_der());
+    }
+}
+
+#[test]
 fn hq_creation_changed_inputs_and_missing_committed_material_never_generate() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("HQ");
