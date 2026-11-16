@@ -8,12 +8,18 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 
 ## Current work
 
-Active acceptance unit: F1a, `codex/v1-release-verifier`, in the dedicated delivery
-worktree from integration cad1057b09fa8b105dfb843d0eaed42d24861d58. Reuse the pure
-six-file org-release library with minimal Cargo/lock and current guidance only.
-Root owns extraction/integration; retained author contexts validate intent. No
-host/web/office consumers or production signing setup are imported. This is an
-internal foundation; checks, independent review and fresh final gates remain.
+Active acceptance unit: F1b-socket, `codex/v1-socket-admission`, from accepted
+integration cd777450. Four exact org-socket confinement/image/example files plus
+two module registrations; no Cargo, host/web consumer or production signing setup
+changes. Root owns extraction/integration, original fullstack author retains intent
+and any repairs. Current targeted/full checks and fresh independent/final reviews
+still gate acceptance. Internal only; first usable U1 remains onboarding/sign-in
+with actual first-organization create/reopen/restart.
+
+The larger host/socket F1b extraction at ace8b29d failed compilation on minimum
+GatewayRelease/static-signing/identifier dependencies. Its branch/source/failed
+checks/journal remain preserved and unaccepted; host/web adapters follow their
+reviewed first-consumer closure. No reset or security bypass.
 
 ### Preserved reservoir history (unaccepted source)
 
@@ -40,6 +46,8 @@ Release-store archive/pin/recovery mechanics now have14 focused tests at their c
 [Incremental delivery order](v1-incremental-delivery.md) governs separate accepted merges, not merely worker assignments. Existing broad check/review receipts remain historical evidence on the reservoir; every extracted unit needs its own current verification, original-author validation and fresh independent/final reviews.
 
 ## Accepted checkpoints
+
+- F1a pure release verifier: accepted `cdfed316`, integration `cd777450`; all23 focused tests, full Rust/kit gates, normal hook, retained author intent, fresh initial and separate final review passed. Strict-object repair and its first macro/source-guard failure retained. Library-only; no installer/signing or usable-feature claim. Journal `6ef553bc40824f149757a838d1a7f8fb` closed; private source-bound evidence `.agent-kit/logs/v1-release-verifier/`.
 
 - F0 governing documentation/delivery split: accepted `92a7f8d4`, integration `cad1057b`; eight configured checks including54 draft-schema tests, two confirmed documentation repairs, author validation and separate fresh final review passed. Documentation only; no product feature or draft-schema deployment. Journal `69978f9191cf46bb8fce19fd44f53d2d` closed; source-bound private evidence `.agent-kit/logs/v1-delivery-baseline/`.
 - Solo workflow correction: feature `effdb4e0`, integration `73a39c58`. AGENTS.md, branch process, roles and catalog aligned; all kit checks, both fresh local reviews and author validation accepted. Journal `2fa7c6b3abc64129a9528c00b4bb1c0f` closed.

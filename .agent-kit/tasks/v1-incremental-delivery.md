@@ -37,11 +37,12 @@ The original browser author retains its four-file reservation.
 | --- | --- | --- |
 | F0 — guidance baseline | Internal only; no product feature. | Extract current solo workflow/kit and incoming v1 documentation at 6f02ae95 without the code bundle. Catalog/policy/preflight/instruction review. |
 | F1a — pure release verifier | Internal only; no signed release claimed. | Reuse org-release/ADR0009 and its exact limits/signature tests. Generated fixture keys remain test-only. Genuine signing setup stays final. |
-| F1b — confinement/release adapters | Internal only. | F1a; reuse org-socket confinement/image and host/web release adapters under ADRs0008/0009. Verify subprocess denies, immutable loaded-image/asset binding and release recovery. Keep first-consumer composition glue with that consumer. Linux stays fail-closed until implemented/verified. |
+| F1b-socket — OS admission substrate | Internal only. | Reuse four org-socket confinement/image/example files and two module registrations under ADRs0008/0009; no dependency changes. Actual subprocess ambient-denial, approved FD/listener/thread and kernel-image checks. Unsupported platforms fail-closed. Separate acceptance/merge from coupled consumers. |
+| F1b-release — host/web adapters with first consumer | Internal only. | F1a/F1b-socket plus the minimum reviewed GatewayRelease/static-signing contract/helper closure before F4 composition. Preserve unaccepted ace8b29d and its real failed compile; no pulling whole F4 to compile a foundation. Exact file/hunk ownership and independent acceptance required before consumer enablement; release recovery/image/asset tests remain. |
 | F2a — source/codec | Internal only; no task writes. | Existing org-docs source editing and org-work codec/history under ADR0006. Preserve original bytes, duplicate/numeric/resource vectors and legacy semantics. No assignment service/UI dependency. |
 | F2b — durable acceptance journal | Internal only. | F2a; existing office acceptance/origin capture and executable migrations. Crash/replay, protected receipt, publication/sequence and legacy compatibility tests. Bootstrap uses this journal, so this cannot be postponed until daily tasks. |
 | F3 — protected HQ state/escrow | Internal only; no normal setup/recovery claim. | F2b; reuse org-pki, HQ creation, launch recovery/writer and host custody/provisioning under ADRs0007/0011. Exact-key retry, protected fresh-owner reservation, escrow/delivery ACK, interruptions/reopen and secret exclusion. Existing-HQ first-owner proof stays paused; REC-1 and physical authentication remain their actual requirements. |
-| F4 — sessions/channel lifecycle | Internal until U1. | F1b/F3 as composed; reuse active CH-LIFE-1r2 repair, host auth/listener, gateway handoff and browser sessions. Capacity/ACK/closure, logout/revocation/expiry, cookie/origin/CSRF, foreign-account and endpoint-failure tests. Extract session routing from selected-task dispatch; no task capability advertised just to make sign-in compile. |
+| F4 — sessions/channel lifecycle | Internal until U1. | F1b-socket/F3 and reviewed F1b-release contract/adapter closure as composed; reuse active CH-LIFE-1r2 repair, host auth/listener, gateway handoff and browser sessions. Capacity/ACK/closure, logout/revocation/expiry, cookie/origin/CSRF, foreign-account and endpoint-failure tests. Extract session routing from selected-task dispatch; no task capability advertised just to make sign-in compile. |
 | U1 — onboarding, first organization, sign-in/reopen | Establish the first administrator, supply organization/repository/initial-team inputs, enter the real workspace, sign out/in and reopen the same organization after restart. | F1–F4 plus minimum selected directory/bootstrap and existing setup continuation/static auth UI. Finish authorized organization reads and real create/open/session UI adapters. Offline zero-network proof, stable identities/home-team/HR readiness, lost-create-reply exact retry, restart, denial/accessibility/browser evidence and documented manual development exercise. No task adoption/assignment completion prerequisite. |
 | U2 — teams | Create root/child teams, inspect them and reopen unchanged IDs/TEAM numbers. | U1 and canonical directory/journal. Reuse chart/forms and traced legacy writer facts. Root must first settle two-store authority/cutover/source-position semantics and obtain focused architecture review. No dual writable truths. Test protected owner/HQ auth, UUIDv7/counter/allocation, retry/concurrency, legacy/reimport compatibility and crash/reopen; real browser create/list. |
 | U3 — people | Add and maintain people in teams; inspect roster/chart with correct home-team, handle, role and reporting relationships. | U2; reuse employee/profile UI and compatible validation. Implement protected canonical mutations/reads and compatibility, not an independent directory. Test identity/links/lead rules, access, retries/concurrency/reopen and real browser flow. Runnable employees remain explicitly not-ready without execution configuration. |
@@ -152,8 +153,19 @@ are preserved reservoir receipts, not F4 extraction or acceptance.
 F0 was accepted after checks, two confirmed documentation repairs, author intent
 and separate fresh final review, then merged --no-ff and pushed to v1-integration
 at cad1057b09fa8b105dfb843d0eaed42d24861d58. It delivers guidance only.
-F1a is the active separate unit on codex/v1-release-verifier from that base: six
-unchanged org-release source files, minimal Cargo/lock and truthful guidance. Root
-is the sole writer; preserved original authors validate intent. Required current
-checks and both independent reviews still gate F1a acceptance. No usable feature
-or full v1 completion is claimed.
+F1a was accepted at cdfed316 and merged/pushed as cd777450 after the genuine
+strict-object R1 repair, full current checks, retained author intent and clean fresh
+initial/separate final reviews. Original failed report and macro/source-guard
+regression remain preserved; no verification waiver. Pure library only.
+
+Actual F1b extraction failed because host runtime/platform source also needs the
+GatewayRelease/private static-signing/identifier helper closure. Preserve unaccepted
+ace8b29d on codex/v1-release-adapters; no source or author context discarded. The
+current independent acceptance unit is codex/v1-socket-admission from cd777450:
+root owns four immutable source imports plus exactly two socket registrations and
+metadata; retained fullstack author validates intent/repairs. No useful second
+source slice exists, so one writer; read-only validation may overlap frozen checks.
+This boundary refinement follows actual compiler dependencies and changes no
+selected architecture, security policy or U1 acceptance. A new broad plan review
+is unnecessary; material contract changes still receive focused review first.
+Neither internal unit is usable onboarding or full v1 completion.
