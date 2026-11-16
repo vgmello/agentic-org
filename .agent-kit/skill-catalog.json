@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead 01a1dd82-ffe6-7363-af94-6072c75de2d1, F2b scoped manifest/interface reassessment 2026-11-16",
-  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer skills cover the unchanged stack and tool versions. Preserve solo root ownership, at most two disjoint worktree writers, author contexts, independent local gates and source-bound evidence. docs/FEATURES.md is the full-scope delivery checklist; FEATURE-AREAS.md defines categories. Draft docs/ADRs and internal foundations do not establish usable features. Signing setup/authentic signed release verification stays last, with production enforcement intact. Retain security guidance for ADR6\u201312 custody, IPC/durability, strict public-source classification and native-source pins. F2b root reassessment inspected the complete manifest/lock diff: org-office adds only existing pinned workspace libc for O_NOFOLLOW/F_FULLFSYNC; no package/version/feature/provider changes. Shared serde records move unchanged to existing org_proto::work; focused interface rev2 is independently READY after genuine-v6 fixture correction. Current Rust/security/public-contract and legacy-adoption guidance covers this bounded extraction; no new framework, role/rule or tool-policy gap. All other 39 evidence entries remain unchanged and prior assessed rationale stays in Git. Actual tests exposed fixture and JSON-subtype capture failures, still open for source repair; catalog/preflight readiness is no implementation acceptance. Full workspace checks, original-author validation and fresh initial/final reviews remain required.",
+  "reviewed_by": "Codex side conversation; owner-authorized scoped delivery-policy reassessment, not independent code review",
+  "rationale": "Retain the current Rust/static-SvelteKit project capability assessment from integration eacb505d2398fc473d43f45053522e39269434b5. This owner-authorized documentation amendment adds independent delivery/boundary rules in docs/independent-delivery.md, links them from architecture-rules.md and AGENTS handoffs, and selects the focused policy directly in both baseline packet phases. Stack, dependencies, roles, other skill rules, verification and model policy remain unchanged. The complete architecture file exceeds the existing24000byte source limit; the focused document stays bounded without changing any validator. Verify all retained evidence against this base; refresh only AGENTS/architecture evidence and add the focused policy. Prior rationale remains in Git. Existing production tests, independent reviews, original-author validation, writer limit and integration rules remain intact. Documentation branch push is not v1-integration acceptance.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "6d3d8a901fe5343eb2c2668ac87bfaf3ccb753fbe1b0ee6e47cdc7bc1737abb3"
+      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
     },
     {
       "path": "Cargo.lock",
@@ -146,7 +146,7 @@
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "c809d3fba308f63f81b07268e3b6db9c62a96a18519611035f555c6d287c9d19"
+      "sha256": "ea6f7921ef3f5e88dd8f62feb658272d08ccfc618e97357055c3771229f64393"
     },
     {
       "path": "docs/design/documentation-authority.md",
@@ -167,6 +167,10 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    },
+    {
+      "path": "docs/independent-delivery.md",
+      "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
     }
   ],
   "roles": {
@@ -185,10 +189,12 @@
       "risks": [],
       "implementation": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "review": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "critical": false
