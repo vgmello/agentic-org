@@ -87,6 +87,12 @@ this preservation requirement does not require contacting offline developers.
 - Before dispatch, specify the worktree/base, exact owned files, interfaces,
   dependencies, acceptance checks, routed model/effort and escalation conditions.
   Supply the selected skill packet and bounded context, preserving author sessions.
+- Every implementation and review handoff must reference the stable delivery
+  contract and [independent delivery and dependency boundaries](docs/architecture-rules.md#independent-delivery-and-dependency-boundaries).
+  State the usable outcome (or internal foundation), declared prerequisites and
+  early production-path verification. Include its focused policy, `docs/independent-delivery.md`,
+  directly in the resolved skill packet. Review actual boundaries and behavior;
+  existing checks, original-author validation and fresh review gates still apply.
 - Workers return concise receipts: changed paths/source references, check results
   and log locations, remaining issues and decisions needed. Keep detailed logs on
   disk. The lead uses targeted follow-up reads to assess architecture, integration
