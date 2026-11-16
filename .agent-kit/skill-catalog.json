@@ -62,11 +62,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "0c374716ea3bb6a7f71528b9560b156bbaa5536d9c327cea0195abed1348a43b"
+      "sha256": "0b5a2ee31d45fa57f56e048bb3bb129797de9d3938e3899639e555754202d877"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "615f0bbf53f4bb125cbf4d25271de4a3376511cc7ed6eac18dcf5219211c0fa0"
+      "sha256": "dd16b1a22fd96119b9b0aa13c7e4b24943841b15020814c5a1990152deaa1391"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -163,6 +163,10 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    },
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a"
     }
   ],
   "roles": {

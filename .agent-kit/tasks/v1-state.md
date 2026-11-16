@@ -8,11 +8,19 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 
 ## Current work
 
-Active acceptance unit: F0, `codex/v1-delivery-baseline`, in the dedicated delivery
-worktree from `origin/v1-integration`. This is governing documentation/workflow,
-not new product source. The branch and assignment records below are the preserved
-source reservoir. CH-LIFE-1r2 reached a source-frozen safe handoff in its original
-worktree; executable fixture follow-up and F4 code acceptance remain open.
+Active acceptance unit: F1a, `codex/v1-release-verifier`, in the dedicated delivery
+worktree from integration cad1057b09fa8b105dfb843d0eaed42d24861d58. Reuse the pure
+six-file org-release library with minimal Cargo/lock and current guidance only.
+Root owns extraction/integration; retained author contexts validate intent. No
+host/web/office consumers or production signing setup are imported. This is an
+internal foundation; checks, independent review and fresh final gates remain.
+
+### Preserved reservoir history (unaccepted source)
+
+The implementation observations and earlier receipts below describe the preserved
+assignment reservoir at b77cbd68, not source delivered by F0/F1a. CH-LIFE-1r2's
+production and two-fixture handoffs are frozen; root's executable suite passed22.
+F4 extraction, current full checks and independent acceptance remain separate.
 
 Integration base: `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`.
 Branch: `codex/v1-assignment-integration`.
@@ -33,6 +41,7 @@ Release-store archive/pin/recovery mechanics now have14 focused tests at their c
 
 ## Accepted checkpoints
 
+- F0 governing documentation/delivery split: accepted `92a7f8d4`, integration `cad1057b`; eight configured checks including54 draft-schema tests, two confirmed documentation repairs, author validation and separate fresh final review passed. Documentation only; no product feature or draft-schema deployment. Journal `69978f9191cf46bb8fce19fd44f53d2d` closed; source-bound private evidence `.agent-kit/logs/v1-delivery-baseline/`.
 - Solo workflow correction: feature `effdb4e0`, integration `73a39c58`. AGENTS.md, branch process, roles and catalog aligned; all kit checks, both fresh local reviews and author validation accepted. Journal `2fa7c6b3abc64129a9528c00b4bb1c0f` closed.
 - Complete-pair assignment domain: feature `339d01a0`, integration `1ded3a88`. Exact revision, explicit nullable pair, active same-org desired targets and old/new payload; legacy APIs unchanged. All 225 org-work tests, workspace and kit/UI checks passed; both local reviews and author validation accepted. Journal `081df96c0d874a85914acd41a2fb55bd` closed. [Domain contract](v1-task-assignment-contract.md), [TA-01](../decisions/TA-01-explicit-task-assignment.md), private evidence `.agent-kit/logs/v1-task-assignment/`.
 - History metadata coverage: feature `43604eb3`, integration `4dd45f5c`; checks/reviews/author accepted, journal `343bdbc564d7483aad95eb7b36fdc9f7` closed. [Coverage contract](v1-history-coverage-contract.md), [TH-01](../decisions/TH-01-task-history-validation.md). Metadata coverage is not full payload/hash verification. [Full history contract](v1-task-history-contract.md) remains open; ADR-0006 now selects the new codec prerequisite.

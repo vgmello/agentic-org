@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "unit": "F1a pure org-release internal foundation",
+  "integration_base": "cad1057b09fa8b105dfb843d0eaed42d24861d58",
+  "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "files": [
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a",
+      "bytes": 388
+    },
+    {
+      "path": "crates/org-release/README.md",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "18e06e90515d819dc4f43a49e9808be0226515cb344e109f6a0a53c45168a941",
+      "bytes": 4259
+    },
+    {
+      "path": "crates/org-release/src/decode.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "1aaaa27f3c3def33f8f9becba3b02c2e2d31ca0787e300026b431a9ca2443d49",
+      "bytes": 4054
+    },
+    {
+      "path": "crates/org-release/src/lib.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "a5c986c723264dff3070efc93418ea006735bd24e3b9ffcf6f9ba69e64c4e840",
+      "bytes": 20716
+    },
+    {
+      "path": "crates/org-release/src/payload.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "6ad9fcba513440e1d32830e6394260ba264ae05915340d765922ac253db10f12",
+      "bytes": 1916
+    },
+    {
+      "path": "crates/org-release/src/tests.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "1986c7aedd577b785e3d1249c74e174c77ca7d2948ead4cb722f5ae6a088d58d",
+      "bytes": 36006
+    }
+  ],
+  "root_owned_hunks": [
+    "Cargo.toml: org-release member and default-member registration only",
+    "Cargo.lock: generated resolver delta, no existing dependency upgrade",
+    "catalog: actual manifest evidence only, unchanged critical rules",
+    "truthful unit/checklist/category status and scoped contract/assessment/reuse metadata"
+  ],
+  "excluded": [
+    "all other reservoir crate/app source",
+    "org-pki/Argon2/raw-value/native pins",
+    "host/web/office consumers and production key configuration"
+  ],
+  "original_contexts": [
+    "01a1dfb4-1d26-7100-9ea4-72b53756ef23 (original fullstack author)",
+    "/root/release_library (lib.rs structural refactor author)",
+    "01a1dd82-ffe6-7363-af94-6072c75de2d1 (root extraction/integration)"
+  ],
+  "state": "EXTRACTED_UNACCEPTED",
+  "no_product_capability_claim": true,
+  "confirmed_repairs": [
+    {
+      "finding": "R1 require strict JSON objects at all four structural record levels",
+      "reported_on": "3038f6a4ed6193b21e1e5b478e7b968df82792ad",
+      "report": ".agent-kit/reviews/60ba78951e374428beea84dae89d389f/round-01/review.json",
+      "blocked_review_status": "Original report is preserved unmodified; runner rejected its absolute finding path. This is not a passing review.",
+      "repair_author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+      "regression": "Four new populated positional-record negative tests fail on original decoder, then23 total focused tests pass after map-only typed repair. Existing19 retained.",
+      "provenance": "files[] source hashes remain immutable b77cbd68 origin; current repaired hashes are recorded here, not substituted for original provenance.",
+      "attempts": [
+        {
+          "iteration": 1,
+          "changed_paths": [
+            {
+              "path": "crates/org-release/src/decode.rs",
+              "before_sha256": "1aaaa27f3c3def33f8f9becba3b02c2e2d31ca0787e300026b431a9ca2443d49",
+              "sha256": "777cb29666f15f4fd5f3a4355d5cdc16f922e39047fa6d3f1b950db53736c025"
+            },
+            {
+              "path": "crates/org-release/src/tests.rs",
+              "before_sha256": "1986c7aedd577b785e3d1249c74e174c77ca7d2948ead4cb722f5ae6a088d58d",
+              "sha256": "ee9a8b09dc192d687c1877a265bdd9b41612ffaa1806fc6110bc6ff677f4a016"
+            }
+          ],
+          "focused_result": "23 tests pass; full workspace source guard rejects new macro; freeze-verification-2.json retains genuine failure."
+        },
+        {
+          "iteration": 2,
+          "receipt": ".agent-kit/logs/v1-release-verifier/original-fullstack-author/strict-object-fix-2/checkpoint-1.json",
+          "changed_paths": [
+            {
+              "path": "crates/org-release/src/decode.rs",
+              "sha256": "a1f7c425ba2fcedeb479f5850970a34243531031090a11d652556cc788037f5a"
+            },
+            {
+              "path": "crates/org-release/src/lib.rs",
+              "sha256": "107da5630030ba2df4cbec507a27602d15b2de83c4473943a0d302fa1ff3fd4e"
+            },
+            {
+              "path": "crates/org-release/src/tests.rs",
+              "sha256": "ee9a8b09dc192d687c1877a265bdd9b41612ffaa1806fc6110bc6ff677f4a016"
+            }
+          ],
+          "result": "Ordinary private map-only typed wrapper; exactly two private entry-call substitutions. All23 tests, unchanged SQLCipher source guard, scoped Clippy/fmt pass. Full workspace and fresh reviews pending."
+        }
+      ]
+    }
+  ],
+  "review_report_contract": "Finding file fields must be repository-relative paths. Preserve failed/malformed reports and all confirmed findings; never normalize artifacts into a passing result."
+}
