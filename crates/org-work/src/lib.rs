@@ -77,6 +77,8 @@ mod model;
 mod ports;
 mod refs;
 pub mod selected_assignment;
+pub mod selected_codec;
+pub mod selected_history;
 mod service;
 mod states;
 mod tasks;

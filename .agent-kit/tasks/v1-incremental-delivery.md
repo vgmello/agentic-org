@@ -39,7 +39,7 @@ The original browser author retains its four-file reservation.
 | F1a — pure release verifier | Internal only; no signed release claimed. | Reuse org-release/ADR0009 and its exact limits/signature tests. Generated fixture keys remain test-only. Genuine signing setup stays final. |
 | F1b-socket — OS admission substrate | Internal only. | Reuse four org-socket confinement/image/example files and two module registrations under ADRs0008/0009; no dependency changes. Actual subprocess ambient-denial, approved FD/listener/thread and kernel-image checks. Unsupported platforms fail-closed. Separate acceptance/merge from coupled consumers. |
 | F1b-release — host/web adapters with first consumer | Internal only. | F1a/F1b-socket plus the minimum reviewed GatewayRelease/static-signing contract/helper closure before F4 composition. Preserve unaccepted ace8b29d and its real failed compile; no pulling whole F4 to compile a foundation. Exact file/hunk ownership and independent acceptance required before consumer enablement; release recovery/image/asset tests remain. |
-| F2a — source/codec | Internal only; no task writes. | Existing org-docs source editing and org-work codec/history under ADR0006. Preserve original bytes, duplicate/numeric/resource vectors and legacy semantics. No assignment service/UI dependency. |
+| F2a — source/codec | Internal only; no task writes. | Eight retained org-docs/org-work source/test/vector files plus root module/export hunks under ADR0006r5. Preserve original bytes, duplicate/numeric/resource vectors and legacy semantics; independent Python vectors. No assignment service/UI dependency. Transport-coupled selected_fingerprint test remains with its U5 production consumers; original allocation/hash retained. |
 | F2b — durable acceptance journal | Internal only. | F2a; existing office acceptance/origin capture and executable migrations. Crash/replay, protected receipt, publication/sequence and legacy compatibility tests. Bootstrap uses this journal, so this cannot be postponed until daily tasks. |
 | F3 — protected HQ state/escrow | Internal only; no normal setup/recovery claim. | F2b; reuse org-pki, HQ creation, launch recovery/writer and host custody/provisioning under ADRs0007/0011. Exact-key retry, protected fresh-owner reservation, escrow/delivery ACK, interruptions/reopen and secret exclusion. Existing-HQ first-owner proof stays paused; REC-1 and physical authentication remain their actual requirements. |
 | F4 — sessions/channel lifecycle | Internal until U1. | F1b-socket/F3 and reviewed F1b-release contract/adapter closure as composed; reuse active CH-LIFE-1r2 repair, host auth/listener, gateway handoff and browser sessions. Capacity/ACK/closure, logout/revocation/expiry, cookie/origin/CSRF, foreign-account and endpoint-failure tests. Extract session routing from selected-task dispatch; no task capability advertised just to make sign-in compile. |
@@ -161,10 +161,16 @@ regression remain preserved; no verification waiver. Pure library only.
 Actual F1b extraction failed because host runtime/platform source also needs the
 GatewayRelease/private static-signing/identifier helper closure. Preserve unaccepted
 ace8b29d on codex/v1-release-adapters; no source or author context discarded. The
-current independent acceptance unit is codex/v1-socket-admission from cd777450:
-root owns four immutable source imports plus exactly two socket registrations and
-metadata; retained fullstack author validates intent/repairs. No useful second
-source slice exists, so one writer; read-only validation may overlap frozen checks.
+independent socket unit was accepted at d6dbf8ee after confirmed Linux cfg repair,
+full checks/retained-author intent and clean fresh initial/separate final reviews;
+merged/pushed as ac20f099. Real macOS example/all69tests and Linux cross-Clippy pass;
+raw blocked report and sandbox failures remain retained. No platform/runtime waiver.
+Current independent acceptance unit codex/v1-source-codec starts from ac20f099:
+root owns eight immutable source/test/vector imports, two library registration/
+export hunks and metadata; retained fullstack author validates intent/repairs.
+The fingerprint integration test stays deferred with its actual U5 consumers.
+One writer is preferable for this coupled extraction; read-only author validation
+may overlap frozen checks. No new mechanism/interface design or broad plan review.
 This boundary refinement follows actual compiler dependencies and changes no
 selected architecture, security policy or U1 acceptance. A new broad plan review
 is unnecessary; material contract changes still receive focused review first.

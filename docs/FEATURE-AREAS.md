@@ -4,7 +4,7 @@ These are the categories used by the [single feature checklist](FEATURES.md). Ea
 
 Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 0 rows needing verification**. Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
-F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim.
+F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. F2a adds separately scoped, still-unaccepted lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim.
 
 ## Categorization rules
 

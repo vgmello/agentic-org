@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "v1-source-codec",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": false,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Eight immutable b77 pure-library files; original fullstack context retained. Existing independent Rust/Python vectors."
+    ],
+    "precise_scope": [
+      "Stable contract registered before detailed planning cf38ef250aef46f79f29cd3b205b1e37; eight files plus two root module/export hunks. Fingerprint integrationtest deferred with later production consumer, not discarded."
+    ],
+    "localized_change": [
+      "Only org-docs/org-work library modules/root glue; no service/protocol/database or dependency change selected. Actual compiler closure still must pass."
+    ],
+    "deterministic_checks": [
+      "Retained source/codec/history tests and separate Python vectors; unchanged source guard; full workspace+kit gates/fresh reviews."
+    ],
+    "low_risk": [
+      "Durable source preservation and lexical portable integrity critical; conservative Xhigh implementation/final."
+    ],
+    "no_prior_failure": [
+      "Prior reservoir review incomplete and extraction/platform/sourceguard issues in other units; no clean-extraction assumption."
+    ],
+    "ambiguity_resolved": [
+      "Reviewed plan17 explicitly selects pure F2a, ADR0006r5 selects codec2; no new mechanism/interface redesign. Material newly discovered premise changes escalate root before dependents."
+    ]
+  }
+}
