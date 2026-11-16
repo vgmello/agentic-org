@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "unit": "F1b-socket internal admission substrate",
+  "integration_base": "cd77745070633341637523d00147eca5ac53b17c",
+  "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "files": [
+    {
+      "path": "crates/org-socket/src/confinement.rs",
+      "sha256": "99c8131d70a9f259bc4acdce30d1891e7a6a8fe5ea6ff1b42002e6f258cd7264",
+      "bytes": 2528
+    },
+    {
+      "path": "crates/org-socket/src/confinement/macos.rs",
+      "sha256": "ef0692b19693611f5d73cb09b923d3fd9c96c0e13f3271f1d3a2e788f1b56b75",
+      "bytes": 4796
+    },
+    {
+      "path": "crates/org-socket/src/image.rs",
+      "sha256": "5ac657c6aea1f7591c6fe86bda31db5debdc5bd10eb2ace378f8ad5268ab83a9",
+      "bytes": 5083
+    },
+    {
+      "path": "crates/org-socket/examples/gateway_confinement.rs",
+      "sha256": "f40a49f0af68dfdf15a307208c504ce8fb4a3e424641f7669e1bc28d8d3459b4",
+      "bytes": 6991
+    }
+  ],
+  "root_owned_hunks": [
+    "crates/org-socket/src/lib.rs: onlypub mod confinement/pub mod image registrations",
+    "scoped contract/assessment/reuse/currentdelivery status and FC017 evidence; no status counts changed"
+  ],
+  "excluded": [
+    "all host/web adapter source, including failedpreservationace8b29d",
+    "all socketpeer/rights changes; current baseline retained",
+    "all Cargo/lock/dependency changes",
+    "all gateway/session/bootstrap/task/UI source"
+  ],
+  "original_contexts": [
+    "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+    "01a1dd82-ffe6-7363-af94-6072c75de2d1"
+  ],
+  "state": "EXTRACTED_UNACCEPTED",
+  "no_product_capability_claim": true,
+  "closure_reason": "Observed wholehost/socket compile failure preserved on ace8b29d. Socket itself compiled; independent foundation canland without unfinished GatewayRelease/static-signing consumer glue. Host/web consumer dependency remains unaccepted, not discarded.",
+  "architecture": "No new dependency or selected mechanism. libc-only leaf/narrownewpublic OS APIs alreadyselected by independentlyREADY ADR8/9; source graphunchanged/no cycles. Kernel metadata is not caller/publisher/account authority.",
+  "repair_overlays": [
+    {
+      "finding": "P1 R1: Linux all-targets Clippy unreachable-code failure",
+      "preserved_blocked_run": ".agent-kit/reviews/e6d50072e83443b09a76ec2e5c35af94",
+      "original_author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+      "path": "crates/org-socket/examples/gateway_confinement.rs",
+      "original_sha256": "f40a49f0af68dfdf15a307208c504ce8fb4a3e424641f7669e1bc28d8d3459b4",
+      "repaired_sha256": "ae586db37aa17b3beaaf6b7151e811c2cba80ee186cd8ce253847aa875e018e6",
+      "change": "macOS-only module and supporting items, target-specific entry points; unsupported platforms explicitly fail. Root exact-body check proves existing vector unchanged after cfg/entrypoint transformation. No policy/assertion/CI/dependency waiver.",
+      "evidence": ".agent-kit/logs/v1-socket-admission/original-fullstack-author/linux-example-fix-1/intent-checkpoint-1.json",
+      "root_checks": [
+        ".agent-kit/logs/v1-socket-admission/linux-clippy-red-1.json",
+        ".agent-kit/logs/v1-socket-admission/kernel-example-2.json",
+        ".agent-kit/logs/v1-socket-admission/focused-tests-2.json"
+      ],
+      "sandbox_failures": "Child real example and 7 existing socket tests failed EPERM under restricting parent; preserved. Root unrestricted same-source example and all69 socket tests pass. No test modification."
+    }
+  ],
+  "review_output_reminder": "Fresh findings must use repository-relative file paths per unchanged installed schema; raw absolute-path BLOCKED reports remain preserved, never normalized to pass."
+}

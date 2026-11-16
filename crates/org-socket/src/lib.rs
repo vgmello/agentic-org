@@ -4,6 +4,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+pub mod confinement;
+pub mod image;
 mod peer;
 pub mod rights;
 
