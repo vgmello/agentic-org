@@ -42,5 +42,24 @@
   "state": "EXTRACTED_UNACCEPTED",
   "no_product_capability_claim": true,
   "closure_reason": "Observed wholehost/socket compile failure preserved on ace8b29d. Socket itself compiled; independent foundation canland without unfinished GatewayRelease/static-signing consumer glue. Host/web consumer dependency remains unaccepted, not discarded.",
-  "architecture": "No new dependency or selected mechanism. libc-only leaf/narrownewpublic OS APIs alreadyselected by independentlyREADY ADR8/9; source graphunchanged/no cycles. Kernel metadata is not caller/publisher/account authority."
+  "architecture": "No new dependency or selected mechanism. libc-only leaf/narrownewpublic OS APIs alreadyselected by independentlyREADY ADR8/9; source graphunchanged/no cycles. Kernel metadata is not caller/publisher/account authority.",
+  "repair_overlays": [
+    {
+      "finding": "P1 R1: Linux all-targets Clippy unreachable-code failure",
+      "preserved_blocked_run": ".agent-kit/reviews/e6d50072e83443b09a76ec2e5c35af94",
+      "original_author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+      "path": "crates/org-socket/examples/gateway_confinement.rs",
+      "original_sha256": "f40a49f0af68dfdf15a307208c504ce8fb4a3e424641f7669e1bc28d8d3459b4",
+      "repaired_sha256": "ae586db37aa17b3beaaf6b7151e811c2cba80ee186cd8ce253847aa875e018e6",
+      "change": "macOS-only module and supporting items, target-specific entry points; unsupported platforms explicitly fail. Root exact-body check proves existing vector unchanged after cfg/entrypoint transformation. No policy/assertion/CI/dependency waiver.",
+      "evidence": ".agent-kit/logs/v1-socket-admission/original-fullstack-author/linux-example-fix-1/intent-checkpoint-1.json",
+      "root_checks": [
+        ".agent-kit/logs/v1-socket-admission/linux-clippy-red-1.json",
+        ".agent-kit/logs/v1-socket-admission/kernel-example-2.json",
+        ".agent-kit/logs/v1-socket-admission/focused-tests-2.json"
+      ],
+      "sandbox_failures": "Child real example and 7 existing socket tests failed EPERM under restricting parent; preserved. Root unrestricted same-source example and all69 socket tests pass. No test modification."
+    }
+  ],
+  "review_output_reminder": "Fresh findings must use repository-relative file paths per unchanged installed schema; raw absolute-path BLOCKED reports remain preserved, never normalized to pass."
 }
