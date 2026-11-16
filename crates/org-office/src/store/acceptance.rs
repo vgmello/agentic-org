@@ -17,7 +17,7 @@ use org_work::selected_codec::{self as codec, Json, NumberToken};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use super::{origin, Store, WriteJob};
+use super::{origin, ReplayJob, Store, WriteJob};
 use crate::OfficeError;
 
 /// Supplied only by protected host/HQ admission, not a browser task command.
@@ -500,6 +500,7 @@ impl Journal {
         // Verify the complete retained source before mutating projections. SQL
         // can be rebuilt while canonical files are already at a later revision;
         // never rewind those files through intermediate historical snapshots.
+        journal.reflush_verified_source(&journal.anchor_path(), &anchor.payload_sha256)?;
         journal.project(db, &anchor, true, true)?;
         for (number, digest) in recovered.verified_prefix {
             let bytes = durable::read(
@@ -512,6 +513,17 @@ impl Journal {
             if envelope.payload_sha256 != digest {
                 return Err(invalid());
             }
+            // The directory entry can survive a process crash without its
+            // publication flush completing. Re-establish durability of these
+            // exact verified bytes before projecting or confirming the prefix.
+            durable::publish(
+                &journal.config.protected_root,
+                &journal.transaction_path(number),
+                &bytes,
+                true,
+                None,
+            )
+            .map_err(storage)?;
             journal.project(db, &envelope, false, true)?;
         }
         // A cursor ahead of the retained source cannot prove acknowledged history.
@@ -534,6 +546,17 @@ impl Journal {
         )?;
         journal.ready = true;
         Ok(journal)
+    }
+
+    fn reflush_verified_source(&self, name: &str, digest: &str) -> Result<(), OfficeError> {
+        let bytes = durable::read(&self.config.protected_root, name, codec::MAX_JSON_BYTES)
+            .map_err(storage)?;
+        if self.decode(&bytes)?.payload_sha256 != digest {
+            return Err(invalid());
+        }
+        // Immutable identical-byte publication never rewrites the retained file;
+        // its existing-byte branch flushes the directory and that file.
+        durable::publish(&self.config.protected_root, name, &bytes, true, None).map_err(storage)
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<Envelope, OfficeError> {
@@ -759,6 +782,84 @@ fn project_envelope(
     #[cfg(test)]
     crash::hit(crash::Point::SqlCommitted);
     rows::mode(db, 0)?;
+    Ok(())
+}
+
+/// Only typed native commands carry this probe. Generic jobs still reach their
+/// ordinal-exhaustion check before any arbitrary transaction callback.
+pub(super) fn run_native_job(
+    db: &mut Connection,
+    journal: &mut Journal,
+    native: ReplayJob,
+) -> bool {
+    let ReplayJob { job, probe } = native;
+    if !journal.ready {
+        (job.reply)(Err(invalid()));
+        return false;
+    }
+    journal.ready = false;
+    let mut began = false;
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if !db.is_autocommit() {
+            return Err(invalid());
+        }
+        db.pragma_update(None, "query_only", true)
+            .map_err(storage)?;
+        db.execute_batch("BEGIN").map_err(storage)?;
+        began = true;
+        journal.verify_cursor(db)?;
+        journal.verify_authority()?;
+        if origin::stored_incarnation(db)?.as_deref() != Some(&journal.origin)
+            || origin::high_water(db, &journal.origin)? != journal.high_water as u64
+        {
+            return Err(invalid());
+        }
+        verify_artifacts(db, &journal.config)?;
+        probe(db)
+    }))
+    .unwrap_or_else(|panic| Err(super::panicked(panic)));
+    // No saved value is exposed until the read transaction and query-only mode
+    // are both cleaned up. Errors and panics are never converted into Miss.
+    let cleanup = finish_native_probe(db, began);
+    match result.and_then(|found| cleanup.map(|()| found)) {
+        Ok(true) => {
+            journal.ready = true;
+            (job.reply)(Ok(()));
+            true
+        }
+        Ok(false) => {
+            journal.ready = true;
+            run_job(db, journal, job);
+            journal.ready
+        }
+        Err(error) => {
+            (job.reply)(Err(error));
+            false
+        }
+    }
+}
+
+fn finish_native_probe(db: &Connection, began: bool) -> Result<(), OfficeError> {
+    let rollback = if began || !db.is_autocommit() {
+        // An unexpectedly ended transaction must produce a cleanup failure too;
+        // do not treat its saved value as a successful probe.
+        db.execute_batch("ROLLBACK").map_err(storage)
+    } else {
+        Ok(())
+    };
+    let reset = db.pragma_update(None, "query_only", false).map_err(storage);
+    rollback.and(reset)
+}
+
+#[cfg(test)]
+pub(super) fn exhaust_for_test(db: &Connection, journal: &mut Journal) -> Result<(), OfficeError> {
+    journal.verify_cursor(db)?;
+    rows::mode(db, 2)?;
+    db.execute("UPDATE selected_journal_cursor SET ordinal=?1", [i64::MAX])
+        .map_err(storage)?;
+    rows::mode(db, 0)?;
+    journal.ordinal = i64::MAX;
+    journal.position.as_mut().ok_or_else(invalid)?.ordinal = i64::MAX;
     Ok(())
 }
 

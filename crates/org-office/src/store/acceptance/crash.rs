@@ -14,6 +14,8 @@ pub(crate) enum Point {
     ReceiptPublished,
     SqlCommitted,
     BeforeReply,
+    AnchorInstalled = 11,
+    ManifestInstalled = 12,
 }
 static POINT: AtomicU8 = AtomicU8::new(0);
 pub(crate) fn arm(point: Point) {
@@ -53,5 +55,15 @@ pub(super) fn file(name: &str, flushed_only: bool) {
     };
     if let Some(point) = point {
         hit(point);
+    }
+}
+
+pub(super) fn installed(name: &str) {
+    if name.contains("/journals/work-acceptance/") {
+        if name.ends_with("/anchor.json") {
+            hit(Point::AnchorInstalled);
+        } else if name.contains("/transactions/") {
+            hit(Point::ManifestInstalled);
+        }
     }
 }

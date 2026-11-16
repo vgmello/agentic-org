@@ -966,3 +966,151 @@ fn frozen_text_cells_publish_reopen_and_rebuild_without_losing_bytes() {
         }
     }
 }
+
+struct RecoverySyncAuthority {
+    inner: ProtectedCheckpoint,
+    required: AtomicUsize,
+    before: std::sync::Mutex<(u64, u64, u64)>,
+}
+
+impl WriterAuthority for RecoverySyncAuthority {
+    fn checkpoint(&self, id: &AcceptanceIdentity) -> Result<Option<JournalPosition>, OfficeError> {
+        *self.before.lock().unwrap() = durable::calls();
+        self.inner.checkpoint(id)
+    }
+
+    fn confirm(
+        &self,
+        id: &AcceptanceIdentity,
+        before: Option<&JournalPosition>,
+        after: &JournalPosition,
+    ) -> Result<(), OfficeError> {
+        let first = *self.before.lock().unwrap();
+        let last = durable::calls();
+        let required = self.required.load(Ordering::SeqCst) as u64;
+        if last.0 - first.0 < required || last.2 - first.2 < required {
+            return Err(OfficeError::Invalid(
+                "recovery confirmation before durable source sync",
+            ));
+        }
+        #[cfg(target_os = "macos")]
+        if last.1 - first.1 < required {
+            return Err(OfficeError::Invalid(
+                "recovery confirmation before full flush",
+            ));
+        }
+        self.inner.confirm(id, before, after)
+    }
+}
+
+#[test]
+fn recovery_syncs_retained_anchor_and_prefix_before_confirmation() {
+    let root = TempDir::new().unwrap();
+    let store = fresh(root.path());
+    let authority = Arc::new(RecoverySyncAuthority {
+        inner: ProtectedCheckpoint::default(),
+        required: AtomicUsize::new(0),
+        before: Default::default(),
+    });
+    let mut c = config(root.path());
+    c.authority = Some(authority.clone());
+    store.install_acceptance(c.clone()).unwrap();
+    store.selected_write(|db| receipt(db, "one")).unwrap();
+    store.selected_write(|db| receipt(db, "two")).unwrap();
+    drop(store);
+    use std::os::unix::fs::MetadataExt;
+    let prefix = c
+        .protected_root
+        .join("offices/office/journals/work-acceptance/journal-one");
+    let retained: Vec<_> = ["anchor.json", "transactions/1.json", "transactions/2.json"]
+        .into_iter()
+        .map(|name| {
+            let path = prefix.join(name);
+            let metadata = std::fs::metadata(&path).unwrap();
+            (
+                path.clone(),
+                std::fs::read(path).unwrap(),
+                metadata.dev(),
+                metadata.ino(),
+                metadata.modified().unwrap(),
+            )
+        })
+        .collect();
+    authority.required.store(3, Ordering::SeqCst);
+    let store = open(root.path(), Opening::Existing);
+    store.install_acceptance(c).unwrap();
+    assert_eq!(cursor(&store), (2, 0));
+    for (path, bytes, device, inode, modified) in retained {
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        assert_eq!((metadata.dev(), metadata.ino()), (device, inode));
+        assert_eq!(metadata.modified().unwrap(), modified);
+    }
+}
+
+struct RecoveryFailureAuthority {
+    inner: ProtectedCheckpoint,
+    fail: AtomicUsize,
+    confirmations: AtomicUsize,
+}
+impl WriterAuthority for RecoveryFailureAuthority {
+    fn checkpoint(&self, id: &AcceptanceIdentity) -> Result<Option<JournalPosition>, OfficeError> {
+        let position = self.inner.checkpoint(id)?;
+        let nth = self.fail.load(Ordering::SeqCst);
+        if nth != 0 {
+            durable::fail_parent_flush_after(nth);
+        }
+        Ok(position)
+    }
+    fn confirm(
+        &self,
+        id: &AcceptanceIdentity,
+        before: Option<&JournalPosition>,
+        after: &JournalPosition,
+    ) -> Result<(), OfficeError> {
+        self.confirmations.fetch_add(1, Ordering::SeqCst);
+        self.inner.confirm(id, before, after)
+    }
+}
+
+#[test]
+fn recovery_sync_failure_refuses_before_confirmation_and_keeps_writer_fenced() {
+    // Fail the anchor flush, then either retained transaction flush.
+    for nth in 1..=3 {
+        let root = TempDir::new().unwrap();
+        let authority = Arc::new(RecoveryFailureAuthority {
+            inner: ProtectedCheckpoint::default(),
+            fail: AtomicUsize::new(0),
+            confirmations: AtomicUsize::new(0),
+        });
+        let mut c = config(root.path());
+        c.authority = Some(authority.clone());
+        let store = fresh(root.path());
+        store.install_acceptance(c.clone()).unwrap();
+        store
+            .selected_write(|db| receipt(db, "before-flush-failure"))
+            .unwrap();
+        store
+            .selected_write(|db| receipt(db, "second-retained-manifest"))
+            .unwrap();
+        drop(store);
+        let confirmations = authority.confirmations.load(Ordering::SeqCst);
+        let position = authority.inner.position.lock().unwrap().clone();
+        authority.fail.store(nth, Ordering::SeqCst);
+        let store = open(root.path(), Opening::Existing);
+        assert!(store.install_acceptance(c.clone()).is_err());
+        assert_eq!(
+            authority.confirmations.load(Ordering::SeqCst),
+            confirmations
+        );
+        assert_eq!(*authority.inner.position.lock().unwrap(), position);
+        assert!(store
+            .selected_write::<()>(|_| panic!("flush failure must fence decision"))
+            .is_err());
+        drop(store);
+        authority.fail.store(0, Ordering::SeqCst);
+        let store = open(root.path(), Opening::Existing);
+        store.install_acceptance(c).unwrap();
+        assert_eq!(cursor(&store), (2, 0));
+    }
+}

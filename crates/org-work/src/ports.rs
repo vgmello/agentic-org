@@ -12,6 +12,7 @@ use org_proto::org::{Area, Member, Position, Project};
 use org_proto::work::{EventRef, ItemKind, Link, LinkKind, WorkEvent, WorkPosition};
 use serde::{Deserialize, Serialize};
 
+use crate::call::{Caller, WorkCall};
 use crate::engine::TxnOutput;
 use crate::model::{StoredItem, StoredResult};
 
@@ -173,6 +174,18 @@ pub trait WorkStore {
     /// all of `f`'s writes commit or none do. `Err` from `f` rolls them back. The result is
     /// reported after the batch's commit.
     fn transact(&self, f: Arc<TxnFn>) -> Result<TxnOutput, StoreError>;
+
+    /// Typed command dispatch. The producer must bind these same immutable inputs
+    /// to `f`; native stores may probe only their authenticated saved result.
+    /// Other stores retain their ordinary transaction behavior.
+    fn transact_command(
+        &self,
+        _caller: &Caller,
+        _call: &WorkCall,
+        f: Arc<TxnFn>,
+    ) -> Result<TxnOutput, StoreError> {
+        self.transact(f)
+    }
 }
 
 /// Reads from the read pool (no writer involved), for `work.get`, `work.activity` and

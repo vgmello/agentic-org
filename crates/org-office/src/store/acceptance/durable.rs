@@ -10,7 +10,15 @@ use std::{
 };
 
 #[cfg(test)]
-thread_local! {static CALLS:std::cell::Cell<(u64,u64,u64)>=const {std::cell::Cell::new((0,0,0))};}
+thread_local! {
+    static CALLS:std::cell::Cell<(u64,u64,u64)>=const {std::cell::Cell::new((0,0,0))};
+    static FAIL_PARENT:std::cell::Cell<usize>=const {std::cell::Cell::new(0)};
+}
+
+#[cfg(test)]
+pub(super) fn fail_parent_flush_after(nth: usize) {
+    FAIL_PARENT.set(nth);
+}
 
 #[cfg(test)]
 pub(super) fn calls() -> (u64, u64, u64) {
@@ -123,6 +131,14 @@ pub(super) fn flush(file: &File) -> io::Result<()> {
 }
 
 fn parent_flush(parent: &Path, file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_PARENT.get() != 0 {
+        let remaining = FAIL_PARENT.get() - 1;
+        FAIL_PARENT.set(remaining);
+        if remaining == 0 {
+            return Err(io::Error::other("injected publication flush failure"));
+        }
+    }
     // First issue directory metadata to the device, then fully flush its cache
     // using the file on that same filesystem. Directory F_FULLFSYNC is not used.
     sync_directory(parent)?;
@@ -218,6 +234,10 @@ pub(crate) fn publish(
         }
     } else {
         fs::rename(&temp, &path)?;
+    }
+    #[cfg(test)]
+    if immutable {
+        super::crash::installed(name);
     }
     parent_flush(parent, &file)?;
     if immutable {

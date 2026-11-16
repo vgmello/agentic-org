@@ -93,7 +93,8 @@ pub mod testkit;
 pub use call::{Caller, WorkCall};
 pub use cascades::reconcile_bugs;
 pub use engine::{
-    execute, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS, CHANGE_RESULT_KEEP_MS,
+    execute, lookup_existing, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS,
+    CHANGE_RESULT_KEEP_MS,
 };
 pub use hash::{canonical_json, params_hash};
 pub use history_coverage::{

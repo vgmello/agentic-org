@@ -337,6 +337,14 @@ impl<T: WorkStore + ?Sized> WorkStore for Arc<T> {
     fn transact(&self, f: Arc<TxnFn>) -> Result<TxnOutput, StoreError> {
         (**self).transact(f)
     }
+    fn transact_command(
+        &self,
+        caller: &crate::Caller,
+        call: &crate::WorkCall,
+        f: Arc<TxnFn>,
+    ) -> Result<TxnOutput, StoreError> {
+        (**self).transact_command(caller, call, f)
+    }
 }
 
 impl WorkReads for MemStore {

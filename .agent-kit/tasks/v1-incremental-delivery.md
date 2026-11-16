@@ -217,3 +217,38 @@ No production migration or reviewed interface change. Required gates repeat on t
 new freeze; retained-author exact-tree validation and both fresh reviews remain.
 This bounded serial repair is faster than a new writer handoff and does not change
 usable delivery order or acceptance. See reuse.json/root_migration_test_handoff.
+
+F2b07572fd5 full gates pass3020/0/5existingignored plus8kit/hook; retained author
+validated frozen tree. Fresh initial review identified missing recovery reflush
+and native exact replay consuming ordinal/clock (including exhaustion refusal).
+The runner rejected absolute finding paths; preserve BLOCKED run1284422c and both
+real issues. Root grants retained author7file repair scope in reuse record and
+pauses tracked writes. No independent second writer across shared journal boundary.
+Production durability/idempotency gates remain unchanged; final current full gates,
+author validation and fresh initial/final acceptance are still required.
+
+F2b bounded repair handoff: original author terminal0/784.55s, F1 recovery flush
+fixed with actual RED/GREEN,30acceptance passes,32SIGKILL cases across12hooks and
+strict flush-failure fencing. All nonowned1413inputs and6guards unchanged. Both
+new native success/refusal replay tests remain RED;103existing work passes.
+Opaque TxnFn needs a typed producer for safe MAX lookup. The exact public Rust
+trait/shared prefix and private FIFO probe proposal has focused independent
+architecture review before additional ownership/dependent code; original journal
+architecture and pre-decision exhaustion policy remain. No source writer active.
+
+Native replay interface rev1 READY210.591s, fresh session01a1e58f. Root activated
+v1-native-replay-interface.md with all source-linked obligations and correct
+Arc adapter testkit.rs. Five minimum org-work source additions extend F2b24->29
+without changing immutable allocation or architecture. Ten exact source paths go
+to the same original author; root pauses tracked writes. This coupled queue/reply/
+authorization repair has no useful second writer. F1 remains preserved, both native
+RED regressions must become GREEN, all final gates remain. No usable unit change.
+
+F2b native repair handoff: original author completed817.716s/exit0. Root verified
+29 source hashes, six unchanged guards,1404 nonowned baseline inputs and all named
+logs. Both retained native retry regressions are GREEN; MAX/fresh authorization,
+read-only probe and failed-cleanup fencing, Arc/default/cascade compatibility,
+duplicate replay and reopen checks pass. Journal30tests/32SIGKILLvectors/12hooks
+retain recovery-reflush repair. Root owns current freeze; no concurrent writer.
+Full current checks and NEW initial/retained-author/fresh final acceptance remain
+open. No usable feature or production host/signing claim; U1 stays first delivery.

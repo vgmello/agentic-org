@@ -73,7 +73,15 @@ pub(crate) struct WriteJob {
 
 /// FIFO barriers share the existing writer connection. A control job is never
 /// put in a batch or retried; work jobs use frozen acceptance once installed.
+type ReplayProbe = dyn FnOnce(&Connection) -> Result<bool, OfficeError> + Send;
+
+pub(crate) struct ReplayJob {
+    job: WriteJob,
+    probe: Box<ReplayProbe>,
+}
+
 enum WriterJob {
+    Native(ReplayJob),
     Batch(WriteJob),
     Work(WriteJob),
     Control(Box<dyn FnOnce(&mut WriterState) + Send>),
@@ -283,11 +291,18 @@ impl Store {
     }
 
     pub(crate) fn job_with_batch_abort<R: Send + 'static>(
-        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
         abort_batch: fn(&OfficeError) -> bool,
     ) -> (WriteJob, mpsc::Receiver<Result<R, OfficeError>>) {
+        Self::job_with_value(work, abort_batch, Arc::new(Mutex::new(None)))
+    }
+
+    fn job_with_value<R: Send + 'static>(
+        mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        abort_batch: fn(&OfficeError) -> bool,
+        slot: Arc<Mutex<Option<R>>>,
+    ) -> (WriteJob, mpsc::Receiver<Result<R, OfficeError>>) {
         let (reply, answer) = mpsc::sync_channel(1);
-        let slot: Arc<Mutex<Option<R>>> = Arc::new(Mutex::new(None));
         let attempt = {
             let slot = Arc::clone(&slot);
             move |db: &Connection| {
@@ -309,6 +324,30 @@ impl Store {
             }),
         };
         (job, answer)
+    }
+
+    fn job_with_replay<R: Send + 'static>(
+        work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
+        probe: impl FnOnce(&Connection) -> Result<Option<R>, OfficeError> + Send + 'static,
+    ) -> (ReplayJob, mpsc::Receiver<Result<R, OfficeError>>) {
+        let slot = Arc::new(Mutex::new(None));
+        let (job, answer) = Self::job_with_value(work, |_| false, slot.clone());
+        let probe = Box::new(move |db: &Connection| match probe(db)? {
+            Some(value) => {
+                *lock(&slot) = Some(value);
+                Ok(true)
+            }
+            None => Ok(false),
+        });
+        (ReplayJob { job, probe }, answer)
+    }
+
+    fn send_native_job(&self, job: ReplayJob) -> Result<(), OfficeError> {
+        self.jobs
+            .as_ref()
+            .ok_or_else(|| failure("the storage writer stopped"))?
+            .send(WriterJob::Native(job))
+            .map_err(|_| failure("the storage writer stopped"))
     }
 
     pub(crate) fn send_job(&self, job: WriteJob) -> Result<(), OfficeError> {
@@ -479,6 +518,21 @@ fn writer_loop(db: Connection, queue: mpsc::Receiver<WriterJob>) {
                 run(&mut state);
                 continue;
             }
+            WriterJob::Native(native) => {
+                if state.recovery_required {
+                    (native.job.reply)(Err(OfficeError::Invalid(
+                        "work acceptance startup recovery required",
+                    )));
+                    continue;
+                }
+                if let Some(journal) = state.acceptance.as_mut() {
+                    if !acceptance::run_native_job(&mut state.db, journal, native) {
+                        state.recovery_required = true;
+                    }
+                    continue;
+                }
+                native.job
+            }
             WriterJob::Work(job) | WriterJob::Batch(job) if state.recovery_required => {
                 (job.reply)(Err(OfficeError::Invalid(
                     "work acceptance startup recovery required",
@@ -497,6 +551,9 @@ fn writer_loop(db: Connection, queue: mpsc::Receiver<WriterJob>) {
             match queue.try_recv() {
                 Ok(WriterJob::Batch(job)) => batch.push(job),
                 Ok(WriterJob::Work(job)) if state.acceptance.is_none() => batch.push(job),
+                Ok(WriterJob::Native(native)) if state.acceptance.is_none() => {
+                    batch.push(native.job)
+                }
                 Ok(barrier) => {
                     deferred = Some(barrier);
                     break;

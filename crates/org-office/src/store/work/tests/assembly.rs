@@ -1767,3 +1767,588 @@ fn oracle_keeps_independent_positions_when_only_native_org_advances() {
     assert_eq!(w.reference.store().positions.lock().unwrap()[&1], before);
     assert_eq!(w.mem.snapshot().feed[0].org_position, before);
 }
+
+#[test]
+fn native_workservice_exact_retry_does_not_publish_or_advance_clock() {
+    native_retry_case(false);
+}
+
+#[test]
+fn native_workservice_refusal_retry_does_not_publish_or_advance_clock() {
+    native_retry_case(true);
+}
+
+fn retained_publications(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, (Vec<u8>, std::time::SystemTime)> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else {
+                assert!(kind.is_file());
+                files.insert(
+                    entry.path(),
+                    (
+                        std::fs::read(entry.path()).unwrap(),
+                        entry.metadata().unwrap().modified().unwrap(),
+                    ),
+                );
+            }
+        }
+    }
+    files
+}
+
+fn native_retry_case(refusal: bool) {
+    use crate::store::acceptance::{AcceptanceConfig, AcceptanceIdentity};
+    let (root, store, _, wall) = setup();
+    super::super::tests::initialize_origin(&store);
+    store
+        .write(|db| {
+            db.execute("INSERT INTO meta VALUES('instance_id','instance')", [])
+                .map_err(OfficeError::storage)?;
+            Ok(((), None))
+        })
+        .unwrap();
+    let c = AcceptanceConfig {
+        authority: None,
+        identity: AcceptanceIdentity {
+            instance_id: "instance".into(),
+            organization_id: "org".into(),
+            office_id: "OFFICE1".into(),
+            journal_incarnation: "journal-one".into(),
+            writer_epoch: 1,
+            machine_id: "machine".into(),
+        },
+        protected_root: root.path().join("recovery"),
+        public_root: root.path().join("public"),
+    };
+    store.install_acceptance(c.clone()).unwrap();
+    let now = wall.clone();
+    let native = OfficeWorkStore::new(
+        store.clone(),
+        Arc::new(MemOrg::new("owner1").with_project("project1", "one", &[])),
+        Arc::new(move || now.now_ms()),
+    )
+    .unwrap();
+    let clock = native.clock();
+    let service = WorkService::new(native, clock, "OFFICE1");
+    for (index, method, params) in [
+        (
+            1,
+            "task.create",
+            json!({"item_id":org_work::ulid_from_parts(T0,9001),"project_id":"project1","title":"task"}),
+        ),
+        (
+            2,
+            "task.update",
+            json!({"item_id":org_work::ulid_from_parts(T0,9002),"expected_version":1,"title":"missing"}),
+        ),
+    ] {
+        if refusal != (index == 2) {
+            continue;
+        }
+        let mut params = params;
+        params["change_id"] = json!(org_work::ulid_from_parts(T0, 9100 + index));
+        let command = Command::parse(&org_proto::Request {
+            id: 1,
+            method: method.into(),
+            principal: None,
+            params,
+        })
+        .unwrap()
+        .unwrap();
+        let original = service
+            .call(Caller::app("owner1"), command.clone())
+            .unwrap();
+        let expected = match original {
+            TxnOutput::Committed { accepted, .. } => Ok(accepted),
+            TxnOutput::Refused(error) => Err(error),
+            other => panic!("expected new decision: {other:?}"),
+        };
+        let before = store
+            .read(|db| {
+                let cursor: (i64, i64) = db
+                    .query_row(
+                        "SELECT ordinal,origin_high_water FROM selected_journal_cursor",
+                        [],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .map_err(OfficeError::storage)?;
+                Ok((cursor, metadata::high_water(db)?))
+            })
+            .unwrap();
+        let file = c.protected_root.join(format!(
+            "offices/OFFICE1/journals/work-acceptance/journal-one/transactions/{}.json",
+            before.0 .0
+        ));
+        let bytes = std::fs::read(&file).unwrap();
+        let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+        let publications = retained_publications(&c.protected_root);
+        assert_eq!(
+            service
+                .call(Caller::app("owner1"), command.clone())
+                .unwrap(),
+            TxnOutput::Replayed(expected.clone())
+        );
+        assert_eq!(retained_publications(&c.protected_root), publications);
+        wall.set(T0 + index as u64 * 100);
+        assert_eq!(
+            service.call(Caller::app("owner1"), command).unwrap(),
+            TxnOutput::Replayed(expected)
+        );
+        let after = store
+            .read(|db| {
+                let cursor: (i64, i64) = db
+                    .query_row(
+                        "SELECT ordinal,origin_high_water FROM selected_journal_cursor",
+                        [],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .map_err(OfficeError::storage)?;
+                Ok((cursor, metadata::high_water(db)?))
+            })
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "exact native retry must not publish or raise persisted clock"
+        );
+        assert_eq!(retained_publications(&c.protected_root), publications);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(file).unwrap().modified().unwrap(),
+            modified
+        );
+    }
+}
+
+#[derive(Default)]
+struct NativeAuthority {
+    position: Mutex<Option<org_proto::work::JournalPosition>>,
+    revoked: std::sync::atomic::AtomicBool,
+}
+impl crate::store::acceptance::WriterAuthority for NativeAuthority {
+    fn checkpoint(
+        &self,
+        _: &org_proto::work::WriterIdentity,
+    ) -> Result<Option<org_proto::work::JournalPosition>, OfficeError> {
+        if self.revoked.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(OfficeError::Invalid("test admission revoked"));
+        }
+        Ok(self.position.lock().unwrap().clone())
+    }
+    fn confirm(
+        &self,
+        id: &org_proto::work::WriterIdentity,
+        before: Option<&org_proto::work::JournalPosition>,
+        after: &org_proto::work::JournalPosition,
+    ) -> Result<(), OfficeError> {
+        let current = self.checkpoint(id)?;
+        assert_eq!(current.as_ref(), before);
+        assert!(after.valid());
+        *self.position.lock().unwrap() = Some(after.clone());
+        Ok(())
+    }
+}
+
+struct NativeReplayFixture {
+    root: tempfile::TempDir,
+    store: Arc<Store>,
+    native: Arc<OfficeWorkStore>,
+    org: Arc<Mutex<MemOrg>>,
+    wall: Arc<TestClock>,
+    config: crate::store::acceptance::AcceptanceConfig,
+    authority: Arc<NativeAuthority>,
+}
+impl NativeReplayFixture {
+    fn new() -> Self {
+        let (root, store, _, wall) = setup();
+        super::super::tests::initialize_origin(&store);
+        store
+            .write(|db| {
+                db.execute("INSERT INTO meta VALUES('instance_id','instance')", [])
+                    .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        let authority = Arc::new(NativeAuthority::default());
+        let config = crate::store::acceptance::AcceptanceConfig {
+            authority: Some(authority.clone()),
+            identity: org_proto::work::WriterIdentity {
+                instance_id: "instance".into(),
+                organization_id: "org".into(),
+                office_id: "OFFICE1".into(),
+                journal_incarnation: "journal-one".into(),
+                writer_epoch: 1,
+                machine_id: "machine".into(),
+            },
+            protected_root: root.path().join("recovery"),
+            public_root: root.path().join("public"),
+        };
+        store.install_acceptance(config.clone()).unwrap();
+        let org = Arc::new(Mutex::new(MemOrg::new("owner1").with_project(
+            "project1",
+            "one",
+            &[],
+        )));
+        let now = wall.clone();
+        let native = Arc::new(
+            OfficeWorkStore::new(store.clone(), org.clone(), Arc::new(move || now.now_ms()))
+                .unwrap(),
+        );
+        Self {
+            root,
+            store,
+            native,
+            org,
+            wall,
+            config,
+            authority,
+        }
+    }
+    fn service(&self) -> WorkService<Arc<OfficeWorkStore>> {
+        WorkService::new(self.native.clone(), self.native.clock(), "OFFICE1")
+    }
+    fn state(&self) -> ((i64, i64), u64) {
+        self.store
+            .read(|db| {
+                let position = db
+                    .query_row(
+                        "SELECT ordinal,origin_high_water FROM selected_journal_cursor",
+                        [],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .map_err(OfficeError::storage)?;
+                Ok((position, metadata::high_water(db)?))
+            })
+            .unwrap()
+    }
+}
+fn replay_command(n: u128, refusal: bool) -> Command {
+    let (method, mut params) = if refusal {
+        (
+            "task.update",
+            json!({"item_id":org_work::ulid_from_parts(T0,n+10000),"expected_version":1,"title":"absent"}),
+        )
+    } else {
+        (
+            "task.create",
+            json!({"item_id":org_work::ulid_from_parts(T0,n+10000),"project_id":"project1","title":"original"}),
+        )
+    };
+    params["change_id"] = json!(org_work::ulid_from_parts(T0, n));
+    Command::parse(&org_proto::Request {
+        id: 1,
+        method: method.into(),
+        principal: None,
+        params,
+    })
+    .unwrap()
+    .unwrap()
+}
+
+#[test]
+fn native_replay_max_arc_dispatch_and_new_command_predecision_fence() {
+    let f = NativeReplayFixture::new();
+    let service = f.service();
+    let commands = [replay_command(30, false), replay_command(31, true)];
+    let expected: Vec<_> = commands
+        .iter()
+        .map(|c| {
+            service
+                .call(Caller::app("owner1"), c.clone())
+                .unwrap()
+                .answer()
+                .cloned()
+                .map_err(Clone::clone)
+        })
+        .collect();
+    f.store
+        .control(|state| {
+            crate::store::acceptance::exhaust_for_test(
+                &state.db,
+                state.acceptance.as_mut().unwrap(),
+            )
+        })
+        .unwrap();
+    f.authority
+        .position
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .ordinal = i64::MAX;
+    let before = f.state();
+    let files = retained_publications(&f.config.protected_root);
+    f.wall.set(T0 + 1000);
+    for (command, answer) in commands.iter().zip(&expected) {
+        assert_eq!(
+            service
+                .call(Caller::app("owner1"), command.clone())
+                .unwrap(),
+            TxnOutput::Replayed(answer.clone())
+        );
+    }
+    assert!(service
+        .call(Caller::app("owner1"), replay_command(32, false))
+        .is_err());
+    assert!(f
+        .native
+        .transact_command(
+            &Caller::app("owner1"),
+            &replay_command(33, false),
+            Arc::new(|_, _| panic!("MAX must precede arbitrary decision"))
+        )
+        .is_err());
+    assert_eq!(f.state(), before);
+    assert_eq!(retained_publications(&f.config.protected_root), files);
+    assert_eq!(
+        service
+            .call(Caller::app("owner1"), commands[0].clone())
+            .unwrap(),
+        TxnOutput::Replayed(expected[0].clone())
+    );
+}
+
+#[test]
+fn native_replay_authorization_and_hash_precedence_remain_live_without_publication() {
+    let f = NativeReplayFixture::new();
+    let service = f.service();
+    let command = replay_command(40, false);
+    let original = service
+        .call(Caller::app("owner1"), command.clone())
+        .unwrap();
+    let state = f.state();
+    let files = retained_publications(&f.config.protected_root);
+    f.wall.set(T0 + 1000);
+    let changed = json!({"item_id":org_work::ulid_from_parts(T0,10040),"project_id":"project1","title":"different","change_id":org_work::ulid_from_parts(T0,40)});
+    let different = Command::parse(&org_proto::Request {
+        id: 1,
+        method: "task.create".into(),
+        principal: None,
+        params: changed,
+    })
+    .unwrap()
+    .unwrap();
+    let wrong = service
+        .call(Caller::app("owner1"), different.clone())
+        .unwrap();
+    assert_eq!(wrong.answer().unwrap_err().code, ErrorCode::InvalidRequest);
+    let agent = service.call(Caller::agent("owner1"), different).unwrap();
+    assert_eq!(agent.answer().unwrap_err().code, ErrorCode::NotAuthorized);
+    let owner = f.org.lock().unwrap().members.remove("owner1").unwrap();
+    let revoked = service
+        .call(Caller::app("owner1"), command.clone())
+        .unwrap();
+    assert_eq!(revoked.answer().unwrap_err().code, ErrorCode::NotAuthorized);
+    f.org.lock().unwrap().members.insert("owner1".into(), owner);
+    assert_eq!(
+        service
+            .call(Caller::app("owner1"), command)
+            .unwrap()
+            .answer(),
+        original.answer()
+    );
+    assert_eq!(f.state(), state);
+    assert_eq!(retained_publications(&f.config.protected_root), files);
+}
+
+#[test]
+fn native_replay_protected_authority_revocation_fences_saved_result() {
+    let f = NativeReplayFixture::new();
+    let service = f.service();
+    let command = replay_command(50, false);
+    service
+        .call(Caller::app("owner1"), command.clone())
+        .unwrap();
+    let before = f.state();
+    f.authority
+        .revoked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(service
+        .call(Caller::app("owner1"), command.clone())
+        .is_err());
+    f.authority
+        .revoked
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(service.call(Caller::app("owner1"), command).is_err());
+    assert_eq!(f.state(), before);
+}
+
+#[test]
+fn native_probe_readonly_error_panic_and_failed_cleanup_never_expose_value_or_miss() {
+    for failure in ["write", "error", "panic", "cleanup"] {
+        let f = NativeReplayFixture::new();
+        let command = replay_command(60, false);
+        f.service()
+            .call(Caller::app("owner1"), command.clone())
+            .unwrap();
+        let before = f.state();
+        let files = retained_publications(&f.config.protected_root);
+        let (job, answer) = call::replay_job::<(TxnOutput, u64)>(
+            |_| panic!("probe failure must never become Miss"),
+            move |db| {
+                match failure {
+                    "write" => {
+                        db.execute("UPDATE work_clock SET high_water_ms=high_water_ms+1", [])
+                            .map_err(OfficeError::storage)
+                            .map_err(WorkCallError::Store)?;
+                    }
+                    "error" => {
+                        return Err(WorkCallError::Port(StoreError::new("probe read failed")))
+                    }
+                    "panic" => panic!("probe panic"),
+                    "cleanup" => db
+                        .execute_batch("ROLLBACK")
+                        .map_err(OfficeError::storage)
+                        .map_err(WorkCallError::Store)?,
+                    _ => unreachable!(),
+                }
+                Ok(Some((noop(), T0)))
+            },
+        );
+        f.store.send_native_job(job).unwrap();
+        let error = answer.recv().unwrap_err();
+        if failure == "cleanup" {
+            let mut cause: &dyn Error = &error;
+            let mut causes = vec![cause.to_string()];
+            while let Some(source) = cause.source() {
+                cause = source;
+                causes.push(cause.to_string());
+            }
+            assert!(
+                causes.iter().any(|text| text.contains("cannot rollback")),
+                "{causes:?}"
+            );
+        }
+        assert!(f
+            .store
+            .write::<()>(|_| panic!("failed probe must fence later writer callbacks"))
+            .is_err());
+        assert!(
+            f.service().call(Caller::app("owner1"), command).is_err(),
+            "{failure}"
+        );
+        assert_eq!(f.state(), before);
+        assert_eq!(retained_publications(&f.config.protected_root), files);
+        f.store
+            .control(|state| {
+                assert!(state.db.is_autocommit());
+                let read_only: i64 = state
+                    .db
+                    .pragma_query_value(None, "query_only", |r| r.get(0))
+                    .map_err(OfficeError::storage)?;
+                assert_eq!(read_only, 0);
+                Ok(())
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn native_concurrent_duplicate_and_unrelated_reopen_keep_original_result() {
+    let f = NativeReplayFixture::new();
+    let command = replay_command(70, false);
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let mut threads = Vec::new();
+    for _ in 0..2 {
+        let service = f.service();
+        let c = command.clone();
+        let b = barrier.clone();
+        threads.push(std::thread::spawn(move || {
+            b.wait();
+            service.call(Caller::app("owner1"), c).unwrap()
+        }));
+    }
+    barrier.wait();
+    let outputs: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|o| matches!(o, TxnOutput::Committed { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|o| matches!(o, TxnOutput::Replayed(_)))
+            .count(),
+        1
+    );
+    assert_eq!(outputs[0].answer(), outputs[1].answer());
+    assert_eq!(f.state().0, (1, 1));
+    let expected = outputs[0].answer().cloned().map_err(Clone::clone);
+    f.wall.set(T0 + 1000);
+    f.service()
+        .call(Caller::app("owner1"), replay_command(71, false))
+        .unwrap();
+    assert_eq!(
+        f.service()
+            .call(Caller::app("owner1"), command.clone())
+            .unwrap(),
+        TxnOutput::Replayed(expected.clone())
+    );
+    let NativeReplayFixture {
+        root,
+        store,
+        native,
+        org,
+        wall,
+        config,
+        ..
+    } = f;
+    drop(native);
+    drop(store);
+    let store = Arc::new(reopen(&root));
+    store.install_acceptance(config).unwrap();
+    let native =
+        Arc::new(OfficeWorkStore::new(store, org, Arc::new(move || wall.now_ms())).unwrap());
+    let service = WorkService::new(native.clone(), native.clock(), "OFFICE1");
+    assert_eq!(
+        service.call(Caller::app("owner1"), command).unwrap(),
+        TxnOutput::Replayed(expected)
+    );
+}
+
+#[test]
+fn native_fallback_replayed_after_probe_miss_does_not_raise_clock_or_publish() {
+    let f = NativeReplayFixture::new();
+    let command = replay_command(80, false);
+    let original = f
+        .service()
+        .call(Caller::app("owner1"), command.clone())
+        .unwrap();
+    let expected = original.answer().cloned().map_err(Clone::clone);
+    let before = f.state();
+    let files = retained_publications(&f.config.protected_root);
+    f.wall.set(T0 + 1000);
+    let org: Arc<dyn OrgSource> = f.org.clone();
+    let clock = f.native.clock.clone();
+    let fallback: Arc<TxnFn> = Arc::new(move |org, txn| {
+        org_work::execute(
+            org,
+            txn,
+            clock.as_ref(),
+            "OFFICE1",
+            &Caller::app("owner1"),
+            &command,
+        )
+    });
+    let clock = f.native.clock.clone();
+    // Force the private Miss/fallback boundary while executing the genuine domain
+    // command against its already accepted receipt, as a raced duplicate would.
+    let (job, answer) = call::replay_job(
+        move |db| native_attempt(db, &org, &clock, &fallback),
+        |_| Ok(None),
+    );
+    f.store.send_native_job(job).unwrap();
+    assert_eq!(answer.recv().unwrap().0, TxnOutput::Replayed(expected));
+    assert_eq!(f.state(), before);
+    assert_eq!(retained_publications(&f.config.protected_root), files);
+}

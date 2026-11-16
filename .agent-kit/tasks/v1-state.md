@@ -9,26 +9,39 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 ## Current work
 
 Active acceptance unit: F2b durable journal, `codex/v1-durable-journal`, from
-accepted integration `0fdb9723`. Registered contract unchanged. Root owns overall
-architecture/interfaces/acceptance/integration. Focused interface revision2 is
-READY; original fullstack author/context retained. Exact22-source extraction and
-all6unchanged guard hashes/checks validated by root. Author26 acceptance,
-12migration,103work/1existingignore,19origin,25writer,212proto tests and scoped
-Clippy/fmt/guard pass. Actual28SIGKILL vectors cover10hooks; SQLCipher TEXT capture
-has RED/GREEN exact-byte publication/reopen/rebuild coverage. Two private test-only
-entrypoints regain production compilation with their real F3/F5/U5 consumers.
-Both extraction process timeouts/failures remain preserved; actual ready source
-checkpoint saved before second timeout, no invented CLI final/usage.
-Root full fmt/Clippy passed; full workspace found two migration-test defects:
-stale current-version expectation and historical v2 simulated by downgrading a
-current schema. Root takes only messaging.rs/status.rs test repairs after author
-processes are terminal: current-version assertion plus independent released v2
-fixture/current migration/status/reopen checks. Reuse record owns exact24paths and
-handoff; no production migration workaround or interface change. No concurrent
-source writer or useful independent slice across this shared writer boundary.
-Full gates repeat, retained-author exact-tree validation and fresh independent
-initial/final reviews remain required. Internal support only; U1 still requires
-real onboarding/sign-in/create/reopen/restart. No task service/UI/signing enabled.
+accepted integration `0fdb9723`. The registered acceptance contract and revision-2
+extraction interface remain unchanged. Root owns architecture, acceptance and
+integration; original fullstack author/context is preserved. The first checkpoint
+`07572fd5` passed full gates (3020 Rust passes, zero failures, five existing ignored,
+eight kit checks and normal commit hook), but its independent initial review found
+missing recovery reflush and native retry writes. The runner rejected absolute
+finding paths; the BLOCKED run and raw findings remain preserved, not accepted.
+
+Both confirmed findings now have bounded source repairs and actual regression
+evidence. Recovery reflushes exact retained source before confirmation: 30 journal
+tests pass, including 32 real SIGKILL cases across 12 hooks and source-byte/identity
+preservation. Native typed command dispatch performs fresh authorization and a
+read-only original-result lookup on the same FIFO writer. Saved success/refusal
+retries leave ordinal, origin, clock and publication bytes/count/mtime unchanged,
+including coherent exhaustion. Generic pre-decision MAX guards are unchanged.
+The minimal typed interface received independent architecture READY before code;
+see [the exact boundary](v1-native-replay-interface.md).
+
+The author completed the native repair (817.716s, exit zero). Root inspected its
+nine production deltas and tests, all 29 unit hashes, six unchanged source guards,
+1404 nonowned baseline inputs and current check logs. Focused checks pass: 238
+domain, 111 native work (one existing ignored), 30 journal, 19 origin and 25 writer
+tests, guard, scoped Clippy and formatting. All earlier failures remain retained.
+Root now owns the frozen checkout; no other source writer is active. Serial work
+remains appropriate for the coupled writer/reply/authorization boundary.
+
+Full current workspace/kit/hook checks, a NEW installed fresh initial review,
+final-tree original-author validation and separate fresh final review remain open.
+The old checkpoint's checks and intent are historical evidence only. Two private
+selected entrypoints remain test-only until their actual F3/F5/U5 consumers land;
+original deferred owner/adoption/service-crash coverage is preserved. This is an
+internal foundation, not onboarding or task/assignment delivery. U1 still requires
+real onboarding/sign-in/create/reopen/restart. No service/UI/signing is enabled.
 
 The larger host/socket F1b extraction at ace8b29d failed compilation on minimum
 GatewayRelease/static-signing/identifier dependencies. Its branch/source/failed

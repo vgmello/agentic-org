@@ -27,6 +27,8 @@ fn point(n: u8) -> Point {
         8 => Point::ReceiptPublished,
         9 => Point::SqlCommitted,
         10 => Point::BeforeReply,
+        11 => Point::AnchorInstalled,
+        12 => Point::ManifestInstalled,
         _ => panic!("unknown storage crash hook"),
     }
 }
@@ -82,6 +84,12 @@ fn storage_crash_child() {
         .unwrap()
         .parse()
         .unwrap();
+    if selected == 11 {
+        let store = open(&root, Opening::Existing);
+        crash::arm(point(selected));
+        store.install_acceptance(config(&root)).unwrap();
+        panic!("armed anchor boundary was never reached");
+    }
     let store = reopen(&root);
     crash::arm(point(selected));
     commit(&store, n);
@@ -246,5 +254,66 @@ fn sigkill_reopen_frozen_storage_at_all_ten_hooks_with_zero_one_multi_origin_map
                 frozen
             );
         }
+    }
+}
+
+#[test]
+fn sigkill_after_anchor_hardlink_before_parent_flush_recovers_identical_source() {
+    let root = TempDir::new().unwrap();
+    let c = config(root.path());
+    let store = fresh(root.path());
+    store
+        .write(|db| {
+            events(db, 2, 1)?;
+            Ok(((), None))
+        })
+        .unwrap();
+    drop(store);
+    kill_at(root.path(), 11, 0);
+    let path = c
+        .protected_root
+        .join("offices/office/journals/work-acceptance/journal-one/anchor.json");
+    let bytes = std::fs::read(&path).unwrap();
+    let store = reopen(root.path());
+    assert_eq!(cursor(&store), (0, 2));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    store
+        .selected_write(|db| receipt(db, "after-anchor-recovery"))
+        .unwrap();
+    drop(store);
+    let store = reopen(root.path());
+    assert_eq!(cursor(&store), (1, 2));
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn sigkill_after_manifest_hardlink_before_parent_flush_recovers_zero_one_multi_origins() {
+    for n in [0, 1, 3] {
+        let root = TempDir::new().unwrap();
+        let c = config(root.path());
+        let store = fresh(root.path());
+        store
+            .write(|db| {
+                events(db, 2, 1)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        store.install_acceptance(c.clone()).unwrap();
+        store
+            .selected_write(|db| artifact(db, SNAPSHOT, ORIGINAL, false))
+            .unwrap();
+        drop(store);
+        kill_at(root.path(), 12, n);
+        let path = c
+            .protected_root
+            .join("offices/office/journals/work-acceptance/journal-one/transactions/2.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let store = reopen(root.path());
+        verify_frozen(&store, &c, n);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        drop(store);
+        let store = reopen(root.path());
+        verify_frozen(&store, &c, n);
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
 }

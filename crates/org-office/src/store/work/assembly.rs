@@ -123,21 +123,8 @@ impl OfficeWorkStore {
     fn transact_job(&self, f: Arc<TxnFn>) -> (WriteJob, Reply) {
         let org = self.org.clone();
         let clock = self.clock.clone();
-        let (job, answer) = call::transact_job(
-            move |db| {
-                let view = org.snapshot().map_err(WorkCallError::Port)?;
-                let served =
-                    (clock.wall)().max(metadata::high_water(db).map_err(WorkCallError::Store)?);
-                clock.state().attempt = Some((thread::current().id(), served));
-                let _attempt = AttemptClock(clock.clone());
-                let output = call::run(db, |call| {
-                    f(&*view, &mut NativeTxn { call, served }).map_err(WorkCallError::Port)
-                })?;
-                metadata::raise_high_water(db, served).map_err(WorkCallError::Store)?;
-                Ok((output, served))
-            },
-            |_| false,
-        );
+        let (job, answer) =
+            call::transact_job(move |db| native_attempt(db, &org, &clock, &f), |_| false);
         (
             job,
             Reply {
@@ -148,11 +135,69 @@ impl OfficeWorkStore {
     }
 }
 
+fn native_attempt(
+    db: &rusqlite::Connection,
+    org: &Arc<dyn OrgSource>,
+    clock: &Arc<OfficeClock>,
+    f: &Arc<TxnFn>,
+) -> Result<(TxnOutput, u64), WorkCallError> {
+    let view = org.snapshot().map_err(WorkCallError::Port)?;
+    let served = (clock.wall)().max(metadata::high_water(db).map_err(WorkCallError::Store)?);
+    clock.state().attempt = Some((thread::current().id(), served));
+    let _attempt = AttemptClock(clock.clone());
+    let output = call::run(db, |call| {
+        f(&*view, &mut NativeTxn { call, served }).map_err(WorkCallError::Port)
+    })?;
+    let committed = if matches!(output, TxnOutput::Replayed(_)) {
+        metadata::high_water(db).map_err(WorkCallError::Store)?
+    } else {
+        metadata::raise_high_water(db, served).map_err(WorkCallError::Store)?;
+        served
+    };
+    Ok((output, committed))
+}
+
 impl WorkStore for OfficeWorkStore {
     fn transact(&self, f: Arc<TxnFn>) -> Result<TxnOutput, StoreError> {
         let (job, answer) = self.transact_job(f);
         self.store.send_work_job(job).map_err(storage)?;
         answer.recv()
+    }
+
+    fn transact_command(
+        &self,
+        caller: &org_work::Caller,
+        command: &org_work::WorkCall,
+        f: Arc<TxnFn>,
+    ) -> Result<TxnOutput, StoreError> {
+        let org = self.org.clone();
+        let clock = self.clock.clone();
+        let probe_org = org.clone();
+        let caller = caller.clone();
+        let command = command.clone();
+        let (job, answer) = call::replay_job(
+            move |db| native_attempt(db, &org, &clock, &f),
+            move |db| {
+                let view = probe_org.snapshot().map_err(WorkCallError::Port)?;
+                let output = org_work::lookup_existing(&*view, &caller, &command, |id| {
+                    metadata::change_result(db, id).map_err(storage)
+                })
+                .map_err(WorkCallError::Port)?;
+                output
+                    .map(|output| {
+                        metadata::high_water(db)
+                            .map(|committed| (output, committed))
+                            .map_err(WorkCallError::Store)
+                    })
+                    .transpose()
+            },
+        );
+        self.store.send_native_job(job).map_err(storage)?;
+        Reply {
+            answer,
+            clock: self.clock.clone(),
+        }
+        .recv()
     }
 }
 
