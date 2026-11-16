@@ -525,7 +525,7 @@ fn submit_as(
             return Ok(Err(ApiError::new(
                 ErrorCode::Unavailable,
                 "organization writes require available HQ authority",
-            )))
+            )));
         }
     };
     let command_id = command.command_id();
@@ -836,6 +836,34 @@ pub(crate) fn snapshot(db: &Connection) -> Result<OrgSnapshot, OfficeError> {
         areas: view.many::<Area>("SELECT body FROM areas ORDER BY id", ()),
     }));
     result.map_err(|_| OfficeError::storage(std::io::Error::other("a snapshot query failed")))
+}
+
+pub(crate) fn prepare_hq_genesis(
+    store: &super::Store,
+    info: &crate::OfficeInfo,
+    binding: &crate::hq_creation::Binding,
+) -> Result<(), OfficeError> {
+    let info = info.clone();
+    let owner = binding.owner_member_id.clone();
+    store.write(move|db| {
+        let invalid=||OfficeError::Invalid("HQ provisioning requires recovery");
+        let existing:Option<String>=db.query_row("SELECT value FROM meta WHERE key='organization_id'",[],|r|r.get(0)).optional().map_err(OfficeError::storage)?;
+        if let Some(org)=existing {
+            if org!=info.org_id {return Err(invalid());}
+            for (name,expected) in [("office_id",&info.office_id),("organization_name",&info.org_name),("created_at",&info.created_at)] {
+                let value:Option<String>=db.query_row("SELECT value FROM meta WHERE key=?1",[name],|r|r.get(0)).optional().map_err(OfficeError::storage)?;
+                if value.as_ref()!=Some(expected) {return Err(invalid());}
+            }
+            let member=OrgSql(db).member(&owner).ok_or_else(invalid)?;
+            if !member.owner || member.kind!=MemberKind::Person || last_position(db)?.is_none() {return Err(invalid());}
+            return Ok(((),None));
+        }
+        let occupied:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM events) OR EXISTS(SELECT 1 FROM members) OR EXISTS(SELECT 1 FROM meta)",[],|r|r.get(0)).map_err(OfficeError::storage)?;
+        if occupied {return Err(invalid());}
+        db.execute("INSERT INTO meta VALUES('office_id',?1)",[&info.office_id]).map_err(OfficeError::storage)?;
+        genesis(db,&Genesis {org_id:info.org_id.clone(),org_name:info.org_name.clone(),created_at:info.created_at.clone(),owner_id:owner.clone()})?;
+        Ok(((),None))
+    })
 }
 
 #[cfg(test)]

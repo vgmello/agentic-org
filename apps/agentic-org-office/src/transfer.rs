@@ -1,5 +1,6 @@
 //! FIFO transfer control service, independent of Office and work execution.
 mod channels;
+mod writer;
 use crate::{revocations::Revocations, startup};
 pub(super) use channels::Channels;
 use org_office_launch::v3::{self, ChannelKind, TransferRecord};
@@ -93,6 +94,49 @@ fn receive(
         .receive_up_to(&mut payload, 1, &transport.fence)?;
     Ok((payload, received))
 }
+pub(super) fn install_initial(
+    transport: &mut startup::Transfer,
+    office: &org_office::Office,
+    instance: &str,
+    out: &startup::EventWriter,
+) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match receive(transport) {
+            Ok((payload, mut received)) => {
+                let TransferRecord::WriterControl {
+                    office_id,
+                    channel_id,
+                } = decode(&payload[..received.bytes], received.descriptors.len())?
+                else {
+                    return Err(invalid());
+                };
+                if office_id != office.info().office_id {
+                    return Err(invalid());
+                }
+                let stream = org_socket::rights::connected_unix_stream(
+                    received.descriptors.pop().ok_or_else(invalid)?,
+                )?;
+                stream.set_nonblocking(false)?;
+                writer::install(stream, office, instance, &office_id)?;
+                return startup::write_event(
+                    out,
+                    &v3::RendezvousEvent::FdsReceived { of: channel_id },
+                )
+                .map_err(|_| invalid());
+            }
+            Err(ReceiveError::WouldBlock) if std::time::Instant::now() < deadline => {
+                poll_readable(
+                    transport.receiver.fd().ok_or_else(invalid)?.as_raw_fd(),
+                    Duration::from_millis(20),
+                )?;
+            }
+            Err(ReceiveError::Fatal(_)) => fatal(),
+            Err(_) => return Err(invalid()),
+        }
+    }
+}
+
 fn run(
     mut transport: startup::Transfer,
     revocations: Arc<Mutex<Revocations>>,
@@ -113,6 +157,7 @@ fn run(
             Err(ReceiveError::Fatal(_)) => return Err(invalid()),
         };
         match decode(&payload[..received.bytes], received.descriptors.len())? {
+            TransferRecord::WriterControl { .. } => return Err(invalid()),
             TransferRecord::Revoked { session_ids } => {
                 revocations
                     .lock()

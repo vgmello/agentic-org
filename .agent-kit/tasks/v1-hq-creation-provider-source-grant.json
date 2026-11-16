@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "contract": "v1-hq-creation-provider-contract.md",
+  "contract_sha256": "587db8cc1f206309e1c95c4ece40a4d81c6d1dcab42889107d4267c619419e14",
+  "base": "0d4035d780e108b90dcf461998d0f97c4b993ac7",
+  "author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+  "grant_revision": 2,
+  "lead_disposition": "Approve five exact additional paths after611.181s safe handoff and actual compiler/helper gap; original33path per-hunk restrictions remain. No acceptance scope/security mechanism change. Stable contract explicitly permits concrete-gap lead reassignment.",
+  "additional_paths": [
+    {
+      "path": "crates/org-proto/src/location.rs",
+      "before_sha256": "dbfe72ec4304924dd19ae2c527009cef5e7b817aa103735a014a630341b8de97"
+    },
+    {
+      "path": "apps/agentic-org-office/src/launch/tests.rs",
+      "before_sha256": "632d17e3d33b2165c562fbf1f6a4c5ca4a0d9be42fec4832d5143adc968428af"
+    },
+    {
+      "path": "apps/agentic-org-office/src/startup/tests.rs",
+      "before_sha256": "e0a4445243056e8af7daec7637dc795a6e4a68525daf46d3e704b5a309ae9206"
+    },
+    {
+      "path": "apps/agentic-org-office/src/tests/transfer_composition.rs",
+      "before_sha256": "794f769989970d4774430a19325afb836163255fb3fe96c360b79b8681545fa7"
+    },
+    {
+      "path": "apps/agentic-org-office/tests/launch/v3_activation.rs",
+      "before_sha256": "dc461a13625dad8eb38d023b6484a75d0cbfe4843e37b34f3aaacf7384b788ef"
+    }
+  ],
+  "hunk_limits": {
+    "crates/org-proto/src/location.rs": "Reuse retained additive selected_office_socket_in, using accepted crate::is_uuid_v7 instead of selected_tasks. Legacy office_socket_in/is_plain_office_id byte behavior remains unchanged; shape only, no authority. Worker socket_path chooses selected carrier only after admitted selected profile/current office identity; no blanket fallback admitting malformed profiles. Add correct UUID-version/variant/case/length/refusal, legacy opaque ID preservation, filename/runtime path and socket byte-limit tests.",
+    "apps/agentic-org-office/src/launch/tests.rs": "Legacy DTO literals only add id_profile:None,selected_writer_required:false,hq_creation:None. Preserve every assertion.",
+    "apps/agentic-org-office/src/startup/tests.rs": "Legacy DTO literal additions only; preserve every assertion and startup phase behavior.",
+    "apps/agentic-org-office/src/tests/transfer_composition.rs": "Legacy OfficeLine literal additions only. Preserve process-isolation, flags, cleanup/failure and fixed diagnostic assertions.",
+    "apps/agentic-org-office/tests/launch/v3_activation.rs": "Root assigns existing actual-executable supervisor fixture instead of new tests/hq_creation.rs to reuse existing World/Run/control/FD helpers. Update legacy literal fields and add selected actual create/admit/Ready/fault/reopen/denial cases required by stablecontract. Test driver is not production host custody/owner proof. No copied whole reservoir file or weakened legacy assertions."
+  },
+  "boundary_review": "Existing independently READY creation/identity/admission boundary C2/C5/C6, all4conditions unchanged. This exact retained additive path carrier closes a discovered production consumer dependency, preserves legacy validator and adds no grant/wire/crypto mechanism. Fresh source/whole-unit code and final reviews still required; new material security behavior returns to root before dependent edits.",
+  "source_writers": 1,
+  "root_mode": "source read-only coordination while author writes; serial metadata only after safe handoff",
+  "no_permission": [
+    "source-inventory guard edits",
+    "task import",
+    "new tests/hq_creation.rs harness",
+    "host/F4/recovery-public imports",
+    "fake Ready/authority",
+    "policy/runtime/hooks/tests weakening"
+  ],
+  "remaining_required": [
+    "actual worker all-target compile and app HQ tests",
+    "actual executable create/control/fault/reopen and privateDER exclusion",
+    "original owner/MAX-rebind/current account/revocation/wrong-scope/EOF assertions with real consumers",
+    "independently frozen schema7->8 migration fixture, no current schema relabel",
+    "fullcurrentworkspace/kit/normalhook and freshinitial/originalauthor/freshfinal gates"
+  ]
+}

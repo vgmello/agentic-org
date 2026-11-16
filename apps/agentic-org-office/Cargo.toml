@@ -19,6 +19,8 @@ name = "owned_recovery"
 path = "tests/owned_recovery.rs"
 
 [dependencies]
+org-pki = { path = "../../crates/org-pki" }
+zeroize = "=1.9.1"
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }

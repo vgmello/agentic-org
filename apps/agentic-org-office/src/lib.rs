@@ -19,6 +19,7 @@ mod bounded;
 pub mod fdswap;
 mod follow;
 mod grant;
+mod hq_creation;
 pub mod inbox;
 mod launch;
 mod live;
@@ -131,6 +132,15 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             "not a plain office id",
         );
     };
+    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok()
+        && !control.selected_writer_required
+    {
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "selected writer custody is required",
+        );
+    }
     match Office::discard(folder, id, key.as_ref()) {
         Ok(()) => {
             emit(&mut control, &ServerEvent::Discarded);
@@ -159,8 +169,6 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             "not a create message",
         );
     };
-    let _recovery = create._recovery;
-    let _owner_member_id = create.owner_member_id;
     if create.role != OfficeRole::Hq {
         return fail(
             &mut control,
@@ -187,24 +195,83 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             return fail(&mut control, FailCode::InvalidName, "a name is not trimmed");
         }
     }
-    // The host holds the key; both versions use the same Office construction path.
-    let created = match create.instance.as_deref() {
-        Some(instance) => Office::create_for_instance(folder, &create.office, create.key, instance),
-        None => Office::create(folder, &create.office, create.key),
+    // Explicit creation-v1 consumes/drops its code before the serve lifetime.
+    // Legacy v2/v3 keeps its existing behavior and never claims selected setup.
+    let (created, _legacy_recovery) = if let Some(context) = create.hq_creation {
+        let (Some(instance), Some(owner)) = (create.instance.as_deref(), create.owner_member_id)
+        else {
+            return fail(
+                &mut control,
+                FailCode::InvalidRequest,
+                "missing HQ creation binding",
+            );
+        };
+        let launch::CreationRecovery::V3 { _code } = create._recovery else {
+            return fail(
+                &mut control,
+                FailCode::InvalidRequest,
+                "missing HQ recovery code",
+            );
+        };
+        let binding = org_office::hq_creation::Binding {
+            operation_id: context.operation_id,
+            owner_member_id: owner,
+            public_root: context.public_root.into(),
+            bootstrap: context.bootstrap.map(|b| *b),
+        };
+        (
+            hq_creation::prepare(
+                &folder,
+                &create.office,
+                create.key,
+                instance,
+                &binding,
+                _code,
+            ),
+            None,
+        )
+    } else {
+        let created = match create.instance.as_deref() {
+            Some(instance) => {
+                Office::create_for_instance(folder, &create.office, create.key, instance)
+            }
+            None => Office::create(folder, &create.office, create.key),
+        };
+        (created, Some(create._recovery))
     };
     let office = match created {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
     let info = office.info();
-    let file = OfficeFile::new(
-        info.office_id.clone(),
-        info.office_name.clone(),
-        OfficeRole::Hq,
-        info.org_id.clone(),
-        info.org_name.clone(),
-        info.created_at.clone(),
-    );
+    let file = if org_office_launch::is_selected_entity_id(&info.office_id) {
+        match OfficeFile::selected(
+            info.office_id.clone(),
+            info.office_name.clone(),
+            OfficeRole::Hq,
+            info.org_id.clone(),
+            info.org_name.clone(),
+            info.created_at.clone(),
+        ) {
+            Ok(file) => file,
+            Err(_) => {
+                return fail(
+                    &mut control,
+                    FailCode::StorageError,
+                    "selected office marker rejected",
+                );
+            }
+        }
+    } else {
+        OfficeFile::new(
+            info.office_id.clone(),
+            info.office_name.clone(),
+            OfficeRole::Hq,
+            info.org_id.clone(),
+            info.org_name.clone(),
+            info.created_at.clone(),
+        )
+    };
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
     serve_office(
@@ -239,6 +306,15 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
     if let Err(message) = socket_path(runtime, id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
+    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok()
+        && !control.selected_writer_required
+    {
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "selected writer custody is required",
+        );
+    }
     let instance = office.map(|identity| {
         let _office_id = identity.office_id;
         identity.instance_id
@@ -251,6 +327,9 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
+    if let Err(error) = hq_creation::verify_existing(&office) {
+        return fail_with(&mut control, &error);
+    }
     serve_office(control, from_host, runtime, office, auth, instance)
 }
 
@@ -301,6 +380,15 @@ fn serve_office(
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
+    let mut transfer = control.transfer();
+    let admitted = initial_writer_admission(&mut transfer, &office, instance.as_deref(), &control);
+    if admitted.is_err() {
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "protected writer admission requires recovery",
+        );
+    }
     let socket = match socket_path(runtime, &info.office_id) {
         Ok(socket) => socket,
         Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
@@ -446,8 +534,7 @@ fn serve_office(
     let shared = Arc::new(shared);
 
     let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
-    let transfers = match control
-        .transfer()
+    let transfers = match transfer
         .map(|transport| {
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
@@ -479,6 +566,24 @@ fn serve_office(
     drop(shared);
     drop(office);
     0
+}
+
+fn initial_writer_admission(
+    transfer: &mut Option<startup::Transfer>,
+    office: &Office,
+    instance: Option<&str>,
+    control: &Control,
+) -> std::io::Result<()> {
+    if control.selected_writer_required || org_proto::is_uuid_v7(&office.info().office_id) {
+        match (transfer, instance, control.writer()) {
+            (Some(transport), Some(instance), Some(out)) => {
+                transfer::install_initial(transport, office, instance, &out)
+            }
+            _ => Err(std::io::Error::other("missing protected writer control")),
+        }
+    } else {
+        Ok(())
+    }
 }
 
 /// Optional live hints cannot prevent the worker's Ready acknowledgement.
@@ -599,7 +704,14 @@ fn runtime_dir_from(
 
 /// The office's socket path, or why it cannot be one.
 fn socket_path(runtime: &Path, office_id: &str) -> Result<std::path::PathBuf, &'static str> {
-    let socket = office_socket_in(runtime, office_id).ok_or("not a plain office id")?;
+    let socket = if org_proto::is_uuid_v7(office_id) {
+        // The current office marker/profile and initial writer admission were
+        // verified before serving. Shape alone never grants authority.
+        org_proto::location::selected_office_socket_in(runtime, office_id)
+    } else {
+        office_socket_in(runtime, office_id)
+    }
+    .ok_or("not a plain office id")?;
     check_socket_path(&socket).map_err(|_| "the socket path is too long")?;
     Ok(socket)
 }

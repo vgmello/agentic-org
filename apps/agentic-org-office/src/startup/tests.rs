@@ -19,6 +19,8 @@ const WAIT: Duration = Duration::from_secs(10);
 
 fn first(path: &Path, op: FirstLine) -> HostFirstLine {
     let office = OfficeLine {
+        id_profile: None,
+        selected_writer_required: false,
         instance_id: ID.into(),
         office_id: ID.into(),
         rendezvous: path.to_str().unwrap().into(),
@@ -31,6 +33,7 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
             office_name: "HQ".into(),
             role: OfficeRole::Hq,
             owner_member_id: ID.into(),
+            hq_creation: None,
         }),
         FirstLine::Start => HostFirstLine::Start(office),
         FirstLine::Discard => HostFirstLine::Discard(office),

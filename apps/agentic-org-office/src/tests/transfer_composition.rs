@@ -80,6 +80,8 @@ fn probe(failure: bool) {
     v3::write_first_line(
         &mut input,
         &HostFirstLine::Start(OfficeLine {
+            id_profile: None,
+            selected_writer_required: false,
             instance_id: ID.into(),
             office_id: ID.into(),
             rendezvous: path.to_str().unwrap().into(),

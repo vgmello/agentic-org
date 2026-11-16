@@ -12,7 +12,9 @@
 //! a satellite replays the very changes HQ logged.
 
 mod employees;
+pub mod hq_creation;
 mod organization;
+pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
 mod error;
 mod key;

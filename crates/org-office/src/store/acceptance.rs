@@ -137,8 +137,7 @@ impl Store {
         self.selected_transaction(move |db, _| work(db))
     }
 
-    // F2b has only test callers; restore with real F3/F5/U5 selected consumers.
-    #[cfg(test)]
+    // F3b organization admission/bootstrap are the production consumers.
     pub(crate) fn selected_transaction<R: Send + 'static>(
         &self,
         work: impl FnOnce(&Connection, &AcceptanceIdentity) -> Result<R, OfficeError> + Send + 'static,
@@ -164,8 +163,7 @@ impl Store {
         answer.recv().map_err(|_| invalid())?
     }
 
-    // F2b has only test callers; restore with real F3/F5/U5 selected consumers.
-    #[cfg(test)]
+    // F3b organization admission/bootstrap are the production consumers.
     pub(crate) fn selected_read<R: Send + 'static>(
         &self,
         read: impl FnOnce(&Connection, &AcceptanceIdentity) -> Result<R, OfficeError> + Send + 'static,

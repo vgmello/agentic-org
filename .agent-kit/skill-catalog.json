@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1, F3a exact crypto manifest/capability reassessment2026-11-16",
-  "rationale": "Retain owner c5123221 independent-delivery policy, current Rust/static-SvelteKit roles and verification/model gates. Actual F3a extraction adds only production org-pki leaf adapter under independently READY ADR0007r1, using existing pinned ring0.17.14, argon2 0.5.3 with alloc/zeroize plus existing password-hash and zeroize1.9.1 alloc. Root inspected all five exact b77 source blobs and complete manifest/lock delta; all157 existing package versions/sources/checksums preserved, only new org-pki package plus argon2 existing-zeroize edge. No custom primitives, host/domain/protocol->crypto edge, task/F4 consumer import or new provider/framework/tool. Existing Rust/security guidance covers this mechanism; add focused critical ADR0007 source rule so implementation/review packets directly include exact profile, pre-KDF bounds and secret-lifetime constraints. Preserve all other evidence and existing owner policy; update only assessed manifest evidence and add the new manifest/ADR. Targeted five tests and production library check pass; full workspace/current initial/origin/final gates remain required. This is internal crypto scope, not HQ persistence, delivery, onboarding, physical authentication, genuine signing or v1 acceptance. Prior assessment rationale remains in Git.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1, reviewed F3b provider ownership boundary and current capability selection2026-11-16",
+  "rationale": "F3b611.181s safe handoff: production workerlib,83launch,5HQ,bootstrap generation/counter,scopedClippy/fmt pass, no acceptance. Root verified33hashes/1406nonowned+4newmetadata/6guards; complete actual manifest/lock diff only4internaledges in2packages, all158existing package identities/sources/checksums unchanged. Refresh only those3assessed manifests/lock evidence. Exact additional5path grant closes real DTO fixture/UUID socket carrier gaps, retaining old opaque validator and admitted selected profile; focused reviewed interface/all4conditions unchanged. No framework/tool/provider/security mechanism or unrelated feature. Full existing gates and owner policy intact; host producer/human sessions/signing/usefulU1 remain open. Prior rationale in Git.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "350d0219e71972e0c1802ca1a63565e76ccd4f42195b755e44af8e0735d1e492"
+      "sha256": "27c8e37a7d9da6d6a2c344c0e248e9084c422da6c3215a3ed9faef5acea3edbe"
     },
     {
       "path": "Cargo.toml",
@@ -70,7 +70,7 @@
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "1b79cc87a15c61cdc4e2c0da41ec0b5d424fc4fe9d4de8da5b126126f4822e27"
+      "sha256": "3cb5d19d40ccb2dd417d22d0ba9229b708be65f113b34f6ca92a08696642f4f8"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -106,7 +106,7 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "17e1f03a76bbdd324f9621eea7befa6d26910ffd266b5a0d50c64cf6aad842fe"
+      "sha256": "3158f539fbd4addf0bab993d4764b6ba357fa881f8cf887f750e8714290128f8"
     },
     {
       "path": "crates/org-release/Cargo.toml",
@@ -175,6 +175,26 @@
     {
       "path": "crates/org-pki/Cargo.toml",
       "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-creation-admission-interface.md",
+      "sha256": "39c08afab75d48f478840f23682e52f88269234bf72c9ee855d691b15a442298"
+    },
+    {
+      "path": "docs/design/organization-data/01-organization-structure.md",
+      "sha256": "b1135ada988ae98b50c8138ba9748967c10ba0b9f87b09922f596bdc1ff7f6ac"
+    },
+    {
+      "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
+      "sha256": "662a8a4d032f79aca78cc9f154674741334b7cee908ea2414bf50a71a4acacf5"
+    },
+    {
+      "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
+      "sha256": "a58018059fdc8a3d43500f1dd24cd3b89090e92bf3e7cf23260c28644c165aeb"
+    },
+    {
+      "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
+      "sha256": "9624f8714b0c5ff44b7fbd43a7963588cf81c5596ca3130499a111284a1b3b9f"
     }
   ],
   "roles": {
@@ -451,6 +471,41 @@
       "review": [
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
         "docs/adr/0007-hq-creation-escrow.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "hq-creation-provider",
+      "description": "Reviewed worker HQ creation/owner admission/canonical bootstrap boundary and recoverable phases; host producer remains separate",
+      "paths": [
+        "crates/org-proto/src/identity.rs",
+        "crates/org-proto/src/selected_bootstrap.rs",
+        "crates/org-office/src/hq_creation.rs",
+        "crates/org-office/src/office/hq_creation",
+        "crates/org-office/src/store/hq_creation.rs",
+        "crates/org-office/src/organization",
+        "crates/org-office-launch/src/writer.rs",
+        "apps/agentic-org-office/src/hq_creation",
+        "apps/agentic-org-office/src/transfer/writer.rs",
+        ".agent-kit/tasks/v1-hq-creation-provider-contract.md",
+        ".agent-kit/tasks/v1-creation-admission-interface.md",
+        "crates/org-proto/src/location.rs",
+        "apps/agentic-org-office/tests/launch/v3_activation.rs"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/tasks/v1-creation-admission-interface.md",
+        "docs/design/documentation-authority.md",
+        "docs/design/organization-data/01-organization-structure.md",
+        ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
+        ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
+      ],
+      "review": [
+        ".agent-kit/tasks/v1-creation-admission-interface.md",
+        "docs/design/documentation-authority.md",
+        "docs/design/organization-data/01-organization-structure.md",
+        ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
+        ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json"
       ],
       "critical": true
     }
