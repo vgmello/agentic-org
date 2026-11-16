@@ -21,14 +21,16 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 
 ## Status totals
 
+[First-five verification audit](verification/2026-11-16-first-five-features.md): three partial implementations and two planned capabilities confirmed on 2026-11-16; none complete. Remaining Needs verification rows: **58**.
+
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 19 |
-| Planned | 24 |
+| In progress | 22 |
+| Planned | 26 |
 | Blocked | 3 |
 | Deferred | 40 |
-| Needs verification | 63 |
+| Needs verification | 58 |
 | **Total** | **158** |
 
 ## Feature tables
@@ -49,9 +51,9 @@ Full requirements: [Application and browser](specs/app-shell-ux.md).
 | [x] | FC-002 | [Explicit unavailable browser states](specs/app-shell-ux.md) | Done | [UI] documents ordinary development/release gating; [production test] covers the boundary. |
 | [ ] | FC-003 | [Navigation, sidebar and contextual drawers](specs/app-shell-ux.md) | In progress | [UI] and [browser tests] cover shell interactions; live domain adapters remain unavailable. |
 | [ ] | FC-004 | [Responsive layout and keyboard accessibility](specs/app-shell-ux.md) | In progress | [browser tests] cover responsive, focus, landmarks and accessibility; full release matrix remains open. |
-| [ ] | FC-005 | [Shared forms, feedback and visual rules](specs/app-shell-ux.md) | Needs verification | Reconcile DS criteria with current controls; the presence of shell tests is insufficient for full completion. |
-| [ ] | FC-006 | [Search, New and scoped lookup](specs/app-shell-ux.md) | Needs verification | Verify authorized live search and creation routes, not only keyboard shortcuts. |
-| [ ] | FC-007 | [Device preferences and keyboard settings](specs/app-shell-ux.md) | Needs verification | Verify persistence and current settings behavior against shell criteria. |
+| [ ] | FC-005 | [Shared forms, feedback and visual rules](specs/app-shell-ux.md) | In progress | [Audit](verification/2026-11-16-first-five-features.md#fc-005): Shared primitives and selected focus/menu/form checks pass; skip-link, form errors/pending feedback, loading and reduced-motion gaps remain. |
+| [ ] | FC-006 | [Search, New and scoped lookup](specs/app-shell-ux.md) | Planned | [Audit](verification/2026-11-16-first-five-features.md#fc-006): No global Search/New controls, /search route or authorized grouped lookup composition; implement selected entry points, references and shortcuts. |
+| [ ] | FC-007 | [Device preferences and keyboard settings](specs/app-shell-ux.md) | Planned | [Audit](verification/2026-11-16-first-five-features.md#fc-007): No /preferences Keyboard switch or required device-storage key/fallback; implement persistence and shortcut/hint coupling. |
 | [ ] | FC-008 | [Account timezone persistence](specs/costs-and-insights-ux.md) | Planned | Account-zone contract/persistence remains gated; browser-local time is not equivalent. |
 | [ ] | FC-009 | [Native desktop shell](adr/0005-standalone-server-v1.md) | Deferred | Tauri is deferred to v2. |
 
@@ -70,10 +72,10 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | [ ] | FC-014 | [Owner first access, sign-in and sign-out](specs/server-installation-and-access-ux.md) | Blocked | Requires protected account/session backend; [UI] claims no real sign-in/setup behavior. |
 | [ ] | FC-015 | [Session expiry and organization switching](specs/server-installation-and-access-ux.md) | Planned | Target authenticated session flow; session-foundation tests do not establish a real identity backend [UI]. |
 | [ ] | FC-016 | [Recovery code and owner access recovery](specs/server-installation-and-access-ux.md) | Planned | Implement escrow, release/redelivery, confirmation and recovery flow; target requirement only. |
-| [ ] | FC-017 | [TLS, CA custody and privilege separation](design/office-host-boundary.md) | Needs verification | Existing key custody is narrower than the selected standalone admission/privilege contract; audit integration. |
+| [ ] | FC-017 | [TLS, CA custody and privilege separation](design/office-host-boundary.md) | In progress | [Audit](verification/2026-11-16-first-five-features.md#fc-017): TLS, custody and admission tests pass; production handoff/authorization, CA escrow and real signed macOS/Linux credential acceptance remain incomplete. |
 | [ ] | FC-018 | [Create and open organization](specs/offices-and-teams-ux.md) | In progress | [browser tests] exercise explicit fakes; [UI] states creation/open gateway adapters unavailable. |
 | [ ] | FC-019 | [Office list, readiness and freshness](specs/offices-and-teams-ux.md) | In progress | Office/status refresh tests exist in [browser tests]; real browser data path remains gated [UI]. |
-| [ ] | FC-020 | [Satellite invite, join approval and repair](specs/offices-and-teams-ux.md) | Needs verification | Check actual enrollment and repair against standalone flow; historical protocol work alone is insufficient. |
+| [ ] | FC-020 | [Satellite invite, join approval and repair](specs/offices-and-teams-ux.md) | In progress | [Audit](verification/2026-11-16-first-five-features.md#fc-020): Status/repair-instruction UI exists, but Add office is disabled and worker rejects non-HQ creation; invitation/approval/drain/repair integration remains. |
 | [ ] | FC-021 | [Restart, relocate and remove office](specs/offices-and-teams-ux.md) | Needs verification | Verify authorization, cleanup and workspace preservation against current implementation. |
 | [ ] | FC-022 | [Updates, uninstall and instance lifecycle](specs/server-installation-and-access-ux.md) | Needs verification | Reconcile installer/service lifecycle and retained data behavior; no complete release evidence recorded. |
 | [ ] | FC-023 | [Logs, doctor and support diagnostics](specs/server-installation-and-access-ux.md) | Needs verification | Verify usable commands and secret-safe diagnostics against installation criteria. |

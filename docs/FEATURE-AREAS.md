@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. This preserves the area-by-area explanation alongside the repository requirements.
 
-Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 63 rows needing verification**. Counts reflect the current checklist, not a new implementation audit. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 58 rows needing verification**. Counts reflect the current checklist, not a new implementation audit. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -18,8 +18,8 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 2 | 1 | 0 | 1 | 3 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 3 | 6 | 3 | 0 | 5 |
+| [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 3 | 3 | 0 | 1 | 0 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 5 | 6 | 3 | 0 | 3 |
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 4 | 0 | 0 | 0 | 8 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 4 | 1 | 0 | 5 | 13 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 0 | 0 | 0 | 1 | 13 |
@@ -31,7 +31,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 1 | 3 | 0 | 1 | 5 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 1 | 1 |
-| **Total** | | **158** | **9** | **19** | **24** | **3** | **40** | **63** |
+| **Total** | | **158** | **9** | **22** | **26** | **3** | **40** | **58** |
 
 ## AREA-01
 
@@ -41,7 +41,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Shared presentation belongs here; domain operations belong to the domain area. Account authorization and browser service composition belong to AREA-02; usage calculations belong to AREA-07.
 
-**Verification focus:** Check shared form/feedback rules, authorized live search and creation, and persisted device/keyboard settings. Shell shortcut or layout tests alone do not establish those capabilities.
+**Verification focus:** The [first-five audit](verification/2026-11-16-first-five-features.md) resolved all three unknown rows here: shared controls are In progress with concrete UX gaps; Search/New and keyboard preferences are Planned. Follow the recorded gaps before claiming completion. Shell shortcut or layout tests alone do not establish those capabilities.
 
 **Requirements:** [Shell UX](specs/app-shell-ux.md), [Executable migration](design/executable-migration.md).
 
@@ -53,7 +53,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns service/access/enrollment behavior. Team membership belongs to AREA-03; durable source restoration and process-safe cache rebuild belong to AREA-12. CSP is classified here with production security, even though it affects every screen.
 
-**Verification focus:** Check TLS/CA custody and privilege separation; satellite invitation, approval and repair; office restart/relocation/removal; updates/uninstall; and usable, secret-safe diagnostics. Pending account/bootstrap work stays Planned or Blocked, not assumed delivered.
+**Verification focus:** Remaining unknown rows concern office restart/relocation/removal, updates/uninstall and usable, secret-safe diagnostics. The [first-five audit](verification/2026-11-16-first-five-features.md) established partial TLS/custody and satellite status/repair UI, with production handoff, CA escrow and invitation/approval integration still missing. Pending account/bootstrap work stays Planned or Blocked, not assumed delivered.
 
 **Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md).
 
