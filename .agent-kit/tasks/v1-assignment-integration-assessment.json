@@ -22,7 +22,8 @@
       "Crosses org-work, org-office storage/dispatch, org-proto/client/gateway and UI; selected task/history foundations may require new interfaces."
     ],
     "deterministic_checks": [
-      "Existing domain tests, workspace Rust and UI checks plus temporary persistence/recovery/authorization fixtures and browser verification can exercise behavior."
+      "Existing domain tests, workspace Rust and UI checks plus temporary persistence/recovery/authorization fixtures and browser verification can exercise behavior.",
+      "Current actual output evidence index: .agent-kit/logs/v1-assignment-integration/CURRENT-REVIEW-EVIDENCE.md. This is output/check receipt navigation, never a project skill source or independent approval. Source-bound full7/native10/browser14 logs, masked screenshots, hashes and cleanup are linked there; inspect independently."
     ],
     "low_risk": [
       "Durability, authorization, idempotency, versioned transport/history and migration are material risks; critical catalog rules apply."
