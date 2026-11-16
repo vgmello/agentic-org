@@ -2,7 +2,7 @@
 
 The single product feature/status index, categorized by the [documented feature areas](FEATURE-AREAS.md). Each row is a small capability with a short description linked to its full requirement. Supporting ADRs and data contracts remain authoritative; this file does not duplicate them. **An unchecked row is not complete.**
 
-Current delivery direction (2026-11-16): [separate acceptance and merge units](../.agent-kit/tasks/v1-incremental-delivery.md). Internal foundations are not usable features. This guidance-only unit imports the original 158-row inventory at the preservation checkpoint; it does not include the concurrent checklist refresh in the original checkout or claim that preserved feature code is in this branch. Full-row completion, security and local review gates remain. Signing setup/authentic verification stays final.
+Current delivery direction (2026-11-16): [separate acceptance and merge units](../.agent-kit/tasks/v1-incremental-delivery.md). Internal foundations are not usable features. The accepted F0 guidance baseline imported the original 158-row inventory at the preservation checkpoint and left the concurrent original-checkout refresh intact. Subsequent units update only their delivered scope; this branch does not contain the full preserved implementation. Full-row completion, security and local review gates remain. Signing setup/authentic verification stays final.
 
 Reviewed: **2026-11-16**, by Ada. Evidence baseline: `origin/v1` at `b1256c9771b15c0b47198828164e5efe78db2e96`; reconciled requirements at `b4f8e8b3456d1dc9dd5cf43bd3db3dd13d403a6e`. This inventory covers all 17 UX specs, the selected organization-data domains and supporting designs, including deferred candidates. It is a capability checklist, not one row per acceptance criterion or database field.
 
@@ -23,13 +23,13 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 
 ## Status totals
 
-[First-five verification audit](verification/2026-11-16-first-five-features.md): three partial implementations and two planned capabilities confirmed on 2026-11-16; none complete. The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) then established 33 partial implementations and 25 planned capabilities. Remaining Needs verification rows: **0**. All 63 original unknown states have been classified; none became Done. The wider test run has an unresolved office source-guard failure, documented in that record.
+[First-five verification audit](verification/2026-11-16-first-five-features.md): three partial implementations and two planned capabilities confirmed on 2026-11-16; none complete. The [remaining-58 audit](verification/2026-11-16-remaining-feature-audit.md) then established 33 partial implementations and 25 planned capabilities. Remaining Needs verification rows: **0**. All 63 original unknown states have been classified; none became Done. That historical reservoir run reported an office source-guard failure, documented in its source-scoped record; it is not a current test result for each extracted unit.
 
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 55 |
-| Planned | 51 |
+| In progress | 56 |
+| Planned | 50 |
 | Blocked | 3 |
 | Deferred | 40 |
 | Needs verification | 0 |
@@ -68,7 +68,7 @@ Full requirements: [Installation, access and office operations](specs/server-ins
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
 | [x] | FC-010 | [Existing host and office launch entry points](design/executable-migration.md) | Done | Existing host lifecycle and worker entry points remain implemented; excludes setup and production web composition. |
-| [ ] | FC-011 | [macOS/Linux installation and named instances](specs/server-installation-and-access-ux.md) | Planned | [Executable status] states setup/service registration unavailable; installer acceptance still required. |
+| [ ] | FC-011 | [macOS/Linux installation and named instances](specs/server-installation-and-access-ux.md) | In progress | Internal [release-verifier library](../crates/org-release/README.md) implements the pure signed-manifest/payload policy under [ADR-0009](adr/0009-complete-release-verification.md); it enables no installer/setup/service path. [Executable status] still records setup refusal. Consumers, platform admission, installation and authentic signed-release acceptance remain. |
 | [ ] | FC-012 | [HQ bootstrap and user-service registration](specs/server-installation-and-access-ux.md) | Planned | setup refuses without creating state; protected bootstrap is unfinished in [executable status]. |
 | [ ] | FC-013 | [Production browser service and domain APIs](design/gateway-api-v1.md) | Blocked | Blocked on authenticated host handoff/backend composition; web executable refuses startup [executable status]. |
 | [ ] | FC-014 | [Owner first access, sign-in and sign-out](specs/server-installation-and-access-ux.md) | Blocked | Requires protected account/session backend; [UI] claims no real sign-in/setup behavior. |

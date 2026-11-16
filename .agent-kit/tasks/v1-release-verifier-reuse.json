@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "unit": "F1a pure org-release internal foundation",
+  "integration_base": "cad1057b09fa8b105dfb843d0eaed42d24861d58",
+  "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "files": [
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a",
+      "bytes": 388
+    },
+    {
+      "path": "crates/org-release/README.md",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "18e06e90515d819dc4f43a49e9808be0226515cb344e109f6a0a53c45168a941",
+      "bytes": 4259
+    },
+    {
+      "path": "crates/org-release/src/decode.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "1aaaa27f3c3def33f8f9becba3b02c2e2d31ca0787e300026b431a9ca2443d49",
+      "bytes": 4054
+    },
+    {
+      "path": "crates/org-release/src/lib.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "a5c986c723264dff3070efc93418ea006735bd24e3b9ffcf6f9ba69e64c4e840",
+      "bytes": 20716
+    },
+    {
+      "path": "crates/org-release/src/payload.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "6ad9fcba513440e1d32830e6394260ba264ae05915340d765922ac253db10f12",
+      "bytes": 1916
+    },
+    {
+      "path": "crates/org-release/src/tests.rs",
+      "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+      "sha256": "1986c7aedd577b785e3d1249c74e174c77ca7d2948ead4cb722f5ae6a088d58d",
+      "bytes": 36006
+    }
+  ],
+  "root_owned_hunks": [
+    "Cargo.toml: org-release member and default-member registration only",
+    "Cargo.lock: generated resolver delta, no existing dependency upgrade",
+    "catalog: actual manifest evidence only, unchanged critical rules",
+    "truthful unit/checklist/category status and scoped contract/assessment/reuse metadata"
+  ],
+  "excluded": [
+    "all other reservoir crate/app source",
+    "org-pki/Argon2/raw-value/native pins",
+    "host/web/office consumers and production key configuration"
+  ],
+  "original_contexts": [
+    "01a1dfb4-1d26-7100-9ea4-72b53756ef23 (original fullstack author)",
+    "/root/release_library (lib.rs structural refactor author)",
+    "01a1dd82-ffe6-7363-af94-6072c75de2d1 (root extraction/integration)"
+  ],
+  "state": "EXTRACTED_UNACCEPTED",
+  "no_product_capability_claim": true
+}

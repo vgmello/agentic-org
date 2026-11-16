@@ -11,7 +11,12 @@ Exact product scope: `crates/org-release/Cargo.toml`, `README.md`,
 `src/{decode.rs,lib.rs,payload.rs,tests.rs}`; only `org-release` member/default-member
 additions in root `Cargo.toml` and the actually necessary generated `Cargo.lock`
 delta. Include this contract, scoped assessment and review-required canonical ADR0009
-with truthful implementation scope as documentation. No `org-pki`, Argon2/raw-value
+with truthful implementation scope as documentation. Root-owned guidance scope is
+`.agent-kit/skill-catalog.json` (actual new manifest evidence only; retain all
+critical rules), this contract/assessment, scoped reuse receipt, delivery status
+in `v1-incremental-delivery.md`/`v1-state.md`, and the relevant FC-011 checklist
+row/category counts in `docs/FEATURES.md`/`docs/FEATURE-AREAS.md`. These truthful
+status/evidence updates do not import other feature source. No `org-pki`, Argon2/raw-value
 feature changes, host/web/office adapters, bootstrap, task service/UI, publisher trust
 provisioning, policy/guard edits or unrelated lock upgrades in this unit.
 
@@ -40,8 +45,11 @@ Acceptance:
    verification stay final. Production verifier enforcement is not weakened.
 
 Preserve the source reservoir, release worker and all historical receipts. Use a
-new clean delivery worktree rather than reset/clean either preserved dirty worker.
+dedicated clean delivery worktree rather than reset/clean either preserved dirty worker.
 The narrow source map and compile/lock delta prove extraction; past green tests do
 not establish current acceptance. Root serially owns Cargo/documentation glue; the
 preserved release author validates source intent and handles any confirmed library
-repair. No new library writer is active until the current bounded channel handoff.
+repair. The bounded channel author has reached safe handoff, including the two fixtures
+and root executable22-test evidence. F0 was accepted and merged separately into
+`v1-integration` at cad1057b09fa8b105dfb843d0eaed42d24861d58. This F1a branch
+starts there, preserving the merged F0 branch and every unaccepted source tree.

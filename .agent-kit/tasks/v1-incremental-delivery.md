@@ -144,9 +144,16 @@ Sol/Xhigh, terminal0; ordered ACK/current preflight verified by root. This readi
 and the status-only update do not approve code. Material domain/security interface
 changes still require focused architecture review before dependents.
 
-The channel author reached a safe source-frozen handoff: fourteen source hashes
-and eight check receipts/logs verified; two old executable fixtures and root-only
-bind tests remain F4 follow-up. Original source/session/worktree remain preserved,
-not imported wholesale. F0 is now the active independent documentation acceptance
-unit on codex/v1-delivery-baseline from origin/v1-integration. No new accepted unit,
-usable feature or integration merge is claimed yet.
+The channel author reached a safe source-frozen handoff: all fourteen production
+hashes remain unchanged; the two executable fixtures are repaired and root ran
+22 real v3_activation tests successfully (0 failed/ignored; 40 filtered). These
+are preserved reservoir receipts, not F4 extraction or acceptance.
+
+F0 was accepted after checks, two confirmed documentation repairs, author intent
+and separate fresh final review, then merged --no-ff and pushed to v1-integration
+at cad1057b09fa8b105dfb843d0eaed42d24861d58. It delivers guidance only.
+F1a is the active separate unit on codex/v1-release-verifier from that base: six
+unchanged org-release source files, minimal Cargo/lock and truthful guidance. Root
+is the sole writer; preserved original authors validate intent. Required current
+checks and both independent reviews still gate F1a acceptance. No usable feature
+or full v1 completion is claimed.

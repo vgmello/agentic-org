@@ -670,6 +670,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-release"
+version = "0.0.0"
+dependencies = [
+ "caseless",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "org-runtime"
 version = "0.0.0"
 dependencies = [
