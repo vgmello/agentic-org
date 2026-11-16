@@ -72,7 +72,7 @@ fn employee<'a>(
     }
     Ok(e)
 }
-fn public_tree(j: &Json) -> Result<(), OfficeError> {
+pub(super) fn public_tree(j: &Json) -> Result<(), OfficeError> {
     match j {
         Json::Object(map) => {
             for (key, value) in map {
@@ -103,6 +103,7 @@ fn public_tree(j: &Json) -> Result<(), OfficeError> {
                     value.as_str(),
                     Some(
                         "private"
+                            | "unclassified"
                             | "private_note"
                             | "private_notes"
                             | "agent_memory"

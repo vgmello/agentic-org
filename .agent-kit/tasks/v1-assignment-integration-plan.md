@@ -1,14 +1,14 @@
 # Selected assignment implementation plan
 
-**Plan revision 11, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
+**Plan revision 12, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
 
 Parent stable acceptance: [v1-assignment-integration-contract.md](v1-assignment-integration-contract.md).
 
-Checkout: `/Users/vgmello/projects/agentic-org`, branch `codex/v1-assignment-integration`, verified base/HEAD `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`.
+Checkout: `/Users/vgmello/projects/agentic-org`, branch `codex/v1-assignment-integration`, base `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`; preserved implementation checkpoint `57b209a9fe0f5bc9a03320ae1b9f30e7916be7a4` is unaccepted and unmerged.
 
 Authority: [active ADR-0006 / TAI-01 revision 5](../../docs/adr/0006-selected-task-acceptance.md), its [independent READY recheck](../logs/v1-assignment-integration/architecture-review/recheck/result.json), the [parent acceptance contract](v1-assignment-integration-contract.md), and [active ADR-0007 / REC-ESC-1 revision 1](../../docs/adr/0007-hq-creation-escrow.md) for the focused HQ escrow prerequisite. [ADR-0008 / GW-SBX-MAC-1 revision 1](../../docs/adr/0008-gateway-macos-sandbox.md) governs the focused macOS gateway sandbox prerequisite; Linux enforcement remains unresolved, without waiving the full contract.
 
-One preserved fullstack author, Sol/Xhigh, owns the complete feature under the lead. The lead preserves overall architecture, shared interfaces, dependency order and final integration. At most two implementation writers may work concurrently in separate worktrees under explicit nonoverlapping scopes; current assignments are in execution checkpoints7–8 below. No nested delegation, worker commits/push/merge, live-root access or installed CLI/spool changes.
+One preserved fullstack author, Sol/Xhigh, owns the complete feature under the lead. The lead preserves overall architecture, shared interfaces, dependency order and final integration. At most two implementation writers may work concurrently in separate worktrees under explicit nonoverlapping scopes; current assignments and the review-repair split are in execution checkpoints7–9 below. No nested delegation, worker commits/push/merge, live-root access or installed CLI/spool changes.
 
 ## 1. Materialize reviewed contracts and interfaces
 
@@ -256,3 +256,41 @@ Update only the complete BRIDGE native byte literal in build.rs, the matching co
 Run the ordinary recovery_presence integration test (both native compiles/all32 isolated ARC+ASAN scenario processes), relevant existing storage/source-pin guards, scoped host/office Clippy and formatting/diff checks. No real OS authentication prompt, private key, live service or organization root. Concise source-bound3-file receipt and actual logs; update compact canonical author handoff pointer without overwriting preserved history. Then freeze all source for root whole-feature checks, actual native/browser verification, normal staged structural gate and unaccepted WIP commit before fresh SolHigh review, original-author validation and separate SolXhigh final exact-commit review.
 
 This is implementation decomposition under existing reviewed contracts; no new architecture mechanism or public interface warrants another plan-review pass. A discovered semantic/security/storage change returnsroot. Existing-HQ firstowner admission remains paused and authentic production/platform evidence remains open; no merge or assignment/v1 completion is claimed.
+
+
+### Execution checkpoint9: review repairs and efficient verification
+
+The lead re-read current AGENTS.md and keeps the overall architecture, plan,
+acceptance contract, shared interfaces and integration. No contract, trust,
+storage or recovery policy changes in this repair checkpoint. The initial
+independent review of commit57b209a9 remains INCOMPLETE/BLOCKED; its three
+confirmed source findings have bounded same-session repairs, without implying
+whole-feature approval. The original fullstack, browser and library author
+contexts/worktrees and parked work remain preserved.
+
+| Lane | Exact ownership and dependency | Current handoff / next check |
+| --- | --- | --- |
+| Repair author, existing session01a1e35e-8c1b-74d0-be39-12fa950c1d87, SolHigh | Same main checkout/branch, base73a39c58. R1 canonical adoption privacy and R2/R3 session/channel lifetime repairs; latest structural turn owns only apps/agentic-org-web/src/sessions/control.rs and control/tests.rs. | Terminal private ChannelCache extraction;11session tests and scoped Clippy/fmt pass. Existing source/assertions and staged repairs preserved. Root actual structural gate and unrestricted complete checks required. |
+| Root parallel verification, no source writes | Frozen host/office and dependency inputs; no dependency on changing web sources. Build actual office and native host test; execute generated disposable protected setup and worker restart. | Useful parallel check reached a new test-only nonblocking-reader WouldBlock failure, previously hidden by reviewer sandbox bind denial. Actual failure retained; no production failure or passing restart inferred. |
+| Next bounded same-session repair | After web writer terminal, transfer only crates/org-host/src/bootstrap/tests.rs. Reuse existing socket readiness API with one absolute deadline across response bytes; preserve every lifecycle/authority assertion. | Root owns unrestricted actual rerun after terminal handoff, then source freeze and coordinated full workspace/kit checks. No concurrent writer in this checkout. |
+| Preserved browser author, read-only execution next | Original isolated browser worktree; four unchanged E2E/config/support sources. Depends on final frozen current native/web/office binaries and static UI, with immutable input manifest. | Run existing full assertion journey against new source-bound runtime after repairs; concise receipt and targeted root evidence verification. No duplicate routine investigation or new source ownership. |
+
+No second ready source slice justifies another writer while these channel-lifecycle
+repairs settle. Root's independent host/office execution is useful parallelism
+without a source conflict. The ceiling remains two concurrent source writers,
+including the lead, in separate worktrees with agreed nonoverlapping interfaces.
+Root coordinates/verifies while delegates write. Ownership expansion or material
+public/security/storage change returns to root before dependent edits.
+
+Each continuation resolves and reads current guidance, records its actual
+preflight, returns changed-path/check/log/source-hash receipts and retains failures.
+Root inspects the changed boundary and verifies receipts rather than repeating
+routine worker discovery. All complete production requirements remain: actual
+platform/setup/adoption/browser evidence, full required tests, fresh complete
+initial review, original author intent validation and separate fresh exact-commit
+final review before merge--no-ff/push to v1-integration. Existing-HQ first-owner,
+authentic publisher/physical authentication and unsupported-platform prerequisites
+remain open; generated debug fixtures and component checks do not satisfy them.
+
+Next usable delivery remains the complete assignment vertical in the parent
+contract. Repair checkpoints are not accepted features or v1 completion.

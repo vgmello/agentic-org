@@ -205,8 +205,8 @@ impl BrowserSessions {
     }
     fn establish(&self, session: Session) -> Result<Established, ApiReply> {
         let (key, session, result) = self.prepare_established(session)?;
+        self.reap()?;
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
-        sessions.retain(|_, s| s.live() && self.host.live());
         if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
             drop(sessions);
             let _ = self.host.end(&session.handle);
@@ -214,6 +214,25 @@ impl BrowserSessions {
         }
         sessions.insert(key, Arc::new(session));
         Ok(result)
+    }
+    fn reap(&self) -> Result<(), ApiReply> {
+        let retired = {
+            let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
+            let mut retired = Vec::new();
+            sessions.retain(|_, session| {
+                if session.live() && self.host.live() {
+                    return true;
+                }
+                retired.push(Arc::clone(&session.handle));
+                false
+            });
+            retired
+        };
+        // No remote bulk session sweep and no browser/cache lock nesting.
+        for handle in retired {
+            self.host.forget(&handle);
+        }
+        Ok(())
     }
     fn view(&self, session: &Session) -> Result<SessionView, ApiReply> {
         let status = self
@@ -246,6 +265,7 @@ impl BrowserSessions {
     }
 
     fn current(&self, ticket: &Ticket) -> Result<(), ApiReply> {
+        self.reap()?;
         let sessions = self.sessions.lock().map_err(|_| unavailable())?;
         if !self.host.live()
             || !ticket.session.live()
@@ -317,6 +337,7 @@ impl Session {
 impl SessionAuthority for Arc<BrowserSessions> {
     type Ticket = Ticket;
     fn authenticate(&self, request: &Parts) -> Result<Ticket, ApiReply> {
+        self.reap()?;
         if !self.host.live() {
             return Err(denied());
         }

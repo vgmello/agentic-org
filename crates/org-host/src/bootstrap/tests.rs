@@ -468,6 +468,12 @@ fn actual_protected_reverse_bootstrap_provisions_and_replays_without_an_owner_em
         answer::<Bootstrap>(&mut native, 2, &p).unwrap_err().code,
         ErrorCode::NotAuthorized
     );
+    exercise_restarted_worker(
+        &host,
+        &native_path,
+        &provisioned.office_id,
+        p.password.expose(),
+    );
     {
         let db = {
             let state = host.state.state.lock().unwrap();
@@ -503,6 +509,232 @@ fn actual_protected_reverse_bootstrap_provisions_and_replays_without_an_owner_em
     assert!(record.finished);
     assert_eq!(record.operation_id, p.operation_id);
     assert_eq!(db.provisioning_offices().unwrap().len(), 1);
+}
+
+/// Actual disposable worker loss/restart proves the host lifecycle used by the
+/// gateway's separate control/cache regressions. No OS presence is requested.
+#[cfg(target_os = "macos")]
+fn exercise_restarted_worker(host: &BootstrapHost, socket: &Path, office: &str, password: &str) {
+    use org_host_control::{ops, SessionHandle};
+    use org_proto::{frame, Call, HelloParams};
+    use org_socket::rights::{ReceiveError, StreamReceiver};
+    use std::{
+        io::{self, Write},
+        os::fd::{AsRawFd, OwnedFd},
+        time::{Duration, Instant},
+    };
+    struct Native {
+        write: UnixStream,
+        read: StreamReceiver,
+        id: u64,
+        workers: Vec<std::io::BufReader<UnixStream>>,
+    }
+    impl Native {
+        fn byte(&mut self, expected: usize, until: Instant) -> io::Result<(u8, Vec<OwnedFd>)> {
+            let timed_out = || io::Error::new(io::ErrorKind::TimedOut, "native response deadline");
+            loop {
+                if Instant::now() >= until {
+                    return Err(timed_out());
+                }
+                match self
+                    .read
+                    .receive_byte(expected, &crate::cloexec::SPAWN_LOCK)
+                {
+                    Ok(byte) => return Ok(byte),
+                    Err(ReceiveError::WouldBlock) => {
+                        let left = until
+                            .checked_duration_since(Instant::now())
+                            .ok_or_else(timed_out)?;
+                        let fd = self.read.fd().ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "native reader closed")
+                        })?;
+                        match org_socket::poll_readable(fd.as_raw_fd(), left) {
+                            Ok(true) => {}
+                            Ok(false) => return Err(timed_out()),
+                            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Err(ReceiveError::Fatal(error))
+                        if error.kind() == io::ErrorKind::UnexpectedEof =>
+                    {
+                        return Err(error);
+                    }
+                    // As in the production gateway, malformed ancillary data
+                    // may have installed unreported descriptors on macOS.
+                    Err(ReceiveError::Fatal(_)) => std::process::exit(1),
+                }
+            }
+        }
+        fn call<C: Call>(&mut self, params: &C::Params) -> Result<C::Result, ApiError> {
+            self.id += 1;
+            let request = Request::new::<C>(self.id, params).unwrap();
+            let mut bytes = serde_json::to_vec(&request).unwrap();
+            bytes.push(b'\n');
+            self.write.write_all(&bytes).unwrap();
+            // One response deadline, never extended by each arriving byte.
+            let until = Instant::now() + Duration::from_secs(30);
+            let mut bytes = Vec::new();
+            loop {
+                let (b, fds) = self.byte(0, until).unwrap();
+                assert!(fds.is_empty());
+                if b == b'\n' {
+                    break;
+                }
+                assert!(bytes.len() < org_proto::MAX_FRAME_BYTES);
+                bytes.push(b);
+            }
+            let response: Response = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(response.id, self.id);
+            response.into_result::<C>().map_err(|e| match e {
+                org_proto::CallError::Api(e) => e,
+                _ => panic!("typed response"),
+            })
+        }
+        fn open(&mut self, handle: &SessionHandle, office: &str) -> String {
+            let opened = self
+                .call::<ops::OfficeOpenChannel>(&ops::OfficeOpenChannelParams {
+                    session: SessionHandle::new(handle.expose().into()).unwrap(),
+                    office_id: office.into(),
+                })
+                .unwrap();
+            let (marker, mut fds) = self
+                .byte(1, Instant::now() + Duration::from_secs(30))
+                .unwrap();
+            assert_eq!(marker, ops::HOST_SOCK_MARKER);
+            let stream = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(30)))
+                .unwrap();
+            self.call::<ops::FdsReceived>(&ops::FdsReceivedParams {
+                of: opened.channel_id.clone(),
+            })
+            .unwrap();
+            let mut worker = std::io::BufReader::new(stream);
+            frame::write_message(
+                worker.get_mut(),
+                &Request::new::<Hello>(
+                    1,
+                    &HelloParams::offering(
+                        org_proto::ApiRange { min: 2, max: 2 },
+                        "restarted-worker-test",
+                    ),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let response: Response = frame::read_message(&mut worker).unwrap().unwrap();
+            assert_eq!(
+                response
+                    .into_result::<Hello>()
+                    .unwrap()
+                    .office
+                    .unwrap()
+                    .office
+                    .id,
+                office
+            );
+            // Keep the real worker connection alive through grant/revocation
+            // checks; closing it here would test a different failure boundary.
+            self.workers.push(worker);
+            opened.channel_id
+        }
+    }
+    let stream = UnixStream::connect(socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
+    let mut native = Native {
+        read: StreamReceiver::new(stream.try_clone().unwrap()),
+        write: stream,
+        id: 0,
+        workers: Vec::new(),
+    };
+    native.call::<Hello>(&HelloParams::default()).unwrap();
+    let signed = native
+        .call::<ops::AccountVerify>(&ops::AccountVerifyParams {
+            login: "Owner".into(),
+            password: Password::new(password.into()).unwrap(),
+        })
+        .unwrap();
+    let channel = native.open(&signed.session, office);
+    let grant_params = |channel_id: String| ops::SessionGrantParams {
+        session: SessionHandle::new(signed.session.expose().into()).unwrap(),
+        office_id: office.into(),
+        channel_id,
+    };
+    let first = native
+        .call::<ops::SessionGrant>(&grant_params(channel.clone()))
+        .unwrap();
+    let offices = {
+        let state = host.state.state.lock().unwrap();
+        Arc::clone(&state.host.as_ref().unwrap().offices)
+    };
+    let old = offices.endpoint(office).unwrap();
+    old.fail();
+    let until = Instant::now() + Duration::from_secs(30);
+    loop {
+        if offices
+            .endpoint(office)
+            .is_some_and(|new| new.is_live() && !Arc::ptr_eq(&old, &new))
+        {
+            break;
+        }
+        assert!(Instant::now() < until, "actual worker did not restart");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(matches!(
+        native
+            .call::<ops::SessionGrant>(&grant_params(channel))
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized | ErrorCode::Unavailable
+    ));
+    native
+        .call::<ops::SessionInspect>(&ops::SessionParams {
+            session: SessionHandle::new(signed.session.expose().into()).unwrap(),
+        })
+        .unwrap();
+    let replacement = native.open(&signed.session, office);
+    let second = native
+        .call::<ops::SessionGrant>(&grant_params(replacement.clone()))
+        .unwrap();
+    assert_ne!(
+        first.grant.claims.channel_id,
+        second.grant.claims.channel_id
+    );
+    assert_eq!(
+        first.grant.claims.session_id,
+        second.grant.claims.session_id
+    );
+    native
+        .call::<ops::SessionEnd>(&ops::SessionParams {
+            session: SessionHandle::new(signed.session.expose().into()).unwrap(),
+        })
+        .unwrap();
+    assert_eq!(
+        native
+            .call::<ops::SessionGrant>(&grant_params(replacement))
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(
+        native
+            .call::<ops::OfficeOpenChannel>(&ops::OfficeOpenChannelParams {
+                session: signed.session,
+                office_id: office.into()
+            })
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
 }
 
 #[cfg(target_os = "macos")]

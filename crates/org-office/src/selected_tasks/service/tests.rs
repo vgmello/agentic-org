@@ -8,6 +8,7 @@ use crate::{
     Key,
 };
 use tempfile::TempDir;
+mod adoption_privacy;
 mod crash_reopen;
 mod directory_import;
 mod legacy_import;

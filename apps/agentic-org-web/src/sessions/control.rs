@@ -1,14 +1,11 @@
 //! One bounded actor owns the already-admitted private host connection and
 //! transfer receiver. No host.sock/path fallback, office key or registry access.
 use crate::selected::OfficeAccess;
-use org_client::selected::ApprovedOffice;
 use org_host_control::{ops, Password, SessionHandle};
 use org_proto::{selected_tasks::OfficeScope, Call, Principal};
 use org_socket::rights::{DatagramReceiver, ReceiveError, StreamReceiver};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
     io::{self, Write},
     net::Shutdown,
     os::{
@@ -28,6 +25,8 @@ use zeroize::Zeroizing;
 const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_CONTROL_BYTES: usize = 64 * 1024;
 static SPAWN_FENCE: Mutex<()> = Mutex::new(());
+#[cfg(test)]
+mod tests;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
     Denied,
@@ -45,9 +44,122 @@ struct Job {
     until: Instant,
     answer: SyncSender<Result<Reply, Failure>>,
 }
-struct Cached {
-    channel: String,
-    office: Arc<ApprovedOffice>,
+use channel_cache::{Cached, ChannelCache};
+
+/// Local resource lifetime and capacity, never session authority. Keeping the
+/// map private prevents transport callers from bypassing expiry or evicting a
+/// concurrently installed replacement. Each operation releases its lock before
+/// the caller can perform host or office RPCs.
+mod channel_cache {
+    use super::{Failure, SessionHandle};
+    use org_client::selected::ApprovedOffice;
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex, MutexGuard},
+        time::Instant,
+    };
+
+    type Key = ([u8; 32], String);
+    #[derive(Clone)]
+    pub(super) struct Cached {
+        pub channel: String,
+        pub office: Arc<ApprovedOffice>,
+        pub expires: Instant,
+    }
+    #[derive(Default)]
+    pub(super) struct ChannelCache {
+        entries: Mutex<BTreeMap<Key, Cached>>,
+    }
+    fn key(handle: &SessionHandle, office: &str) -> Key {
+        (
+            Sha256::digest(handle.expose().as_bytes()).into(),
+            office.into(),
+        )
+    }
+    fn available(entries: &BTreeMap<Key, Cached>, key: &Key) -> Result<(), Failure> {
+        if !entries.contains_key(key) && entries.len() >= 256 {
+            return Err(Failure::Unavailable);
+        }
+        Ok(())
+    }
+    impl ChannelCache {
+        fn live_entries(&self) -> Result<MutexGuard<'_, BTreeMap<Key, Cached>>, Failure> {
+            let mut entries = self.entries.lock().map_err(|_| Failure::Unavailable)?;
+            // Abandoned/revoked handles may never make another request. Their
+            // last host-observed lifetime still bounds these local resources.
+            entries.retain(|_, cached| cached.expires > Instant::now());
+            Ok(entries)
+        }
+        pub(super) fn get(
+            &self,
+            handle: &SessionHandle,
+            office: &str,
+        ) -> Result<Option<Cached>, Failure> {
+            let key = key(handle, office);
+            let entries = self.live_entries()?;
+            available(&entries, &key)?;
+            Ok(entries.get(&key).cloned())
+        }
+        pub(super) fn insert(
+            &self,
+            handle: &SessionHandle,
+            office: &str,
+            cached: Cached,
+        ) -> Result<(), Failure> {
+            let key = key(handle, office);
+            let mut entries = self.live_entries()?;
+            available(&entries, &key)?;
+            entries.insert(key, cached);
+            Ok(())
+        }
+        pub(super) fn refresh(
+            &self,
+            handle: &SessionHandle,
+            office: &str,
+            channel: &str,
+            expires: Instant,
+        ) -> Result<(), Failure> {
+            self.entries
+                .lock()
+                .map_err(|_| Failure::Unavailable)?
+                .entry(key(handle, office))
+                .and_modify(|current| {
+                    if current.channel == channel {
+                        current.expires = expires;
+                    }
+                });
+            Ok(())
+        }
+        pub(super) fn evict(
+            &self,
+            handle: &SessionHandle,
+            office: &str,
+            channel: &str,
+        ) -> Result<(), Failure> {
+            let key = key(handle, office);
+            let mut entries = self.entries.lock().map_err(|_| Failure::Unavailable)?;
+            if entries
+                .get(&key)
+                .is_some_and(|current| current.channel == channel)
+            {
+                entries.remove(&key);
+            }
+            Ok(())
+        }
+        pub(super) fn forget(&self, handle: &SessionHandle) {
+            if let Ok(mut entries) = self.entries.lock() {
+                let digest: [u8; 32] = Sha256::digest(handle.expose().as_bytes()).into();
+                entries.retain(|(key, _), _| *key != digest);
+            }
+        }
+        // Keep existing regression observations/injected clock boundaries
+        // available in tests without exposing the map in production.
+        #[cfg(test)]
+        pub(super) fn entries_for_test(&self) -> MutexGuard<'_, BTreeMap<Key, Cached>> {
+            self.entries.lock().unwrap()
+        }
+    }
 }
 pub struct HostControl {
     instance: String,
@@ -55,7 +167,7 @@ pub struct HostControl {
     socket: UnixStream,
     jobs: SyncSender<Job>,
     next: std::sync::atomic::AtomicU64,
-    channels: Mutex<BTreeMap<([u8; 32], String), Cached>>,
+    channels: ChannelCache,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -150,7 +262,7 @@ impl HostControl {
             socket,
             jobs,
             next: std::sync::atomic::AtomicU64::new(1),
-            channels: Mutex::new(BTreeMap::new()),
+            channels: ChannelCache::default(),
         });
         let hello = control
             .call::<org_host_control::Hello>(&Default::default(), None)
@@ -286,15 +398,24 @@ impl HostControl {
         struct Params<'a> {
             session: &'a SessionHandle,
         }
-        self.borrowed::<ops::SessionRenew, _>(&Params { session: handle })
-            .map(|_| ())
+        let result = self
+            .borrowed::<ops::SessionRenew, _>(&Params { session: handle })
+            .map(|_| ());
+        if result == Err(Failure::Denied) {
+            self.forget(handle);
+        }
+        result
     }
     pub fn inspect(&self, handle: &SessionHandle) -> Result<ops::SessionInspectResult, Failure> {
         #[derive(Serialize)]
         struct Params<'a> {
             session: &'a SessionHandle,
         }
-        self.borrowed::<ops::SessionInspect, _>(&Params { session: handle })
+        let result = self.borrowed::<ops::SessionInspect, _>(&Params { session: handle });
+        if matches!(result, Err(Failure::Denied)) {
+            self.forget(handle);
+        }
+        result
     }
     pub fn end(&self, handle: &SessionHandle) -> Result<(), Failure> {
         #[derive(Serialize)]
@@ -302,69 +423,120 @@ impl HostControl {
             session: &'a SessionHandle,
         }
         let result = self.borrowed::<ops::SessionEnd, _>(&Params { session: handle });
-        if let Ok(mut channels) = self.channels.lock() {
-            let key: [u8; 32] = Sha256::digest(handle.expose().as_bytes()).into();
-            channels.retain(|(k, _), _| *k != key);
-        }
+        self.forget(handle);
         result.map(|_| ())
+    }
+    /// Local resource cleanup only. The host remains the authority for sessions,
+    /// grants and revocation; dropping a browser entry never fabricates logout.
+    pub(super) fn forget(&self, handle: &SessionHandle) {
+        self.channels.forget(handle);
     }
     pub fn office(
         &self,
         handle: &SessionHandle,
         scope: &OfficeScope,
     ) -> Result<OfficeAccess, Failure> {
+        if scope.instance_id != self.instance {
+            return Err(Failure::Denied);
+        }
+        let mut expires = self.office_authority(handle, scope)?;
+        if let Some(cached) = self.channels.get(handle, &scope.office_id)? {
+            match self.office_grant(handle, scope, &cached.channel) {
+                Ok(principal) => {
+                    self.channels
+                        .refresh(handle, &scope.office_id, &cached.channel, expires)?;
+                    return Ok(OfficeAccess {
+                        office: cached.office,
+                        principal,
+                    });
+                }
+                Err(error) => {
+                    // Never retain the failed worker binding, or evict a newer
+                    // channel installed concurrently by another request.
+                    self.channels
+                        .evict(handle, &scope.office_id, &cached.channel)?;
+                    if !self.live() {
+                        return Err(error);
+                    }
+                    // A failed grant is not authority. Recheck the SAME session
+                    // and live link before the single replacement open/grant.
+                    expires = self.office_authority(handle, scope)?;
+                }
+            }
+        }
+        // Acquisition happens before dispatch. No submitted task command is
+        // replayed here, including one whose result may be unknown.
+        let (channel, descriptor) = self.open(handle, &scope.office_id)?;
+        let office = Arc::new(
+            org_client::selected::ApprovedOffice::from_descriptor(
+                descriptor,
+                self.instance.clone(),
+                scope.org_id.clone(),
+                scope.office_id.clone(),
+                channel.clone(),
+            )
+            .map_err(|_| Failure::Unavailable)?,
+        );
+        let principal = self.office_grant(handle, scope, &channel)?;
+        self.channels.insert(
+            handle,
+            &scope.office_id,
+            Cached {
+                channel,
+                office: Arc::clone(&office),
+                expires,
+            },
+        )?;
+        Ok(OfficeAccess { office, principal })
+    }
+    fn office_authority(
+        &self,
+        handle: &SessionHandle,
+        scope: &OfficeScope,
+    ) -> Result<Instant, Failure> {
+        let status = self.inspect(handle)?;
+        if !status
+            .orgs
+            .iter()
+            .any(|link| link.org_id == scope.org_id && link.office_ids.contains(&scope.office_id))
+        {
+            return Err(Failure::NotFound);
+        }
+        let remaining = status
+            .absolute_expires_at_ms
+            .min(status.idle_expires_at_ms)
+            .checked_sub(status.server_time_ms)
+            .filter(|ms| *ms > 0)
+            .ok_or(Failure::Denied)?;
+        Instant::now()
+            .checked_add(Duration::from_millis(remaining))
+            .ok_or(Failure::Unavailable)
+    }
+    fn office_grant(
+        &self,
+        handle: &SessionHandle,
+        scope: &OfficeScope,
+        channel: &str,
+    ) -> Result<Principal, Failure> {
         #[derive(Serialize)]
         struct Grant<'a> {
             session: &'a SessionHandle,
             office_id: &'a str,
             channel_id: &'a str,
         }
-        if scope.instance_id != self.instance {
-            return Err(Failure::Denied);
-        }
-        let key: [u8; 32] = Sha256::digest(handle.expose().as_bytes()).into();
-        let mut channels = self.channels.lock().map_err(|_| Failure::Unavailable)?;
-        let cache_key = (key, scope.office_id.clone());
-        if !channels.contains_key(&cache_key) {
-            if channels.len() >= 256 {
-                return Err(Failure::Unavailable);
-            }
-            let opened = self.open(handle, &scope.office_id)?;
-            let office = Arc::new(
-                ApprovedOffice::from_descriptor(
-                    opened.1,
-                    self.instance.clone(),
-                    scope.org_id.clone(),
-                    scope.office_id.clone(),
-                    opened.0.clone(),
-                )
-                .map_err(|_| Failure::Unavailable)?,
-            );
-            channels.insert(
-                cache_key.clone(),
-                Cached {
-                    channel: opened.0,
-                    office,
-                },
-            );
-        }
-        let cached = channels.get(&cache_key).ok_or(Failure::Unavailable)?;
         let grant = self.borrowed::<ops::SessionGrant, _>(&Grant {
             session: handle,
             office_id: &scope.office_id,
-            channel_id: &cached.channel,
+            channel_id: channel,
         })?;
         if grant.grant.claims.org_id != scope.org_id
             || grant.grant.claims.office_id != scope.office_id
-            || grant.grant.claims.channel_id != cached.channel
+            || grant.grant.claims.channel_id != channel
         {
             self.close();
             return Err(Failure::Unavailable);
         }
-        Ok(OfficeAccess {
-            office: Arc::clone(&cached.office),
-            principal: Principal { grant: grant.grant },
-        })
+        Ok(Principal { grant: grant.grant })
     }
     fn open(&self, handle: &SessionHandle, office: &str) -> Result<(String, OwnedFd), Failure> {
         #[derive(Serialize)]

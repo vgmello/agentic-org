@@ -367,6 +367,10 @@ fn verify_imported_events(
             Admission::Import,
         )
         .map_err(|_| invalid())?;
+        // Codec/hash verification does not classify retained source. Apply the
+        // same provenance guard to every event, including nonlegacy imports and
+        // unknown change types, before any public artifact can be installed.
+        legacy_import::public_tree(event.value())?;
         verify_public_snapshot(
             event.value().get("change").ok_or_else(invalid)?,
             &id.organization_id,
