@@ -72,48 +72,52 @@ fn employee<'a>(
     }
     Ok(e)
 }
+fn public_property(key: &str, value: Option<&str>) -> Result<(), OfficeError> {
+    let key = key.to_ascii_lowercase();
+    if matches!(
+        key.as_str(),
+        "private"
+            | "private_note"
+            | "private_notes"
+            | "private_memory"
+            | "agent_memory"
+            | "credential"
+            | "credentials"
+            | "password"
+            | "secret"
+            | "secrets"
+            | "private_key"
+            | "api_key"
+            | "authorization"
+            | "cookie"
+    ) {
+        return Err(invalid());
+    }
+    if matches!(
+        key.as_str(),
+        "source_kind" | "visibility" | "classification" | "namespace" | "record_kind"
+    ) && matches!(
+        value,
+        Some(
+            "private"
+                | "unclassified"
+                | "private_note"
+                | "private_notes"
+                | "agent_memory"
+                | "credentials"
+                | "credential"
+                | "secret"
+        )
+    ) {
+        return Err(invalid());
+    }
+    Ok(())
+}
 pub(super) fn public_tree(j: &Json) -> Result<(), OfficeError> {
     match j {
         Json::Object(map) => {
             for (key, value) in map {
-                let key = key.to_ascii_lowercase();
-                if matches!(
-                    key.as_str(),
-                    "private"
-                        | "private_note"
-                        | "private_notes"
-                        | "private_memory"
-                        | "agent_memory"
-                        | "credential"
-                        | "credentials"
-                        | "password"
-                        | "secret"
-                        | "secrets"
-                        | "private_key"
-                        | "api_key"
-                        | "authorization"
-                        | "cookie"
-                ) {
-                    return Err(invalid());
-                }
-                if matches!(
-                    key.as_str(),
-                    "source_kind" | "visibility" | "classification" | "namespace" | "record_kind"
-                ) && matches!(
-                    value.as_str(),
-                    Some(
-                        "private"
-                            | "unclassified"
-                            | "private_note"
-                            | "private_notes"
-                            | "agent_memory"
-                            | "credentials"
-                            | "credential"
-                            | "secret"
-                    )
-                ) {
-                    return Err(invalid());
-                }
+                public_property(key, value.as_str())?;
                 public_tree(value)?;
             }
         }
@@ -125,6 +129,29 @@ pub(super) fn public_tree(j: &Json) -> Result<(), OfficeError> {
         _ => {}
     }
     Ok(())
+}
+pub(super) fn public_snapshot(snapshot: &TaskSnapshot<'_>) -> Result<(), OfficeError> {
+    fn map(map: &serde_json::Map<String, Value>) -> Result<(), OfficeError> {
+        for (key, value) in map {
+            public_property(key, value.as_str())?;
+            walk(value)?;
+        }
+        Ok(())
+    }
+    fn walk(value: &Value) -> Result<(), OfficeError> {
+        match value {
+            Value::Object(object) => map(object)?,
+            Value::Array(items) => {
+                for value in items {
+                    walk(value)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    // Inspect the parsed front matter without rewriting the retained source.
+    map(snapshot.source.front_matter())
 }
 fn classification(raw: &Json, known: &Json, declared: &Json) -> Result<(), OfficeError> {
     let Json::Array(paths) = declared else {

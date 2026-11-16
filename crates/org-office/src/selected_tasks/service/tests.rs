@@ -10,6 +10,7 @@ use crate::{
 use tempfile::TempDir;
 mod adoption_paths;
 mod adoption_privacy;
+mod adoption_snapshot_privacy;
 mod crash_reopen;
 mod directory_import;
 mod legacy_import;

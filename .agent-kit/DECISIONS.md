@@ -35,3 +35,7 @@ recoverable acceptance, adoption and UI; it does not claim implemented support.
 - [ADR-0010 / LEGACY-ADOPT-1 r1](../docs/adr/0010-legacy-task-adoption.md): independently READY conservative legacy version1 adoption, explicit baseline1/import facts with complete original Created evidence, strict mapping/public classification and intact staged unsupported histories. No full migration/code acceptance.
 
 - [ADR-0011 / REC-DEL-1 r1](../docs/adr/0011-protected-recovery-delivery.md): independently READY protected native OS-presence delivery, same-run ACK, durable audit/deletion/reopen and bounded committed public escrow transfer/export. Exact cc1.11.1 SDK bridge, no crypto/key boundary change. Actual physical-auth/production implementation and full feature acceptance remain unverified.
+
+- [ADR-0012 / CH-LIFE-1 r2](../docs/adr/0012-office-channel-lifecycle.md): independently READY bounded8physical/7gateway channel profile, authenticated ownership/refusal/closure and shared permission/receipt liveness. Preserves16pending/512combined listener and64session bounds, exact ACK/revocation/custody. Implementation and production/code/final acceptance remain pending.
+
+- Owner release-phase override (2026-11-16): [release signing deferral](tasks/v1-release-signing-deferral.md). Implement everything else first; signing setup and authentic signed-release verification are final release work. Preserve failclosed signing code and full functional/local review gates; missing signing inputs do not block ordinary implementation/integration.

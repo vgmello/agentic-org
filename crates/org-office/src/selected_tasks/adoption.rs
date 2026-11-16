@@ -216,6 +216,7 @@ fn prepare(
     )?;
     let text = std::str::from_utf8(&source).map_err(|_| invalid())?;
     let snapshot = TaskSnapshot::parse(&id.organization_id, text).map_err(|_| invalid())?;
+    legacy_import::public_snapshot(&snapshot)?;
     let facts = snapshot.immutable();
     if facts.task_id != m.task_id {
         return Err(invalid());
@@ -587,6 +588,7 @@ fn verify_public_snapshot(
             std::str::from_utf8(bytes).map_err(|_| invalid())?
         };
         let snapshot = TaskSnapshot::parse(org, text).map_err(|_| invalid())?;
+        legacy_import::public_snapshot(&snapshot)?;
         if snapshot.immutable().task_id != task || snapshot.revision() != revision {
             return Err(invalid());
         }

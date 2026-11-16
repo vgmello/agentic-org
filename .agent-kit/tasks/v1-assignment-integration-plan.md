@@ -1,6 +1,6 @@
 # Selected assignment implementation plan
 
-**Plan revision 13, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
+**Plan revision 16, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
 
 Parent stable acceptance: [v1-assignment-integration-contract.md](v1-assignment-integration-contract.md).
 
@@ -335,3 +335,96 @@ runs early structural and coordinated current fullchecks/runtime as affected,
 then required fresh complete review, original author validation and separate
 exactcommit final review. Existing production/platform/firstowner requirements
 and next complete usable assignment delivery remain unchanged.
+
+
+### Execution checkpoint11: snapshot privacy and physical channel lifecycle
+
+Root retains the one architecture, plan, stable acceptance contract, shared
+interfaces, dependency order and integration owner. Preservation HEAD c3ada005 is
+unaccepted. Third actual initial SolXhigh review session
+01a1e3e7-cacd-7153-a114-deab8f51ed46 found R1/R2/R3 and returned INCOMPLETE;
+its absolute finding paths failed report validation. Preserve the original raw
+report, actual execution and BLOCKED result; no code acceptance is inferred.
+Full7/native10/Chromium14 and original intent validation are historical evidence
+once any repair changes their inputs. All production gates remain required.
+
+| Lane | Worktree / ownership | Dependencies and checks |
+| --- | --- | --- |
+| Same third reviewer, explicit fix, SolXhigh | Main checkout at c3ada005; only org-office selected_tasks/adoption.rs, adoption/legacy_import.rs, service/tests.rs and new service/tests/adoption_snapshot_privacy.rs | R1 uses existing provenance policy on actual current and historical Markdown, inline and referenced. No new public DTO or parser normalization. Real stage/commit red/green, source retention, first protected Staged receipt and exact retry/reopen, public unknown-extension positive controls; scoped selected tests/fmt/Clippy. |
+| Fresh independent architecture reviewer, read-only SolXhigh | Main checkout; candidate ADR0012 channel capacity/lifecycle, host/worker/launch source only | R2 shared physical budget8/gateway7 and graceful ordinary refusal; R3 true socket closure releases occupancy. Review authenticated close/refusal event ordering, pending FD ownership, lock ordering and failclosed malformed-transfer behavior before dependent code. No source writes. |
+| Original fullstack author, pending | Separate new detached c3ada005 worktree only after architecture READY and explicit ownership handoff | Candidate org-office-launch v3 protocol/tests, host supervisor/channels and service/authentication/tests, office transfer/channels/tests and startup event wiring. Exact files/interfaces must be enumerated in the approved handoff before dispatch. No org-office privacy files. |
+
+There is currently one source writer. Privacy repair and read-only channel design
+review are useful independent parallel work. If channel architecture is READY
+while privacy is active, a second writer may start only in the separate worktree
+with disjoint exact files and agreed event/state interfaces. Root coordinates and
+verifies without becoming a third writer. Otherwise serial implementation is
+preferable to speculative cross-process interfaces. Existing browser/library/main
+contexts, all worktrees, parked stash and installed CLI/spool remain preserved.
+
+Root integrates terminal receipts, targeted source inspection and early structural
+checks, then coherent complete workspace/kit/app and affected native/browser
+verification. Preserve independent initial review, original-author validation and
+separate fresh final exact-commit review. No merge until the complete stable
+acceptance contract passes. Next usable delivery remains the full assignment
+vertical; these repair checkpoints do not complete assignment or v1.
+
+
+### Execution checkpoint12: approved parallel channel implementation
+
+ADR0012 CH-LIFE-1revision2 is ACTIVE after independent SolXhigh architecture
+READY at exact archived proposal06073c57959c1a1dae08f4a63f0d5178fe222fc4d6417275a2289e04829063aa.
+Root owns the single architecture/plan/interfaces/acceptance/integration. The
+source-bound assignment contract remains unchanged. R1 privacy author is still
+finishing terminal targeted checks in main; its four files are disjoint from
+this channel slice. Preserve its actual session, work and every failed attempt.
+
+Original fullstack author01a1dfb4-1d26-7100-9ea4-72b53756ef23 SolXhigh now owns
+CH-LIFE-1 implementation in separate detachedc3ada005 channel-worker worktree.
+Exact enumerated paths/interfaces/checks are in channel-implementation-1/root-assignment.json.
+No nested delegation or worker commits/branches/push/merge. This material protocol
+correction returns to original architecture/fullstack author after root decision,
+rather than broadening the privacy reviewer's bounded R1 fix. Preserve third
+reviewer context for finding/repair verification and original authors for intent.
+Maximum two writers: privacy author main plus fullstack channel-worker. Root
+freezes source writes while they are active and verifies/coordinates only.
+
+The shared interface is the reviewed8total/7gateway profile/readiness marker,
+authenticated ACK/refusal/close lifecycle, per-ID physical liveness witness and
+closed-aware Session/native/gateway ownership receipts, retaining16pending,
+512combined listener and64cross-office session limits. No new host-control API,
+trust authority, dependency, SQL schema, native pin, global error waiver or source
+normalization. Worker returns genuine extra ownership or mechanism requirements
+before editing them. Existing writer/recovery/revocation/failed-rights invariants
+remain. Targeted failing-before/passing-after tests and concise evidence receipt
+precede root integration; root verifies current hashes and affected boundaries,
+runs early structural gate then coherent complete checks and actual native/browser.
+Independent initial, original intent and separate fresh final exact-commit review
+remain mandatory. All production/platform/existing-owner prerequisites stay open.
+
+Next usable delivery remains the full assignment vertical; repair and architecture
+READY are not accepted assignment or v1 completion. Canonical plan15 is authored
+in this worktree and will be integrated by root after both handoffs; main plan14
+remains preserved during the privacy writer's active turn.
+
+
+### Execution checkpoint13: owner defers release signing to the final phase
+
+The owner's explicit answer supersedes earlier per-feature signing-input gating:
+release signing needs setup and is to be skipped now, handled last after all other
+implementation. See v1-release-signing-deferral.md for the exact scoped phase
+amendment. Signing/verifier production code and failclosed checks are preserved;
+no release bypass, generated production keys or fictitious production proof.
+Missing authentic signing inputs must not stop functional implementation or local
+reviewed v1-integration delivery. Complete functional tests, original intent and
+fresh initial/final exact-commit reviews remain required. Final signed release,
+normal production setup/service and signing-dependent E2E remain deferred release
+acceptance. Other security, durability, auth and platform requirements remain.
+
+Active channel author continues unchanged CH-LIFE1r2 source interface in separate
+worktree; its frozen plan15/ADR2 packet remains valid for that unchanged scoped
+implementation. Root owns phase16 planning/metadata in main; no concurrent edits to
+worker-owned16sourcefiles. Refresh subsequent handoffs/preflights against phase16;
+communicate this scheduling amendment on the next preserved-author turn. R1 scoped
+repair is terminal and root verified; early staged health passed0fail/2nonblocking
+cohesive test-fixture warnings, without any policy/assertion/threshold change.
