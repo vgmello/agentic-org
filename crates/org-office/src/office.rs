@@ -217,6 +217,7 @@ impl Office {
         &self,
         authority: Arc<dyn crate::OwnerAuthority>,
     ) -> Result<(), OfficeError> {
+        self.retained_hq_creation_binding()?;
         crate::organization::admission::bind_owner(&self.stores.local, authority)
     }
 
@@ -232,6 +233,7 @@ impl Office {
         {
             return Err(OfficeError::Invalid("work acceptance scope mismatch"));
         }
+        self.validate_hq_creation_root(&config)?;
         self.stores.local.install_acceptance(config)
     }
 
@@ -378,7 +380,7 @@ impl Office {
         let lock = lock_folder(&folder, lock_wait)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
-        let hq_binding = hq_creation::verify_intent(&folder, &info, instance)?;
+        hq_creation::verify_intent(&folder, &info, instance)?;
 
         // Refuse before either database migrates or changes journal mode. The office lock
         // keeps this read and the later transactional adoption under one owner.
@@ -414,8 +416,9 @@ impl Office {
                 "the databases belong to another office",
             ));
         }
-        if let Some(binding) = hq_binding {
-            crate::store::hq_creation::verify_binding(&local, &binding)?;
+        if let Some(binding) =
+            hq_creation::verify_retained_binding(&folder, &info, instance, &local)?
+        {
             hq_creation::publish_public(&folder, &local, &binding)?;
         }
         org_db::sweep_snapshot_scratch(&folder)?;

@@ -645,3 +645,167 @@ fn frozen_schema7_upgrades_to8_preserving_instance_origin_status_and_directory()
         drop(current);
     }
 }
+
+fn admission_config(root: &Path, public: &Path) -> crate::AcceptanceConfig {
+    crate::AcceptanceConfig {
+        identity: crate::AcceptanceIdentity {
+            instance_id: INSTANCE.into(),
+            organization_id: "ORG".into(),
+            office_id: "HQ".into(),
+            machine_id: "machine".into(),
+            writer_epoch: 1,
+            journal_incarnation: "journal".into(),
+        },
+        public_root: public.into(),
+        protected_root: root.canonicalize().unwrap().join("protected"),
+        authority: None,
+    }
+}
+struct AdmissionOwner(String);
+impl crate::OwnerAuthority for AdmissionOwner {
+    fn verify_live(
+        &self,
+        _: &crate::AcceptanceIdentity,
+    ) -> Result<crate::OwnerAccount, OfficeError> {
+        Ok(crate::OwnerAccount {
+            account_id: "account".into(),
+            member_id: self.0.clone(),
+        })
+    }
+}
+
+#[test]
+fn hq_creation_domain_precheck_and_direct_install_bind_enforce_frozen_root_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let bound = binding(dir.path());
+    let office = Office::provision_hq_for_instance(
+        dir.path().join("HQ"),
+        &new(),
+        Key::from_bytes([8; 32]),
+        INSTANCE,
+        &bound,
+        material,
+    )
+    .unwrap();
+    let config = admission_config(dir.path(), &bound.public_root);
+    office
+        .validate_hq_creation_admission(&config, &bound.owner_member_id)
+        .unwrap();
+    assert!(office
+        .validate_hq_creation_admission(&config, "different-member")
+        .is_err());
+    let foreign = tempfile::tempdir().unwrap();
+    let mut wrong = config.clone();
+    wrong.public_root = foreign.path().canonicalize().unwrap();
+    assert!(office
+        .validate_hq_creation_admission(&wrong, &bound.owner_member_id)
+        .is_err());
+    // Direct installation cannot bypass the worker precheck.
+    assert!(office.install_selected_acceptance(wrong).is_err());
+    assert!(!config.protected_root.exists());
+    assert_eq!(fs::read_dir(foreign.path()).unwrap().count(), 0);
+    office.install_selected_acceptance(config).unwrap();
+    let position = || {
+        office.local_store().selected_read(|db,_| {
+        db.query_row("SELECT ordinal,(SELECT count(*) FROM selected_owner_authority) FROM selected_journal_cursor",[],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).map_err(OfficeError::storage)
+    }).unwrap()
+    };
+    let before = position();
+    // A live, internally consistent authority naming another member still fails.
+    assert!(office
+        .bind_selected_owner(Arc::new(AdmissionOwner("different-member".into())))
+        .is_err());
+    assert_eq!(position(), before);
+    office
+        .bind_selected_owner(Arc::new(AdmissionOwner(bound.owner_member_id)))
+        .unwrap();
+    assert_eq!(position().1, 1);
+    // Receipt-bearing plain legacy creation legitimately has no PreparedV1.
+    office
+        .finish_selected_bootstrap(Arc::new(AdmissionOwner("unused".into())))
+        .unwrap();
+}
+
+#[test]
+fn hq_creation_plain_receipt_requires_retained_intent_and_private_binding() {
+    for damage in ["intent", "owner", "operation"] {
+        let dir = tempfile::tempdir().unwrap();
+        let bound = binding(dir.path());
+        let key = Key::from_bytes([8; 32]);
+        let folder = dir.path().join("HQ");
+        let office = Office::provision_hq_for_instance(
+            &folder,
+            &new(),
+            key.clone(),
+            INSTANCE,
+            &bound,
+            material,
+        )
+        .unwrap();
+        let config = admission_config(dir.path(), &bound.public_root);
+        match damage {
+            "intent" => fs::remove_file(folder.join(INTENT)).unwrap(),
+            "owner" | "operation" => {
+                let name = if damage == "owner" {
+                    "hq_creation_owner"
+                } else {
+                    "hq_creation_operation"
+                };
+                office
+                    .local_store()
+                    .write(move |db| {
+                        db.execute("UPDATE meta SET value='corrupted' WHERE key=?1", [name])
+                            .map_err(OfficeError::storage)?;
+                        Ok(((), None))
+                    })
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            office
+                .validate_hq_creation_admission(&config, &bound.owner_member_id)
+                .is_err(),
+            "{damage}"
+        );
+        assert!(
+            office.install_selected_acceptance(config.clone()).is_err(),
+            "{damage}"
+        );
+        assert!(
+            office
+                .finish_selected_bootstrap(Arc::new(AdmissionOwner(bound.owner_member_id)))
+                .is_err(),
+            "{damage}"
+        );
+        assert!(!config.protected_root.exists());
+        assert_eq!(
+            fs::read(bound.public_root.join(PUBLIC_ESCROW)).unwrap(),
+            vec![7; 140]
+        );
+        drop(office);
+        assert!(
+            Office::open_for_instance(&folder, key, INSTANCE).is_err(),
+            "{damage}"
+        );
+    }
+}
+
+#[test]
+fn hq_creation_admission_preserves_plain_legacy_without_creation_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let office = Office::create_for_instance(
+        dir.path().join("HQ"),
+        &new(),
+        Key::from_bytes([8; 32]),
+        INSTANCE,
+    )
+    .unwrap();
+    let config = admission_config(dir.path(), dir.path());
+    office
+        .validate_hq_creation_admission(&config, "legacy-owner")
+        .unwrap();
+    office
+        .finish_selected_bootstrap(Arc::new(AdmissionOwner("legacy-owner".into())))
+        .unwrap();
+}

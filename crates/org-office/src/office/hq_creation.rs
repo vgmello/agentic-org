@@ -226,7 +226,13 @@ pub(crate) fn verify_intent(
 ) -> Result<Option<Binding>, OfficeError> {
     let bytes = match durable::read(folder, INTENT, INTENT_LIMIT) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return if org_proto::is_uuid_v7(&info.office_id) {
+                Err(invalid())
+            } else {
+                Ok(None)
+            };
+        }
         Err(e) => return Err(OfficeError::storage(e)),
     };
     let intent: Intent = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -240,7 +246,98 @@ pub(crate) fn verify_intent(
         bootstrap: intent.bootstrap,
     };
     binding.validate()?;
+    validate_retained_bootstrap(info, &binding)?;
     Ok(Some(binding))
+}
+
+fn validate_retained_bootstrap(info: &OfficeInfo, binding: &Binding) -> Result<(), OfficeError> {
+    match &binding.bootstrap {
+        Some(prepared)
+            if prepared.valid()
+                && prepared.office_id == info.office_id
+                && prepared.organization_id == info.org_id
+                && prepared.plan.name == info.org_name =>
+        {
+            Ok(())
+        }
+        None if !org_proto::is_uuid_v7(&info.office_id) => Ok(()),
+        _ => Err(invalid()),
+    }
+}
+
+pub(crate) fn verify_retained_binding(
+    folder: &Path,
+    info: &OfficeInfo,
+    instance: Option<&str>,
+    store: &Store,
+) -> Result<Option<Binding>, OfficeError> {
+    let binding = verify_intent(folder, info, instance)?;
+    let Some(binding) = binding else {
+        let retained: bool = store.read(|db| {
+            db.query_row("SELECT EXISTS(SELECT 1 FROM local_hq_creation) OR EXISTS(SELECT 1 FROM meta WHERE key IN ('hq_creation_operation','hq_creation_owner'))", [], |r| r.get(0)).map_err(OfficeError::storage)
+        })?;
+        return if retained { Err(invalid()) } else { Ok(None) };
+    };
+    storage::verify_binding(store, &binding)?;
+    let record = store.read(storage::read_public)?.ok_or_else(invalid)?;
+    if info.role != crate::OfficeRole::Hq
+        || record.organization_id != info.org_id
+        || record.operation_id != binding.operation_id
+    {
+        return Err(invalid());
+    }
+    Ok(Some(binding))
+}
+
+impl Office {
+    pub(crate) fn retained_hq_creation_binding(&self) -> Result<Option<Binding>, OfficeError> {
+        let instance = self.local_store().meta("instance_id")?;
+        verify_retained_binding(
+            self.folder(),
+            self.info(),
+            instance.as_deref(),
+            self.local_store(),
+        )
+    }
+
+    pub(crate) fn validate_hq_creation_root(
+        &self,
+        config: &crate::AcceptanceConfig,
+    ) -> Result<Option<Binding>, OfficeError> {
+        let binding = self.retained_hq_creation_binding()?;
+        if let Some(binding) = &binding {
+            if config.public_root != binding.public_root
+                || config.identity.office_id != self.info().office_id
+                || config.identity.organization_id != self.info().org_id
+                || Some(config.identity.instance_id.clone())
+                    != self.local_store().meta("instance_id")?
+            {
+                return Err(invalid());
+            }
+            let record = self
+                .local_store()
+                .read(storage::read_public)?
+                .ok_or_else(invalid)?;
+            verify_public(binding, &record)?;
+        }
+        Ok(binding)
+    }
+
+    /// Reject inconsistent creation context before installing protected acceptance.
+    /// This confers no writer or owner authority; live control remains mandatory.
+    pub fn validate_hq_creation_admission(
+        &self,
+        config: &crate::AcceptanceConfig,
+        owner_member: &str,
+    ) -> Result<(), OfficeError> {
+        if self
+            .validate_hq_creation_root(config)?
+            .is_some_and(|binding| binding.owner_member_id != owner_member)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
 }
 
 const PUBLIC_ESCROW: &str = "security/ca-escrow.v1.bin";

@@ -771,14 +771,8 @@ fn selected_handshake(world: &World, start: bool) -> Session {
     assert!(!socket.exists(), "Created must not bind before admission");
     session
 }
-fn selected_writer(
-    world: &World,
-    session: &Session,
-    position: std::sync::Arc<std::sync::Mutex<Option<org_proto::work::JournalPosition>>>,
-    mode: &'static str,
-) -> std::thread::JoinHandle<()> {
-    use org_office_launch::writer::{self as wire, Admission, Request, Response};
-    use std::os::fd::AsFd;
+fn selected_admission(world: &World) -> org_office_launch::writer::Admission {
+    use org_office_launch::writer::{self as wire, Admission};
     let p = selected_plan();
     let identity = org_proto::work::WriterIdentity {
         instance_id: INSTANCE.into(),
@@ -788,7 +782,7 @@ fn selected_writer(
         writer_epoch: 1,
         journal_incarnation: "test-journal".into(),
     };
-    let mut admission = Admission {
+    Admission {
         version: wire::VERSION,
         identity,
         protected_root: world.home.join("protected").to_str().unwrap().into(),
@@ -799,10 +793,33 @@ fn selected_writer(
             .into(),
         owner_account: "test-account".into(),
         owner_member: OWNER.into(),
-    };
+    }
+}
+fn selected_writer(
+    world: &World,
+    session: &Session,
+    position: std::sync::Arc<std::sync::Mutex<Option<org_proto::work::JournalPosition>>>,
+    mode: &'static str,
+) -> std::thread::JoinHandle<()> {
+    let mut admission = selected_admission(world);
     if mode == "scope" {
         admission.identity.office_id = "foreign".into();
     }
+    let (thread, sent) = selected_writer_attempt(session, position, mode, admission);
+    sent.unwrap();
+    thread
+}
+
+// Expected startup refusal may close transfer before the initial descriptor send.
+// Only refusal tests inspect this result; the ordinary path above stays strict.
+fn selected_writer_attempt(
+    session: &Session,
+    position: std::sync::Arc<std::sync::Mutex<Option<org_proto::work::JournalPosition>>>,
+    mode: &'static str,
+    admission: org_office_launch::writer::Admission,
+) -> (std::thread::JoinHandle<()>, Result<(), String>) {
+    use org_office_launch::writer::{self as wire, Request, Response};
+    use std::os::fd::AsFd;
     let (worker, host) = UnixStream::pair().unwrap();
     host.set_read_timeout(Some(WAIT)).unwrap();
     let thread = std::thread::spawn(move || {
@@ -858,18 +875,19 @@ fn selected_writer(
         }
     });
     let record = v3::encode_transfer_record(&v3::TransferRecord::WriterControl {
-        office_id: p.office_id,
+        office_id: selected_plan().office_id,
         channel_id: "initial-writer".into(),
     })
     .unwrap();
-    org_socket::rights::send(
+    let sent = org_socket::rights::send(
         session.transfer.as_ref().unwrap().as_fd(),
         &record,
         &[worker.as_fd()],
         std::time::Instant::now() + WAIT,
     )
-    .unwrap();
-    thread
+    .map(|_| ())
+    .map_err(|error| error.to_string());
+    (thread, sent)
 }
 #[test]
 fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
@@ -960,4 +978,174 @@ fn selected_provider_actual_denied_scope_account_owner_and_eof_never_ready() {
         }
         assert!(world.folder(&p.office_id).join("office.json").exists());
     }
+}
+
+struct SelectedRetainedMaterial {
+    intent: Vec<u8>,
+    marker: Vec<u8>,
+    record: org_office::hq_creation::LocalRecord,
+}
+
+fn selected_interrupted_material(world: &World) -> SelectedRetainedMaterial {
+    let p = selected_plan();
+    let mut created = selected_handshake(world, false);
+    created.run.child.kill().unwrap();
+    assert!(!created.run.wait().success());
+    drop(created);
+    let folder = world.folder(&p.office_id);
+    let office = org_office::Office::open_for_instance(
+        &folder,
+        org_office::Key::from_db_key(db_key()),
+        INSTANCE,
+    )
+    .unwrap();
+    SelectedRetainedMaterial {
+        intent: std::fs::read(folder.join("hq-creation.v1.json")).unwrap(),
+        marker: std::fs::read(folder.join("office.json")).unwrap(),
+        record: office.hq_creation_record().unwrap().unwrap(),
+    }
+}
+
+fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedMaterial) {
+    let folder = world.folder(&selected_plan().office_id);
+    assert_eq!(
+        std::fs::read(folder.join("office.json")).unwrap(),
+        retained.marker
+    );
+    assert_eq!(
+        std::fs::read(world.home.join("state/security/ca-escrow.v1.bin")).unwrap(),
+        retained.record.package
+    );
+    // Restore only this deliberately damaged test input after the worker exits,
+    // so strict production open can verify that local cryptographic material survived.
+    std::fs::write(folder.join("hq-creation.v1.json"), &retained.intent).unwrap();
+    let office = org_office::Office::open_for_instance(
+        &folder,
+        org_office::Key::from_db_key(db_key()),
+        INSTANCE,
+    )
+    .unwrap();
+    let record = office.hq_creation_record().unwrap().unwrap();
+    assert_eq!(record.organization_id, retained.record.organization_id);
+    assert_eq!(record.operation_id, retained.record.operation_id);
+    assert_eq!(record.public_key, retained.record.public_key);
+    assert_eq!(record.package, retained.record.package);
+    assert!(record.local_der() == retained.record.local_der());
+}
+
+fn selected_expect_start_refusal(
+    world: &World,
+    retained: &SelectedRetainedMaterial,
+    admission: org_office_launch::writer::Admission,
+) {
+    let mut start = selected_handshake(world, true);
+    let (thread, sent) =
+        selected_writer_attempt(&start, std::sync::Arc::default(), "allow", admission);
+    let first = start.event();
+    let outcome = if first["event"] == "fds_received" {
+        assert_eq!(
+            first,
+            json!({"v":3,"event":"fds_received","of":"initial-writer"})
+        );
+        assert!(
+            sent.is_ok(),
+            "acknowledged failed descriptor delivery: {sent:?}"
+        );
+        start.event()
+    } else {
+        first
+    };
+    // A broken baseline may emit Ready and stay running. Reap it explicitly so
+    // each independent regression fails promptly without leaving a live worker.
+    if outcome["event"] != "failed" {
+        start.run.child.kill().unwrap();
+    }
+    let status = start.run.wait();
+    start.no_stdout();
+    drop(start);
+    thread.join().unwrap();
+    assert_selected_retained_material(world, retained);
+    assert_eq!(
+        outcome["event"], "failed",
+        "selected startup falsely reached Ready: {outcome}"
+    );
+    assert!(!status.success());
+    let socket = org_proto::location::selected_office_socket_in(
+        &world.home.join("run"),
+        &selected_plan().office_id,
+    )
+    .unwrap();
+    assert!(!socket.exists(), "refused selected startup bound a socket");
+    assert!(
+        !world.home.join("protected").exists(),
+        "refused creation context installed protected acceptance/owner state"
+    );
+    let public: Vec<_> = std::fs::read_dir(world.home.join("state"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(public, [std::ffi::OsString::from("security")]);
+}
+
+#[test]
+fn selected_provider_actual_missing_intent_restart_never_ready() {
+    let _process = process_isolation();
+    let world = World::new();
+    let retained = selected_interrupted_material(&world);
+    std::fs::remove_file(
+        world
+            .folder(&selected_plan().office_id)
+            .join("hq-creation.v1.json"),
+    )
+    .unwrap();
+    selected_expect_start_refusal(&world, &retained, selected_admission(&world));
+}
+
+#[test]
+fn selected_provider_actual_null_bootstrap_restart_never_ready() {
+    let _process = process_isolation();
+    let world = World::new();
+    let retained = selected_interrupted_material(&world);
+    let mut intent: Value = serde_json::from_slice(&retained.intent).unwrap();
+    intent["bootstrap"] = Value::Null;
+    std::fs::write(
+        world
+            .folder(&selected_plan().office_id)
+            .join("hq-creation.v1.json"),
+        serde_json::to_vec(&intent).unwrap(),
+    )
+    .unwrap();
+    selected_expect_start_refusal(&world, &retained, selected_admission(&world));
+}
+
+#[test]
+fn selected_provider_actual_disjoint_public_root_never_ready() {
+    let _process = process_isolation();
+    let world = World::new();
+    let retained = selected_interrupted_material(&world);
+    let foreign = tempfile::tempdir().unwrap();
+    let mut admission = selected_admission(&world);
+    admission.public_root = std::fs::canonicalize(foreign.path())
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .into();
+    selected_expect_start_refusal(&world, &retained, admission);
+    assert_eq!(
+        std::fs::read_dir(foreign.path()).unwrap().count(),
+        0,
+        "mismatched admission published canonical artifacts to the foreign root"
+    );
+}
+
+#[test]
+fn selected_provider_actual_different_creation_owner_never_ready() {
+    let _process = process_isolation();
+    let world = World::new();
+    let retained = selected_interrupted_material(&world);
+    let mut admission = selected_admission(&world);
+    admission.owner_member = "01ARZ3NDEKTSV4RRFFQ69G5FAY".into();
+    assert_ne!(admission.owner_member, OWNER);
+    assert!(org_proto::is_valid_member_id(&admission.owner_member));
+    selected_expect_start_refusal(&world, &retained, admission);
 }

@@ -33,11 +33,33 @@ pub(super) fn owner(
     if owner.account_id.is_empty() || owner.member_id.is_empty() {
         return Err(unauthorized());
     }
+    validate_creation_owner(db, &owner.member_id)?;
     if !owner_binding(db, id, &owner)? {
         return Err(unauthorized());
     }
     Ok(owner)
 }
+fn validate_creation_owner(db: &Connection, member: &str) -> Result<(), OfficeError> {
+    let expected: Option<String> = db
+        .query_row(
+            "SELECT value FROM meta WHERE key='hq_creation_owner'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(storage)?;
+    let retained: bool = db
+        .query_row("SELECT EXISTS(SELECT 1 FROM local_hq_creation)", [], |r| {
+            r.get(0)
+        })
+        .map_err(storage)?;
+    match (expected, retained) {
+        (Some(expected), true) if expected == member => Ok(()),
+        (None, false) => Ok(()),
+        _ => Err(unauthorized()),
+    }
+}
+
 fn owner_binding(
     db: &Connection,
     id: &AcceptanceIdentity,
@@ -71,6 +93,7 @@ pub(crate) fn bind_owner(
     store.selected_transaction(move|db,id| {
         let binding=authority.verify_live(id)?;
         if binding.account_id.is_empty()||binding.member_id.is_empty() {return Err(invalid());}
+        validate_creation_owner(db,&binding.member_id)?;
         let prior:Option<(String,String,i64)>=db.query_row("SELECT account_id,member_id,active FROM selected_owner_authority WHERE organization_id=?1",[&id.organization_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(storage)?;
         if let Some(prior)=prior {
             if prior!=(binding.account_id,binding.member_id,1) {return Err(OfficeError::Invalid("protected owner binding requires recovery"));}

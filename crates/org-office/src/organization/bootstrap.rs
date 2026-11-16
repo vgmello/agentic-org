@@ -26,13 +26,7 @@ impl Office {
         &self,
         authority: Arc<dyn OwnerAuthority>,
     ) -> Result<(), OfficeError> {
-        let instance = self.local_store().meta("instance_id")?;
-        let Some(binding) = crate::office::hq_creation::verify_intent(
-            self.folder(),
-            self.info(),
-            instance.as_deref(),
-        )?
-        else {
+        let Some(binding) = self.retained_hq_creation_binding()? else {
             return Ok(());
         };
         let Some(prepared) = binding.bootstrap else {

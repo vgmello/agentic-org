@@ -258,3 +258,109 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     assert_eq!(doc.front_matter()["home_team_id"], p.home_team_id);
     assert_eq!(doc.front_matter()["is_owner"], false);
 }
+
+#[test]
+fn selected_bootstrap_open_and_admission_reject_lost_or_incoherent_prepared_state() {
+    for damage in ["missing", "null", "organization", "private-owner"] {
+        let dir = tempfile::tempdir().unwrap();
+        let public = dir.path().canonicalize().unwrap().join("state");
+        std::fs::create_dir(&public).unwrap();
+        let p = prepared();
+        let bound = Binding {
+            operation_id: OP.into(),
+            owner_member_id: INSTANCE.into(),
+            public_root: public.clone(),
+            bootstrap: Some(p.clone()),
+        };
+        let new = NewOffice {
+            office_id: p.office_id.clone(),
+            org_id: p.organization_id.clone(),
+            org_name: p.plan.name.clone(),
+            office_name: "HQ".into(),
+            role: OfficeRole::Hq,
+        };
+        let folder = dir.path().join(&p.office_id);
+        let key = Key::from_bytes([63; 32]);
+        let org = p.organization_id.clone();
+        let office = Office::provision_hq_for_instance(
+            &folder,
+            &new,
+            key.clone(),
+            INSTANCE,
+            &bound,
+            move |_| {
+                LocalRecord::new(
+                    org,
+                    OP.into(),
+                    [4; 65],
+                    vec![7; 140],
+                    Zeroizing::new(vec![1; 138]),
+                )
+            },
+        )
+        .unwrap();
+        let path = folder.join("hq-creation.v1.json");
+        match damage {
+            "missing" => std::fs::remove_file(&path).unwrap(),
+            "private-owner" => office
+                .local_store()
+                .write(|db| {
+                    db.execute(
+                        "UPDATE meta SET value='different-member' WHERE key='hq_creation_owner'",
+                        [],
+                    )
+                    .map_err(storage)?;
+                    Ok(((), None))
+                })
+                .unwrap(),
+            _ => {
+                let mut intent: Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                if damage == "null" {
+                    intent["bootstrap"] = Value::Null;
+                } else {
+                    intent["bootstrap"]["organization_id"] =
+                        json!("01900000-0000-7000-8000-000000000009");
+                }
+                std::fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
+            }
+        }
+        let config = AcceptanceConfig {
+            identity: AcceptanceIdentity {
+                instance_id: INSTANCE.into(),
+                organization_id: p.organization_id,
+                office_id: p.office_id,
+                machine_id: "machine".into(),
+                writer_epoch: 1,
+                journal_incarnation: "journal".into(),
+            },
+            public_root: public.clone(),
+            protected_root: dir.path().canonicalize().unwrap().join("protected"),
+            authority: None,
+        };
+        assert!(
+            office
+                .validate_hq_creation_admission(&config, INSTANCE)
+                .is_err(),
+            "{damage}"
+        );
+        assert!(
+            office.install_selected_acceptance(config.clone()).is_err(),
+            "{damage}"
+        );
+        assert!(
+            office.finish_selected_bootstrap(Arc::new(Owner)).is_err(),
+            "{damage}"
+        );
+        assert!(!config.protected_root.exists());
+        assert_eq!(
+            std::fs::read(public.join("security/ca-escrow.v1.bin")).unwrap(),
+            vec![7; 140]
+        );
+        drop(office);
+        assert!(
+            Office::open_for_instance(folder, key, INSTANCE).is_err(),
+            "{damage}"
+        );
+    }
+}

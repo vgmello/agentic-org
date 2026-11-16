@@ -118,13 +118,14 @@ pub(super) fn install(
         stream: Mutex::new(reader),
     });
     let config = AcceptanceConfig {
-        identity: admission.identity,
-        protected_root: admission.protected_root.into(),
-        public_root: admission.public_root.into(),
+        identity: admission.identity.clone(),
+        protected_root: admission.protected_root.clone().into(),
+        public_root: admission.public_root.clone().into(),
         authority: Some(authority.clone()),
     };
     office
-        .install_selected_acceptance(config)
+        .validate_hq_creation_admission(&config, &admission.owner_member)
+        .and_then(|()| office.install_selected_acceptance(config))
         .and_then(|()| office.bind_selected_owner(authority.clone()))
         .and_then(|()| office.finish_selected_bootstrap(authority))
         .map_err(|_| io::Error::other("selected writer recovery required"))
