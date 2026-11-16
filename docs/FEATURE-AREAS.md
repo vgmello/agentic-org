@@ -4,7 +4,7 @@ These are the categories used by the [single feature checklist](FEATURES.md). Ea
 
 Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 0 rows needing verification**. Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
-F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim. F2b now adds scoped journal/capture source and storage tests, including recovery of interrupted directory creation and ancestor-flush failure fencing: FC-146 moves Planned to In progress, while FC-042 remains partial. This is internal storage evidence; full unit checks/reviews, protected host/service composition and usable feature acceptance remain.
+F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim. F2b now adds scoped journal/capture source and storage tests, including recovery of interrupted directory creation and ancestor-flush failure fencing: FC-146 moves Planned to In progress, while FC-042 remains partial. F2b was accepted/integrated at `d55e3c25`/`eacb505d` with current checks and author/fresh reviews; protected host/service composition and usable feature acceptance remain. F3a adds the internal REC-ESC-1 crypto adapter and five targeted tests: FC-016 moves Planned to In progress. Its full unit gates, HQ persistence and protected recovery delivery remain pending.
 
 ## Categorization rules
 
@@ -21,7 +21,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 3 | 3 | 0 | 1 | 0 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 9 | 5 | 3 | 0 | 0 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 18 | 1 | 10 | 4 | 3 | 0 | 0 |
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 11 | 1 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 1 | 12 | 0 | 1 | 0 |
@@ -33,7 +33,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 4 | 5 | 0 | 1 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **158** | **9** | **57** | **49** | **3** | **40** | **0** |
+| **Total** | | **158** | **9** | **58** | **48** | **3** | **40** | **0** |
 
 ## AREA-01
 

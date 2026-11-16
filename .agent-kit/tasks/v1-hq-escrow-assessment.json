@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "task_id": "v1-hq-escrow",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": null,
+    "localized_change": false,
+    "deterministic_checks": null,
+    "low_risk": false,
+    "no_prior_failure": null,
+    "ambiguity_resolved": false
+  },
+  "evidence": {
+    "familiar_pattern": [
+      ".agent-kit/tasks/v1-delivery-source-map.json: F3 source paths retained at b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09; original author preserved"
+    ],
+    "precise_scope": [],
+    "localized_change": [
+      "F3 spans key custody, protected host state, HQ creation and worker recovery contracts; exact dependency closure pending retained-author intake"
+    ],
+    "deterministic_checks": [],
+    "low_risk": [
+      "docs/adr/0007-hq-creation-escrow.md and docs/adr/0011-protected-recovery-delivery.md: credentials, owner authorization and durable recovery delivery"
+    ],
+    "no_prior_failure": [],
+    "ambiguity_resolved": [
+      ".agent-kit/tasks/v1-incremental-delivery.md: shared F3/F4/bootstrap registration closure must be established before dependent implementation"
+    ]
+  }
+}

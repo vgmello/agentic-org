@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/org-proto",
+  "crates/org-pki",
   "crates/org-host-control",
   "crates/org-client",
   "crates/org-office",
@@ -27,6 +28,7 @@ members = [
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
   "crates/org-proto",
+  "crates/org-pki",
   "crates/org-host-control",
   "crates/org-client",
   "crates/org-office",
@@ -58,7 +60,7 @@ publish = false
 repository = "https://github.com/vgmello/agentic-org"
 
 [workspace.dependencies]
-argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash"] }
+argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash", "alloc", "zeroize"] }
 # Pin exact versions here; crates opt in with `x.workspace = true`.
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"

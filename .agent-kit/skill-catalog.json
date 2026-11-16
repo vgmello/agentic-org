@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead 01a1dd82-ffe6-7363-af94-6072c75de2d1, F2b scoped manifest/interface reassessment 2026-11-16",
-  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer skills cover the unchanged stack and tool versions. Preserve solo root ownership, at most two disjoint worktree writers, author contexts, independent local gates and source-bound evidence. docs/FEATURES.md is the full-scope delivery checklist; FEATURE-AREAS.md defines categories. Draft docs/ADRs and internal foundations do not establish usable features. Signing setup/authentic signed release verification stays last, with production enforcement intact. Retain security guidance for ADR6\u201312 custody, IPC/durability, strict public-source classification and native-source pins. F2b root reassessment inspected the complete manifest/lock diff: org-office adds only existing pinned workspace libc for O_NOFOLLOW/F_FULLFSYNC; no package/version/feature/provider changes. Shared serde records move unchanged to existing org_proto::work; focused interface rev2 is independently READY after genuine-v6 fixture correction. Current Rust/security/public-contract and legacy-adoption guidance covers this bounded extraction; no new framework, role/rule or tool-policy gap. All other 39 evidence entries remain unchanged and prior assessed rationale stays in Git. Actual tests exposed fixture and JSON-subtype capture failures, still open for source repair; catalog/preflight readiness is no implementation acceptance. Full workspace checks, original-author validation and fresh initial/final reviews remain required.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1, F3a exact crypto manifest/capability reassessment2026-11-16",
+  "rationale": "Retain owner c5123221 independent-delivery policy, current Rust/static-SvelteKit roles and verification/model gates. Actual F3a extraction adds only production org-pki leaf adapter under independently READY ADR0007r1, using existing pinned ring0.17.14, argon2 0.5.3 with alloc/zeroize plus existing password-hash and zeroize1.9.1 alloc. Root inspected all five exact b77 source blobs and complete manifest/lock delta; all157 existing package versions/sources/checksums preserved, only new org-pki package plus argon2 existing-zeroize edge. No custom primitives, host/domain/protocol->crypto edge, task/F4 consumer import or new provider/framework/tool. Existing Rust/security guidance covers this mechanism; add focused critical ADR0007 source rule so implementation/review packets directly include exact profile, pre-KDF bounds and secret-lifetime constraints. Preserve all other evidence and existing owner policy; update only assessed manifest evidence and add the new manifest/ADR. Targeted five tests and production library check pass; full workspace/current initial/origin/final gates remain required. This is internal crypto scope, not HQ persistence, delivery, onboarding, physical authentication, genuine signing or v1 acceptance. Prior assessment rationale remains in Git.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -58,15 +58,15 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "6d3d8a901fe5343eb2c2668ac87bfaf3ccb753fbe1b0ee6e47cdc7bc1737abb3"
+      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "997c8874369c0b7e3b3aee3842a5704204bcf09c2c525946601181de94b48219"
+      "sha256": "350d0219e71972e0c1802ca1a63565e76ccd4f42195b755e44af8e0735d1e492"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "dd16b1a22fd96119b9b0aa13c7e4b24943841b15020814c5a1990152deaa1391"
+      "sha256": "bc2d81cbf0ec85359f846c21f8e51111a4abb2273ab339ae605699ec0bb8bd8b"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -146,7 +146,7 @@
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "c809d3fba308f63f81b07268e3b6db9c62a96a18519611035f555c6d287c9d19"
+      "sha256": "ea6f7921ef3f5e88dd8f62feb658272d08ccfc618e97357055c3771229f64393"
     },
     {
       "path": "docs/design/documentation-authority.md",
@@ -167,6 +167,14 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    },
+    {
+      "path": "docs/independent-delivery.md",
+      "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
     }
   ],
   "roles": {
@@ -185,10 +193,12 @@
       "risks": [],
       "implementation": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "review": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "critical": false
@@ -423,6 +433,24 @@
         ".agent-kit/project-skills/security-boundaries/SKILL.md",
         "docs/adr/0007-hq-creation-escrow.md",
         "docs/adr/0011-protected-recovery-delivery.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "pki-escrow",
+      "description": "REC-ESC-1 fixed CA/code/envelope profiles, pre-KDF parser bounds and application-owned secret lifetime",
+      "paths": [
+        "crates/org-pki",
+        "docs/adr/0007-hq-creation-escrow.md"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md"
       ],
       "critical": true
     }
