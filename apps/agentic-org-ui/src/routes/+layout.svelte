@@ -12,7 +12,7 @@
 	});
 </script>
 
-{#if capability.available || page.status === 404}
+{#if capability.available || page.status === 404 || page.url.pathname === '/tasks'}
 	{@render children()}
 {:else}
 	<Unavailable />

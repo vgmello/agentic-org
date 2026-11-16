@@ -54,6 +54,36 @@ impl Fixture {
 }
 
 #[test]
+fn read_only_routing_verifies_binding_while_the_writer_holds_root_lock() {
+    let fixture = Fixture::new();
+    let instance = fixture.reserve("default");
+    let before = fs::read(fixture.locator()).unwrap();
+    let (id, temp) = fixture
+        .registry
+        .locate(None, &fixture.root("default"))
+        .unwrap();
+    assert_eq!(id, instance.id());
+    assert_eq!(temp, instance.temp_folder());
+    assert_eq!(fs::read(fixture.locator()).unwrap(), before);
+    assert!(fixture
+        .registry
+        .reserve(None, &fixture.root("default"))
+        .is_err());
+    assert!(fixture
+        .registry
+        .locate(None, &fixture.root("different"))
+        .is_err());
+    fs::rename(fixture.root("default"), fixture.root("moved")).unwrap();
+    fs::create_dir(fixture.root("default")).unwrap();
+    fs::set_permissions(fixture.root("default"), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(fixture
+        .registry
+        .locate(None, &fixture.root("default"))
+        .is_err());
+    assert_eq!(fs::read(fixture.locator()).unwrap(), before);
+}
+
+#[test]
 fn locator_writer_validates_the_same_rules_as_the_reader_before_publication() {
     for invalid in [
         "version",

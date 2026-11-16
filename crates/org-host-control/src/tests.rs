@@ -650,6 +650,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
     let first = GatewayFirstLine {
         rendezvous: "/run/user/501/agentic-org/r/0123456789abcdef".into(),
         instance_id: "01M72N8MG00000000000000I01".into(),
+        release: None,
     };
     let wire = json!({
         "v": 1, "rendezvous": "/run/user/501/agentic-org/r/0123456789abcdef",
@@ -800,6 +801,7 @@ fn gateway_lines_refuse_unknown_fields() {
     let mut first = serde_json::to_value(GatewayFirstLine {
         rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
         instance_id: "01JINS0000000000000000000A".into(),
+        release: None,
     })
     .unwrap();
     let mut ready = serde_json::json!({"v": 1, "event": "ready_for_secrets"});

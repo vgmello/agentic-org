@@ -12,7 +12,7 @@ The current solo Codex workflow in AGENTS.md governs implementation and integrat
 - UI licensing: Tailwind Plus stays inside apps/agentic-org-ui, never a published kit or crate.
 - Adoption: user explicitly selected codex-only on 2026-11-15. Kit 0.10.0 at 01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1 supplies Sol routing, Repowise 0.61.0 and Hindsight 1.2.1. Separate readiness claims/evidence live in ADOPTION.md.
 
-No new product architecture is selected. Read applicable full primary documents before dependent work. Preserve replaced decisions/rationale in canonical ADR history.
+Product architecture remains governed by the primary documents; task-specific active decisions below select scoped implementation mechanisms. Read applicable full primary documents before dependent work. Preserve replaced decisions/rationale in canonical ADR history.
 
 Task-specific implementation premises: [TH-01](decisions/TH-01-task-history-validation.md)
 tracks selected task-history validation and its independent coverage prerequisite;
@@ -20,3 +20,18 @@ it does not replace the product decisions in documents 05/12.
 
 [TA-01](decisions/TA-01-explicit-task-assignment.md) preserves the selected complete
 assignment-pair domain boundary and its separate service-acceptance obligations.
+
+[ADR-0006 / TAI-01](../docs/adr/0006-selected-task-acceptance.md) revision 5 is
+**active for implementation architecture**, after fresh independent review and a focused READY recheck. It covers selected
+assignment’s authenticated vertical path and focused private web transport edges, codec 2, snapshot preservation,
+recoverable acceptance, adoption and UI; it does not claim implemented support.
+
+[ADR-0007 / REC-ESC-1](../docs/adr/0007-hq-creation-escrow.md) revision 1 is **active for implementation architecture**, following independent READY review and a bounded primitive probe. It fills the missing HQ-creation escrow format prerequisite for ADR-0006 P6/P9: fixed Argon2id/AEAD envelope, high-entropy code, worker-local CA key, protected delivery and idempotent provisioning. It preserves ADR-0006 and REC-1; production setup/recovery acceptance remains unverified.
+
+[ADR-0008 / GW-SBX-MAC-1](../docs/adr/0008-gateway-macos-sandbox.md) revision 1 is **active for macOS adapter implementation**, following fresh independent READY and actual child enforcement/thread/host probes. Fixed parameterized Seatbelt deny-default/exact-rendezvous/deny-bind policy stays in libc-only org-socket; SDK deprecation fails closed and requires rechecks. Linux and full production handoff/browser/code acceptance remain unverified; no acceptance waiver.
+
+[ADR-0009 / RLS-1](../docs/adr/0009-complete-release-verification.md) revision2 is **active for implementation architecture**, after fresh independent READY and exact-version signature/archive plus generated macOS loaded-image probes. It selects build-pinned exact-byte signed complete directory/tar.gz bundles, publisher-bound runtime images/authenticated static assets, host-owned durable staging/pins and a narrow shared org-release verifier. Revision2 preserves the gateway64MiB/4096-entry UI budget including inferred directories and source-backed kernel-loaded image binding; one focused architecture finding was corrected and independently rechecked READY. Production key provisioning and full setup/adoption/browser/code acceptance remain unverified.
+
+- [ADR-0010 / LEGACY-ADOPT-1 r1](../docs/adr/0010-legacy-task-adoption.md): independently READY conservative legacy version1 adoption, explicit baseline1/import facts with complete original Created evidence, strict mapping/public classification and intact staged unsupported histories. No full migration/code acceptance.
+
+- [ADR-0011 / REC-DEL-1 r1](../docs/adr/0011-protected-recovery-delivery.md): independently READY protected native OS-presence delivery, same-run ACK, durable audit/deletion/reopen and bounded committed public escrow transfer/export. Exact cc1.11.1 SDK bridge, no crypto/key boundary change. Actual physical-auth/production implementation and full feature acceptance remain unverified.

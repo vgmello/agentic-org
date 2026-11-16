@@ -168,6 +168,26 @@ impl Catalog {
             || self.reserved.iter().any(|r| taken(&r.office_id))
     }
 
+    /// Hold the exact selected reservation across incomplete attempts. The
+    /// protected operation owns release/recovery; legacy failure cleanup does not.
+    pub(crate) fn reserve_selected(
+        &mut self,
+        p: &org_proto::selected_bootstrap::PreparedV1,
+    ) -> Result<(), PlanError> {
+        if self.is_reserved(&p.office_id) {
+            return Ok(());
+        }
+        let name = OrganizationName::parse(&p.plan.name).map_err(|_| PlanError::NameTaken)?;
+        if self.has_organization_named(&name) || self.handle_taken(&p.office_id) {
+            return Err(PlanError::NameTaken);
+        }
+        self.reserved.push(Reservation {
+            office_id: p.office_id.clone(),
+            name_key: name.key().into(),
+        });
+        Ok(())
+    }
+
     /// The details of a new organization and its HQ, checked against this catalog and the
     /// creates in flight: the name must be free, and the office id's handle unique (re-rolled
     /// until it is). The name and handle are then reserved, until the create fails
@@ -303,7 +323,11 @@ fn office_folders(home: &Path) -> io::Result<Vec<(String, PathBuf)>> {
 pub(crate) fn unfinished_folders(home: &Path) -> io::Result<Vec<String>> {
     Ok(office_folders(home)?
         .into_iter()
-        .filter(|(_, path)| !has_office_file(path))
+        .filter(|(_, path)| {
+            !has_office_file(path)
+                && !path.join("hq-creation.v1.json").exists()
+                && !path.join("selected-writer.required").exists()
+        })
         .map(|(folder, _)| folder)
         .collect())
 }

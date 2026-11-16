@@ -465,6 +465,13 @@ impl Directory {
         let result = (|| {
             file.write_all(bytes)?;
             file.sync_all()?;
+            #[cfg(target_os = "macos")]
+            // SAFETY: this is our live regular control-file descriptor. Refuse
+            // unsupported full flush rather than acknowledging a weaker setup
+            // identity/operation record before protected creation.
+            if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
+                return Err(io::Error::last_os_error().into());
+            }
             self.verify()?;
             self.verify_file(&temporary, &file)?;
             let from = leaf(&temporary)?;

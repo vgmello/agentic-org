@@ -13,6 +13,8 @@ const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 fn create_line(path: &Path) -> HostFirstLine {
     HostFirstLine::Create(CreateLine {
         office: OfficeLine {
+            id_profile: None,
+            selected_writer_required: false,
             instance_id: INSTANCE.into(),
             office_id: OFFICE.into(),
             rendezvous: path.to_str().unwrap().into(),
@@ -22,6 +24,7 @@ fn create_line(path: &Path) -> HostFirstLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
+        hq_creation: None,
     })
 }
 
@@ -192,6 +195,15 @@ impl Session {
 }
 
 fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -> Session {
+    handshake_preparation(world, op, instance, key, false)
+}
+fn handshake_preparation(
+    world: &World,
+    op: FirstLine,
+    instance: &str,
+    key: Option<DbKey>,
+    creation: bool,
+) -> Session {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = world.home.join(format!(
         "r{}",
@@ -204,11 +216,30 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
                 unreachable!()
             };
             create.office.instance_id = instance.into();
+            if creation {
+                create.hq_creation = Some(v3::HqCreationV1 {
+                    version: 1,
+                    operation_id: INSTANCE.into(),
+                    escrow_profile: 1,
+                    bootstrap: None,
+                    public_root: {
+                        let root = world.home.join("state");
+                        std::fs::create_dir_all(&root).unwrap();
+                        std::fs::canonicalize(root)
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .into()
+                    },
+                });
+            }
             (vec!["--create"], HostFirstLine::Create(create))
         }
         FirstLine::Start => (
             vec!["--office", OFFICE],
             HostFirstLine::Start(OfficeLine {
+                id_profile: None,
+                selected_writer_required: false,
                 instance_id: instance.into(),
                 office_id: OFFICE.into(),
                 rendezvous: path.to_str().unwrap().into(),
@@ -217,6 +248,8 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
         FirstLine::Discard => (
             vec!["--discard", OFFICE],
             HostFirstLine::Discard(OfficeLine {
+                id_profile: None,
+                selected_writer_required: false,
                 instance_id: instance.into(),
                 office_id: OFFICE.into(),
                 rendezvous: path.to_str().unwrap().into(),
@@ -235,7 +268,15 @@ fn handshake(world: &World, op: FirstLine, instance: &str, key: Option<DbKey>) -
         FirstLine::Create => Handoff::Create {
             db_key: key.unwrap(),
             grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: RecoveryCode::new("TEST-RECOVERY-SECRET".into()).unwrap(),
+            recovery_code: RecoveryCode::new(
+                if creation {
+                    "0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213"
+                } else {
+                    "TEST-RECOVERY-SECRET"
+                }
+                .into(),
+            )
+            .unwrap(),
             fds: vec![HandoffFd::Transfer],
         },
         FirstLine::Start => Handoff::Start {
@@ -487,6 +528,8 @@ fn v3_cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
             OFFICE,
         ]);
         let office = OfficeLine {
+            id_profile: None,
+            selected_writer_required: false,
             instance_id: INSTANCE.into(),
             office_id: "OTHEROFFICE".into(),
             rendezvous: path.to_str().unwrap().into(),
@@ -649,3 +692,42 @@ fn startup_rights_faults_exit_before_any_failure_or_office_event() {
 
 #[path = "v3_activation/transfer.rs"]
 mod transfer;
+
+#[test]
+fn real_v3_hq_escrow_creation_retries_exactly_and_restarts_without_delivery_code() {
+    let _process = process_isolation();
+    let world = World::new();
+    let mut created =
+        handshake_preparation(&world, FirstLine::Create, INSTANCE, Some(db_key()), true);
+    assert_eq!(created.event()["event"], "created");
+    assert_eq!(created.event()["event"], "ready");
+    created.stop();
+    let inspect = || {
+        let office = org_office::Office::open_for_instance(
+            world.folder(OFFICE),
+            org_office::Key::from_db_key(db_key()),
+            INSTANCE,
+        )
+        .unwrap();
+        let record = office.hq_creation_record().unwrap().unwrap();
+        assert_eq!(office.org_snapshot().unwrap().members[0].id, OWNER);
+        (
+            record.package,
+            record.public_key,
+            office.org_snapshot().unwrap().position,
+        )
+    };
+    let before = inspect();
+    // Model committed create reply loss using the same original operation/code.
+    let mut retried =
+        handshake_preparation(&world, FirstLine::Create, INSTANCE, Some(db_key()), true);
+    assert_eq!(retried.event()["event"], "created");
+    assert_eq!(retried.event()["event"], "ready");
+    retried.stop();
+    assert_eq!(inspect(), before);
+    // Ordinary start has no recovery code in its handoff.
+    let mut reopened = handshake(&world, FirstLine::Start, INSTANCE, Some(db_key()));
+    assert_eq!(reopened.event()["event"], "ready");
+    reopened.stop();
+    assert_eq!(inspect(), before);
+}

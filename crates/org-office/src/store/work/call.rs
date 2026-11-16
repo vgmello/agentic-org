@@ -108,7 +108,7 @@ pub(super) fn transact_with_abort<T: Send + 'static>(
     abort_batch: fn(&OfficeError) -> bool,
 ) -> Result<T, WorkCallError> {
     let (job, reply) = transact_job(move |db| run(db, &callback), abort_batch);
-    store.send_job(job).map_err(WorkCallError::Store)?;
+    store.send_work_job(job).map_err(WorkCallError::Store)?;
     reply.recv()
 }
 

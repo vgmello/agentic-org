@@ -416,7 +416,10 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 6);
+        assert_eq!(
+            count(&office, "PRAGMA user_version"),
+            crate::office::OFFICE_SCHEMA.version
+        );
         assert_eq!(
             count(
                 &office,

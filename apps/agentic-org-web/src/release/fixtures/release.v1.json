@@ -1,0 +1,53 @@
+{
+  "format": "agentic-org-release-v1",
+  "release_id": "gateway-input-fixture-1",
+  "sequence": 1,
+  "platform": "linux",
+  "architecture": "x86_64",
+  "installer_contract": 1,
+  "key_id": "522253efe6c825e4a2b144f58b11c34c6771915a02456ed8579f68cccaf7a15d",
+  "files": [
+    {
+      "path": "agentic-org",
+      "size": 3,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "role": "executable",
+      "macos_cdhash": null
+    },
+    {
+      "path": "agentic-org-office",
+      "size": 3,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "role": "executable",
+      "macos_cdhash": null
+    },
+    {
+      "path": "agentic-org-web",
+      "size": 3,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "role": "executable",
+      "macos_cdhash": null
+    },
+    {
+      "path": "agent-os",
+      "size": 3,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "role": "executable",
+      "macos_cdhash": null
+    },
+    {
+      "path": "ui/index.html",
+      "size": 111,
+      "sha256": "c749607a5ec7ff1cbfb09e4d845bfb7e44eb2c7ac2610b566c154d2c20652dcb",
+      "role": "data",
+      "macos_cdhash": null
+    },
+    {
+      "path": "ui/_app/a.js",
+      "size": 29,
+      "sha256": "ddf066ee341c060cca67ed6faa462602690b490d98c6fecdf607c447754e14bb",
+      "role": "data",
+      "macos_cdhash": null
+    }
+  ]
+}

@@ -66,6 +66,15 @@ pub fn office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> 
     Some(runtime_dir.join(format!("{handle}.sock")))
 }
 
+/// Additive selected carrier only. Legacy `office_socket_in` retains its exact
+/// validator; callers must already have admitted this entity's selected profile.
+pub fn selected_office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> {
+    crate::selected_tasks::is_uuid_v7(office_id).then(|| {
+        let handle = &office_id[office_id.len() - OFFICE_SOCKET_HANDLE_CHARS..];
+        runtime_dir.join(format!("{handle}.sock"))
+    })
+}
+
 /// Whether an office id is plain: 1..=[`MAX_OFFICE_ID_CHARS`] ASCII letters and digits. It
 /// checks the shape only, not that the office exists, and doesn't require a ULID.
 fn is_plain_office_id(office_id: &str) -> bool {

@@ -69,7 +69,12 @@ fn legacy_instance_office(version: i64, bound: Option<&str>) -> (TempDir, Key, P
                     "../../store/work/tests/fixtures/office-v5.sql"
                 ))
             },
-            6 => OFFICE_SCHEMA.create,
+            6 => |tx| {
+                tx.execute_batch(include_str!(
+                    "../../store/work/tests/fixtures/office-v5.sql"
+                ))?;
+                crate::store::owned_processes::create_table(tx)
+            },
             _ => unreachable!(),
         },
         upgrade: |_, _| unreachable!("fixture creates only its declared released schema"),
@@ -122,7 +127,7 @@ fn v3_start_adopts_v1_through_v6_once_and_reopens() {
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    6
+                    OFFICE_SCHEMA.version
                 );
                 Ok(())
             })
@@ -330,7 +335,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
     .unwrap();
     store
         .write(|db| {
-            db.pragma_update(None, "user_version", 7)
+            db.pragma_update(None, "user_version", OFFICE_SCHEMA.version + 1)
                 .map_err(OfficeError::storage)?;
             Ok(((), None))
         })
@@ -344,7 +349,7 @@ fn v3_newer_schema_is_refused_without_adopting_instance() {
     assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), before);
     let future = Schema {
         admit: None,
-        version: 7,
+        version: OFFICE_SCHEMA.version + 1,
         create: |_| unreachable!(),
         upgrade: |_, _| unreachable!(),
     };

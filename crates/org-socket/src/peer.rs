@@ -14,6 +14,18 @@ pub fn peer_allowed(stream: &UnixStream, expected_uid: u32) -> bool {
     peer_allowed_fd(stream.as_raw_fd(), expected_uid)
 }
 
+/// Whether Linux identifies the peer as both the expected user and process.
+/// Query failures, truncated credentials and nonpositive process IDs refuse it.
+#[cfg(target_os = "linux")]
+pub fn peer_process_allowed(stream: &UnixStream, expected_uid: u32, expected_pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(expected_pid) else {
+        return false;
+    };
+    pid > 0
+        && linux_credentials(stream.as_raw_fd())
+            .is_ok_and(|credentials| credentials.uid == expected_uid && credentials.pid == pid)
+}
+
 fn peer_allowed_fd(fd: RawFd, expected_uid: u32) -> bool {
     peer_uid(fd).is_ok_and(|uid| uid == expected_uid)
 }
@@ -28,22 +40,28 @@ fn peer_uid(fd: RawFd) -> io::Result<u32> {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: every bit pattern is valid for ucred's integer fields.
-        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-        let expected = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let mut length = expected;
-        // SAFETY: cred is writable for length bytes; length points to its live size value.
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                (&mut cred as *mut libc::ucred).cast(),
-                &mut length,
-            )
-        };
-        checked_uid(rc, cred.uid, length, expected)
+        Ok(linux_credentials(fd)?.uid)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_credentials(fd: RawFd) -> io::Result<libc::ucred> {
+    // SAFETY: every bit pattern is valid for ucred's integer fields.
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let expected = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let mut length = expected;
+    // SAFETY: cred is writable for length bytes; length points to its live size value.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    checked_uid(rc, cred.uid, length, expected)?;
+    Ok(cred)
 }
 
 // Isolate syscall status/size decisions so a truncated credential can be tested hermetically.
@@ -92,5 +110,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn real_process_credentials_require_both_uid_and_pid_without_truncation() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let uid = effective_uid();
+        let pid = std::process::id();
+        assert!(peer_process_allowed(&stream, uid, pid));
+        assert!(!peer_process_allowed(&stream, uid.wrapping_add(1), pid));
+        assert!(!peer_process_allowed(&stream, uid, pid + 1));
+        assert!(!peer_process_allowed(&stream, uid, 0));
+        assert!(!peer_process_allowed(&stream, uid, u32::MAX));
+        assert_eq!(
+            linux_credentials(-1).unwrap_err().raw_os_error(),
+            Some(libc::EBADF)
+        );
     }
 }

@@ -152,6 +152,8 @@ fn manager() -> (
 }
 fn owned_channel(stream: UnixStream, office: &str, id: &str) -> Channel {
     Channel {
+        writer: false,
+        recovery: false,
         kind: ChannelKind::Local,
         office_id: office.into(),
         channel_id: id.into(),
@@ -178,6 +180,8 @@ fn owned_admission_rejects_wrong_office_and_datagram_without_registration_or_ack
     let (socket, peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
     assert!(channels
         .open(Channel {
+            writer: false,
+            recovery: false,
             kind: ChannelKind::Local,
             office_id: OFFICE_ID.into(),
             channel_id: "datagram".into(),
@@ -704,6 +708,8 @@ fn stream_validation_precedes_even_a_poisoned_registry_refusal() {
     let (datagram, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
     let error = channels
         .open(Channel {
+            writer: false,
+            recovery: false,
             kind: ChannelKind::Local,
             office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
             channel_id: "invalid-before-registry".into(),

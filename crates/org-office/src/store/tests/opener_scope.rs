@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 pub(super) enum SourceKind {
     Rust,
     Config,
+    Native,
 }
 
 pub(super) struct SourceScope {

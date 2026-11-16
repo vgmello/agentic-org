@@ -17,6 +17,9 @@ use std::fmt;
 use saphyr_parser::{Event, Parser, ScalarStyle, ScanError};
 use serde_json::{Map, Number, Value};
 
+mod source;
+pub use source::{RootScalarEdit, ScalarValue, SourceDoc, SourceError, MAX_SOURCE_BODY_BYTES};
+
 /// The largest front matter read, in bytes.
 pub const MAX_FRONT_MATTER_BYTES: usize = 64 * 1024;
 /// The deepest nesting of mappings and sequences, the root mapping counting as one.

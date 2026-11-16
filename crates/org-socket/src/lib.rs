@@ -4,9 +4,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(missing_docs)]
 
+pub mod confinement;
+pub mod image;
 mod peer;
 pub mod rights;
 
+#[cfg(target_os = "linux")]
+pub use peer::peer_process_allowed;
 pub use peer::{effective_uid, peer_allowed};
 
 use std::io::{self, BufRead, BufReader, Read};

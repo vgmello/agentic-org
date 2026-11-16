@@ -1,3 +1,4 @@
+pub(crate) mod hq_creation;
 use std::fs::{self, File, TryLockError};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -44,7 +45,8 @@ const WORKSPACE: &str = "workspace";
 
 /// Everything an office folder can hold besides its lock; `create` refuses a folder with any
 /// of it, and a failed `create` removes what it made.
-const OFFICE_ENTRIES: [&str; 11] = [
+const OFFICE_ENTRIES: [&str; 12] = [
+    "hq-creation.v1.json",
     office_file::FILE_NAME,
     "office.json.tmp",
     WORKSPACE,
@@ -66,10 +68,12 @@ const OFFICE_ENTRIES: [&str; 11] = [
 /// Version 5 adds change results, number counters and a clock, and is closed.
 /// Version 6 decouples current tasks from status lines and adds the owned-process rows recovery
 /// reads (B1-12). Work number keys are unique; pre-final v6 files are admitted atomically.
-/// Version 6 stays open until B1-11's final slice.
+/// Version 7 adds selected projections and gates. The protected immutable journal
+/// remains outside this rebuildable encrypted projection. Version 8 adds the
+/// worker-local, nonreplicated HQ creation/CA receipt.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
     admit: Some(work::admit_v6),
-    version: 6,
+    version: 8,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
@@ -77,7 +81,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         origin::create_tables(tx)?;
         work::create_tables(tx)?;
         work::create_v5_tables(tx)?;
-        crate::store::owned_processes::create_table(tx)
+        crate::store::owned_processes::create_table(tx)?;
+        crate::store::acceptance::schema::create(tx)?;
+        crate::store::hq_creation::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -97,6 +103,12 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 6 {
             crate::store::owned_processes::create_table(tx)?;
+        }
+        if from < 7 {
+            crate::store::acceptance::schema::create(tx)?;
+        }
+        if from < 8 {
+            crate::store::hq_creation::create_table(tx)?;
         }
         Ok(())
     },
@@ -200,6 +212,73 @@ impl OrgStore for Office {
 }
 
 impl Office {
+    pub fn selected_task_ready(&self) -> Result<bool, OfficeError> {
+        crate::selected_tasks::read::ready(&self.stores.local)
+    }
+    pub fn selected_adoption_ready(&self) -> Result<bool, OfficeError> {
+        crate::selected_tasks::read::adoption_ready(&self.stores.local)
+    }
+    pub fn read_selected_tasks(
+        &self,
+        authority: Arc<dyn crate::selected_tasks::OwnerAuthority>,
+        query: org_proto::selected_tasks::read::Query,
+    ) -> Result<org_proto::selected_tasks::read::Result<i64>, OfficeError> {
+        crate::selected_tasks::read::read(&self.stores.local, authority, query)
+    }
+    /// Protected host provisioning port. Imported profile flags are never read
+    /// as owner authority. Binding a different account requires explicit recovery.
+    pub fn bind_selected_owner(
+        &self,
+        authority: Arc<dyn crate::selected_tasks::OwnerAuthority>,
+    ) -> Result<(), OfficeError> {
+        crate::selected_tasks::directory::bind_owner(&self.stores.local, authority)
+    }
+
+    /// Admit lossless selected directory facts at a writer-ordered generation.
+    pub fn admit_selected_directory(
+        &self,
+        authority: Arc<dyn crate::selected_tasks::OwnerAuthority>,
+        expected_generation: Option<i64>,
+        source: Vec<u8>,
+    ) -> Result<i64, OfficeError> {
+        crate::selected_tasks::directory::admit(
+            &self.stores.local,
+            authority,
+            expected_generation,
+            source,
+        )
+    }
+    /// Trusted composition supplies live grant/session/account verification. The
+    /// request cannot supply account identity or obtain authority by assignment.
+    pub fn set_selected_assignment(
+        &self,
+        authority: Arc<dyn crate::selected_tasks::OwnerAuthority>,
+        request: crate::selected_tasks::AssignmentRequest,
+    ) -> Result<crate::selected_tasks::AssignmentOutcome, OfficeError> {
+        crate::selected_tasks::service::assign(&self.stores.local, authority, request)
+    }
+
+    pub fn selected_assignment_result(
+        &self,
+        authority: Arc<dyn crate::selected_tasks::OwnerAuthority>,
+        operation_id: String,
+    ) -> Result<Option<crate::selected_tasks::AssignmentOutcome>, OfficeError> {
+        crate::selected_tasks::service::lookup(&self.stores.local, authority, operation_id)
+    }
+    /// Install host-issued recovery configuration before exposing selected work.
+    /// The composition root must verify its protected writer lease first.
+    pub fn install_selected_acceptance(
+        &self,
+        config: crate::selected_tasks::AcceptanceConfig,
+    ) -> Result<(), OfficeError> {
+        if config.identity.office_id != self.info.office_id
+            || config.identity.organization_id != self.info.org_id
+            || !self.is_replication_hq()?
+        {
+            return Err(OfficeError::Invalid("work acceptance scope mismatch"));
+        }
+        self.stores.local.install_acceptance(config)
+    }
     /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
     /// office id) and opens it with `key`, **which the host made and holds** (ADR-0002, key
     /// custody): the office never makes, stores or deletes a key. The host saves the key before
@@ -343,6 +422,7 @@ impl Office {
         let lock = lock_folder(&folder, lock_wait)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
+        let hq_binding = hq_creation::verify_intent(&folder, &info, instance)?;
 
         // Refuse before either database migrates or changes journal mode. The office lock
         // keeps this read and the later transactional adoption under one owner.
@@ -377,6 +457,10 @@ impl Office {
             return Err(OfficeError::Invalid(
                 "the databases belong to another office",
             ));
+        }
+        if let Some(binding) = hq_binding {
+            crate::store::hq_creation::verify_binding(&local, &binding)?;
+            hq_creation::publish_public(&folder, &local, &binding)?;
         }
         org_db::sweep_snapshot_scratch(&folder)?;
         let stores = stores(org, local, &info.office_id)?;
@@ -418,7 +502,7 @@ impl Office {
         key: Option<&Key>,
         lock_wait: Duration,
     ) -> Result<(), OfficeError> {
-        if !is_plain_id(office_id) {
+        if !office_file::is_storage_id(office_id) {
             return Err(OfficeError::Invalid(
                 "an office id is 1 to 64 letters and digits",
             ));
@@ -433,7 +517,9 @@ impl Office {
         }
         let _lock = lock_folder(&folder, lock_wait)?;
 
-        if exists(&folder.join(office_file::FILE_NAME))? {
+        if exists(&folder.join(office_file::FILE_NAME))?
+            || exists(&folder.join("hq-creation.v1.json"))?
+        {
             return Err(OfficeError::OfficeExists);
         }
         let org_db = folder.join(ORG_DB);
@@ -702,6 +788,10 @@ impl Office {
     /// `org.db`, the organization's data.
     pub(crate) fn org_store(&self) -> &Store {
         &self.stores.org
+    }
+
+    pub(crate) fn work_org_source(&self) -> Arc<dyn work::assembly::OrgSource> {
+        Arc::new(OrgDbSource::new(self.stores.org.clone()))
     }
 
     /// Test fixtures only: replaces the organization's members with `members`, as an organization applied

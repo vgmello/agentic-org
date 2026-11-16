@@ -3,6 +3,7 @@ use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 use super::*;
+mod selected_legacy;
 mod work;
 use crate::model::OfficeRole;
 use org_proto::org::CommandStatus;

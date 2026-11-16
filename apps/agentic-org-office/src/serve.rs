@@ -290,6 +290,7 @@ pub(crate) const MAX_CONNECTIONS: usize = 64;
 
 /// What every connection shares.
 pub struct Shared {
+    pub(crate) selected: Option<Arc<org_office::Office>>,
     pub hello: HelloResult,
     office_id: String,
     ports: OfficePorts,
@@ -318,6 +319,7 @@ impl Shared {
         auth: impl Into<LaunchAuth>,
     ) -> Self {
         Self {
+            selected: None,
             office_id: info.office_id.clone(),
             ports,
             auth: auth.into(),
@@ -700,52 +702,24 @@ fn serve_connection_with_poll(
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
-            // A dead binding cannot be kept alive by principal-bearing frames.
-            if control.revoked.load(Ordering::SeqCst) {
-                refuse_revoked(&out, request.id, &control, shared.timing);
+            match socket_ingress(&request, shared, &out, &control) {
+                Ingress::Serve => {}
+                Ingress::Skip => continue,
+                Ingress::Stop => break,
+            }
+            if !prepare_binding(
+                &request,
+                shared,
+                &out,
+                &control,
+                &mut binding,
+                &mut registration,
+                &mut subscribed,
+            ) {
                 break;
-            }
-            // This is the office-socket loop; host channels authenticate principals separately.
-            // Presence includes null and malformed values. Refuse before any binding effects.
-            if request.principal.is_some() {
-                let refusal = bind_error(
-                    request.id,
-                    ErrorCode::NotAuthorized,
-                    "a principal is not allowed on the office socket",
-                );
-                if !send(&out, request.id, &refusal, shared.timing) {
-                    break;
-                }
-                continue;
-            }
-            // The member this connection acts as is checked on every call, not only at bind, and
-            // the watcher may have ended the connection's held calls already.
-            let member_lookup = if control.revoked.load(Ordering::SeqCst) {
-                Some(Lookup::Not)
-            } else {
-                binding
-                    .member()
-                    .map(|member| lookup_binding(shared, member))
-            };
-            if matches!(member_lookup, Some(Lookup::Not)) || control.revoked.load(Ordering::SeqCst)
-            {
-                refuse_revoked(&out, request.id, &control, shared.timing);
-                break;
-            }
-            if !request.is::<MsgBind>() && matches!(member_lookup, Some(Lookup::Failed)) {
-                binding = Binding::Anonymous;
-                registration.sync(None);
-                generation.fetch_add(1, Ordering::SeqCst);
-                subscribed = false;
-                held.cancel_all();
             }
             if request.is::<Hello>() {
-                let response = hello_response(&request, shared);
-                let unsupported = matches!(
-                    &response.outcome,
-                    org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
-                );
-                if !send(&out, request.id, &response, shared.timing) || unsupported {
+                if !send_hello(&request, shared, &out) {
                     break;
                 }
                 continue;
@@ -757,139 +731,306 @@ fn serve_connection_with_poll(
                 held.cancel_all();
             }
             if request.is::<MsgWait>() {
-                match msg_calls::begin_wait(&request, binding.member()) {
-                    Ok(wait) => {
-                        let (cancel, cancellation) = cancellation_pair();
-                        let Some(number) = held.start(cancel) else {
-                            let busy = Response::error(
-                                request.id,
-                                ApiError::new(
-                                    ErrorCode::Unavailable,
-                                    "too many calls are held on this connection",
-                                ),
-                            );
-                            if !send(&out, request.id, &busy, shared.timing) {
-                                break;
-                            }
-                            continue;
-                        };
-                        // The watcher sets `revoked` before it cancels, so a wait that began
-                        // after its cancel still finds the flag and ends at once.
-                        if control.revoked.load(Ordering::SeqCst) {
-                            held.cancel_all();
-                        }
-                        let (out, held, mailbox, timing) =
-                            (&out, &held, &shared.ports.mailbox, shared.timing);
-                        let id = request.id;
-                        let started = std::thread::Builder::new()
-                            .name("org-office-wait".into())
-                            .spawn_scoped(scope, move || {
-                                let _place = Place(held, number);
-                                // A panic in the mailbox answers this call alone.
-                                let answer =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        msg_calls::finish_wait(id, mailbox, wait, &cancellation)
-                                    }))
-                                    .unwrap_or_else(|_| internal(id));
-                                send(out, id, &answer, timing);
-                            });
-                        if started.is_err() {
-                            held.finish(number);
-                            let busy = Response::error(
-                                request.id,
-                                ApiError::new(ErrorCode::Unavailable, "the office is busy"),
-                            );
-                            if !send(out, request.id, &busy, timing) {
-                                break;
-                            }
-                        }
-                        continue;
-                    }
-                    Err(refusal) => {
-                        if !send(&out, request.id, &refusal, shared.timing) {
-                            break;
-                        }
-                        continue;
-                    }
+                if !start_wait(scope, &request, &binding, shared, &out, &control) {
+                    break;
                 }
+                continue;
             }
             let response = if request.is::<org_proto::Subscribe>() {
-                match follow::begin(
+                match start_subscription(
+                    scope,
                     &request,
-                    &*shared.ports.feed,
-                    binding.is_app_bound(),
-                    subscribed,
+                    SubscriptionContext {
+                        shared,
+                        out: &out,
+                        generation,
+                        sent: &sent,
+                    },
+                    &binding,
+                    &mut subscribed,
+                    &mut pusher,
                 ) {
-                    Ok(position) => {
-                        // Live events start from here: what is published from now on.
-                        let start = follow::Start {
-                            position,
-                            live: shared.ports.live.head(),
-                        };
-                        // The generation this subscription belongs to, taken before the answer
-                        // goes out: a watcher's bump after this ends it.
-                        let mine = generation.load(Ordering::SeqCst);
-                        // The answer first, then the events.
-                        let answer =
-                            Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
-                                .unwrap_or_else(|_| internal(request.id));
-                        if !send(&out, request.id, &answer, shared.timing) {
-                            break;
-                        }
-                        subscribed = true;
-                        if let Some(old) = pusher.take() {
-                            let _ = old.join();
-                        }
-                        let (feed, live) = (&*shared.ports.feed, &*shared.ports.live);
-                        let wire = follow::Wire {
-                            out: &out,
-                            generation,
-                            mine,
-                            seq: &sent,
-                            timing: shared.timing,
-                        };
-                        let binding = binding.clone();
-                        pusher = Some(scope.spawn(move || {
-                            let subscriber = Subscriber {
-                                binding: &binding,
-                                wire: &wire,
-                            };
-                            follow::push_with_hint(feed, live, &wire, start, |data| {
-                                deliver_hint(shared, &subscriber, data)
-                            });
-                        }));
-                        continue;
-                    }
-                    Err(refusal) => Response::error(request.id, refusal),
+                    SubscriptionStart::Started => continue,
+                    SubscriptionStart::Closed => break,
+                    SubscriptionStart::Refused(response) => response,
                 }
             } else {
                 answer(&request, shared, &mut binding)
             };
-            // The watcher finds this connection by the member it now acts as. Registered before
-            // the answer goes out, so a client that has its bind's answer is already watched.
-            if registration.sync(binding.member()) {
-                // Registered after the member may already have gone: the watcher cannot have
-                // seen this entry, so look once.
-                if let Some(member) = binding.member() {
-                    if is_gone(shared, member) {
-                        control.held.cancel_all();
-                        control.generation.fetch_add(1, Ordering::SeqCst);
-                        control.revoked.store(true, Ordering::SeqCst);
-                    }
-                }
-            }
-            // A watcher can revoke the old binding while msg.bind resolves the new one.
-            // Registration keeps that revocation sticky; never acknowledge a fresh bind.
-            if request.is::<MsgBind>() && control.revoked.load(Ordering::SeqCst) {
-                refuse_revoked(&out, request.id, &control, shared.timing);
-                break;
-            }
-            if !send(&out, request.id, &response, shared.timing) {
+            if !send_bound_response(
+                &request,
+                shared,
+                &out,
+                &control,
+                &binding,
+                &mut registration,
+                &response,
+            ) {
                 break;
             }
         }
         generation.fetch_add(1, Ordering::SeqCst);
     });
+}
+
+fn send_hello(request: &Request, shared: &Shared, out: &Mutex<UnixStream>) -> bool {
+    let response = hello_response(request, shared);
+    let unsupported = matches!(
+        &response.outcome,
+        org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
+    );
+    send(out, request.id, &response, shared.timing) && !unsupported
+}
+
+fn send_bound_response(
+    request: &Request,
+    shared: &Shared,
+    out: &Mutex<UnixStream>,
+    control: &Control,
+    binding: &Binding,
+    registration: &mut Registration<'_>,
+    response: &Response,
+) -> bool {
+    // The watcher finds this connection by the member it now acts as. Registered before
+    // the answer goes out, so a client that has its bind's answer is already watched.
+    if registration.sync(binding.member()) {
+        // Registered after the member may already have gone: the watcher cannot have
+        // seen this entry, so look once.
+        if let Some(member) = binding.member() {
+            if is_gone(shared, member) {
+                control.held.cancel_all();
+                control.generation.fetch_add(1, Ordering::SeqCst);
+                control.revoked.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    // A watcher can revoke the old binding while msg.bind resolves the new one.
+    // Registration keeps that revocation sticky; never acknowledge a fresh bind.
+    if request.is::<MsgBind>() && control.revoked.load(Ordering::SeqCst) {
+        refuse_revoked(out, request.id, control, shared.timing);
+        return false;
+    }
+    send(out, request.id, response, shared.timing)
+}
+
+enum Ingress {
+    Serve,
+    Skip,
+    Stop,
+}
+
+fn socket_ingress(
+    request: &Request,
+    shared: &Shared,
+    out: &Mutex<UnixStream>,
+    control: &Control,
+) -> Ingress {
+    if request.method == org_proto::selected_tasks::SET_ASSIGNMENT
+        || request.method == org_proto::selected_tasks::staging::METHOD
+        || request.method == org_proto::selected_tasks::adoption::METHOD
+    {
+        let response = Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "selected assignment requires a host owner channel",
+            ),
+        );
+        if !send(out, request.id, &response, shared.timing) {
+            return Ingress::Stop;
+        }
+        return Ingress::Skip;
+    }
+    // A dead binding cannot be kept alive by principal-bearing frames.
+    if control.revoked.load(Ordering::SeqCst) {
+        refuse_revoked(out, request.id, control, shared.timing);
+        return Ingress::Stop;
+    }
+    // This is the office-socket loop; host channels authenticate principals separately.
+    // Presence includes null and malformed values. Refuse before any binding effects.
+    if request.principal.is_some() {
+        let refusal = bind_error(
+            request.id,
+            ErrorCode::NotAuthorized,
+            "a principal is not allowed on the office socket",
+        );
+        if !send(out, request.id, &refusal, shared.timing) {
+            return Ingress::Stop;
+        }
+        return Ingress::Skip;
+    }
+    Ingress::Serve
+}
+
+fn prepare_binding(
+    request: &Request,
+    shared: &Shared,
+    out: &Mutex<UnixStream>,
+    control: &Control,
+    binding: &mut Binding,
+    registration: &mut Registration<'_>,
+    subscribed: &mut bool,
+) -> bool {
+    // The member this connection acts as is checked on every call, not only at bind, and
+    // the watcher may have ended the connection's held calls already.
+    let member_lookup = if control.revoked.load(Ordering::SeqCst) {
+        Some(Lookup::Not)
+    } else {
+        binding
+            .member()
+            .map(|member| lookup_binding(shared, member))
+    };
+    if matches!(member_lookup, Some(Lookup::Not)) || control.revoked.load(Ordering::SeqCst) {
+        refuse_revoked(out, request.id, control, shared.timing);
+        return false;
+    }
+    if !request.is::<MsgBind>() && matches!(member_lookup, Some(Lookup::Failed)) {
+        *binding = Binding::Anonymous;
+        registration.sync(None);
+        control.generation.fetch_add(1, Ordering::SeqCst);
+        *subscribed = false;
+        control.held.cancel_all();
+    }
+    true
+}
+
+fn start_wait<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    request: &Request,
+    binding: &Binding,
+    shared: &'scope Shared,
+    out: &'scope Mutex<UnixStream>,
+    control: &'scope Control,
+) -> bool {
+    let held = &control.held;
+    match msg_calls::begin_wait(request, binding.member()) {
+        Ok(wait) => {
+            let (cancel, cancellation) = cancellation_pair();
+            let Some(number) = held.start(cancel) else {
+                let busy = Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::Unavailable,
+                        "too many calls are held on this connection",
+                    ),
+                );
+                if !send(out, request.id, &busy, shared.timing) {
+                    return false;
+                }
+                return true;
+            };
+            // The watcher sets `revoked` before it cancels, so a wait that began
+            // after its cancel still finds the flag and ends at once.
+            if control.revoked.load(Ordering::SeqCst) {
+                held.cancel_all();
+            }
+            let (out, held, mailbox, timing) = (out, held, &shared.ports.mailbox, shared.timing);
+            let id = request.id;
+            let started = std::thread::Builder::new()
+                .name("org-office-wait".into())
+                .spawn_scoped(scope, move || {
+                    let _place = Place(held, number);
+                    // A panic in the mailbox answers this call alone.
+                    let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        msg_calls::finish_wait(id, mailbox, wait, &cancellation)
+                    }))
+                    .unwrap_or_else(|_| internal(id));
+                    send(out, id, &answer, timing);
+                });
+            if started.is_err() {
+                held.finish(number);
+                let busy = Response::error(
+                    request.id,
+                    ApiError::new(ErrorCode::Unavailable, "the office is busy"),
+                );
+                if !send(out, request.id, &busy, timing) {
+                    return false;
+                }
+            }
+            true
+        }
+        Err(refusal) => {
+            if !send(out, request.id, &refusal, shared.timing) {
+                return false;
+            }
+            true
+        }
+    }
+}
+
+struct SubscriptionContext<'a> {
+    shared: &'a Shared,
+    out: &'a Mutex<UnixStream>,
+    generation: &'a AtomicU64,
+    sent: &'a AtomicU64,
+}
+enum SubscriptionStart {
+    Started,
+    Closed,
+    Refused(Response),
+}
+
+fn start_subscription<'scope, 'env>(
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+    request: &Request,
+    context: SubscriptionContext<'scope>,
+    binding: &Binding,
+    subscribed: &mut bool,
+    pusher: &mut Option<std::thread::ScopedJoinHandle<'scope, ()>>,
+) -> SubscriptionStart {
+    let SubscriptionContext {
+        shared,
+        out,
+        generation,
+        sent,
+    } = context;
+    match follow::begin(
+        request,
+        &*shared.ports.feed,
+        binding.is_app_bound(),
+        *subscribed,
+    ) {
+        Ok(position) => {
+            // Live events start from here: what is published from now on.
+            let start = follow::Start {
+                position,
+                live: shared.ports.live.head(),
+            };
+            // The generation this subscription belongs to, taken before the answer
+            // goes out: a watcher's bump after this ends it.
+            let mine = generation.load(Ordering::SeqCst);
+            // The answer first, then the events.
+            let answer = Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
+                .unwrap_or_else(|_| internal(request.id));
+            if !send(out, request.id, &answer, shared.timing) {
+                return SubscriptionStart::Closed;
+            }
+            *subscribed = true;
+            if let Some(old) = pusher.take() {
+                let _ = old.join();
+            }
+            let (feed, live) = (&*shared.ports.feed, &*shared.ports.live);
+            let wire = follow::Wire {
+                out,
+                generation,
+                mine,
+                seq: sent,
+                timing: shared.timing,
+            };
+            let binding = binding.clone();
+            *pusher = Some(scope.spawn(move || {
+                let subscriber = Subscriber {
+                    binding: &binding,
+                    wire: &wire,
+                };
+                follow::push_with_hint(feed, live, &wire, start, |data| {
+                    deliver_hint(shared, &subscriber, data)
+                });
+            }));
+            SubscriptionStart::Started
+        }
+        Err(refusal) => SubscriptionStart::Refused(Response::error(request.id, refusal)),
+    }
 }
 
 fn refuse_revoked(out: &Mutex<UnixStream>, id: u64, control: &Control, timing: Timing) {

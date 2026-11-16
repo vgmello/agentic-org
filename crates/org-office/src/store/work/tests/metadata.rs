@@ -13,7 +13,7 @@ fn work_v5_schema_has_the_three_storage_tables_and_expiry_index() {
     store.read(|db| {
         let tables: Vec<String> = db.prepare("SELECT name FROM sqlite_schema WHERE name IN ('work_change_results','work_number_counters','work_clock') ORDER BY name").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         assert_eq!(tables, ["work_change_results", "work_clock", "work_number_counters"]);
-        assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),6);
+        assert_eq!(db.pragma_query_value::<i64,_>(None,"user_version",|r|r.get(0)).unwrap(),OFFICE_SCHEMA.version);
         assert_eq!(db.query_row("SELECT count(*) FROM sqlite_schema WHERE name='idx_work_change_results_expiry'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
         assert_eq!(db.query_row("SELECT name FROM pragma_index_info('idx_work_change_results_expiry')",[],|r|r.get::<_,String>(0)).unwrap(),"expires_at_ms");
         let flags:Vec<(String,i64,i64)>=db.prepare("SELECT name,wr,strict FROM pragma_table_list WHERE schema='main' AND name IN ('work_change_results','work_number_counters','work_clock') ORDER BY name").unwrap().query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
@@ -695,7 +695,7 @@ fn work_v6_all_released_versions_upgrade_preserve_every_row_and_match_fresh_sche
                 assert_eq!(
                     db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                         .unwrap(),
-                    6
+                    OFFICE_SCHEMA.version
                 );
                 Ok(())
             })

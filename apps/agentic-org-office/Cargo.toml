@@ -22,6 +22,8 @@ path = "tests/owned_recovery.rs"
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
+org-pki = { path = "../../crates/org-pki" }
+zeroize = "=1.9.1"
 org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }

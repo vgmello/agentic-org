@@ -61,6 +61,12 @@ struct Args {
 }
 
 pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
+    // Selected registered services resolve the frozen instance and release in
+    // the host library. Preserve explicit legacy debug fixture composition.
+    if arguments.iter().any(|s| s == "--name") || (!cfg!(debug_assertions) && arguments.is_empty())
+    {
+        return org_host::human::serve_selected(&arguments);
+    }
     // First, before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
     let args = parse_args(arguments, Build::CURRENT)?;

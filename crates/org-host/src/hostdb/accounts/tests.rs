@@ -20,6 +20,7 @@ fn first() -> Account {
         login: "Sage".into(),
         admin: true,
         revoked_at_ms: None,
+        password_changed_at_ms: 123,
         links: vec![],
     }
 }
@@ -97,6 +98,7 @@ fn reads_bind_keys_and_ids_and_keep_each_accounts_links_separate() {
         login: "Other".into(),
         admin: false,
         revoked_at_ms: None,
+        password_changed_at_ms: 124,
         links: vec![Link {
             org_id: "ORG-C".into(),
             member_id: "MEMBER-C".into(),

@@ -23,6 +23,85 @@ use std::fmt;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::selected_codec::{self as codec, Json, NumberToken};
+
+/// Immutable command scope, supplied by authenticated registry/channel context.
+/// This is business retry identity, not an authorization token or event identity.
+pub struct AssignmentScope<'a> {
+    pub instance_id: &'a str,
+    pub organization_id: &'a str,
+    pub office_id: &'a str,
+    pub task_id: &'a str,
+}
+
+/// Versioned typed retry fingerprint. Equivalent decoded string escapes and
+/// native/browser revision adaptations yield the same hash. Actor/account binding
+/// remains separate protected receipt metadata. Historical event-number spellings
+/// never participate in this command encoding.
+pub fn assignment_fingerprint(
+    scope: AssignmentScope<'_>,
+    command: &AssignmentCommand,
+) -> Result<String, FingerprintError> {
+    if [
+        scope.instance_id,
+        scope.organization_id,
+        scope.office_id,
+        scope.task_id,
+    ]
+    .iter()
+    .any(|s| s.is_empty())
+        || command.expected_revision <= 0
+        || command
+            .assigned_team_id
+            .as_ref()
+            .is_some_and(|s| s.is_empty())
+        || command.assignee_id.as_ref().is_some_and(|s| s.is_empty())
+    {
+        return Err(FingerprintError::InvalidIntent);
+    }
+    let string = |s: &str| Json::String(s.to_owned());
+    let nullable = |s: Option<&str>| s.map(string).unwrap_or(Json::Null);
+    let value = Json::Object(
+        [
+            (
+                "fingerprint_version".into(),
+                Json::Number(NumberToken::new("1")?),
+            ),
+            ("method".into(), string("task.set_assignment")),
+            ("instance_id".into(), string(scope.instance_id)),
+            ("organization_id".into(), string(scope.organization_id)),
+            ("office_id".into(), string(scope.office_id)),
+            ("task_id".into(), string(scope.task_id)),
+            (
+                "expected_revision".into(),
+                Json::Number(NumberToken::new(&command.expected_revision.to_string())?),
+            ),
+            (
+                "assigned_team_id".into(),
+                nullable(command.assigned_team_id.as_deref()),
+            ),
+            (
+                "assignee_id".into(),
+                nullable(command.assignee_id.as_deref()),
+            ),
+        ]
+        .into(),
+    );
+    Ok(codec::sha256(&codec::canonical(&value)?))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FingerprintError {
+    InvalidIntent,
+    Codec(codec::Error),
+}
+
+impl From<codec::Error> for FingerprintError {
+    fn from(value: codec::Error) -> Self {
+        Self::Codec(value)
+    }
+}
+
 /// A current or desired assignment pair. Serialization always includes both nullable keys.
 ///
 /// Construction does not validate historical references. Desired IDs are validated by

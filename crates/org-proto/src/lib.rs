@@ -91,6 +91,7 @@ pub mod location;
 pub mod msg;
 pub mod org;
 pub mod retired;
+pub mod selected_tasks;
 pub mod work;
 
 mod calls;
@@ -177,3 +178,6 @@ pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 mod tests;
 #[cfg(test)]
 mod v2_tests;
+
+/// Versioned nonsecret selected HQ preparation input.
+pub mod selected_bootstrap;

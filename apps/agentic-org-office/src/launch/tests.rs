@@ -16,6 +16,8 @@ fn token() -> AppToken {
 }
 fn office() -> OfficeLine {
     OfficeLine {
+        id_profile: None,
+        selected_writer_required: false,
         instance_id: INSTANCE.into(),
         office_id: "OFFICE1".into(),
         rendezvous: "/unused".into(),
@@ -29,6 +31,7 @@ fn create() -> CreateLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
+        hq_creation: None,
     }
 }
 fn request(version: u8, op: u8, key: bool) -> Request {

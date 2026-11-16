@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "01a1dd82-ffe6-7363-af94-6072c75de2d1",
-  "rationale": "Actual Rust 1.99.1/Svelte 5 static monorepo, maintained UI skills and sensitive host/storage/protocol boundaries. Reassessed after explicit owner solo-Codex instruction on 2026-11-15: removed offline developer ownership/messaging/approval from baseline process and affected role/skill guidance, retained local kit review gates, interface compatibility, full-stack responsibility, technical/data/security checks and local embed memory adaptation. No model policy, executable runtime or application behavior changes; unchanged capability rules/evidence remain applicable.",
+  "rationale": "Existing fullstack/reviewer roles and Rust/security/contracts/UI guidance cover the selected stack. Active ADR6r5 acceptance, ADR7r1 escrow, ADR8r1 macOS confinement, ADR9r2 signed release/kernel image/UI64MiB+4096 budget, ADR10r1 conservative legacy adoption and ADR11r1 protected native recovery were independently reviewed. Updated security-boundaries covers macOS SDK ARC/blocks callback lifetime/deadlines, kernel peer/console/TTY checks, connection-bound ACK, durable deletion and bounded public escrow exchange. Actual ADR11 addition is solely alreadylocked cc1.11.1 host build edge (exact removal reproduces prior manifest/lock hashes) plus fixed SDK frameworks/libbsm; no host->office/pki or gateway->host edge, new crypto or browser secret surface. Whole build-script/native input pins and strict build-time release registry validation remain required; no arbitrary generated Rust include/helper exception. Existing tar0.4.46/flate21.1.11 and web rustix1.1.6 fs/std edges were scoped and verified without unrelated lock changes. AGENTS mandates root architecture/integration owner, maximum two disjoint source writers in separate worktrees and delegate-only caveman communication. Original authors and full acceptance retained. Current source-bound native/bootstrap and Chromium/debug fixtures are scoped evidence; authentic production publisher/platform/physical authentication/setup/service/Linux/WebKit, full current checks and fresh reviews remain mandatory. No production readiness claim. Fixed macOS libbsm SDK accessor link passed no-prompt compile/query; no Cargo version or reviewed presence mechanism changed.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "22607aff3f219c179223713ce5fd342b1f7d289f3a36d0d539b5f55eaabafc6c"
+      "sha256": "008313093f494ad03206c53764bbe74732764fc5c0dbefcbae5e5ffe17e76bbe"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -54,11 +54,19 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "76f252483e2613feb87e363526e15670870e1deb80acb8cb3e4a77cae3712f56"
+      "sha256": "d83a87ffbff109db1a38ff11b06d0fe40f59ad1a32db3bb248fd9219360b482e"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "d40834edec14eb5bd0fc4600cf0be269c10ad3249c2a4a9f0c07cb39b257f753"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "615f0bbf53f4bb125cbf4d25271de4a3376511cc7ed6eac18dcf5219211c0fa0"
+      "sha256": "3770bc88b9eb7dcf960ad2accbe4c4ced6fe20202a4572ca833916b079b4ea0b"
+    },
+    {
+      "path": "apps/agentic-org-office/Cargo.toml",
+      "sha256": "b7f9f4f94d4ade2fb0a5d79ca36b0b9b86e30622268422ab68a6459a71ec2c9d"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -73,12 +81,56 @@
       "sha256": "a5f4697b3d032b26acaf83fde679694345e853f104f4adfbdc324572314450aa"
     },
     {
+      "path": "apps/agentic-org-web/Cargo.toml",
+      "sha256": "adf10a83044cf928c774ab2e9111bf4776c9981c045b9d859cbc6b49c2459174"
+    },
+    {
+      "path": "crates/org-client/Cargo.toml",
+      "sha256": "b413e712066ea48dd9bdebc854ac9d08b52cbfb2a8b6e6c1025c8958af293ac2"
+    },
+    {
+      "path": "crates/org-host-control/Cargo.toml",
+      "sha256": "37431b1daf626be9c1438a100fbfe49ec56b3eeb6aec40c978860a1a82b56fee"
+    },
+    {
+      "path": "crates/org-host/Cargo.toml",
+      "sha256": "13e7acfe81cc8df1214261b653bc3801c8f3584a3f101f04f660b267cd4101ce"
+    },
+    {
+      "path": "crates/org-office-launch/Cargo.toml",
+      "sha256": "f98458710d9697445041863a31f18922e6afa6f5a4b81eb50e36dbdf225b19ca"
+    },
+    {
+      "path": "crates/org-office/Cargo.toml",
+      "sha256": "f11b34e74fd1f78e8657266f837a7803201b53c09cb0d32481d737cdd24d2c1a"
+    },
+    {
+      "path": "crates/org-pki/Cargo.toml",
+      "sha256": "8cde431444a1a5226133b622c417b6f663332f00995e51a9b6977adcd22dc777"
+    },
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a"
+    },
+    {
+      "path": "crates/org-socket/Cargo.toml",
+      "sha256": "4818938dc204365e6240f6d202d134327d9283486fe1d2e135c1f7d6dcebbbc2"
+    },
+    {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
       "sha256": "a77502af12f59a2d65778414261eefa078c4b39ba62db467a23e1b801288283a"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
       "sha256": "d073d3427e489b48ccbb98f6f148fea2ec8f53a8e54e39f85fdfb222905c9ca8"
+    },
+    {
+      "path": "docs/adr/0008-gateway-macos-sandbox.md",
+      "sha256": "b30a5ef6e0d924d73a8b96f34565564269dd336e5c0296205037e4512aeafa7f"
+    },
+    {
+      "path": "docs/adr/0009-complete-release-verification.md",
+      "sha256": "a6b1a72eab2a70f05012bf52c9302b3097f4368095d7191d711f71f4a22e441d"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -103,6 +155,22 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    },
+    {
+      "path": ".agents/skills/caveman/SKILL.md",
+      "sha256": "d59325d69f2da932f525ca69dd42a3dba6abb0c6e07c3908b941c7be6ece4fb6"
+    },
+    {
+      "path": "docs/adr/0010-legacy-task-adoption.md",
+      "sha256": "010d28fff2d1b01a515aa662bd438ec275e2f0b357be0c07d1cd1a4528185f03"
+    },
+    {
+      "path": "docs/adr/0011-protected-recovery-delivery.md",
+      "sha256": "72d87a6af79d0624ac723900f06925bb2dfce0964b94e07a16a44e2a33959457"
+    },
+    {
+      "path": "docs/adr/0007-hq-creation-escrow.md",
+      "sha256": "6751f22ec7f2e74e964fef67557933a5ca16174bafd7b416e6d83f671853fe3f"
     }
   ],
   "roles": {
@@ -126,6 +194,21 @@
       "review": [
         "AGENTS.md",
         "docs/processes/branch-and-merge.md"
+      ],
+      "critical": false
+    },
+    {
+      "id": "delegate-communication",
+      "description": "Delegate-only concise reporting; main lead keeps concise normal prose",
+      "paths": [
+        "."
+      ],
+      "risks": [],
+      "implementation": [
+        ".agents/skills/caveman/SKILL.md"
+      ],
+      "review": [
+        ".agents/skills/caveman/SKILL.md"
       ],
       "critical": false
     },
@@ -171,12 +254,15 @@
     },
     {
       "id": "host-and-storage",
-      "description": "Credential, authorization and durable storage boundaries",
+      "description": "Host credential, PKI, authorization and durable storage boundaries",
       "paths": [
         "crates/org-host",
         "crates/org-office",
         "apps/agentic-org",
-        "apps/agentic-org-web"
+        "apps/agentic-org-web",
+        "crates/org-pki",
+        "crates/org-socket",
+        "crates/org-release"
       ],
       "risks": [],
       "implementation": [
@@ -194,7 +280,9 @@
         "crates/org-proto",
         "crates/org-sync-proto",
         "crates/org-office-launch",
-        "crates/org-runtime"
+        "crates/org-runtime",
+        "crates/org-host-control",
+        "crates/org-release"
       ],
       "risks": [],
       "implementation": [
@@ -275,6 +363,70 @@
       ],
       "review": [
         ".agent-kit/project-skills/kit-maintenance/SKILL.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "release-verification",
+      "description": "Publisher-signed complete release inventory, build-pinned trust, runtime image/asset binding and durable staging/pins",
+      "paths": [
+        "crates/org-release",
+        "crates/org-host/src/release",
+        "apps/agentic-org/src/setup",
+        "apps/agentic-org-web/src/process.rs",
+        "crates/org-host/build.rs",
+        "apps/agentic-org-web/build.rs",
+        "crates/org-socket/src/image"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0009-complete-release-verification.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0009-complete-release-verification.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "legacy-adoption-profile",
+      "description": "Reviewed conservative original-source legacy mapping, baseline provenance and adoption fencing",
+      "paths": [
+        "crates/org-office/src/selected_tasks/adoption.rs",
+        "crates/org-office/src/selected_tasks/adoption",
+        "docs/adr/0010-legacy-task-adoption.md"
+      ],
+      "risks": [],
+      "implementation": [
+        "docs/adr/0010-legacy-task-adoption.md"
+      ],
+      "review": [
+        "docs/adr/0010-legacy-task-adoption.md"
+      ],
+      "critical": true
+    },
+    {
+      "id": "protected-recovery-delivery",
+      "description": "Reviewed native OS presence/ARC callback lifecycle, durable secret delivery ACK/deletion and bounded worker public escrow transport",
+      "paths": [
+        "crates/org-host",
+        "crates/org-host-control",
+        "crates/org-office-launch",
+        "apps/agentic-org-office/src/transfer",
+        "apps/agentic-org",
+        "docs/adr/0011-protected-recovery-delivery.md"
+      ],
+      "risks": [],
+      "implementation": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md",
+        "docs/adr/0011-protected-recovery-delivery.md"
+      ],
+      "review": [
+        ".agent-kit/project-skills/security-boundaries/SKILL.md",
+        "docs/adr/0007-hq-creation-escrow.md",
+        "docs/adr/0011-protected-recovery-delivery.md"
       ],
       "critical": true
     }

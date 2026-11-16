@@ -181,7 +181,7 @@ fn scalar(db: &Connection, pragma: &str) -> i64 {
 fn encrypted_schema_metadata_tls_and_pragmas_survive_reopen() {
     let (home, secrets, db) = fixture();
     let c = db.connection.lock().unwrap();
-    assert_eq!(scalar(&c, "user_version"), 1);
+    assert_eq!(scalar(&c, "user_version"), 3);
     assert_eq!(scalar(&c, "synchronous"), 2);
     assert_eq!(scalar(&c, "fullfsync"), 1);
     assert_eq!(scalar(&c, "checkpoint_fullfsync"), 1);
@@ -259,7 +259,7 @@ fn encrypted_schema_metadata_tls_and_pragmas_survive_reopen() {
     let c = connection_for_test(home.path().join(DB), OpenFlags::default()).unwrap();
     c.execute_batch(&format!("PRAGMA key=\"x'{}'\";", hex(key.expose())))
         .unwrap();
-    assert_eq!(scalar(&c, "user_version"), 1);
+    assert_eq!(scalar(&c, "user_version"), 3);
 }
 #[test]
 fn create_replaces_leftover_secrets_and_temps_without_tls() {
@@ -372,7 +372,7 @@ fn refusals_preserve_existing_database_and_wal_bytes() {
     db.connection
         .lock()
         .unwrap()
-        .pragma_update(None, "user_version", 2)
+        .pragma_update(None, "user_version", 4)
         .unwrap();
     let before = bytes(home.path());
     assert!(matches!(
@@ -1017,7 +1017,7 @@ fn ownership_guards_accept_ours_and_refuse_foreign_linux_root_fixtures() {
 
 #[test]
 fn schema_refusal_is_read_only_even_when_it_is_the_last_wal_connection() {
-    for version in [0, 2, -1] {
+    for version in [0, 4, -1] {
         let (home, secrets, db) = fixture();
         {
             let c = db.connection.lock().unwrap();
@@ -1502,20 +1502,29 @@ struct OrphanCheckedSecrets {
 }
 impl HostSecrets for OrphanCheckedSecrets {
     fn put(&self, name: &Name, value: &Value) -> Result<(), crate::host_secrets::Error> {
+        self.before_mutation()?;
         self.inner.put(name, value)
     }
     fn load(&self, name: &Name) -> Result<Option<Value>, crate::host_secrets::Error> {
         self.inner.load(name)
     }
     fn delete(&self, name: &Name) -> Result<(), crate::host_secrets::Error> {
+        self.before_mutation()?;
         self.inner.delete(name)
     }
     fn list(&self) -> Result<Vec<Name>, crate::host_secrets::Error> {
-        // Observe the actual ordering: orphan cleanup must precede any secret reset.
+        // A read-only custody inventory must detect retained writer authority
+        // before deleting even an apparently orphaned sidecar.
+        self.inner.list()
+    }
+}
+impl OrphanCheckedSecrets {
+    fn before_mutation(&self) -> Result<(), crate::host_secrets::Error> {
+        // Orphan cleanup must precede every mutating secret operation.
         if fs::symlink_metadata(&self.sidecar).is_ok() {
             return Err(crate::host_secrets::Error::Unsafe);
         }
-        self.inner.list()
+        Ok(())
     }
 }
 fn owned_orphan_is_cleaned(suffix: &str) {
@@ -1559,6 +1568,48 @@ fn orphan_final_wal_is_cleaned_before_secrets() {
 #[test]
 fn orphan_final_shm_is_cleaned_before_secrets() {
     owned_orphan_is_cleaned("-shm");
+}
+#[test]
+fn retained_writer_custody_prevents_orphan_cleanup_and_any_secret_reset() {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        for writer in [
+            "writer-device".to_owned(),
+            format!("writer.{}", "a".repeat(64)),
+        ] {
+            let home = home();
+            let path = home.path().join(format!("{DB}{suffix}"));
+            fs::write(&path, b"retained orphan evidence").unwrap();
+            let inode = fs::metadata(&path).unwrap().ino();
+            let secrets = OrphanCheckedSecrets {
+                inner: Secrets::default(),
+                sidecar: path.clone(),
+            };
+            secrets
+                .inner
+                .put(
+                    &Name::parse(&writer).unwrap(),
+                    &Value::new(b"retained custody".to_vec()).unwrap(),
+                )
+                .unwrap();
+            secrets
+                .inner
+                .put(
+                    &Name::parse("registry").unwrap(),
+                    &Value::new(vec![0x31; 32]).unwrap(),
+                )
+                .unwrap();
+            let before = secrets.inner.0.lock().unwrap().clone();
+            assert!(matches!(
+                HostDb::create(home.path(), &secrets, &init(false)),
+                Err(Error::Unsafe)
+            ));
+            assert_eq!(*secrets.inner.0.lock().unwrap(), before);
+            assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+            assert_eq!(fs::read(&path).unwrap(), b"retained orphan evidence");
+            assert!(!home.path().join(DB).exists());
+            assert!(!home.path().join(TMP).exists());
+        }
+    }
 }
 #[test]
 fn unsafe_orphan_sidecars_refuse_create_before_secrets_and_stay_untouched() {
@@ -1670,6 +1721,14 @@ fn delete_mode_fixture(version: i64) -> (tempfile::TempDir, Secrets) {
         .pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))
         .unwrap();
     assert_eq!(mode, "delete");
+    if version == 1 || version == 2 {
+        raw.execute_batch("DROP TABLE selected_recovery_audit; DROP TABLE selected_recovery")
+            .unwrap();
+    }
+    if version == 1 {
+        raw.execute_batch("DROP TABLE selected_provisioning")
+            .unwrap();
+    }
     raw.pragma_update(None, "user_version", version).unwrap();
     raw.close().unwrap();
     assert!(!home.path().join("host-registry.db-journal").exists());
@@ -1688,8 +1747,100 @@ fn open_enters_wal_for_a_valid_delete_mode_registry() {
 }
 
 #[test]
+fn provisioning_migration_retains_legacy_accounts_links_journal_and_unknown_text() {
+    let (home, secrets) = delete_mode_fixture(1);
+    let key = secrets
+        .load(&Name::parse("registry").unwrap())
+        .unwrap()
+        .unwrap();
+    let raw = connect(&home.path().canonicalize().unwrap().join(DB), &key).unwrap();
+    let account = init(false).bootstrap.account;
+    let operation = "01J00000000000000000000009";
+    raw.execute(
+        "INSERT INTO account_links VALUES (?1,'legacy-org','01J00000000000000000000008')",
+        [&account],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO org_owners VALUES ('legacy-org',?1,'01J00000000000000000000008')",
+        [&account],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO op_journal VALUES (?1,'office.restart',?2,?3,'completed',?4,9999999999999)",
+        (operation, [3u8; 32], &account, r#"{"kept":1e+000123}"#),
+    )
+    .unwrap();
+    raw.execute_batch("CREATE TABLE retained_extension (payload TEXT NOT NULL) STRICT")
+        .unwrap();
+    let extension = r#"{"unknown":123456789012345678901234567890.0000e+0042}"#;
+    raw.execute("INSERT INTO retained_extension VALUES (?1)", [extension])
+        .unwrap();
+    let before: (String,String) = raw.query_row("SELECT password_phc,(SELECT value FROM meta WHERE key='bootstrap') FROM accounts WHERE account_id=?1",[&account],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    raw.close().unwrap();
+    let db = HostDb::open(home.path(), &secrets).unwrap();
+    {
+        let c = db.connection.lock().unwrap();
+        assert_eq!(
+            c.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+                .unwrap(),
+            3
+        );
+        let after:(String,String)=c.query_row("SELECT password_phc,(SELECT value FROM meta WHERE key='bootstrap') FROM accounts WHERE account_id=?1",[&account],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(
+            c.query_row("SELECT payload FROM retained_extension", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            extension
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT result FROM op_journal WHERE operation_id=?1",
+                [operation],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            r#"{"kept":1e+000123}"#
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM account_links JOIN org_owners USING(org_id)",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+    drop(db);
+    let db = HostDb::open(home.path(), &secrets).unwrap();
+    assert!(db.provisioning_offices().unwrap().is_empty());
+}
+
+#[test]
+fn malformed_version_one_schema_is_refused_before_migration_publication() {
+    let (home, secrets) = delete_mode_fixture(1);
+    let key = secrets
+        .load(&Name::parse("registry").unwrap())
+        .unwrap()
+        .unwrap();
+    let raw = connect(&home.path().canonicalize().unwrap().join(DB), &key).unwrap();
+    raw.execute_batch("DROP INDEX op_verifiers_account")
+        .unwrap();
+    raw.close().unwrap();
+    let before = fs::read(home.path().join(DB)).unwrap();
+    assert!(matches!(
+        HostDb::open(home.path(), &secrets),
+        Err(Error::Unsafe)
+    ));
+    assert_eq!(fs::read(home.path().join(DB)).unwrap(), before);
+    assert!(!home.path().join("host-registry.db-wal").exists());
+}
+
+#[test]
 fn incompatible_delete_mode_versions_refuse_without_changing_bytes() {
-    for version in [0, 2, -1] {
+    for version in [0, 4, -1] {
         let (home, secrets) = delete_mode_fixture(version);
         let before = fs::read(home.path().join(DB)).unwrap();
         assert!(

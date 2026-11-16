@@ -9,6 +9,7 @@ use std::ops::RangeInclusive;
 
 use org_proto::Position;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 use crate::OfficeError;
 
@@ -70,21 +71,21 @@ pub(crate) fn stored_incarnation(db: &Connection) -> Result<Option<String>, Offi
 }
 
 /// Shared by messages and work; a restore tool rotates only the incarnation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LocalOrigin {
     pub(crate) office_id: String,
     pub(crate) incarnation: String,
 }
 
 /// The committed version, enriched with the stored item's ownership generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OriginRef {
     pub(crate) target_id: String,
     pub(crate) generation: u64,
     pub(crate) version: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OriginEntry {
     pub(crate) origin: LocalOrigin,
     pub(crate) seq: u64,
@@ -166,7 +167,9 @@ pub(crate) fn entries_after(
         .map_err(OfficeError::storage)?;
     for entry in &entries {
         validate_origin(&entry.origin)?;
-        validate_ref(&entry.target)?;
+        if validate_ref(&entry.target).is_err() {
+            validate_selected_ref(db, &entry.target)?;
+        }
     }
     Ok(entries)
 }
@@ -180,6 +183,46 @@ pub(crate) fn append(
     refs: &[OriginRef],
     feed_seq: u64,
     at_ms: u64,
+) -> Result<RangeInclusive<u64>, OfficeError> {
+    append_validated(db, position, refs, feed_seq, at_ms, |item| {
+        validate_ref(item)
+    })
+}
+
+/// Selected admission uses the same allocator. Its additive identity validator
+/// requires the protected adoption registry and exact retained selected event.
+pub(crate) fn append_selected(
+    db: &Connection,
+    position: Position,
+    refs: &[OriginRef],
+    feed_seq: u64,
+    at_ms: u64,
+) -> Result<RangeInclusive<u64>, OfficeError> {
+    append_validated(db, position, refs, feed_seq, at_ms, |item| {
+        validate_selected_ref(db, item)
+    })
+}
+
+fn validate_selected_ref(db: &Connection, item: &OriginRef) -> Result<(), OfficeError> {
+    if item.target_id.is_empty() || item.generation == 0 || item.version == 0 {
+        return Err(OfficeError::Invalid("invalid selected origin reference"));
+    }
+    let exists:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM selected_adoptions a JOIN selected_events e USING(organization_id,task_id) WHERE a.task_id=?1 AND a.origin_generation=?2 AND e.revision=?3)",params![item.target_id,integer(item.generation)?,integer(item.version)?],|r|r.get(0)).map_err(OfficeError::storage)?;
+    if !exists {
+        return Err(OfficeError::Invalid(
+            "selected origin has no admitted source event",
+        ));
+    }
+    Ok(())
+}
+
+fn append_validated(
+    db: &Connection,
+    position: Position,
+    refs: &[OriginRef],
+    feed_seq: u64,
+    at_ms: u64,
+    validate: impl Fn(&OriginRef) -> Result<(), OfficeError>,
 ) -> Result<RangeInclusive<u64>, OfficeError> {
     if db.is_autocommit() {
         return Err(OfficeError::Invalid(
@@ -196,7 +239,7 @@ pub(crate) fn append(
     }
     let mut seen = BTreeMap::new();
     for item in refs {
-        validate_ref(item)?;
+        validate(item)?;
         if seen
             .insert(&item.target_id, item.version)
             .is_some_and(|previous| item.version <= previous)
@@ -248,7 +291,7 @@ fn integer(value: u64) -> Result<i64, OfficeError> {
 }
 
 fn validate_origin(origin: &LocalOrigin) -> Result<(), OfficeError> {
-    if !crate::office_file::is_plain_id(&origin.office_id)
+    if !crate::office_file::is_storage_id(&origin.office_id)
         || crate::ulid::time_ms(&origin.incarnation).is_none()
     {
         return Err(OfficeError::Invalid("invalid work origin identity"));

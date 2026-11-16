@@ -922,6 +922,23 @@ page:
 
 ### 4a.6 Recovery code
 
+Selected implementation profile: [ADR-0011](../adr/0011-protected-recovery-delivery.md)
+REC-DEL-1 governs the native macOS flow below. Its system reason is fixed and
+sanitized and names both showing the code and recording it as stored; it does
+not interpolate organization names. Actual local console/audit-session and
+foreground TTY checks precede credentials and are repeated after authentication.
+The SDK device-owner policy may use the methods supported by macOS. Each new
+invocation authenticates afresh; same-run acknowledgement uses private
+connection-bound permission, not a second dialog. Linux secret delivery remains
+unavailable until its own reviewed presence policy, superseding the prospective
+Linux examples below for this selected implementation.
+
+The CLI asks for an explicit new package file, refuses overwrite, and requires
+the final code group plus typed `yes` for **both** package and code retained off
+HQ. An interrupted acknowledgement may report deletion pending; no later command
+can redisplay the code while that durable deletion is being reconciled. Status
+reports persisted delivery facts only and always retains the REC-1 limitation.
+
 The recovery code, with the organization's encrypted recovery package, will let
 the owner recover the organization's certificate authority if the HQ machine is
 lost. Under O-2 the host generates the code, the worker creates the authority and

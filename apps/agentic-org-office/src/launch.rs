@@ -14,8 +14,10 @@ pub(super) struct Create {
     pub auth: LaunchAuth,
     pub instance: Option<String>,
     pub owner_member_id: Option<String>,
-    // Retains the recovery code through create and the blocking serve call.
+    // Legacy v3 retains its old wrapper behavior; explicit creation-v1 drops it
+    // after preparation, before serving.
     pub _recovery: CreationRecovery,
+    pub hq_creation: Option<org_office_launch::v3::HqCreationV1>,
 }
 
 pub(super) enum CreationRecovery {
@@ -59,6 +61,7 @@ impl Launch {
                 instance: None,
                 owner_member_id: None,
                 _recovery: CreationRecovery::Legacy,
+                hq_creation: None,
             }),
             Request::V2(HostMessage::Start(s)) => Self::Start {
                 key: Key::from_db_key(s.db_key),
@@ -91,6 +94,7 @@ impl Launch {
                 auth: LaunchAuth::Grants { _key: grant_key },
                 instance: Some(c.office.instance_id),
                 owner_member_id: Some(c.owner_member_id),
+                hq_creation: c.hq_creation,
                 _recovery: CreationRecovery::V3 {
                     _code: recovery_code,
                 },

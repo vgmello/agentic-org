@@ -60,6 +60,9 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
             .iter()
             .filter(|path| {
                 path.extension().is_some_and(|ext| ext == "rs")
+                    || path
+                        .strip_prefix(&root)
+                        .is_ok_and(|p| p == Path::new(super::opener_build::NATIVE))
                     || opener_policy_config(path)
                     || POLICY_NAMES.iter().any(|name| path.ends_with(name))
             })
@@ -68,6 +71,11 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
                     path.clone(),
                     if path.extension().is_some_and(|ext| ext == "rs") {
                         SourceKind::Rust
+                    } else if path
+                        .strip_prefix(&root)
+                        .is_ok_and(|p| p == Path::new(super::opener_build::NATIVE))
+                    {
+                        SourceKind::Native
                     } else {
                         SourceKind::Config
                     },
@@ -81,7 +89,9 @@ pub(super) fn tracked(root: &Path) -> SourceScope {
         scope.require(path);
         if opener_policy_config(path) {
             check_opener_config(path, &std::fs::read_to_string(path).unwrap());
-        } else if path.extension().is_none_or(|ext| ext != "rs") {
+        } else if scope.files[path] == SourceKind::Config
+            && path.extension().is_none_or(|ext| ext != "rs")
+        {
             check_clippy_config(path, &std::fs::read_to_string(path).unwrap());
         }
     }

@@ -310,6 +310,11 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
         .cloned()
         .collect();
     for method in &candidates {
+        // The raw routes deliberately bypass Request/Value-based dispatch.
+        // Probe the production classifier rather than adding a test allowlist.
+        if selected::Route::from_method(method).is_some() {
+            dispatch.methods.insert(method.clone());
+        }
         let request = signed(&shared, method, Value::Null);
         // Exercise the real registries. A new OrgCommand or WorkCall is discovered even if
         // no direct request.is::<Call>() appears in agentic-org-office.
@@ -416,6 +421,7 @@ fn expected_policy(method: &str, served: bool) -> HostPolicy {
         {
             HostPolicy::Refuse
         }
+        _ if selected::Route::from_method(method).is_some() => HostPolicy::RawSelected,
         _ if served => HostPolicy::Serve,
         _ if [
             "work.",
@@ -479,7 +485,10 @@ fn each_unserved_row_has_exact_error_after_authority_and_each_refused_row_is_fix
     let shared = shared();
     let ctx = context();
     for row in operations() {
-        if !matches!(row.policy, HostPolicy::Unserved | HostPolicy::Refuse) {
+        if !matches!(
+            row.policy,
+            HostPolicy::Unserved | HostPolicy::Refuse | HostPolicy::RawSelected
+        ) {
             continue;
         }
         let mut request = signed(&shared, &row.method, json!({}));

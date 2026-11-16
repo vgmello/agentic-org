@@ -24,6 +24,10 @@ fn host_fixture() -> tempfile::TempDir {
         ("Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'"),
         ("src/lib.rs", "pub struct Allowed;"),
         (HOST, HOST_SOURCE),
+        (
+            super::opener_build::NATIVE,
+            include_str!("../../../../../crates/org-host/src/recovery/presence.m"),
+        ),
         ("build.rs", HOST_SOURCE),
         ("other.rs", HOST_SOURCE),
         ("scripts/helper.rs", HOST_SOURCE),
@@ -251,6 +255,10 @@ fn sqlcipher_build_inventory_cargo_discovers_custom_default_and_disabled_scripts
                 },
             ),
             (PIN, "// Protected pin fixture."),
+            (
+                super::opener_build::NATIVE,
+                include_str!("../../../../../crates/org-host/src/recovery/presence.m"),
+            ),
         ]);
         let lock = std::fs::read(dir.path().join("Cargo.lock")).unwrap();
         if admitted {
@@ -399,5 +407,103 @@ fn sqlcipher_build_inventory_cargo_refuses_workspace_proc_macros() {
         let message = error(|| super::check_source_inventory(dir.path()));
         assert!(message.contains("macro-helper") && (message.contains("proc-macro") || message.contains("build dependency")), "{declaration}: {message}");
         assert_eq!(std::fs::read(dir.path().join("Cargo.lock")).unwrap(), lock);
+    }
+}
+
+#[test]
+fn sqlcipher_build_helpers_bind_exact_owner_manifest_name_and_complete_tuple() {
+    let dir = fixture(&[
+        ("Cargo.toml", "[workspace]"),
+        ("src/lib.rs", "pub struct Entry;"),
+        (
+            "crates/org-host/Cargo.toml",
+            "[package]\nname='org-host'\nversion='0.0.0'",
+        ),
+        (
+            "apps/agentic-org-web/Cargo.toml",
+            "[package]\nname='agentic-org-web'\nversion='0.0.0'",
+        ),
+        (
+            "crates/org-release/Cargo.toml",
+            "[package]\nname='org-release'\nversion='0.0.0'",
+        ),
+    ]);
+    let scope = tracked(dir.path());
+    let release = json!({"name":"org-release","source":null,"req":"*","kind":"build","rename":null,"optional":false,
+        "uses_default_features":true,"features":[],"target":null,"registry":null,"path":scope.root.join("crates/org-release")});
+    let cc = json!({"name":"cc","source":"registry+https://github.com/rust-lang/crates.io-index","req":"=1.11.1","kind":"build",
+        "rename":null,"optional":false,"uses_default_features":true,"features":[],"target":null,"registry":null});
+    let host = scope.root.join("crates/org-host/Cargo.toml");
+    let web = scope.root.join("apps/agentic-org-web/Cargo.toml");
+    let check = |name, manifest: &std::path::Path, d: &Value| {
+        super::opener_build::dependency(&scope, "untrusted metadata id", Some(name), manifest, d)
+    };
+    check("org-host", &host, &release);
+    check("agentic-org-web", &web, &release);
+    check("org-host", &host, &cc);
+    error(|| check("agentic-org-web", &web, &cc));
+    error(|| check("spoofed", &host, &cc));
+    error(|| check("org-host", &web, &cc));
+    for (field, bad) in [
+        ("name", json!("helper")),
+        ("source", json!("git+https://example.test/cc")),
+        ("req", json!("^1.11.1")),
+        ("path", json!(scope.root.join("outside"))),
+        ("rename", json!("other")),
+        ("features", json!(["parallel"])),
+        ("optional", json!(true)),
+        ("uses_default_features", json!(false)),
+        ("target", json!("cfg(unix)")),
+        ("registry", json!("other")),
+    ] {
+        let mut bad_cc = cc.clone();
+        bad_cc[field] = bad;
+        error(|| check("org-host", &host, &bad_cc));
+    }
+    for (field, bad) in [
+        ("path", json!(scope.root.join("../org-release"))),
+        (
+            "source",
+            json!("registry+https://github.com/rust-lang/crates.io-index"),
+        ),
+        ("req", json!("=0.0.0")),
+        ("features", json!(["new-feature"])),
+    ] {
+        let mut bad_release = release.clone();
+        bad_release[field] = bad;
+        error(|| check("org-host", &host, &bad_release));
+    }
+}
+#[test]
+fn sqlcipher_native_bridge_requires_exact_bytes_fixed_kind_confined_tracked_regular_source() {
+    use super::opener_build::{native, NATIVE};
+    let dir = host_fixture();
+    let scope = tracked(dir.path());
+    let path = scope.root.join(NATIVE);
+    native(&scope, &path);
+    let original = std::fs::read(&path).unwrap();
+    std::fs::write(&path, [original.as_slice(), b"\n// changed bytes"].concat()).unwrap();
+    error(|| native(&scope, &path));
+    std::fs::write(&path, &original).unwrap();
+    let mut untracked = tracked(dir.path());
+    untracked.files.remove(&path);
+    error(|| native(&untracked, &path));
+    let mut wrong = tracked(dir.path());
+    wrong
+        .files
+        .insert(path.clone(), super::opener_scope::SourceKind::Rust);
+    error(|| native(&wrong, &path));
+    error(|| native(&scope, &scope.root.join("../presence.m")));
+    error(|| {
+        scope.require_rust(&path);
+    });
+    std::fs::remove_file(&path).unwrap();
+    error(|| native(&scope, &path));
+    #[cfg(unix)]
+    {
+        let other = scope.root.join("other-native.txt");
+        std::fs::write(&other, &original).unwrap();
+        std::os::unix::fs::symlink(&other, &path).unwrap();
+        error(|| native(&scope, &path));
     }
 }

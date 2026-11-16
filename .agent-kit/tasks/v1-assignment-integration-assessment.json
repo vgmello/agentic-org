@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "v1-assignment-integration",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": false,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": false,
+    "ambiguity_resolved": false
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "TA-01 is a pure domain prerequisite only; existing task.assign and WorkEvent have distinct legacy semantics."
+    ],
+    "precise_scope": [
+      "v1-assignment-integration-contract.md binds selected docs12/05/16 and demands actual UI/API/durable acceptance."
+    ],
+    "localized_change": [
+      "Crosses org-work, org-office storage/dispatch, org-proto/client/gateway and UI; selected task/history foundations may require new interfaces."
+    ],
+    "deterministic_checks": [
+      "Existing domain tests, workspace Rust and UI checks plus temporary persistence/recovery/authorization fixtures and browser verification can exercise behavior."
+    ],
+    "low_risk": [
+      "Durability, authorization, idempotency, versioned transport/history and migration are material risks; critical catalog rules apply."
+    ],
+    "no_prior_failure": [
+      "Actual integration repaired confirmed host-policy/peer-owner/route-inventory/satellite-startup failures and browser privacy/containment regressions. Mandatory staged structural gate rejected first WIP attempt; private decomposition completed without weakening it. Current checkpoint5 full workspace3184/0fail/11ignored, fmt/Clippy/kit5, native8 and complete Chromium12PASS; all95 immutable runtime hashes verified and disposable fixture/copies/control cleaned after protected exit0. Prior failures and pre-refactor checkpoints retained."
+    ],
+    "ambiguity_resolved": [
+      "ADR0006r5/0007-0011 select current implementation boundaries. Existing-HQ first protected owner registration remains a missing planned prerequisite, independently ARCHITECTURE INCOMPLETE; no new takeover policy/interface approved. Authentic production inputs/platform/physical evidence remain missing. This WIP source checkpoint permits independent code inspection, not implementation acceptance."
+    ]
+  }
+}

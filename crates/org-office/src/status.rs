@@ -304,10 +304,13 @@ mod tests {
             store
                 .write(|db| {
                     db.execute_batch(
-                        "DROP TABLE work_change_results; DROP TABLE work_number_counters; DROP TABLE work_clock;
+                        "DROP TABLE selected_adoptions; DROP TABLE selected_events; DROP TABLE selected_tasks;
+                         DROP TABLE selected_directory_head; DROP TABLE selected_directory;
+                         DROP TABLE selected_receipts; DROP TABLE selected_artifacts; DROP TABLE selected_journal_cursor; DROP TABLE selected_owner_authority;
+                         DROP TABLE work_change_results; DROP TABLE work_number_counters; DROP TABLE work_clock;
                          DROP TABLE work_events; DROP TABLE work_ids; DROP TABLE work_items;
                          DROP TABLE work_origin_log; DROP TABLE work_origin_counter;
-                         DROP TABLE work_feed; DROP TABLE member_status; DROP TABLE owned_processes;
+                         DROP TABLE work_feed; DROP TABLE member_status; DROP TABLE owned_processes; DROP TABLE local_hq_creation;
                          PRAGMA user_version = 2;",
                     )
                     .map_err(crate::error::OfficeError::storage)?;

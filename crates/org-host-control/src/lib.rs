@@ -44,6 +44,11 @@
 //! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the
 //! event payloads, and the host-only results and refusals (`needs_local_session`).
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`, defined once there.
+//! Selected REC-DEL-1 recovery operations are native-only: live instance
+//! administrator, authenticated signed peer and verified local-console/TTY
+//! context. Release additionally requires fresh SDK device-owner authentication.
+//! ACK permission is private to that same live connection/invocation and is never
+//! serialized. Status/package are public data; neither grants ACK authority.
 //! This crate doesn't re-export it, so that its only dependencies stay `org-proto`, serde,
 //! `serde_json` and `sha2` (X-02 §5.2, §11; `sha2` for the pair fingerprint of `tls.set` and
 //! `bootstrap`, [`ops::TlsPairFingerprint`]): the gateway imports it from `org-office-launch`.
@@ -57,6 +62,8 @@ pub mod journal;
 pub mod listen;
 pub mod ops;
 pub mod pem;
+pub mod provision;
+pub mod recovery;
 mod secret;
 mod status;
 pub use status::{

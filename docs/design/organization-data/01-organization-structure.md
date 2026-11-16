@@ -131,6 +131,7 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── provider-connections/<connection-id>.yaml
 ├── model-profiles/<profile-id>.yaml
 ├── offices/<office-id>.yaml
+├── security/ca-escrow.v1.bin        # Public encrypted CA package, ADR-0007
 ├── roles/<role-id>.md
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
@@ -154,6 +155,23 @@ An employee has exactly one home team. Each team may have direct people, direct 
 [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns the connection/profile definitions in this same organization repository. Shared definitions contain references and policy, while office-local auth bindings/credentials stay outside Git.
 
 An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
+
+`security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
+package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). The usable CA key is
+an HQ-local SQLCipher record, excluded from copied organization projections and
+all selected journals/history. The delivery code stays in protected host custody
+until acknowledged; neither secret is organization Git content. The public
+package alone supplies no account, epoch or writer authority.
+
+The protected creation context supplies an explicit absolute canonical state
+root, separate from the private office directory. Creation freezes that location
+with its original operation. Before create completion, the worker publishes the
+exact committed package at that root's `security/ca-escrow.v1.bin`, using immutable
+publication and the required file/parent flushes. A missing copy is repairable
+from committed bytes on reopen; a different copy is retained and refused, never
+overwritten. The binary envelope is the versioned copied record; the existing
+legacy native organization snapshot codec does not acquire secret or escrow
+fields implicitly. Selected Git/adoption copies retain this public file verbatim.
 
 ## Repository types
 

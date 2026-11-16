@@ -143,6 +143,8 @@ pub const LAUNCH_VERSION: u32 = 2;
 /// The version of `office.json`, separate from the pipe lines' [`LAUNCH_VERSION`]. Bumped only
 /// for a breaking change to the file.
 pub const OFFICE_FILE_VERSION: u32 = 1;
+/// Additive selected carrier, with UUIDv7 entity IDs; legacy v1 is unchanged.
+pub const SELECTED_OFFICE_FILE_VERSION: u32 = 2;
 
 /// The command-line flag that creates a new office from the create message on stdin.
 pub const CREATE_FLAG: &str = "--create";
@@ -161,7 +163,7 @@ pub const REFUSED_DIR_NAME: &str = ".refused";
 /// `<home>/offices/.refused/<office_id>`, or `None` if the id isn't plain. A name already taken
 /// there is the host's to resolve (e.g. a suffix); the base path is this.
 pub fn refused_dir(office_home: &Path, office_id: &str) -> Option<PathBuf> {
-    is_plain_id(office_id).then(|| {
+    is_storage_id(office_id).then(|| {
         office_home
             .join(OFFICES_DIR_NAME)
             .join(REFUSED_DIR_NAME)
@@ -184,7 +186,7 @@ pub const MAX_OFFICE_FILE_BYTES: usize = 64 * 1024;
 /// [`org_proto::location::office_socket_path`]. Ids arrive through pipes and files, so this
 /// never lets one point outside `offices/`.
 pub fn office_dir(office_home: &Path, office_id: &str) -> Option<PathBuf> {
-    is_plain_id(office_id).then(|| office_home.join(OFFICES_DIR_NAME).join(office_id))
+    is_storage_id(office_id).then(|| office_home.join(OFFICES_DIR_NAME).join(office_id))
 }
 
 /// The longest plain id, the same cap as [`org_proto::location`].
@@ -193,6 +195,17 @@ pub const MAX_ID_CHARS: usize = 64;
 /// Whether `id` is a plain id: 1 to [`MAX_ID_CHARS`] ASCII letters and digits.
 pub fn is_plain_id(id: &str) -> bool {
     (1..=MAX_ID_CHARS).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Canonical lowercase UUIDv7 text. This validates syntax/version/variant, not
+/// existence or authority. It never reformats an incoming identity.
+pub fn is_selected_entity_id(id: &str) -> bool {
+    org_proto::selected_tasks::is_uuid_v7(id)
+}
+/// Path-safe runtime storage names only. Protocol callers must select their
+/// versioned identity validator separately.
+pub fn is_storage_id(id: &str) -> bool {
+    is_plain_id(id) || is_selected_entity_id(id)
 }
 
 /// Whether `text` is an RFC 3339 UTC timestamp with milliseconds, `YYYY-MM-DDTHH:MM:SS.mmmZ`,
@@ -238,6 +251,7 @@ fn is_timestamp(text: &str) -> bool {
 /// written ([`LaunchError::Invalid`]): every office this build writes has a role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OfficeFile {
+    version: u32,
     pub office_id: String,
     pub office_name: String,
     pub role: OfficeRole,
@@ -271,6 +285,7 @@ impl OfficeFile {
         created_at: impl Into<String>,
     ) -> Self {
         OfficeFile {
+            version: OFFICE_FILE_VERSION,
             office_id: office_id.into(),
             office_name: office_name.into(),
             role,
@@ -280,6 +295,24 @@ impl OfficeFile {
             extra: serde_json::Map::new(),
             unknown_role: None,
         }
+    }
+
+    /// Construct a new selected marker without changing legacy constructor rules.
+    pub fn selected(
+        office_id: impl Into<String>,
+        office_name: impl Into<String>,
+        role: OfficeRole,
+        org_id: impl Into<String>,
+        org_name: impl Into<String>,
+        created_at: impl Into<String>,
+    ) -> Result<Self, LaunchError> {
+        let mut file = Self::new(office_id, office_name, role, org_id, org_name, created_at);
+        file.version = SELECTED_OFFICE_FILE_VERSION;
+        file.check_writable()?;
+        Ok(file)
+    }
+    pub fn version(&self) -> u32 {
+        self.version
     }
 
     /// Decode `office.json`. Unknown fields are kept; another `v` is
@@ -353,7 +386,14 @@ impl OfficeFile {
     }
 
     fn check_ids(&self) -> Result<(), LaunchError> {
-        if is_plain_id(&self.office_id) && is_plain_id(&self.org_id) {
+        let valid = match self.version {
+            OFFICE_FILE_VERSION => is_plain_id(&self.office_id) && is_plain_id(&self.org_id),
+            SELECTED_OFFICE_FILE_VERSION => {
+                is_selected_entity_id(&self.office_id) && is_selected_entity_id(&self.org_id)
+            }
+            _ => false,
+        };
+        if valid {
             Ok(())
         } else {
             Err(LaunchError::Invalid(
@@ -410,6 +450,7 @@ impl TryFrom<RawOfficeFile> for OfficeFile {
             .and_then(|value| OfficeRole::deserialize(value).ok())
             .unwrap_or(OfficeRole::Unknown);
         let file = OfficeFile {
+            version: raw.v,
             office_id: raw.office_id,
             office_name: raw.office_name,
             role,
@@ -437,7 +478,7 @@ impl Serialize for OfficeFile {
             (known, _) => Some(serde_json::to_value(known).map_err(serde::ser::Error::custom)?),
         };
         RawOfficeFileRef {
-            v: OFFICE_FILE_VERSION,
+            v: self.version,
             office_id: &self.office_id,
             office_name: &self.office_name,
             role,
@@ -694,7 +735,7 @@ impl std::fmt::Display for LaunchError {
             LaunchError::UnsupportedOfficeFileVersion(v) => write!(
                 f,
                 "office.json version {v} isn't supported (this build reads \
-                 {OFFICE_FILE_VERSION})"
+                 {OFFICE_FILE_VERSION} or {SELECTED_OFFICE_FILE_VERSION})"
             ),
             LaunchError::Json(e) => write!(f, "launch message: {e}"),
             LaunchError::Invalid(why) => f.write_str(why),
@@ -983,7 +1024,7 @@ fn check_version(v: u32, supported: &'static [u32]) -> Result<(), LaunchError> {
 }
 
 fn check_office_file_version(v: u32) -> Result<(), LaunchError> {
-    if v == OFFICE_FILE_VERSION {
+    if matches!(v, OFFICE_FILE_VERSION | SELECTED_OFFICE_FILE_VERSION) {
         Ok(())
     } else {
         Err(LaunchError::UnsupportedOfficeFileVersion(v))
@@ -1014,7 +1055,9 @@ fn write_versioned<T: Serialize>(w: &mut impl Write, body: &T) -> Result<(), Lau
     frame::write_message(w, &line).map_err(LaunchError::Frame)
 }
 
+pub mod recovery;
 pub mod v3;
+pub mod writer;
 
 #[cfg(test)]
 mod tests;

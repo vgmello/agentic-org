@@ -1,0 +1,106 @@
+{
+  "capability": "selected_tasks_v1",
+  "status": "codec only; no runtime availability implied",
+  "valid": [
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+      "revision": "1",
+      "assigned_team_id": null,
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9007199254740993\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9007199254740993,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+      "revision": "9007199254740993",
+      "assigned_team_id": null,
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9223372036854775807\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9223372036854775807,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+      "revision": "9223372036854775807",
+      "assigned_team_id": null,
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}}",
+      "revision": "1",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9007199254740993\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9007199254740993,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}}",
+      "revision": "9007199254740993",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9223372036854775807\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9223372036854775807,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":null}}}",
+      "revision": "9223372036854775807",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": null
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "1",
+      "assigned_team_id": null,
+      "assignee_id": "employee-opaque"
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9007199254740993\",\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9007199254740993,\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "9007199254740993",
+      "assigned_team_id": null,
+      "assignee_id": "employee-opaque"
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9223372036854775807\",\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9223372036854775807,\"assigned_team_id\":null,\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "9223372036854775807",
+      "assigned_team_id": null,
+      "assignee_id": "employee-opaque"
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "1",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": "employee-opaque"
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9007199254740993\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9007199254740993,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "9007199254740993",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": "employee-opaque"
+    },
+    {
+      "http": "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9223372036854775807\",\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}",
+      "native": "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":9223372036854775807,\"assigned_team_id\":\"team-opaque\",\"assignee_id\":\"employee-opaque\"}}}",
+      "revision": "9223372036854775807",
+      "assigned_team_id": "team-opaque",
+      "assignee_id": "employee-opaque"
+    }
+  ],
+  "invalid_http": [
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"other\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assigned_team_\\u0069d\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"01\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"9223372036854775808\",\"assigned_team_id\":null,\"assignee_id\":null}}",
+    "{\"operation_id\":\"01J00000000000000000000000\",\"scope\":{\"kind\":\"office\",\"kind\":\"office\",\"instance_id\":\"instance\",\"org_id\":\"organization-opaque\",\"office_id\":\"office\"},\"params\":{\"expected_revision\":\"1\",\"assigned_team_id\":null,\"assignee_id\":null}}"
+  ],
+  "invalid_native": [
+    "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{},\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+    "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{},\"command\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+    "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1e0,\"assigned_team_id\":null,\"assignee_id\":null}}}",
+    "{\"id\":1,\"method\":\"task.set_assignment\",\"params\":{\"change_id\":\"01J00000000000000000000000\",\"task_id\":\"task-opaque\",\"command\":{\"expected_revision\":1,\"assigned_team_id\":null,\"assignee_id\":null,\"assignee_id\":null}}}"
+  ]
+}

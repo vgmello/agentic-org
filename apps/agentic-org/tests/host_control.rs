@@ -178,7 +178,7 @@ fn a_registered_hello_and_strict_status_share_the_immutable_instance_id() {
     host.shutdown();
 }
 #[test]
-fn every_non_open_operation_is_refused_before_valid_or_invalid_params() {
+fn unserved_and_setup_only_operations_are_refused_before_params() {
     let home = TestHome::registered();
     let host = home.start(home.config()).unwrap();
     let mut client = Client::connect(host.socket_path());
@@ -192,7 +192,6 @@ fn every_non_open_operation_is_refused_before_valid_or_invalid_params() {
         "subscribe",
         "office.app_token",
         "office.restart",
-        "account.verify",
         "bootstrap",
         "exit",
         "future.method",
@@ -207,8 +206,63 @@ fn every_non_open_operation_is_refused_before_valid_or_invalid_params() {
             );
         }
     }
+    // A well-formed bootstrap still cannot initialize a normal service host:
+    // only the separate protected reverse-setup listener serves that operation.
+    let result =
+        client.call::<org_host_control::ops::Bootstrap>(&org_host_control::ops::BootstrapParams {
+            operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            hq_operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
+            login: "Fixture owner".into(),
+            password: org_host_control::Password::new("synthetic setup password".into()).unwrap(),
+            tls: None,
+        });
+    assert_eq!(result.unwrap_err().code, ErrorCode::NotAuthorized);
     assert!(home.office_folders().is_empty());
     assert!(home.key_ids().is_empty());
+    assert!(!home.fixture_base().join("i/host-registry.db").exists());
+    host.shutdown();
+}
+
+#[test]
+fn open_signin_and_session_routes_fail_closed_without_a_protected_account_registry() {
+    // registered() creates only an instance binding. It neither bootstraps an
+    // administrator nor seeds an account. Missing registry is Unavailable even
+    // for a valid sign-in; it never creates one or grants an anonymous session.
+    let home = TestHome::registered();
+    let host = home.start(home.config()).unwrap();
+    let mut client = Client::connect(host.socket_path());
+    client
+        .call::<org_host_control::Hello>(&Default::default())
+        .unwrap();
+    for method in [
+        "account.verify",
+        "session.inspect",
+        "session.renew",
+        "session.end",
+        "session.grant",
+        "office.open_channel",
+    ] {
+        for params in ["{}", r#"{"name":"Blocked"}"#, "[]"] {
+            let response = client.raw(&format!(
+                r#"{{"id":9,"method":"{method}","params":{params}}}"#
+            ));
+            assert!(
+                matches!(response.outcome,Outcome::Error(error) if error.code==ErrorCode::Unavailable),
+                "{method}"
+            );
+        }
+    }
+    let result = client.call::<org_host_control::ops::AccountVerify>(
+        &org_host_control::ops::AccountVerifyParams {
+            login: "No seeded account".into(),
+            password: org_host_control::Password::new("synthetic missing-account password".into())
+                .unwrap(),
+        },
+    );
+    assert_eq!(result.unwrap_err().code, ErrorCode::Unavailable);
+    assert!(home.office_folders().is_empty());
+    assert!(home.key_ids().is_empty());
+    assert!(!home.fixture_base().join("i/host-registry.db").exists());
     host.shutdown();
 }
 

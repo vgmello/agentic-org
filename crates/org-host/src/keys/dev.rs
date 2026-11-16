@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 
-use org_office_launch::is_plain_id;
+use org_office_launch::is_storage_id;
 use org_proto::{DbKey, DB_KEY_BYTES};
 
 use super::{KeyStore, KeyStoreError};
@@ -34,7 +34,7 @@ impl DevKeys {
 
     fn path(&self, office_id: &str) -> Result<PathBuf, KeyStoreError> {
         // Ids are plain (callers check), but this is a path: be sure.
-        if !is_plain_id(office_id) {
+        if !is_storage_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
         Ok(self.dir.join(format!("{office_id}.key")))
@@ -146,7 +146,7 @@ impl KeyStore for DevKeys {
         for entry in entries {
             let name = entry?.file_name();
             if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".key")) {
-                if is_plain_id(id) {
+                if is_storage_id(id) {
                     ids.push(id.to_owned());
                 }
             }

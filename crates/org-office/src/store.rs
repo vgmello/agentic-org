@@ -12,6 +12,8 @@
 //! connections (WAL lets them run beside the writer), so many concurrent callers never see
 //! `SQLITE_BUSY`.
 
+pub(crate) mod acceptance;
+pub(crate) mod hq_creation;
 pub(crate) mod messages;
 pub(crate) mod org;
 #[cfg_attr(
@@ -70,6 +72,20 @@ pub(crate) struct WriteJob {
     reply: Box<dyn FnOnce(Result<(), OfficeError>) + Send>,
 }
 
+/// FIFO barriers share the existing writer connection. A control job is never
+/// put in a batch or retried; work jobs use frozen acceptance once installed.
+enum WriterJob {
+    Batch(WriteJob),
+    Work(WriteJob),
+    Control(Box<dyn FnOnce(&mut WriterState) + Send>),
+}
+
+struct WriterState {
+    db: Connection,
+    acceptance: Option<acceptance::Journal>,
+    recovery_required: bool,
+}
+
 /// One go at a request, inside its savepoint.
 type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Send;
 
@@ -102,7 +118,7 @@ pub(crate) enum Opening {
 
 pub(crate) struct Store {
     /// `None` only while dropping.
-    jobs: Option<mpsc::Sender<WriteJob>>,
+    jobs: Option<mpsc::Sender<WriterJob>>,
     writer: Option<JoinHandle<()>>,
     readers: Mutex<Vec<Connection>>,
     db_path: PathBuf,
@@ -226,7 +242,7 @@ impl Store {
         }
         migrate_bound(&mut writer, schema, instance)?;
 
-        let (jobs, queue) = mpsc::channel::<WriteJob>();
+        let (jobs, queue) = mpsc::channel::<WriterJob>();
         let thread = std::thread::Builder::new()
             .name("org-office-writer".into())
             .spawn(move || writer_loop(writer, queue))
@@ -301,8 +317,35 @@ impl Store {
         self.jobs
             .as_ref()
             .ok_or_else(stopped)?
-            .send(job)
+            .send(WriterJob::Batch(job))
             .map_err(|_| stopped())
+    }
+
+    pub(crate) fn send_work_job(&self, job: WriteJob) -> Result<(), OfficeError> {
+        self.jobs
+            .as_ref()
+            .ok_or_else(|| failure("the storage writer stopped"))?
+            .send(WriterJob::Work(job))
+            .map_err(|_| failure("the storage writer stopped"))
+    }
+
+    fn control<R: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut WriterState) -> Result<R, OfficeError> + Send + 'static,
+    ) -> Result<R, OfficeError> {
+        let (reply, answer) = mpsc::sync_channel(1);
+        self.jobs
+            .as_ref()
+            .ok_or_else(|| failure("the storage writer stopped"))?
+            .send(WriterJob::Control(Box::new(move |state| {
+                let result = catch_unwind(AssertUnwindSafe(|| work(state)))
+                    .unwrap_or_else(|panic| Err(panicked(panic)));
+                let _ = reply.send(result);
+            })))
+            .map_err(|_| failure("the storage writer stopped"))?;
+        answer
+            .recv()
+            .map_err(|_| failure("the storage writer stopped"))?
     }
 
     /// Runs `work` on a reader connection: an idle one if there is one, else a new one.
@@ -421,16 +464,48 @@ impl Drop for Store {
 }
 
 /// The writer thread: takes whatever is queued, commits it together, repeats.
-fn writer_loop(mut db: Connection, queue: mpsc::Receiver<WriteJob>) {
-    while let Ok(first) = queue.recv() {
+fn writer_loop(db: Connection, queue: mpsc::Receiver<WriterJob>) {
+    let mut state = WriterState {
+        db,
+        acceptance: None,
+        recovery_required: false,
+    };
+    let mut deferred = None;
+    loop {
+        let Some(first) = deferred.take().or_else(|| queue.recv().ok()) else {
+            break;
+        };
+        let first = match first {
+            WriterJob::Control(run) => {
+                run(&mut state);
+                continue;
+            }
+            WriterJob::Work(job) | WriterJob::Batch(job) if state.recovery_required => {
+                (job.reply)(Err(OfficeError::Invalid(
+                    "work acceptance startup recovery required",
+                )));
+                continue;
+            }
+            WriterJob::Work(job) if state.acceptance.is_some() => {
+                let journal = state.acceptance.as_mut().expect("installed acceptance");
+                acceptance::run_job(&mut state.db, journal, job);
+                continue;
+            }
+            WriterJob::Batch(job) | WriterJob::Work(job) => job,
+        };
         let mut batch = vec![first];
         while batch.len() < MAX_BATCH {
             match queue.try_recv() {
-                Ok(job) => batch.push(job),
+                Ok(WriterJob::Batch(job)) => batch.push(job),
+                Ok(WriterJob::Work(job)) if state.acceptance.is_none() => batch.push(job),
+                Ok(barrier) => {
+                    deferred = Some(barrier);
+                    break;
+                }
                 Err(_) => break,
             }
         }
-        run_batch(&mut db, batch);
+        run_batch(&mut state.db, batch);
     }
 }
 

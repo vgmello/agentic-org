@@ -22,6 +22,7 @@ pub(crate) struct Channels {
     hello: org_proto::HelloResult,
     out: startup::EventWriter,
     revocations: Arc<Mutex<Revocations>>,
+    writer_installed: bool,
 }
 impl Channels {
     pub fn new(
@@ -40,10 +41,13 @@ impl Channels {
             hello,
             out,
             revocations,
+            writer_installed: false,
         }
     }
     pub fn open(&mut self, channel: Channel) -> io::Result<()> {
         let Channel {
+            writer,
+            recovery,
             kind,
             office_id,
             channel_id,
@@ -54,8 +58,49 @@ impl Channels {
         }
         let stream = org_socket::rights::connected_unix_stream(fd)?;
         stream.set_nonblocking(false)?;
+        if writer && recovery {
+            return Err(invalid());
+        }
+        if writer {
+            if self.writer_installed {
+                return Err(invalid());
+            }
+            let office = self.shared.selected.as_ref().ok_or_else(invalid)?;
+            super::writer::install(
+                stream,
+                office,
+                self.hello.instance_id.as_deref().ok_or_else(invalid)?,
+                &office_id,
+            )?;
+            self.writer_installed = true;
+            return startup::write_event(
+                &self.out,
+                &RendezvousEvent::FdsReceived { of: channel_id },
+            )
+            .map_err(|_| invalid());
+        }
         let registered = register(&self.registry, &channel_id, kind, &stream)?;
         let (shared, stopping) = (Arc::clone(&self.shared), Arc::clone(&self.stop));
+        if recovery {
+            let instance = self.hello.instance_id.clone().ok_or_else(invalid)?;
+            let thread = Builder::new()
+                .name("org-recovery-public".into())
+                .spawn(move || {
+                    let _registered = registered;
+                    if !stopping.load(Ordering::SeqCst) {
+                        if let Some(office) = &shared.selected {
+                            let _ = super::recovery::serve(stream, office, &instance, &office_id);
+                        }
+                    }
+                })?;
+            self.threads.retain(|thread| !thread.is_finished());
+            self.threads.push(thread);
+            return startup::write_event(
+                &self.out,
+                &RendezvousEvent::FdsReceived { of: channel_id },
+            )
+            .map_err(|_| invalid());
+        }
         let context = serve::Context::HostChannel(Box::new(serve::HostChannel {
             _channel_id: channel_id.clone(),
             _kind: kind,

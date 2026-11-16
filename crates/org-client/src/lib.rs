@@ -37,6 +37,7 @@
 pub mod agent;
 mod error;
 mod helper;
+pub mod selected;
 
 use helper::Helper;
 use std::collections::HashMap;
@@ -113,6 +114,8 @@ const QUEUED: u8 = 0;
 const WRITING: u8 = 1;
 const WRITTEN: u8 = 2;
 const ABANDONED: u8 = 3;
+
+type PendingAnswer = mpsc::Receiver<Result<Response, ClientError>>;
 
 type Pending = HashMap<u64, SyncSender<Result<Response, ClientError>>>;
 
@@ -307,6 +310,132 @@ fn check_not_redirected(run: &Path, socket: &Path) -> Result<(), ClientError> {
     }
 }
 
+/// Encode a complete bounded frame before registering or sending it.
+fn request_line<C: Call>(
+    id: u64,
+    params: &C::Params,
+    principal: Option<&org_proto::Principal>,
+) -> Result<Vec<u8>, ClientError> {
+    let mut request =
+        Request::new::<C>(id, params).map_err(|e| ClientError::Protocol(e.to_string()))?;
+    if let Some(principal) = principal {
+        request = request
+            .with_principal(principal)
+            .map_err(|_| ClientError::Protocol("invalid selected principal".into()))?;
+    }
+    let mut line =
+        serde_json::to_vec(&request).map_err(|e| ClientError::Protocol(e.to_string()))?;
+    if line.len() > MAX_FRAME_BYTES {
+        // Nothing is sent, so the connection stays in step.
+        return Err(ClientError::RequestTooLarge);
+    }
+    line.push(b'\n');
+    Ok(line)
+}
+
+/// Register the response before exposing the frame to the bounded writer queue.
+fn send_request(
+    shared: &Shared,
+    outbound: Option<&SyncSender<Outgoing>>,
+    id: u64,
+    line: Vec<u8>,
+    deadline: Instant,
+    sent: &mut bool,
+) -> Result<(Arc<AtomicU8>, PendingAnswer), ClientError> {
+    let size = line.len();
+
+    // Register before sending, so the answer can't beat the registration.
+    let (answer_to, answer) = mpsc::sync_channel(1);
+    lock(&shared.pending).insert(id, answer_to);
+    // Registered first, then checked: either the reader's cleanup sees this call or this
+    // check sees `closed`, so a call on a dead connection never waits out its timeout.
+    if shared.closed.load(Ordering::SeqCst) {
+        lock(&shared.pending).remove(&id);
+        return Err(ClientError::Disconnected);
+    }
+
+    let state = Arc::new(AtomicU8::new(QUEUED));
+    // Wait for room, but only until this call's deadline: a burst of large requests is no
+    // reason to give the connection up. A genuinely stuck write is dealt with by the call
+    // that is waiting on it (see `settle`), and the connection closes then.
+    let mut waiting = Some(Outgoing {
+        line,
+        deadline,
+        state: Arc::clone(&state),
+    });
+    loop {
+        let message = waiting
+            .take()
+            .expect("the message is put back before looping");
+        let outbound = match (outbound, shared.closed.load(Ordering::SeqCst)) {
+            (Some(outbound), false) => outbound,
+            _ => {
+                lock(&shared.pending).remove(&id);
+                return Err(ClientError::Disconnected);
+            }
+        };
+        // Reserve room in the byte budget, never going over it (not even for a moment).
+        let reserved = shared
+            .queued_bytes
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
+                (queued + size <= MAX_QUEUED_BYTES).then_some(queued + size)
+            })
+            .is_ok();
+        if reserved {
+            match outbound.try_send(message) {
+                Ok(()) => {
+                    *sent = true;
+                    break;
+                }
+                Err(TrySendError::Full(message)) => {
+                    shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
+                    waiting = Some(message);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
+                    lock(&shared.pending).remove(&id);
+                    return Err(ClientError::Disconnected);
+                }
+            }
+        } else {
+            waiting = Some(message);
+        }
+        if Instant::now() >= deadline {
+            lock(&shared.pending).remove(&id);
+            return Err(ClientError::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok((state, answer))
+}
+
+/// Retire the registration while retaining an answer racing the timeout.
+fn wait_answer(
+    shared: &Shared,
+    id: u64,
+    deadline: Instant,
+    answer: &PendingAnswer,
+) -> Result<Result<Response, ClientError>, mpsc::RecvTimeoutError> {
+    let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    // On timeout the entry is still there: drop it, so a late answer is ignored.
+    let entry = lock(&shared.pending).remove(&id);
+    if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
+        // An answer that came in between the wait ending and the entry going is still an
+        // answer: a call that succeeded is not reported as timed out (the caller might
+        // retry a create that went through). If the entry was already gone, the reader has
+        // taken it and is about to send: wait a moment for that.
+        let late = if entry.is_none() {
+            answer.recv_timeout(Duration::from_millis(100)).ok()
+        } else {
+            answer.try_recv().ok()
+        };
+        if let Some(late) = late {
+            outcome = Ok(late);
+        }
+    }
+    outcome
+}
+
 impl Client {
     /// Connects to this machine's host (see [`default_host_socket_path`]).
     pub fn connect_host() -> Result<Self, ClientError> {
@@ -340,6 +469,12 @@ impl Client {
             ErrorKind::NotFound | ErrorKind::ConnectionRefused => ClientError::NotRunning(e),
             _ => ClientError::Io(e),
         })?;
+        Self::from_stream(stream)
+    }
+
+    // Only path connection or the explicit approved-descriptor adapter reaches
+    // this constructor. It does not create an agent/member binding.
+    fn from_stream(stream: UnixStream) -> Result<Self, ClientError> {
         let io = ClientError::Io;
         let reader_stream = stream.try_clone().map_err(io)?;
         let writer_stream = stream.try_clone().map_err(io)?;
@@ -432,6 +567,16 @@ impl Client {
         timeout: Duration,
         sent: &mut bool,
     ) -> Result<C::Result, ClientError> {
+        self.call_tracked_principal::<C>(params, None, timeout, sent)
+    }
+
+    fn call_tracked_principal<C: Call>(
+        &self,
+        params: &C::Params,
+        principal: Option<&org_proto::Principal>,
+        timeout: Duration,
+        sent: &mut bool,
+    ) -> Result<C::Result, ClientError> {
         let started = Instant::now();
         // A timeout too large to add to a clock reading means "very long".
         let deadline = started
@@ -443,98 +588,16 @@ impl Client {
                 "this connection has used up its request ids; reconnect".into(),
             ));
         }
-        let request =
-            Request::new::<C>(id, params).map_err(|e| ClientError::Protocol(e.to_string()))?;
-        let mut line =
-            serde_json::to_vec(&request).map_err(|e| ClientError::Protocol(e.to_string()))?;
-        if line.len() > MAX_FRAME_BYTES {
-            // Nothing is sent, so the connection stays in step.
-            return Err(ClientError::RequestTooLarge);
-        }
-        line.push(b'\n');
-        let size = line.len();
-
-        // Register before sending, so the answer can't beat the registration.
-        let (answer_to, answer) = mpsc::sync_channel(1);
-        lock(&self.shared.pending).insert(id, answer_to);
-        // Registered first, then checked: either the reader's cleanup sees this call or this
-        // check sees `closed`, so a call on a dead connection never waits out its timeout.
-        if self.shared.closed.load(Ordering::SeqCst) {
-            lock(&self.shared.pending).remove(&id);
-            return Err(ClientError::Disconnected);
-        }
-
-        let state = Arc::new(AtomicU8::new(QUEUED));
-        // Wait for room, but only until this call's deadline: a burst of large requests is no
-        // reason to give the connection up. A genuinely stuck write is dealt with by the call
-        // that is waiting on it (see `settle`), and the connection closes then.
-        let mut waiting = Some(Outgoing {
+        let line = request_line::<C>(id, params, principal)?;
+        let (state, answer) = send_request(
+            &self.shared,
+            self.outbound.as_ref(),
+            id,
             line,
             deadline,
-            state: Arc::clone(&state),
-        });
-        loop {
-            let message = waiting
-                .take()
-                .expect("the message is put back before looping");
-            let outbound = match (&self.outbound, self.shared.closed.load(Ordering::SeqCst)) {
-                (Some(outbound), false) => outbound,
-                _ => {
-                    lock(&self.shared.pending).remove(&id);
-                    return Err(ClientError::Disconnected);
-                }
-            };
-            // Reserve room in the byte budget, never going over it (not even for a moment).
-            let reserved = self
-                .shared
-                .queued_bytes
-                .try_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
-                    (queued + size <= MAX_QUEUED_BYTES).then_some(queued + size)
-                })
-                .is_ok();
-            if reserved {
-                match outbound.try_send(message) {
-                    Ok(()) => {
-                        *sent = true;
-                        break;
-                    }
-                    Err(TrySendError::Full(message)) => {
-                        self.shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
-                        waiting = Some(message);
-                    }
-                    Err(TrySendError::Disconnected(_)) => {
-                        self.shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
-                        lock(&self.shared.pending).remove(&id);
-                        return Err(ClientError::Disconnected);
-                    }
-                }
-            } else {
-                waiting = Some(message);
-            }
-            if Instant::now() >= deadline {
-                lock(&self.shared.pending).remove(&id);
-                return Err(ClientError::Timeout);
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-
-        let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
-        // On timeout the entry is still there: drop it, so a late answer is ignored.
-        let entry = lock(&self.shared.pending).remove(&id);
-        if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
-            // An answer that came in between the wait ending and the entry going is still an
-            // answer: a call that succeeded is not reported as timed out (the caller might
-            // retry a create that went through). If the entry was already gone, the reader has
-            // taken it and is about to send: wait a moment for that.
-            let late = if entry.is_none() {
-                answer.recv_timeout(Duration::from_millis(100)).ok()
-            } else {
-                answer.try_recv().ok()
-            };
-            if let Some(late) = late {
-                outcome = Ok(late);
-            }
-        }
+            sent,
+        )?;
+        let outcome = wait_answer(&self.shared, id, deadline, &answer);
         if !matches!(outcome, Ok(Ok(_))) && self.settle(&state) {
             // Withdrawn before the writer started on it: the server never saw any of it.
             *sent = false;

@@ -1060,8 +1060,8 @@ CREATE TABLE task_events (
   task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
   task_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK (revision >= 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  occurred_at TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version IN (1, 2)),
+  occurred_at TEXT,
   actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'owner', 'system', 'unknown')),
   actor_id TEXT,
   operation_id TEXT,
@@ -1072,6 +1072,9 @@ CREATE TABLE task_events (
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+  resource_profile TEXT CHECK (resource_profile IS NULL OR resource_profile = 'selected-task-resources/1'),
+  event_bytes BLOB,
+  CHECK (schema_version <> 2 OR (resource_profile IS 'selected-task-resources/1' AND event_bytes IS NOT NULL)),
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (

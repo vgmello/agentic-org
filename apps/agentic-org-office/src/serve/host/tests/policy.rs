@@ -95,6 +95,101 @@ fn refused(response: Value, code: &str) {
 }
 
 #[test]
+fn selected_raw_socket_refuses_duplicates_and_checks_live_grant_before_storage() {
+    use std::io::Write;
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let shared = shared();
+    let requests = [
+        signed(
+            &shared,
+            "task.set_assignment",
+            json!({"change_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","task_id":"opaque","command":{"expected_revision":9223372036854775807_i64,"assigned_team_id":null,"assignee_id":null}}),
+        ),
+        signed(
+            &shared,
+            "operation.get",
+            json!({"kind":"work","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+        ),
+        signed(&shared, "task.selected.read", json!({"kind":"status"})),
+        signed(
+            &shared,
+            "task.selected.stage.v1",
+            json!({"stage_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","manifest_sha256":"a".repeat(64),"blob":{"sha256":"b".repeat(64),"byte_length":1},"chunk":null}),
+        ),
+        signed(
+            &shared,
+            "task.selected.adopt.v1",
+            json!({"kind":"lookup","operation_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+        ),
+    ];
+    for request in requests {
+        let (socket, peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let thread = std::thread::spawn(move || {
+            serve(
+                socket,
+                &shared_for_selected(),
+                context(),
+                &Default::default(),
+            )
+        });
+        let mut peer = std::io::BufReader::new(peer);
+        assert_eq!(
+            exchange(&mut peer, "hello", json!({"api":{"min":2,"max":2}}))["result"]["api_version"],
+            2
+        );
+        let send = |peer: &mut std::io::BufReader<UnixStream>, raw: &[u8]| {
+            peer.get_mut().write_all(raw).unwrap();
+            peer.get_mut().write_all(b"\n").unwrap();
+            frame::read_message::<Value>(peer).unwrap().unwrap()
+        };
+        let raw = serde_json::to_vec(&request).unwrap();
+        assert_eq!(send(&mut peer, &raw)["error"]["code"], "unavailable");
+        let duplicate =
+            String::from_utf8(raw)
+                .unwrap()
+                .replacen("\"id\":71", "\"id\":70,\"id\":71", 1);
+        assert_eq!(
+            send(&mut peer, duplicate.as_bytes())["error"]["code"],
+            "invalid_request"
+        );
+        let mut expired = request;
+        expired.principal.as_mut().unwrap()["grant"]["exp"] = 1.into();
+        sign(&mut expired.principal.as_mut().unwrap()["grant"]);
+        assert_eq!(
+            send(&mut peer, &serde_json::to_vec(&expired).unwrap())["error"]["code"],
+            "not_authorized"
+        );
+        drop(peer);
+        thread.join().unwrap();
+    }
+}
+
+#[test]
+fn selected_raw_routes_require_hello_before_decoding_or_authority() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    for method in [
+        "task.set_assignment",
+        "task.selected.read",
+        "task.selected.stage.v1",
+        "task.selected.adopt.v1",
+    ] {
+        let (mut peer, thread) = host_pair();
+        assert_eq!(
+            exchange(&mut peer, method, json!({}))["error"]["code"],
+            "unsupported_version",
+            "{method}"
+        );
+        assert!(frame::read_line(&mut peer).unwrap().is_none());
+        thread.join().unwrap();
+    }
+}
+
+fn shared_for_selected() -> Shared {
+    shared()
+}
+
+#[test]
 fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes() {
     let shared = shared();
     let ctx = context();

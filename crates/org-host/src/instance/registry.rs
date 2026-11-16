@@ -121,6 +121,8 @@ struct Config {
     binding: Binding,
     #[serde(deserialize_with = "office_handles")]
     office_temp_handles: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser: Option<org_host_control::listen::ListenConfig>,
 }
 
 fn office_handles<'de, D: serde::Deserializer<'de>>(
@@ -169,7 +171,7 @@ impl Config {
         }
         let mut handles = std::collections::BTreeSet::new();
         for (office, handle) in &self.office_temp_handles {
-            if !org_office_launch::is_plain_id(office)
+            if !org_office_launch::is_storage_id(office)
                 || !temp::valid(handle)
                 || !handles.insert(handle)
             {
@@ -243,6 +245,27 @@ struct RebindSnapshot {
 }
 
 impl Instance {
+    /// Setup holds the instance/root lock. Retry may repeat, never silently
+    /// replace, the listener that the protected bootstrap is about to validate.
+    pub(crate) fn set_browser(
+        &self,
+        listen: &org_host_control::listen::ListenConfig,
+    ) -> Result<(), Error> {
+        let (mut config, previous) = self.config()?;
+        if let Some(current) = config.browser {
+            if current != *listen {
+                return Err(Error::Conflict("listener differs from reserved setup"));
+            }
+            return Ok(());
+        }
+        config.browser = Some(listen.clone());
+        self.root
+            .publish(CONFIG, &encode(&config)?, Some(&previous))?;
+        Ok(())
+    }
+    pub(crate) fn browser(&self) -> Result<Option<org_host_control::listen::ListenConfig>, Error> {
+        self.config().map(|(config, _)| config.browser)
+    }
     pub(crate) fn id(&self) -> &str {
         &self.binding.id
     }
@@ -296,7 +319,7 @@ impl Instance {
 
     /// Allocates once under this instance; callers backfill every catalog office before launch.
     pub(crate) fn allocate_office_temp(&mut self, office: &str) -> Result<PathBuf, Error> {
-        if !org_office_launch::is_plain_id(office) {
+        if !org_office_launch::is_storage_id(office) {
             return Err(Error::Invalid("office ID must be plain"));
         }
         let (mut config, previous) = self.config()?;
@@ -510,6 +533,37 @@ impl Registry {
         self.finish(locator, index, root, &registry_lock, previous.as_ref())
     }
 
+    /// Read-only routing to an already reserved instance while its writer owns
+    /// the root lock. This does not create/repair/promote a root or grant access.
+    pub(crate) fn locate(
+        &self,
+        name: Option<&str>,
+        path: &Path,
+    ) -> Result<(String, PathBuf), Error> {
+        let name = Name::parse(name)?;
+        let path = absolute(path)?;
+        let lock = self.directory.lock_file(LOCK)?;
+        let (locator, _) = self.load()?;
+        let entry = locator
+            .entries
+            .iter()
+            .find(|e| e.binding.name == name)
+            .ok_or(Error::Invalid("instance is not registered"))?;
+        let root = self
+            .check_roots(&locator, &name, &path)?
+            .ok_or(Error::Unsafe("registered instance root is missing"))?;
+        let bytes = root.read(CONFIG, MAX_BYTES)?.ok_or(Error::Unsafe(
+            "registered instance configuration is missing",
+        ))?;
+        decode::<Config>(&bytes)?.validate(&entry.binding)?;
+        self.user_temp
+            .child("ao", false)?
+            .child(&entry.binding.temp_handle, false)?
+            .verify()?;
+        self.directory.verify_file(LOCK, &lock)?;
+        Ok((entry.binding.id.clone(), entry.binding.temp_folder.clone()))
+    }
+
     fn load(&self) -> Result<(Locator, Option<ControlFile>), Error> {
         let previous = self.directory.read(REGISTRY, MAX_BYTES)?;
         let locator = match previous.as_ref() {
@@ -636,6 +690,7 @@ impl Registry {
             version: 1,
             binding: entry.binding.clone(),
             office_temp_handles: BTreeMap::new(),
+            browser: None,
         };
         match root.read(CONFIG, MAX_BYTES)? {
             Some(bytes) => {

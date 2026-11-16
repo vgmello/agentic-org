@@ -16,6 +16,7 @@ export const NAV: NavItem[] = [
 	{ name: 'Org chart', href: '/org-chart', icon: 'orgchart' },
 	{ name: 'Projects', href: '/projects', icon: 'projects' },
 	{ name: 'Work', href: '/work', icon: 'tasks' },
+	{ name: 'Tasks', href: '/tasks', icon: 'tasks' },
 	{ name: 'Sessions', href: '/sessions', icon: 'sessions' },
 	{ name: 'Activity', href: '/activity', icon: 'activity' },
 	{ name: 'Processes', href: '/processes', icon: 'processes' },

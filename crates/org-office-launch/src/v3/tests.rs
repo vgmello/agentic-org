@@ -14,10 +14,31 @@ const RENDEZVOUS: &str = "/run/user/501/agentic-org/r/0123456789abcdef";
 
 fn office() -> OfficeLine {
     OfficeLine {
+        id_profile: None,
+        selected_writer_required: false,
         instance_id: INSTANCE.into(),
         office_id: OFFICE.into(),
         rendezvous: RENDEZVOUS.into(),
     }
+}
+
+#[test]
+fn selected_identity_profile_is_explicit_and_does_not_widen_legacy_lines() {
+    let mut line = office();
+    line.office_id = "019a8928-1337-7456-8456-0123456789ac".into();
+    let mut bytes = Vec::new();
+    assert!(write_first_line(&mut bytes, &HostFirstLine::Start(line.clone())).is_err());
+    assert!(bytes.is_empty());
+    line.id_profile = Some(IdProfile::SelectedV1);
+    let mut bytes = Vec::new();
+    write_first_line(&mut bytes, &HostFirstLine::Start(line.clone())).unwrap();
+    assert!(
+        matches!(read_first_line(&mut bytes.as_slice(), FirstLine::Start).unwrap(),Some(HostFirstLine::Start(actual)) if actual==line)
+    );
+    line.office_id = "legacy".into();
+    let mut bytes = Vec::new();
+    assert!(write_first_line(&mut bytes, &HostFirstLine::Start(line)).is_err());
+    assert!(bytes.is_empty());
 }
 
 fn create() -> CreateLine {
@@ -28,7 +49,139 @@ fn create() -> CreateLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
+        hq_creation: None,
     }
+}
+
+fn selected_create() -> CreateLine {
+    let id = |n| format!("01900000-0000-7000-8000-{n:012x}");
+    let prepared = org_proto::selected_bootstrap::PreparedV1 {
+        plan: org_proto::selected_bootstrap::PlanV1 {
+            version: 1,
+            name: "Acme".into(),
+            slug: "acme".into(),
+            repository_remote_url: "https://example.test/org.git".into(),
+            state_branch: "org/state".into(),
+            home_team_name: "Core".into(),
+        },
+        organization_id: id(1),
+        office_id: id(2),
+        repository_id: id(3),
+        home_team_id: id(4),
+        hr_employee_id: id(5),
+    };
+    CreateLine {
+        office: OfficeLine {
+            id_profile: Some(IdProfile::SelectedV1),
+            selected_writer_required: true,
+            instance_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            office_id: prepared.office_id.clone(),
+            rendezvous: RENDEZVOUS.into(),
+        },
+        org_id: prepared.organization_id.clone(),
+        org_name: prepared.plan.name.clone(),
+        office_name: "HQ".into(),
+        role: OfficeRole::Hq,
+        owner_member_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
+        hq_creation: Some(HqCreationV1 {
+            version: 1,
+            operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
+            escrow_profile: 1,
+            public_root: "/private/tmp/selected-state".into(),
+            bootstrap: Some(Box::new(prepared)),
+        }),
+    }
+}
+
+#[test]
+fn complete_selected_create_round_trip_retains_writer_admission_and_legacy_default() {
+    let expected = HostFirstLine::Create(selected_create());
+    let mut wire = Vec::new();
+    write_first_line(&mut wire, &expected).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&wire).unwrap()["selected_writer_required"],
+        true
+    );
+    assert_eq!(
+        read_first_line(&mut wire.as_slice(), FirstLine::Create).unwrap(),
+        Some(expected)
+    );
+    // This is the complete actual create frame, including the prepared plan;
+    // id_profile alone is never a writer-admission grant.
+    let legacy = HostFirstLine::Create(create());
+    let mut wire = Vec::new();
+    write_first_line(&mut wire, &legacy).unwrap();
+    assert!(!serde_json::from_slice::<Value>(&wire)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("selected_writer_required"));
+    assert_eq!(
+        read_first_line(&mut wire.as_slice(), FirstLine::Create).unwrap(),
+        Some(legacy)
+    );
+}
+
+#[test]
+fn selected_create_rejects_missing_false_duplicate_unknown_and_mismatched_scope() {
+    let original = written(&HostFirstLine::Create(selected_create()));
+    for mutation in [
+        "false",
+        "missing",
+        "no-profile",
+        "no-bootstrap",
+        "organization",
+        "office",
+        "name",
+        "unknown",
+    ] {
+        let mut v = original.clone();
+        match mutation {
+            "false" => v["selected_writer_required"] = json!(false),
+            "missing" => {
+                v.as_object_mut()
+                    .unwrap()
+                    .remove("selected_writer_required");
+            }
+            "no-profile" => {
+                v.as_object_mut().unwrap().remove("id_profile");
+            }
+            "no-bootstrap" => {
+                v["hq_creation"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("bootstrap");
+            }
+            "organization" => {
+                v["hq_creation"]["bootstrap"]["organization_id"] =
+                    json!("01900000-0000-7000-8000-000000000099")
+            }
+            "office" => {
+                v["hq_creation"]["bootstrap"]["office_id"] =
+                    json!("01900000-0000-7000-8000-000000000099")
+            }
+            "name" => v["hq_creation"]["bootstrap"]["plan"]["name"] = json!("Other"),
+            _ => v["unknown"] = json!(true),
+        }
+        let wire = serde_json::to_vec(&v).unwrap();
+        assert!(
+            read_first_line(&mut wire.as_slice(), FirstLine::Create).is_err(),
+            "{mutation}"
+        );
+    }
+    let encoded = serde_json::to_string(&original).unwrap();
+    let duplicated = encoded.replacen(
+        "\"selected_writer_required\":true",
+        "\"selected_writer_required\":true,\"selected_writer_required\":true",
+        1,
+    );
+    assert!(read_first_line(&mut duplicated.as_bytes(), FirstLine::Create).is_err());
+    // Invalid in-memory preparation must also fail before emitting any bytes.
+    let mut invalid = selected_create();
+    invalid.office.selected_writer_required = false;
+    let mut wire = Vec::new();
+    assert!(write_first_line(&mut wire, &HostFirstLine::Create(invalid)).is_err());
+    assert!(wire.is_empty());
 }
 
 fn written(line: &HostFirstLine) -> Value {
@@ -791,4 +944,63 @@ fn rendezvous_events_keep_the_office_file_size_limit() {
             assert!(matches!(read, Err(LaunchError::Invalid(_))));
         }
     }
+}
+
+#[test]
+fn selected_start_flag_round_trips_and_cannot_be_silently_lost_on_legacy_create() {
+    let mut office = office();
+    office.selected_writer_required = true;
+    let line = HostFirstLine::Start(office.clone());
+    let mut bytes = Vec::new();
+    write_first_line(&mut bytes, &line).unwrap();
+    assert_eq!(
+        read_first_line(&mut Cursor::new(&bytes), FirstLine::Start).unwrap(),
+        Some(line)
+    );
+    let mut create = create();
+    create.office = office;
+    assert!(write_first_line(&mut Vec::new(), &HostFirstLine::Create(create)).is_err());
+}
+
+#[test]
+fn hq_creation_context_is_explicit_versioned_and_strictly_decoded_from_raw_bytes() {
+    let mut creation = create();
+    creation.hq_creation = Some(HqCreationV1 {
+        version: 1,
+        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        escrow_profile: 1,
+        public_root: "/tmp/test-state".into(),
+        bootstrap: None,
+    });
+    let line = HostFirstLine::Create(creation.clone());
+    let mut bytes = Vec::new();
+    write_first_line(&mut bytes, &line).unwrap();
+    assert_eq!(
+        read_first_line(&mut Cursor::new(&bytes), FirstLine::Create).unwrap(),
+        Some(line)
+    );
+    let text = String::from_utf8(bytes).unwrap();
+    for bad in [
+        text.replace("\"version\":1", "\"version\":2"),
+        text.replace("/tmp/test-state", "relative/state"),
+        text.replace("/tmp/test-state", "/tmp/../state"),
+        text.replace("/tmp/test-state", "/"),
+        text.replace("\"escrow_profile\":1", "\"escrow_profile\":2"),
+        text.replace("\"version\":1", "\"version\":1,\"version\":1"),
+        text.replace("\"version\":1", "\"version\":1,\"ver\\u0073ion\":1"),
+        text.replace(
+            "\"escrow_profile\":1",
+            "\"escrow_profile\":1,\"unknown\":true",
+        ),
+        text.replace(
+            "\"hq_creation\":{",
+            "\"hq_creation\":null,\"hq_creation\":{",
+        ),
+    ] {
+        assert!(read_first_line(&mut Cursor::new(bad), FirstLine::Create).is_err());
+    }
+    creation.hq_creation.as_mut().unwrap().version = 2;
+    let mut out = Vec::new();
+    assert!(write_first_line(&mut out, &HostFirstLine::Create(creation)).is_err());
+    assert!(out.is_empty());
 }
