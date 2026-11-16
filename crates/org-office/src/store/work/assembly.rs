@@ -151,7 +151,7 @@ impl OfficeWorkStore {
 impl WorkStore for OfficeWorkStore {
     fn transact(&self, f: Arc<TxnFn>) -> Result<TxnOutput, StoreError> {
         let (job, answer) = self.transact_job(f);
-        self.store.send_job(job).map_err(storage)?;
+        self.store.send_work_job(job).map_err(storage)?;
         answer.recv()
     }
 }

@@ -629,7 +629,7 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
         let (started, ready) = mpsc::channel();
         let (release, held) = mpsc::channel();
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |_| {
                     started.send(()).map_err(OfficeError::storage)?;
                     held.recv_timeout(Duration::from_secs(5))
@@ -638,7 +638,7 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
                 }),
                 abort_batch: |_| false,
                 reply: Box::new(|r| r.unwrap()),
-            })
+            }))
             .unwrap();
         ready.recv_timeout(Duration::from_secs(5)).unwrap();
         let slot = Arc::new(Mutex::new(None));
@@ -648,7 +648,7 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
         let (item, events) = task_fixture(1, true);
         let (replied, reply) = mpsc::channel();
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |db| {
                     if mode == "other-invalid" && counter.load(Ordering::SeqCst) > 0 {
                         return Err(OfficeError::Invalid("other"));
@@ -670,10 +670,10 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
                 reply: Box::new(move |r| {
                     replied.send(finish(r, &slot)).unwrap();
                 }),
-            })
+            }))
             .unwrap();
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |db| {
                     if mode == "begin-failure" {
                         db.pragma_update(None, "query_only", true)
@@ -689,7 +689,7 @@ fn work_call_error_slot_replay_and_pre_attempt_failure_never_mask_causes() {
                         Err(OfficeError::Invalid("injected batch abort"))
                     ))
                 }),
-            })
+            }))
             .unwrap();
         release.send(()).unwrap();
         let result = reply.recv_timeout(Duration::from_secs(10)).unwrap();

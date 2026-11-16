@@ -4,7 +4,7 @@ These are the categories used by the [single feature checklist](FEATURES.md). Ea
 
 Reviewed: **2026-11-16**, by Ada. There are **13 categories, 158 feature rows and 0 rows needing verification**. Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
-F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim.
+F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim. F2b now adds scoped journal/capture source and storage tests: FC-146 moves Planned to In progress, while FC-042 remains partial. This is internal storage evidence; full unit checks/reviews, protected host/service composition and usable feature acceptance remain.
 
 ## Categorization rules
 
@@ -31,9 +31,9 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 0 | 0 | 6 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
-| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 3 | 6 | 0 | 1 | 0 |
+| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 4 | 5 | 0 | 1 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **158** | **9** | **56** | **50** | **3** | **40** | **0** |
+| **Total** | | **158** | **9** | **57** | **49** | **3** | **40** | **0** |
 
 ## AREA-01
 

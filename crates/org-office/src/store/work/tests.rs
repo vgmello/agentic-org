@@ -1164,7 +1164,7 @@ fn native_work_v3_upgrade_and_reopen_preserve_existing_message_metadata() {
             assert_eq!(
                 db.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
                     .unwrap(),
-                6
+                OFFICE_SCHEMA.version
             );
             assert_eq!(
                 db.query_row(
@@ -1619,7 +1619,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
     let (started, ready) = mpsc::channel();
     let (release, held) = mpsc::channel();
     queue
-        .send(WriteJob {
+        .send(crate::store::WriterJob::Batch(WriteJob {
             attempt: Box::new(move |_| {
                 started.send(()).map_err(OfficeError::storage)?;
                 held.recv_timeout(Duration::from_secs(5))
@@ -1628,7 +1628,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
             }),
             abort_batch: |_| false,
             reply: Box::new(|result| result.unwrap()),
-        })
+        }))
         .unwrap();
     ready.recv_timeout(Duration::from_secs(5)).unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));
@@ -1639,7 +1639,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
         let (attempts, replied) = (Arc::clone(&attempts), replied.clone());
         let (item, events) = task_fixture(id, true);
         queue
-            .send(WriteJob {
+            .send(crate::store::WriterJob::Batch(WriteJob {
                 attempt: Box::new(move |db| {
                     if id == 2 {
                         db.execute_batch("ROLLBACK").map_err(OfficeError::storage)?;
@@ -1666,7 +1666,7 @@ fn native_work_writer_replay_commits_items_ids_events_and_origin_once() {
                 reply: Box::new(move |result| {
                     replied.send((id, result)).unwrap();
                 }),
-            })
+            }))
             .unwrap();
     }
     release.send(()).unwrap();

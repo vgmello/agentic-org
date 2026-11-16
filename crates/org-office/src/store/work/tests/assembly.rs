@@ -41,6 +41,134 @@ fn saved() -> StoredResult {
     }
 }
 
+#[test]
+fn legacy_native_work_uses_frozen_journal_and_retains_exact_put_order() {
+    use crate::store::acceptance::{AcceptanceConfig, AcceptanceIdentity};
+    use crate::store::origin;
+    let (root, store, native, _) = setup();
+    super::super::tests::initialize_origin(&store);
+    store
+        .write(|db| {
+            db.execute("INSERT INTO meta VALUES('instance_id','instance')", [])
+                .map_err(OfficeError::storage)?;
+            Ok(((), None))
+        })
+        .unwrap();
+    let config = AcceptanceConfig {
+        authority: None,
+        identity: AcceptanceIdentity {
+            instance_id: "instance".into(),
+            organization_id: "org".into(),
+            office_id: "OFFICE1".into(),
+            journal_incarnation: "journal-one".into(),
+            writer_epoch: 1,
+            machine_id: "machine".into(),
+        },
+        protected_root: root.path().join("recovery"),
+        public_root: root.path().join("public"),
+    };
+    store.install_acceptance(config.clone()).unwrap();
+    // Two real legacy snapshots, in descending target order, including their
+    // original nested event payloads. Publication must retain allocation order.
+    let mut items = vec![task_fixture(5, true), task_fixture(2, false)];
+    items.sort_by(|a, b| b.0.id.cmp(&a.0.id));
+    let original = items.clone();
+    let frozen = Arc::new(items);
+    let data = frozen.clone();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let decision_calls = calls.clone();
+    native
+        .transact(Arc::new(move |_, txn| {
+            decision_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut all = Vec::new();
+            for (item, events) in data.iter() {
+                txn.put_item(item, events)?;
+                all.extend(refs(events));
+            }
+            txn.record_change(Position { epoch: 2, seq: 9 }, &all, Some("legacy-original"))?;
+            txn.put_change_result("legacy-original", &saved())?;
+            Ok(noop())
+        }))
+        .unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let incarnation = store.read(origin::stored_incarnation).unwrap().unwrap();
+    let entries = store
+        .read(move |db| origin::entries_after(db, &incarnation, 0, 1024))
+        .unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|e| (&e.target.target_id, e.target.version))
+            .collect::<Vec<_>>(),
+        original
+            .iter()
+            .flat_map(|(_, ev)| ev.iter().map(|e| (&e.target_id, e.version)))
+            .collect::<Vec<_>>()
+    );
+    native
+        .transact(Arc::new(|_, txn| {
+            txn.put_change_result("legacy-rejected", &saved())?;
+            Ok(noop())
+        }))
+        .unwrap();
+    let high = store
+        .read(|db| {
+            db.query_row(
+                "SELECT ordinal,origin_high_water FROM selected_journal_cursor",
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .map_err(OfficeError::storage)
+        })
+        .unwrap();
+    assert_eq!(high, (2, entries.len() as i64));
+    drop(native);
+    drop(store);
+    let store = reopen(&root);
+    store.install_acceptance(config).unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    for id in ["legacy-original", "legacy-rejected"] {
+        let retained = store
+            .read(move |db| metadata::change_result(db, id))
+            .unwrap()
+            .unwrap();
+        let expected = saved();
+        assert_eq!(retained.params_hash, expected.params_hash);
+        assert_eq!(retained.answer, expected.answer);
+        assert_eq!(retained.expires_at_ms, expected.expires_at_ms);
+    }
+    assert_eq!(
+        store
+            .read(|db| db
+                .query_row(
+                    "SELECT value FROM meta WHERE key='message_sequence'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .map_err(OfficeError::storage))
+            .unwrap(),
+        "41"
+    );
+    for (item, events) in original {
+        assert_eq!(
+            store
+                .read(|db| {
+                    let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+                    super::super::get(&tx, &item.id)
+                })
+                .unwrap(),
+            Some(item.clone())
+        );
+        let records = store
+            .read(move |db| super::super::event_records(db, &item.id, 0))
+            .unwrap();
+        assert_eq!(
+            records.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
+            events
+        );
+    }
+}
+
 fn call_error(error: &StoreError) -> &WorkCallError {
     error
         .source()

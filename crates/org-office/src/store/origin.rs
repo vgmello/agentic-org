@@ -10,6 +10,8 @@ use std::ops::RangeInclusive;
 use org_proto::Position;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use serde::{Deserialize, Serialize};
+
 use crate::OfficeError;
 
 const INCARNATION_KEY: &str = "incarnation";
@@ -70,21 +72,21 @@ pub(crate) fn stored_incarnation(db: &Connection) -> Result<Option<String>, Offi
 }
 
 /// Shared by messages and work; a restore tool rotates only the incarnation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LocalOrigin {
     pub(crate) office_id: String,
     pub(crate) incarnation: String,
 }
 
 /// The committed version, enriched with the stored item's ownership generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OriginRef {
     pub(crate) target_id: String,
     pub(crate) generation: u64,
     pub(crate) version: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OriginEntry {
     pub(crate) origin: LocalOrigin,
     pub(crate) seq: u64,

@@ -25,6 +25,9 @@ mod private_fs;
 pub mod rules;
 mod status;
 mod store;
+pub use store::acceptance::{
+    AcceptanceConfig, AcceptanceIdentity, JournalPosition, WriterAuthority,
+};
 mod time;
 mod ulid;
 

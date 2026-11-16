@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "unit": "F2b",
+  "source_commit": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09",
+  "base": "0fdb9723375dcf56a8887aaa22eee159d6c4c3a4",
+  "author_session": "01a1dfb4-1d26-7100-9ea4-72b53756ef23",
+  "architecture_owner": "root",
+  "interface_revision": 2,
+  "reviewed_interface_sha256": "666f213fafa78b15fa98db219cebb9a2e1f70f57188f85b88b95de79305585ad",
+  "interface_review_verdict": "READY",
+  "review_session": "01a1e546-f737-74e1-926f-cfd395e590d6",
+  "review_artifacts": ".agent-kit/logs/v1-durable-journal/interface-review-recheck-1",
+  "requested_model": "gpt-6.1-sol",
+  "requested_effort": "xhigh",
+  "actual_model_effort": "not exposed",
+  "scope_paths": [
+    "crates/org-office/src/store/acceptance.rs",
+    "crates/org-office/src/store/acceptance/crash.rs",
+    "crates/org-office/src/store/acceptance/durable.rs",
+    "crates/org-office/src/store/acceptance/rows.rs",
+    "crates/org-office/src/store/acceptance/schema.rs",
+    "crates/org-office/src/store/acceptance/tests.rs",
+    "crates/org-office/src/store/acceptance/tests/crash_reopen.rs",
+    "crates/org-office/src/store/origin.rs",
+    "crates/org-office/src/store/origin/tests.rs",
+    "crates/org-office/src/store/work/assembly.rs",
+    "crates/org-office/src/store/work/call.rs",
+    "crates/org-office/src/store/work/tests.rs",
+    "crates/org-office/src/store/work/tests/assembly.rs",
+    "crates/org-office/src/store/work/tests/call.rs",
+    "crates/org-office/src/store/work/tests/metadata.rs",
+    "crates/org-office/src/store.rs",
+    "crates/org-office/src/lib.rs",
+    "crates/org-office/src/office.rs",
+    "crates/org-office/src/office/tests/instance.rs",
+    "crates/org-proto/src/work.rs",
+    "crates/org-office/Cargo.toml",
+    "Cargo.lock",
+    "crates/org-office/src/messaging.rs",
+    "crates/org-office/src/status.rs"
+  ],
+  "root_grant": "Shared two-record placement, direct retained installation exports, instance migration correction, storage-only ten-hook crash harness, and libc-only office manifest/lock dependency-list delta. Sole source writer; root tracked writes pause at dispatch. No changed fields/mechanism or production capability.",
+  "mandatory_correction": "Retained b77 v6 fixture is inaccurate. Independently freeze/reconstruct accepted v6 schema/admission and validate pre-migration schema/rows, schema7/reopen preservation, genuine v1\u2013v5 controls and future-version refusal.",
+  "compiler_acceptance": "Focused author extraction and both root migration regressions pass. Root full fmt/Clippy passed on prior freeze; workspace run1 exposed the two repaired test defects. Full current gates and independent acceptance remain required.",
+  "source_guard_files": "All six unchanged; no future host/web/native inventories imported",
+  "deferred_coverage": [
+    {
+      "consumer": "F3/F5/U5",
+      "source": "crates/org-office/src/store/acceptance.rs",
+      "obligation": "Remove only the two cfg(test) attributes when real production selected_transaction/selected_read consumers extract. Bodies retained unchanged; see author-deferred-entrypoints-1.json."
+    },
+    {
+      "consumer": "F3/F5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/store/acceptance/tests.rs:671-729",
+      "obligation": "Restore owner-authority/directory binding and generation assertions with real corresponding consumer. Actual run_job ordinal exhaustion and original receipt read retained and passing here."
+    },
+    {
+      "consumer": "F5/U5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/office/tests/selected_legacy.rs",
+      "sha256": "db1683dce1d7865b666a24ca8606c0460f25671f823724e133831ca2646140ce",
+      "obligation": "Service-level adoption/legacy mutation coverage remains intact in immutable source, not replaced by synthetic storage SQL fences."
+    },
+    {
+      "consumer": "U5",
+      "source": "b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09:crates/org-office/src/selected_tasks/service/tests/crash_reopen.rs",
+      "sha256": "dc703561e842f887ef125c3e9f3be28e750bedf05aa26893072d7529e9d4c16b",
+      "obligation": "Restore real service crash/retry/authentication coverage; the storage-only 28-vector SIGKILL test is additional and not a replacement."
+    },
+    {
+      "consumer": "F3/F5/U5 and corresponding host/web consumers",
+      "source": ".agent-kit/logs/v1-durable-journal/allocated-source-files.json",
+      "allocation_sha256": "fbb5cdda67a0170d675c83d3da4239e1b79bb688215f95208479e7b9ebff6811",
+      "obligation": "All21 immutable original allocation records retained, including deferred sourceguard inventories and selected origin/opaque-ID consumer hunks. Future selected_tasks re-exports must refer to the same canonical org_proto::work records. No future service/host/web/HQ/session/UI imports or guard extensions extracted."
+    }
+  ],
+  "extraction_checkpoint": "Author actual ready checkpoint17:31:19 saved before terminal600.025s timeout; consumed/validated by root, raw CLI final missing. No accepted feature claim.",
+  "bounded_repairs": [
+    "The two private selected_transaction/selected_read methods have only test consumers on this base. Add cfg(test) to these test entry points until their real F3/F5/U5 consumer is extracted; preserve exact future production code/source locations and remove cfg with actual consumer, not fake calls/exports or dead_code allows. Legacy Work run_job remains production.",
+    "Restore the failed json_set write from acceptance-tests-2 as a regression and reproduce RED on existing capture. Literal SQL substitution in tests-3 is not resolution. Investigate actual SQLCipher JSON subtype reaching json_array and enforce Cell::Text for SQLite TEXT without parsing/reserializing contents. Verify exact bytes on prepare/publish/reopen, plus ordinary text/blob/null/integer controls, embedded NUL and lexical JSON/Unicode where relevant. Any subtype stripping must retain all text bytes; printf/substr approaches can truncate NUL, so prove behavior rather than assume.",
+    "Root staged exact22source paths after the author process was actually terminal. Repeat actual sourceguard now Git inventory includes all7new files. Leave all6guardbytes unchanged.",
+    "Catalog reassessed exact libc dependency-list delta and refreshed2evidence hashes; guidance/roles/rules/policy unchanged. Use new implementation-packet-2 and actual preflight.",
+    "Original 900s timeout, all failures and partial checks remain preserved; no completed-turn usage known. Resume SAME author, never fresh. Root pauses tracked writes for this bounded repair."
+  ],
+  "focused_counts": {
+    "acceptance": 26,
+    "instance": 12,
+    "work_passed": 103,
+    "work_existing_ignored": 1,
+    "origin": 19,
+    "writer": 25,
+    "proto": 212,
+    "source_guard": 1,
+    "sigkill_vectors": 28,
+    "sigkill_hooks": 10
+  },
+  "repair_evidence": "Actual SQLCipher JSON subtype RED/GREEN; ordinary TEXT/embedded NUL/Unicode/lexical JSON frozen exactly through journal, projection/reopen and lost-SQL rebuild. Earlier literal-fixture substitution rejected/restored. Both process timeouts and failures retained; no completed-turn usage claimed.",
+  "root_migration_test_handoff": {
+    "owner": "root",
+    "other_source_writers": 0,
+    "at": "2026-11-16T17:42:50.009206+00:00",
+    "paths": [
+      "crates/org-office/src/messaging.rs",
+      "crates/org-office/src/status.rs"
+    ],
+    "reason": "Actual full workspace run1 has only two org-office failures: stale current-version assertion and fake v2 fixture produced by lowering a current database version. Retained author extraction processes are terminal; preserve exact original author context.",
+    "repairs": "Use current OFFICE_SCHEMA.version in messaging; rebuild status fixture from independent released office-v2.sql in TempDir, verify historical preconditions/current migration and usable status/reopen. No production migration changes, table-drop additions or admission bypass.",
+    "red_evidence": ".agent-kit/logs/v1-durable-journal/workspace-tests-1.log",
+    "baseline_hashes": {
+      "crates/org-office/src/messaging.rs": "c5b99c44d1863833cc9a89c4954e5fca0f42b73d5de366cfaf5ccc39ac33852d",
+      "crates/org-office/src/status.rs": "7e3be088c001e1ceceaac4c44801030386eb39374ff4b6ca78449541e2e656e1"
+    },
+    "required": "Targeted regressions, repeat full gates, independent initial and final reviews and retained-author exact-tree validation.",
+    "targeted_result": {
+      "passed": 2,
+      "failed": 0,
+      "evidence": ".agent-kit/logs/v1-durable-journal/root-migration-regressions-2.json",
+      "prior_compile_error": "First targeted attempt used u32 against i64 schema.version; corrected test row type, failure retained."
+    },
+    "source_hashes": {
+      "crates/org-office/src/messaging.rs": "4ecc0de2f08c38369da7c37525cda1f529298b661f28e9c3dabd4ab724e2e8ef",
+      "crates/org-office/src/status.rs": "80a67d5133123eba2bc84cdd0561075a602e2f01a8dc7644fda60f2b9c1d9571"
+    }
+  }
+}

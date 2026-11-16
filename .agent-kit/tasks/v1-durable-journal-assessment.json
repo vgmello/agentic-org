@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "task_id": "v1-durable-journal",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": false,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Retained original b77 journal/origin/capture implementation and author context; reviewed plan17/ADR0006r5 select the mechanism. Not current extracted acceptance."
+    ],
+    "precise_scope": [
+      "Stable F2b contract registered before detailed planning in journal ac8e4c4b7bbf49dbb4a6a16071b41f8b; immutable21-path allocation and named shared-hunk candidates. No future service/UI enabled."
+    ],
+    "localized_change": [
+      "Focused interface rev2 independently READY; actual22path extraction compiled with approved libc-only delta and canonical shared DTO placement. Future-consumer private entrypoints test-only with recorded restoration obligation.",
+      "Root takes only messaging.rs/status.rs migration-test compatibility repair after actual fullworkspace2failures and terminal author processes;24source paths now owned, no production schema/interface change."
+    ],
+    "deterministic_checks": [
+      "Author checkpoint/source hashes current;26 acceptance tests include28 actual SIGKILL cases/all10hooks,12 migration tests,103 work passes/1existingignore,19origin,25writer,212proto, unchangedguard and scopedalltargetClippy/fmt passed. SQLCipher TEXT subtype regression failed before fix and passed with lexical/UTF8/NUL/int/blob/null controls plus frozen publication/reopen/rebuild. Full workspace gates/reviews still pending."
+    ],
+    "low_risk": [
+      "Critical durable publication/receipts/replay, legacy compatibility, authorization fencing and SQLCipher opener enforcement. Conservative implementation/final Xhigh required."
+    ],
+    "no_prior_failure": [
+      "Reservoir review incomplete; prior independent extractions exposed real compiler/sourceguard/platform failures. Do not assume a clean import.",
+      "Root full fmt/Clippy pass; workspace run1 found stale version6 expectation and fake historical v2 fixture. Original failures retained in root-full-checks-1.json; targeted repair and repeat full gates required."
+    ],
+    "ambiguity_resolved": [
+      "Actual compiler and sourceguard closure demonstrated, root inspected source/handoff and corrected JSON-producing SQL test avoidance. No architecture replacement; critical risk and recorded real failures remain conservative."
+    ]
+  }
+}

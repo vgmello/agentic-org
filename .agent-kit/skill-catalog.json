@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead 01a1dd82-ffe6-7363-af94-6072c75de2d1, F0 extraction 2026-11-16",
-  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer guidance still covers the stack; no dependency, protocol or runtime source changed in incoming v1 docs batch6f02ae95. Root independently inspected changed AGENTS/authority map: retain solo root ownership, max2disjointworktreewriters, existingauthorcontexts/localgates; add single docs/FEATURES.md checklist and docs/FEATURE-AREAS.md categories with full-scope evidence rules. New target UX/cost/messaging refinements are requirements, not delivered services or automatic scope activation. Signing setup and authentic signed-release checks are owner-deferred finalphase16, failclosed code preserved. Existing security guidance retains ADR6-12 protected custody, bounded IPC/durability, strict public source and exact native pins. No new stack/skill gap; current channel author remains in unchanged separate c3worktree under its actual preflight; subsequent assignments must resolve/read newly merged guidance. Main root scope here is documentation reconciliation/catalog freshness only; coherent functional checks and independent/original/final review still required for implementation. F0 is a guidance-only extraction on integration baseline: org-pki/org-release are not present yet, so their absent manifests are not current project evidence. Their critical path rules remain; assess and capture manifests when their implementation units land. Baseline Rust/Svelte/tool versions retained; guidance/ADRs describe selected contracts, not newly shipped functionality.",
+  "reviewed_by": "Codex lead 01a1dd82-ffe6-7363-af94-6072c75de2d1, F2b scoped manifest/interface reassessment 2026-11-16",
+  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer skills cover the unchanged stack and tool versions. Preserve solo root ownership, at most two disjoint worktree writers, author contexts, independent local gates and source-bound evidence. docs/FEATURES.md is the full-scope delivery checklist; FEATURE-AREAS.md defines categories. Draft docs/ADRs and internal foundations do not establish usable features. Signing setup/authentic signed release verification stays last, with production enforcement intact. Retain security guidance for ADR6\u201312 custody, IPC/durability, strict public-source classification and native-source pins. F2b root reassessment inspected the complete manifest/lock diff: org-office adds only existing pinned workspace libc for O_NOFOLLOW/F_FULLFSYNC; no package/version/feature/provider changes. Shared serde records move unchanged to existing org_proto::work; focused interface rev2 is independently READY after genuine-v6 fixture correction. Current Rust/security/public-contract and legacy-adoption guidance covers this bounded extraction; no new framework, role/rule or tool-policy gap. All other 39 evidence entries remain unchanged and prior assessed rationale stays in Git. Actual tests exposed fixture and JSON-subtype capture failures, still open for source repair; catalog/preflight readiness is no implementation acceptance. Full workspace checks, original-author validation and fresh initial/final reviews remain required.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -62,7 +62,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "0b5a2ee31d45fa57f56e048bb3bb129797de9d3938e3899639e555754202d877"
+      "sha256": "997c8874369c0b7e3b3aee3842a5704204bcf09c2c525946601181de94b48219"
     },
     {
       "path": "Cargo.toml",
@@ -106,7 +106,11 @@
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "ca05c3d071587dda73ce876d0c6438e2219e0adb4d13f96ce04f916e1b014ffe"
+      "sha256": "17e1f03a76bbdd324f9621eea7befa6d26910ffd266b5a0d50c64cf6aad842fe"
+    },
+    {
+      "path": "crates/org-release/Cargo.toml",
+      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a"
     },
     {
       "path": "crates/org-socket/Cargo.toml",
@@ -163,10 +167,6 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
-    },
-    {
-      "path": "crates/org-release/Cargo.toml",
-      "sha256": "266a2a3378a8d2b4b60f87f9ff5493cd62ffbb823de8afe7f136e4b3a8bb781a"
     }
   ],
   "roles": {

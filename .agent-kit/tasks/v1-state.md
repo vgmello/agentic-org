@@ -8,16 +8,27 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 
 ## Current work
 
-Active acceptance unit: the owner's pinned `origin/v1` documentation batch at
-`6f02ae95`, on `codex/v1-documentation-sync` from accepted integration `1b911da2`.
-F0 already retained most equivalent document bytes; it did not merge this upstream
-ancestry. Reconcile it now, preserving current solo/local-review rules, incoming
-requirements/audit and accepted evidence. Root alone owns the coupled resolutions;
-no implementation worker or broad replanning is needed. Current documentation/kit
-checks and both fresh reviews still gate this merge. Then extract F2b's durable
-journal, which bootstrap requires. First usable U1 remains actual onboarding/
-sign-in/create/reopen/restart. The transport-coupled selected_fingerprint test stays
-preserved with its U5 production consumers. No source or security-policy change.
+Active acceptance unit: F2b durable journal, `codex/v1-durable-journal`, from
+accepted integration `0fdb9723`. Registered contract unchanged. Root owns overall
+architecture/interfaces/acceptance/integration. Focused interface revision2 is
+READY; original fullstack author/context retained. Exact22-source extraction and
+all6unchanged guard hashes/checks validated by root. Author26 acceptance,
+12migration,103work/1existingignore,19origin,25writer,212proto tests and scoped
+Clippy/fmt/guard pass. Actual28SIGKILL vectors cover10hooks; SQLCipher TEXT capture
+has RED/GREEN exact-byte publication/reopen/rebuild coverage. Two private test-only
+entrypoints regain production compilation with their real F3/F5/U5 consumers.
+Both extraction process timeouts/failures remain preserved; actual ready source
+checkpoint saved before second timeout, no invented CLI final/usage.
+Root full fmt/Clippy passed; full workspace found two migration-test defects:
+stale current-version expectation and historical v2 simulated by downgrading a
+current schema. Root takes only messaging.rs/status.rs test repairs after author
+processes are terminal: current-version assertion plus independent released v2
+fixture/current migration/status/reopen checks. Reuse record owns exact24paths and
+handoff; no production migration workaround or interface change. No concurrent
+source writer or useful independent slice across this shared writer boundary.
+Full gates repeat, retained-author exact-tree validation and fresh independent
+initial/final reviews remain required. Internal support only; U1 still requires
+real onboarding/sign-in/create/reopen/restart. No task service/UI/signing enabled.
 
 The larger host/socket F1b extraction at ace8b29d failed compilation on minimum
 GatewayRelease/static-signing/identifier dependencies. Its branch/source/failed
@@ -50,6 +61,7 @@ Release-store archive/pin/recovery mechanics now have14 focused tests at their c
 
 ## Accepted checkpoints
 
+- Owner's pinned v1 documentation batch: accepted normal merge `a11edaf4`, integration `0fdb9723`; `6f02ae95` is now an ancestor, unlike earlier equivalent F0 byte imports. Solo rules/source/security bytes preserved, README links included, 158 feature rows/13 categories/statuses unchanged. Eight configured checks/normal hook, clean fresh initial/root intent/separate final passed. Journal `20051c26ae5940c587ac125242eb8a73` closed before switch; evidence `.agent-kit/logs/v1-documentation-sync/integration-receipt.json`.
 - F2a source/codec: accepted `2fe7c3d3`, integration `1b911da2`; eight exact retained files/two minimal registration hunks, 259 focused Rust tests plus independent Python corpus, full workspace gates (2992 reported passes/0 failures/5 existing ignored), explicit kit and normal hook passed. Retained-author exact-tree validation, clean fresh initial and separate final accepted. Journal `cf38ef250aef46f79f29cd3b205b1e37` closed before merge; evidence `.agent-kit/logs/v1-source-codec/integration-receipt.json`. Pure helpers only, no durable writer or usable-feature claim.
 - F1b-socket: accepted `d6dbf8ee`, integration `ac20f099`; real macOS kernel vector/all69 socket tests, Linux cross-Clippy, full Rust/kit gates, normal hook, retained-author intent, clean fresh initial and separate final passed. Raw Linux P1/blocked report and child sandbox failures retained. Internal substrate only; no gateway/handoff/Linux confinement/usable feature claim. Journal `6e30816039104e869f84c5b8f18189da` closed before merge; evidence `.agent-kit/logs/v1-socket-admission/integration-receipt.json`.
 - F1a pure release verifier: accepted `cdfed316`, integration `cd777450`; all23 focused tests, full Rust/kit gates, normal hook, retained author intent, fresh initial and separate final review passed. Strict-object repair and its first macro/source-guard failure retained. Library-only; no installer/signing or usable-feature claim. Journal `6ef553bc40824f149757a838d1a7f8fb` closed; private source-bound evidence `.agent-kit/logs/v1-release-verifier/`.

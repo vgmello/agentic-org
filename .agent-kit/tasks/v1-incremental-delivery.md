@@ -171,15 +171,49 @@ Cargo/lock, full current gates, retained-author exact-tree validation and clean
 fresh initial/separate final reviews. The fingerprint integration test stays
 preserved with its actual U5 consumers. Pure source/integrity helpers only.
 
-The owner's pinned upstream documentation batch at 6f02ae95 is now being reconciled
-on codex/v1-documentation-sync from 1b911da2, before F2b. Most F0 document bytes
-already match it, but equivalent bytes did not establish merged ancestry. Root
-alone preserves current solo/local-review/security rules, incoming requirement/
-audit history and accepted scoped evidence. One writer is preferable for these
-coupled resolutions; no source worker or broad plan review. This documentation unit
-still needs its current checks and independent/final acceptance before integration.
-F2b's durable journal follows; bootstrap actually depends on it.
+The owner's pinned upstream documentation batch at 6f02ae95 was accepted in normal
+merge a11edaf4 and integrated/pushed at 0fdb9723. Most F0 document bytes already
+matched it, but equivalent bytes did not establish ancestry; that is now corrected.
+Current solo/local-review/security rules, incoming requirements/audit and accepted
+evidence remain. Eight configured checks, normal hook, fresh initial/root intent/
+separate final passed, with no feature-status change.
+
+Current F2b on codex/v1-durable-journal starts from 0fdb9723; bootstrap depends on
+this journal. Its stable contract is registered before detailed planning. Root
+owns architecture/interfaces/integration, retained fullstack author assesses the
+bounded minimum closure first, then owns the agreed source extraction alone.
+Root pauses source writes during implementation. Existing shared test/source files
+need hunk selection; actual compilation, guard maintenance and acceptance remain
+unproven. No ready independent DTO/second writer or broad plan review is needed.
 This boundary refinement follows actual compiler dependencies and changes no
 selected architecture, security policy or U1 acceptance. A new broad plan review
 is unnecessary; material contract changes still receive focused review first.
 Neither internal unit is usable onboarding or full v1 completion.
+
+F2b focused closure checkpoint: the original fullstack author completed read-only
+source assessment (536.059s). Interface revision2 independently READY after one
+focused v6-fixture correction/recheck, session01a1e546-f737-74e1-926f-cfd395e590d6.
+Exact22-path handoff is v1-durable-journal-interface.md/reuse.json; root owns
+architecture/integration and pauses tracked writes while that one author extracts.
+No second independent writer is ready across this shared writer/capture boundary.
+No guard changes, future service imports or source acceptance claimed.
+
+F2b implementation checkpoint: exact22path extraction/current original-author
+ready checkpoint consumed by root; all focused compiler/Clippy/fmt/guard and
+journal/legacy/migration/protocol checks pass. Actual28SIGKILL cases cover10hooks.
+Root rejected a literal-fixture substitution and required real SQLCipher TEXT
+subtype RED/GREEN preservation through publication/reopen/rebuild. Two private
+test-only selected entrypoints must regain production compilation with real
+F3/F5/U5 consumers. Both timed-out CLI executions and raw failures remain; author
+saved its ready source/check receipt before the second timeout. Complete source
+freeze/workspace/kit/original-author/initial/final review acceptance still pending.
+
+F2b full-workspace checkpoint: fmt/Clippy pass, only two office migration-test
+failures remain (609office passes/2existingignored). Author processes are terminal;
+root takes messaging.rs/status.rs tests only, making24unit source paths. Replace
+the fake downgraded-current v2 fixture with independent released v2 SQL and prove
+status/migration/reopen; use current schema version in the v1 message migration.
+No production migration or reviewed interface change. Required gates repeat on the
+new freeze; retained-author exact-tree validation and both fresh reviews remain.
+This bounded serial repair is faster than a new writer handoff and does not change
+usable delivery order or acceptance. See reuse.json/root_migration_test_handoff.
