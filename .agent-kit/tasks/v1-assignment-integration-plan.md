@@ -1,6 +1,6 @@
 # Selected assignment implementation plan
 
-**Plan revision 12, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
+**Plan revision 13, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
 
 Parent stable acceptance: [v1-assignment-integration-contract.md](v1-assignment-integration-contract.md).
 
@@ -8,7 +8,7 @@ Checkout: `/Users/vgmello/projects/agentic-org`, branch `codex/v1-assignment-int
 
 Authority: [active ADR-0006 / TAI-01 revision 5](../../docs/adr/0006-selected-task-acceptance.md), its [independent READY recheck](../logs/v1-assignment-integration/architecture-review/recheck/result.json), the [parent acceptance contract](v1-assignment-integration-contract.md), and [active ADR-0007 / REC-ESC-1 revision 1](../../docs/adr/0007-hq-creation-escrow.md) for the focused HQ escrow prerequisite. [ADR-0008 / GW-SBX-MAC-1 revision 1](../../docs/adr/0008-gateway-macos-sandbox.md) governs the focused macOS gateway sandbox prerequisite; Linux enforcement remains unresolved, without waiving the full contract.
 
-One preserved fullstack author, Sol/Xhigh, owns the complete feature under the lead. The lead preserves overall architecture, shared interfaces, dependency order and final integration. At most two implementation writers may work concurrently in separate worktrees under explicit nonoverlapping scopes; current assignments and the review-repair split are in execution checkpoints7–9 below. No nested delegation, worker commits/push/merge, live-root access or installed CLI/spool changes.
+One preserved fullstack author, Sol/Xhigh, owns the complete feature under the lead. The lead preserves overall architecture, shared interfaces, dependency order and final integration. At most two implementation writers may work concurrently in separate worktrees under explicit nonoverlapping scopes; current assignments and the review-repair split are in execution checkpoints7–10 below. No nested delegation, worker commits/push/merge, live-root access or installed CLI/spool changes.
 
 ## 1. Materialize reviewed contracts and interfaces
 
@@ -294,3 +294,44 @@ remain open; generated debug fixtures and component checks do not satisfy them.
 
 Next usable delivery remains the complete assignment vertical in the parent
 contract. Repair checkpoints are not accepted features or v1 completion.
+
+
+### Execution checkpoint10: canonical and HTTP task-ID admission
+
+Current preservation commit2a23aff7 is unaccepted. Full6 (3192Rust tests),
+native9 and unchanged Chromium13 passed against its source, with all mandatory
+checks and temporary-runtime cleanup recorded. A fresh independent review still
+returned INCOMPLETE: it found two additional task-ID compatibility defects and
+did not establish complete290file/output coverage. Both actual review runs and
+their unsuccessful metrics remain preserved; no independent approval or merge.
+
+Root keeps architecture/plan/interfaces/acceptance/integration. Resume only the
+second reviewer's actual session01a1e3b2-3b57-72a3-8bf9-df094bff9514, SolHigh,
+for the bounded repair in second-review-repairs-1/root-assignment.json.
+It owns selected_tasks/directory.rs, service/tests.rs and new
+service/tests/adoption_paths.rs under crates/org-office/src, plus TESTS ONLY
+in apps/agentic-org-web/src/path.rs if useful. All other source authors remain
+frozen. Root coordinates and verifies; no second ready source slice benefits
+while admission/publication invariants settle. Separate worktrees and max2
+sourcewriters remain mandatory if useful concurrent implementation becomes ready.
+
+Validate the complete generated task filename and HTTP representability before
+immutable acceptance.253–255byte bare IDs must not become unmaterializable
+.md filenames after journaling. Backslash-bearing IDs must not be adopted and
+listed while the existing gateway rejects their detail paths. Preserve original
+opaque IDs/source bytes in protected staging for unsupported representations;
+never rewrite identities or relax the global URI decoder. Positive252byte,
+UTF8, percent-looking and other supported identities remain supported. This
+implements the current ADR6/10 staging contract, with no new trust/storage/wire
+mechanism. Escalate an actual policy/interface expansion before dependent edits.
+
+Require failing-before/passing-after real admission tests. Preserve the existing
+durable protected Staged receipt on first refusal (one receipt-only journal
+advance); exact retry must not advance again. Require no public/task/adoption
+projection or work-origin mutation, exact staging/retry retention,
+positive valid publication and reopened readiness. Re-resolve/read current skill
+packet and preflight before edits. Root verifies concise source/check/log receipts,
+runs early structural and coordinated current fullchecks/runtime as affected,
+then required fresh complete review, original author validation and separate
+exactcommit final review. Existing production/platform/firstowner requirements
+and next complete usable assignment delivery remain unchanged.

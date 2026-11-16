@@ -168,6 +168,13 @@ impl<'a> Facts<'a> {
     pub(super) fn task_path(&self, snapshot: &TaskSnapshot<'_>) -> Result<String, OfficeError> {
         let facts = snapshot.immutable();
         path_component(&facts.task_id)?;
+        // The suffix counts toward the existing filesystem component byte bound.
+        let filename = format!("{}.md", facts.task_id);
+        path_component(&filename)?;
+        // Task IDs also occupy HTTP path segments; their decoder rejects backslashes.
+        if facts.task_id.contains('\\') {
+            return Err(invalid());
+        }
         if !self.teams.contains_key(&facts.team_id) {
             return Err(invalid());
         }
@@ -181,7 +188,7 @@ impl<'a> Facts<'a> {
         } else {
             self.team_path(&facts.team_id)?
         };
-        Ok(format!("{root}/work/tasks/{}.md", facts.task_id))
+        Ok(format!("{root}/work/tasks/{filename}"))
     }
 }
 

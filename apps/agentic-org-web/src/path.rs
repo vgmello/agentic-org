@@ -107,6 +107,29 @@ mod tests {
     }
 
     #[test]
+    fn selected_task_ids_preserve_literal_percent_utf8_and_spaces_after_one_decode() {
+        for (encoded, expected) in [
+            ("%255C", "%5C"),
+            ("%252f", "%2f"),
+            ("%252e%252e", "%2e%2e"),
+            (
+                "task%20caf%C3%A9%20%E6%9D%B1%E4%BA%AC%20with%20spaces",
+                "task café 東京 with spaces",
+            ),
+            ("task%3F%23fragment", "task?#fragment"),
+        ] {
+            let path = RequestPath::parse(&format!(
+                "/api/v1/organizations/org/tasks/{encoded}/assignment"
+            ))
+            .unwrap();
+            assert_eq!(path.segments()[5], expected);
+        }
+        assert!(
+            RequestPath::parse("/api/v1/organizations/org/tasks/task%5Cid/assignment").is_err()
+        );
+    }
+
+    #[test]
     fn reserved_namespaces_are_whole_decoded_segments() {
         for raw in ["/api", "/api/v1/version", "/api/v2/x", "/%61pi/x"] {
             assert!(RequestPath::parse(raw).unwrap().is_api(), "{raw}");
