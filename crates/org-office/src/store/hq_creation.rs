@@ -109,6 +109,38 @@ pub(crate) fn initialize(store: &Store, record: LocalRecord) -> Result<(), Offic
     })
 }
 
+/// Admission only follows completed creation. Inspect its retained cursor before
+/// preparation can recreate missing organization storage or the Created marker.
+pub(crate) fn has_selected_history(
+    path: &std::path::Path,
+    key: &crate::Key,
+) -> Result<bool, OfficeError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {}
+        Ok(_) => return Err(invalid()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(OfficeError::storage(e)),
+    }
+    Store::inspect(path, key, |db| {
+        let has_cursor: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='selected_journal_cursor')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(OfficeError::storage)?;
+        if !has_cursor {
+            return Ok(false);
+        }
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM selected_journal_cursor)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(OfficeError::storage)
+    })
+}
+
 /// Initial creation is authorized by its immutable intent and protected caller.
 /// A pre-schema crash may leave an empty encrypted database. Only an entirely
 /// empty version-0 database is finishable; any foreign schema is retained/refused.

@@ -145,10 +145,10 @@ impl Office {
     }
 }
 
-/// Once Created was stored, absent native history requires recovery. Validate
-/// before preparation can create or initialize organization storage again.
+/// Created or retained admission proves native history must already exist.
+/// Validate before preparation can initialize organization storage again.
 fn verify_completed_history(folder: &Path, key: &Key, completed: bool) -> Result<(), OfficeError> {
-    if !completed {
+    if !completed && !storage::has_selected_history(&folder.join(OFFICE_DB), key)? {
         return Ok(());
     }
     let path = folder.join(ORG_DB);

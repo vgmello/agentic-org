@@ -209,6 +209,125 @@ fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_rein
 }
 
 #[test]
+fn admitted_hq_retry_with_lost_marker_refuses_lost_native_history() {
+    for damage in ["marker-only", "missing", "preschema", "empty"] {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("HQ");
+        let key = Key::from_bytes([8; 32]);
+        let bound = binding(dir.path());
+        let office = Office::provision_hq_for_instance(
+            &folder,
+            &new(),
+            key.clone(),
+            INSTANCE,
+            &bound,
+            material,
+        )
+        .unwrap();
+        let command_id = crate::ulid::from_ms(time::now_ms(), 1);
+        office
+            .submit_org(OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: command_id.clone(),
+                team_id: "TEAM".into(),
+                name: "Platform".into(),
+                owner_team_id: None,
+            }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(office.org_snapshot().unwrap().position.seq, 2);
+        let config = admission_config(dir.path(), &bound.public_root);
+        office.install_selected_acceptance(config.clone()).unwrap();
+        office
+            .bind_selected_owner(Arc::new(AdmissionOwner(bound.owner_member_id.clone())))
+            .unwrap();
+        let record = office.hq_creation_record().unwrap().unwrap();
+        drop(office);
+
+        let local = fs::read(folder.join(OFFICE_DB)).unwrap();
+        let intent = fs::read(folder.join(INTENT)).unwrap();
+        let marker = fs::read(folder.join(office_file::FILE_NAME)).unwrap();
+        let journal = config
+            .protected_root
+            .join("offices/HQ/journals/work-acceptance/journal");
+        let sources = ["anchor.json", "transactions/1.json"].map(|path| {
+            let path = journal.join(path);
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        });
+        fs::remove_file(folder.join(office_file::FILE_NAME)).unwrap();
+        let org_path = folder.join(ORG_DB);
+        if damage != "marker-only" {
+            fs::remove_file(&org_path).unwrap();
+            if damage != "missing" {
+                let preschema = Schema {
+                    admit: None,
+                    version: 0,
+                    create: |_| Ok(()),
+                    upgrade: |_, _| unreachable!(),
+                };
+                let schema = if damage == "preschema" {
+                    &preschema
+                } else {
+                    &org_db::SCHEMA
+                };
+                drop(Store::open(&org_path, &key, Opening::New, schema).unwrap());
+            }
+        }
+        let damaged_org = fs::read(&org_path).ok();
+        let mut material_called = false;
+        let retry = Office::provision_hq_for_instance(
+            &folder,
+            &new(),
+            key.clone(),
+            INSTANCE,
+            &bound,
+            |prior| {
+                material_called = true;
+                assert!(prior.is_some());
+                material(prior)
+            },
+        );
+        if damage == "marker-only" {
+            let office = retry.unwrap();
+            assert!(material_called);
+            assert_eq!(office.org_snapshot().unwrap().position.seq, 2);
+            assert!(office.org_operation_get(&command_id).unwrap().is_ok());
+            assert_eq!(
+                fs::read(folder.join(office_file::FILE_NAME)).unwrap(),
+                marker
+            );
+            drop(office);
+        } else {
+            assert!(
+                retry.is_err(),
+                "{damage}: lost native history was reinitialized"
+            );
+            assert!(
+                !material_called,
+                "{damage}: refusal followed material processing"
+            );
+            assert!(!folder.join(office_file::FILE_NAME).exists());
+            assert_eq!(fs::read(&org_path).ok(), damaged_org, "{damage}");
+            assert_eq!(fs::read(folder.join(OFFICE_DB)).unwrap(), local);
+        }
+        assert_eq!(fs::read(folder.join(INTENT)).unwrap(), intent);
+        assert_eq!(
+            fs::read(bound.public_root.join(PUBLIC_ESCROW)).unwrap(),
+            record.package
+        );
+        for (path, bytes) in sources {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        let retained = Store::inspect(&folder.join(OFFICE_DB), &key, storage::read)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained.public_key, record.public_key);
+        assert_eq!(retained.package, record.package);
+        assert_eq!(retained.local_der(), record.local_der());
+    }
+}
+
+#[test]
 fn hq_creation_changed_inputs_and_missing_committed_material_never_generate() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("HQ");
