@@ -8,13 +8,14 @@ Integrate reviewed features into `v1-integration`; review locally without waitin
 
 ## Current work
 
-Active acceptance unit: F1b-socket, `codex/v1-socket-admission`, from accepted
-integration cd777450. Four exact org-socket confinement/image/example files plus
-two module registrations; no Cargo, host/web consumer or production signing setup
-changes. Root owns extraction/integration, original fullstack author retains intent
-and any repairs. Current targeted/full checks and fresh independent/final reviews
-still gate acceptance. Internal only; first usable U1 remains onboarding/sign-in
-with actual first-organization create/reopen/restart.
+Active acceptance unit: F2a source/codec, `codex/v1-source-codec`, from accepted
+integration ac20f099. Eight exact org-docs/org-work source/test/vector files plus
+minimal module/export hunks; no Cargo, service, auth, UI or assignment transport
+changes. Root owns extraction/integration; original fullstack author retains intent
+and bounded repairs. Compile closure passes independently; focused/full checks and
+fresh independent/final reviews still gate acceptance. Internal only; first usable
+U1 remains actual onboarding/sign-in/create/reopen/restart. The transport-coupled
+selected_fingerprint test stays preserved with its U5 production consumers.
 
 The larger host/socket F1b extraction at ace8b29d failed compilation on minimum
 GatewayRelease/static-signing/identifier dependencies. Its branch/source/failed
@@ -47,6 +48,7 @@ Release-store archive/pin/recovery mechanics now have14 focused tests at their c
 
 ## Accepted checkpoints
 
+- F1b-socket: accepted `d6dbf8ee`, integration `ac20f099`; real macOS kernel vector/all69 socket tests, Linux cross-Clippy, full Rust/kit gates, normal hook, retained-author intent, clean fresh initial and separate final passed. Raw Linux P1/blocked report and child sandbox failures retained. Internal substrate only; no gateway/handoff/Linux confinement/usable feature claim. Journal `6e30816039104e869f84c5b8f18189da` closed before merge; evidence `.agent-kit/logs/v1-socket-admission/integration-receipt.json`.
 - F1a pure release verifier: accepted `cdfed316`, integration `cd777450`; all23 focused tests, full Rust/kit gates, normal hook, retained author intent, fresh initial and separate final review passed. Strict-object repair and its first macro/source-guard failure retained. Library-only; no installer/signing or usable-feature claim. Journal `6ef553bc40824f149757a838d1a7f8fb` closed; private source-bound evidence `.agent-kit/logs/v1-release-verifier/`.
 
 - F0 governing documentation/delivery split: accepted `92a7f8d4`, integration `cad1057b`; eight configured checks including54 draft-schema tests, two confirmed documentation repairs, author validation and separate fresh final review passed. Documentation only; no product feature or draft-schema deployment. Journal `69978f9191cf46bb8fce19fd44f53d2d` closed; source-bound private evidence `.agent-kit/logs/v1-delivery-baseline/`.
