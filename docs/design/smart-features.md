@@ -1,6 +1,6 @@
 # Smart features: the copilot
 
-Status: **library implementation plus target integration proposal, rev 2**
+Status: **library implementation plus target integration proposal, rev 3**
 (2026-11-15). The existing org-copilot registry/rendering/validation/fake-runtime
 contract remains current; real execution integration is not established here.
 [Organization-data execution](organization-data/11-model-profiles-and-agent-execution.md),
@@ -11,7 +11,7 @@ contract remains current; real execution integration is not established here.
 boundaries. This document does not select areas, staffing automation or a separate
 copilot process owner. Author: the copilot work (cloud). Reviewer: ada.
 Builds on [ADR-0001](../adr/0001-app-is-a-client-office-is-a-server.md) (the app is a client; the office server does the work) and the [architecture rules](../architecture-rules.md).
-Eden's smart-features candidate list is not in `docs/specs/` on this branch. The specs only refer to it by number (#7 break a feature into tasks, #13 "why?" answers, #16 suggest who scopes a request, P2 the Reporter's narrative), so this design takes the user's first set and leaves room for those.
+Compatible requirements from Eden's earlier smart-feature candidates are integrated below. The registry entries distinguish implemented library contracts from deferred candidates; listing a candidate neither registers nor activates it.
 
 ## What it is
 The **copilot** drafts text for a person to review and confirm. It has no domain
@@ -28,6 +28,35 @@ The first set (the phases below are these three features):
    home-team assignment, roles and separate execution pool/model choices with an
    explicitly qualified cost estimate. Each hire is reviewed; no automatic hire.
 
+### Candidate experience (deferred unless an implemented entry is identified below)
+
+The existing `text.improve` and `bug.from_sentence` library entries remain the first two implemented contracts. Their additional candidate UX and every other row require separate selection, schemas, authorized context and integration. Candidate numbers retain the earlier product references; they are not registry IDs.
+
+| Candidate | Proposed draft/output and review |
+| --- | --- |
+| 1 · Bug from a sentence | Fill the ordinary report form with field-level Drafted provenance; the person checks/edits then uses Report bug. Optional severity stays an explicit choice/suggestion. Use selected task accountability, not the old area field. |
+| 2 · Duplicate finder | At report/triage, up to three likely duplicates with a one-line reason each; the person chooses This is the same bug or ignores them. No automatic close/link. |
+| 3 · Triage suggestion | Suggest authorized accountable scope, severity, priority and assignment with reasons from visible similar bugs; the person edits before Mark as triaged. No automatic triage/assignment. |
+| 4 · Text draft/improvement | Field text plus Shorter/Clearer/Plain language/Spelling/Custom intent produces a diff; Use this, Use selected parts or Discard precedes ordinary save/send. |
+| 5 · Hire from description | Draft title, role summary, responsibilities, focus, valid home team, reporting suggestion and name; use the normal hire review/confirmation, never provision from the draft. |
+| 6 · Definition of done | Draft one or two checkable sentences from task title/description, editable in the normal task form; no new completion engine. |
+| 7 · Task/breakdown | A goal becomes one task or three to seven proposals with checkable completion text, order and suggested assignees; edit/drop before an explicit Create N tasks confirmation. Keep proposals distinct from accepted task IDs and selected mutation services. |
+| 8 · Fix task from bug | Draft a fix task's title, description and completion text from the visible bug into New task; ordinary confirmation creates it. No direct repository access. |
+| 9 · Reply suggestions | From the visible question and explicitly prepared recent turns, draft two or three short replies; pick/edit then use ordinary Send. |
+| 10 · Linked summaries | Three to five read-only lines from authorized activity/thread facts, each linked to its source. Private away context follows the separate account-only digest boundary, never shared project/agent context. |
+| 11 · Doc/brief draft | A topic and authorized project facts produce Markdown in the editor; ordinary reviewed Save/publication persists it with selected document scope. |
+| 12 · Release notes | Selected completed work/verified fixes in a date range produce user-facing draft notes in the editor; Save follows the existing release/document contract. |
+| 13 · Ask the organization | The office searches authorized records first and supplies bounded prepared context; return a read-only answer with source links. The copilot performs no live search or tool invocation. |
+| 14 · Team suggestion | Visible roles/projects suggest a team grouping with a reason; prefill the ordinary New team form for review, without moving employees automatically. |
+| 15 · Staff a team | Draft a named team/lead and three to six role/title/focus/reporting proposals; edit/drop/add and review each hire. Separate execution suggestions require owner confirmation and selected pool/model data; no old monthly model quote or role default. |
+| 16 · Route a request | Request text and authorized projects/roles/recent requests produce suggested project/type and up to three scopers with reasons; choose/edit or Just save, then ordinary Send. Configured rule fallback remains explicitly labelled. |
+
+**Common target UX:** disclose the exact context under the button (“Uses this text and this project's open bugs”). The office prepares only the feature registry's authorized, bounded data; source text remains untrusted data, never instructions. No candidate gains tools, file/network/MCP access, credentials or private-note/other-account activity access. Any later prepared repository context needs an explicit reviewed registry/context contract; these candidates grant none.
+
+Use one secondary Draft with copilot pattern, progress with Stop, per-field Drafted markers and reasoned suggestions; forms stay editable and manual actions remain usable. Preview is separate from ordinary Save/Send/Report/Hire. Hide controls when disabled/unconfigured; show the reason for a temporarily unavailable configured feature. Keep the person's input on failure and clear a panel's stale error on retry or Dismiss. Cost labels/reads use the actual route's ledger coverage and existing scoped amount rules; no separate monthly Copilot accounting model is added.
+
+**Target acceptance:** a candidate cannot mutate a domain record before ordinary confirmation; selected rewrite parts preserve the remaining original text; an attempted context read outside scope fails before prompting. Duplicate/scoper results never exceed three, breakdown proposals stay within three to seven when splitting, and reply suggestions number two or three. Cancellation remains pending until the execution adapter proves cleanup; an unavailable runtime never blocks the manual form.
+
 ## Principles
 1. **Drafts only.** A copilot result is a value the app shows in an editable form. Nothing is saved, sent, hired or run until the person presses the normal confirm button. The copilot has no write path into the office.
 2. **Read-only, tool-less runs.** The runtime is started with no tools, no file access, no network and no MCP servers, in an empty temporary directory. If a runtime cannot be started that way, it is not offered as a copilot runtime.
@@ -38,14 +67,15 @@ The first set (the phases below are these three features):
    HQ operations route to the owning office. org-copilot does not spawn; the office
    execution integration owns routes/permits/process cleanup. The `copilot.*` shapes
    below remain library/mock contracts until real handlers are implemented.
-7. **Hidden when it can't work.** With no runtime set up, `copilot.features` is empty and the app hides every smart button. A screen never shows a smart button that will only fail.
+7. **Unavailable states are explicit.** With no runtime set up, `copilot.features` is empty and the app hides every smart button. For a configured feature temporarily unavailable, disable it with the concrete reason while retaining the manual path; do not present a functional control that will only fail. This UI requirement does not turn an unavailable production handler into an implemented feature.
 8. **Honest cost.** Document 10 owns immutable usage, actual consumer and scope
    attribution. No automatic separate “Copilot” cost category is introduced. A
    non-employee copilot consumer maps to one_off only when that is the actual
    execution identity; never fabricate an employee from the requesting person.
    Missing tokens/cost stay partial/unavailable, with actual route/attempt evidence
    when available. Task/agent budgets use document 17; release caps warn only.
-   The absent costs-and-budgets-v1 PRD supplies no operative rule.
+   Compatible cost requirements are integrated in those existing contracts;
+   older contradictory proposals grant no additional authority.
 9. **Replaceable.** The runtimes sit behind a port the crate owns. The crate has no process or network code.
 
 ## The pieces
@@ -100,6 +130,7 @@ area dependencies rather than promoting them through context resolution.
 - Input: `{ sentence: string (<= 1000) }`. Context: the project's areas, one `area` item each (`label`: the name, `text`: the id), resolved by the office.
 - Draft: the fields of the real `bug.report` call (`org-proto`), so a draft fills the report form as it is: `{ title (1..120), what_happened (1..2000), severity: "critical" | "major" | "minor" | "trivial", steps?: string (one string, one step per line), expected?: string, area_id?: string, environment?: string }`. Only the first three are required. The model leaves out what the sentence doesn't say. `area_id` is only meaningful if it is the id of one of the areas given as context: the copilot drops an `area_id` that is not one of the ids it was given as context (the rest of the draft stays), and the dialog ignores one that is not an area of the project (the area the person had chosen stays).
 - Behaviour: in the real report dialog (`ReportBugDialog`, opened from a project's Bugs tab) the person types a sentence and presses **Draft the report**. The dialog's fields fill with the draft, marked "Drafted by the copilot", and the person edits them and presses **Report bug**, which is the normal `bug.report` call. **Undo draft** puts back exactly what the person had before the first draft. The copilot never calls `bug.report`.
+- Target UI checks: mark each filled field **Drafted** until edited/explicitly kept. A drafted severity says **Suggested by the copilot** or remains a nonselected hint; it never silently becomes the person's deliberate severity choice. Editing one field clears only its own marker. Clear a draft/improve panel's prior error on its next attempt or Dismiss, retaining the person's inputs and Undo draft. These are requirements from the earlier pinned UX review, not proof of current UI behavior.
 
 #### 3. `team.staff` (deferred draft feature; not built or registered)
 
@@ -219,5 +250,5 @@ The template is fixed text. The renderer puts the feature's output schema in the
 
 ## Not decided
 1. Explicit copilot execution pool/model and non-employee admission mapping. No implicit first-runtime default is selected.
-2. Budget evaluation follows document 17 and actual ledger attribution. There is no monthly project budget; no invented non-employee agent allowance. The precise admission adaptation remains work, not authority inferred from the absent PRD.
+2. Budget evaluation follows document 17 and actual ledger attribution. There is no monthly project budget; no invented non-employee agent allowance. The precise admission adaptation remains implementation work; integrated requirements do not establish a completed service.
 3. ~~Whether `copilot_busy` is a new code or reuses `unavailable`.~~ *Decided (ada, PR review): keep `copilot_busy`.*

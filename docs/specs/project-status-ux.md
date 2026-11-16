@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 8
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -19,7 +19,7 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
-**Revision 8 (2026-11-15): selected data reconciliation.** Status and report presentation remain a UX proposal; automatic reporting schedules, delivery triggers and Reporter orchestration are deferred. [Projects and documents](../design/organization-data/02-project-structure.md), [typed tasks/features](../design/organization-data/03-features-and-work.md), [accounting](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md) own their data. Budget/accounting services are not implemented by this spec. The referenced costs-and-budgets-v1 PRD is absent and grants no operative authority. Retrospective actions and area-based metrics are independently deferred.
+**Revision 9 (2026-11-15): integrated reporting requirements.** Adds shared metric references and condensed deferred Flow/digest behavior. Status and report presentation remain a UX proposal; automatic reporting schedules, delivery triggers and Reporter orchestration are deferred. [Projects and documents](../design/organization-data/02-project-structure.md), [typed tasks/features](../design/organization-data/03-features-and-work.md), [accounting](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md) own their data. Budget/accounting services are not implemented by this spec. Compatible earlier PRD requirements are integrated into these existing contracts; contradictory older rules do not override them. Retrospective actions and area-based metrics are independently deferred.
 
 A report is a supporting document in organization Git: required project, optional at most one same-project feature/release/deployment scope, stable ID, schema/revision, title, `kind: report`, `status: draft | current | deprecated`, owner and creation/update attribution. Current requires an active owner. Store a project report at `projects/<project-id>/reports/<document-id>.md`; use feature `reports/` or release/deployment `documents/` for those narrower scopes. Dates belong in metadata, not identity. New IDs use UUIDv7; retained imported IDs do not change. Keep the report narrative and safe fact snapshot separate from protected monetary snapshots.
 
@@ -34,11 +34,15 @@ A report is a supporting document in organization Git: required project, optiona
 
 ## 1. Flow 1 · The Status page (the project's **Overview** tab)
 
+The initial [project Overview](work-items-ux.md#3-flow-1--project-page) keeps its
+brief, counts and recent activity. This richer status/reporting proposal does
+not replace that view before its data and presentation services are selected.
+
 *(rev 5)* **Who sees cost:** the Investment tile and the cost trend show amounts only to the owner and the project's manager (document 17 and COST-7). Everyone else sees the tile as the budget state only, for example "1 budget reached", with no dollar figure, or "No budgets reached" when none is.
 
 *The mock-ups in this spec and in `costs-and-insights-ux.md` are set in December 2026. The project started on 7 Nov.*
 
-The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status page. Its earlier tiles (needs triage, open bugs, tasks, brief) are part of it, so there's no separate Status tab.
+In the deferred reporting experience, the project's Overview tab **would be** this Status page. Its earlier tiles (needs triage, open bugs, tasks, brief) are part of it, so there's no separate Status tab.
 
 ```
  Agentic Org · Status                                   ● At risk             [Generate report]
@@ -61,6 +65,7 @@ The project's Overview tab (`work-items-ux.md` decision 1) **is** this Status pa
 
 - Every tile opens the list behind it (the features, the bugs, the usage records behind the cost).
 - **Charts:** the trend uses the dataviz rules (labelled values, never color alone, a table toggle for screen readers).
+- **Metric consistency:** Flow, reports and future Insights use the [shared duration definitions and deferred analytics calculations](costs-and-insights-ux.md#shared-duration-definitions): exclude terminal gaps, retain unknown baselines, show sample sizes and never label status time as working time. The illustrated Flow tile is a proposal; the detailed replacement below stays deferred.
 - **States:** a new project ("Not enough history yet: status appears after the first week of work". The tiles show what exists) · a project with no features (the Features tile becomes "Tasks: 12 open · 31 done") · a source unavailable (for example no usage data: "Usage incomplete: Antigravity doesn't report usage", never $0).
 
 ## 2. Flow 2 · A status report
@@ -107,6 +112,8 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 - STATUS-9 · *(rev 5)* Home › Projects status lists every project's health, features in progress, this month's cost and waiting-on-you count, sorted by health. The cost column shows amounts only to the owner and each project's manager (document 17 and COST-7); other members see no cost column.
 - STATUS-10 · Health rules are a proposed editable presentation policy; **deferred scheduling** needs its own service/configuration contract. Reports export to Markdown and PDF.
 - STATUS-11 · Charts have a table view and never rely on color alone. Missing data is shown as not available, never as zero.
+- STATUS-12 · **Deferred analytics:** Flow and Insights agree for identical explicit periods/checkpoints. A Flow link preserves rolling 7d; filtering Flow never changes Progress. Median values below five completed items show “—, n items”.
+- STATUS-13 · **Deferred private digest:** guessed-ID reads by another account or agent reveal no away window/digest; exports and satellites receive none. A daily budget reset cannot resolve a separate monthly problem; a release warning cap is not a problem.
 
 ## 6. Open questions
 
@@ -119,3 +126,23 @@ Budget state distinguishes `stop_pending` from `held`: reaching a threshold does
 
 **For the user**
 - ~~U23~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
+
+### Deferred Progress and Flow requirements
+
+These requirements retain the earlier project-insights direction without selecting an analytics or planning engine. When selected, Insights follows Conversations as the last tab, with Progress, Speed, then Cost. Progress shows project completion, open-release rows followed by collapsed closed rows newest close first, a release-switchable burn-up, then open milestones. Period/team/member filters live in the URL and affect Flow only; say “Progress isn't filtered”.
+
+The proposed Flow tile shows rolling-7d completed count/median cycle time, current-release completion and at most three open milestone rows, then “+N more”. Current release means earliest In progress, else earliest Planned in the release picker order; no open release leaves count/cycle only. Its link preserves 7d. Use the shared sample/population rules; no member ranking view.
+
+Burn-up uses retained scope/history at each bucketing-day end and now today, with linked scope/done-change markers. Freeze at release/cancellation; an explicitly selected reopen resumes actual historical daily states. A release created today shows one point and “The trend starts tomorrow”. Milestones have rows; milestone burn-up, points and forecasts remain separately deferred. These scope figures never move historical ledger spend by current membership.
+
+### Deferred account digest requirements
+
+An away digest is a separate private account feature, not a shared project report. Its persistence, activity capture, display-time policy and authorization contract remain pending. Away/back instants, durations, digest, seen state and daily summaries stay on HQ, visible only to that account; exclude them from shared history/feed, other accounts, agent context, exports and satellite replication. Guessed-ID reads return not found. Existing coarse presence/last_seen grants no window access.
+
+If selected, Away starts at last input across devices and is confirmed after 10m with no input or immediately when no tab is visible. Only later input in a visible tab ends it; session expiry alone changes neither boundary. HQ owns live time; delayed reports are bounded to known disconnect/reconnect instants. A closed offline tab may lose its report and leave a false window the owner can mark seen.
+
+The qualifying Home card precedes Needs you without replacing it. Prospective thresholds are 10m/30m/1h default/4h/Off. Only Mark as seen syncs seen/hides the card; unseen qualifying windows merge, including active-gap events. Window history retains 30 days; separately selected private daily summaries retain 90 days with their original zone/bounds. Account-zone switching needs contiguous daily boundaries; it cannot rewrite old summaries or budget periods. No retention service is implemented here.
+
+Sections are Problems, Delivered, Progress, later Decisions, Conversations, later Speed. Omit unavailable sources rather than show zero. Facts derive from durable records, not agent prose; every claim links to an authorized source or safe deleted-record evidence. Delivered uses the last completion that stands at return: completion then reopen is absent, completion again counts once. Problems retain start/resolve facts even when resolved before return, combine repeated same-kind occurrences with latest outcome/count, and preserve frozen historical text with explicitly live resolved/reopened/Needs you annotations.
+
+Daily/monthly budget problems stay independent. Release caps and neutral resets are not problems; budget-caused blocks do not duplicate Blocked lines. Validated late events join their original window, update history with “Updated later”, and resurrect a seen Home card only for a new Problem; outside-window events join none. Do not rewrite immutable accounting timestamps using a digest clock-skew rule. A future display timestamp preserves the source evidence. Speed/usual comparisons use the cost spec's deferred minimums; exact digest elapsed spans use “{h} h {m} min” (minutes alone below 1h), separate from the aggregate duration formatter. Reporter, schedule, routine and retrospective orchestration remain deferred.

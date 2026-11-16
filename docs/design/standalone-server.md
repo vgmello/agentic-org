@@ -125,6 +125,19 @@ instance/organization scope, operation ID and expected versions; they are not an
 unrestricted JSON-to-host tunnel. Private peer admission and platform filesystem/
 process controls must enforce this separation within the stated same-UID limits.
 
+Selected production startup binds this handoff to the verified complete release.
+The host consumes a recovered release-store pin into a privately constructed
+runtime token, retains its store lock, verifies its own kernel-loaded image and
+selects worker/gateway paths from that release before opening custody. The v1
+nonsecret gateway first line additionally carries `release` with `version:1`,
+`release_id`, lowercase full `manifest_sha256` and positive integer `sequence`.
+The complete frame stays within 1024 bytes and rejects unknown/duplicate fields.
+The gateway independently checks this binding against its embedded publisher
+registry, exact sibling manifest/signature, own kernel image and authenticated UI
+bytes before confinement/readiness/secrets. An omitted release binding is retained
+only for explicitly named debug/legacy fixtures; production refuses it. This
+describes the selected integration, not evidence of production signing or setup.
+
 **Create organization** requires an authenticated **instance administrator**.
 Owning one organization alone grants no right to create another. Local protected
 setup establishes the first instance administrator and creates the first HQ;
@@ -148,6 +161,47 @@ composition. The retired same-named Tauri workspace member is removed; there is 
 separate setup package or executable. Release staging must select this CLI's
 artifact. `setup` is reserved and currently fails before provisioning; protected
 HQ bootstrap and service registration must land before it can perform onboarding.
+
+The complete-release verifier follows [ADR-0009](../adr/0009-complete-release-verification.md).
+Its private release store is separate from organization data and input bundles.
+The local implementation uses owner-only `staging/`, `releases/`, `intents/` and
+`pins/` directories under a caller-selected protected store, serialized by
+`store.lock`. Completed release trees are read-only. A version-1 intent freezes
+the exact manifest digest, release ID, sequence, private staging handle and prior
+pin digest before publication. Immutable version-1 pin records use contiguous
+positive 20-digit commit ordinals and a SHA256 chain; these ordinals have no
+relationship to office work-event origins or selected acceptance ordinals.
+Intents and pins are retained. Only the next frozen intent may finish after a
+crash; an unrelated staging tree or installed directory never selects itself.
+This layout describes the implementation boundary, not evidence that publication,
+platform admission, setup or service activation has passed production checks.
+Sealed output trees use private `.stage-<handle>` names under the same `releases/`
+parent as their final release IDs. This preserves the directory's parent during
+the exclusive rename: macOS refuses cross-parent moves of a `0500` directory.
+The separate `staging/` directory holds frozen compressed inputs; it is never a
+source of automatic release selection. No output tree is made writable to publish.
+Its trusted build inputs are `ORG_RELEASE_TRUST_REGISTRY` (a public registry file,
+not a signing private key) and `ORG_RELEASE_MIN_SEQUENCE` (the positive compiled
+freshness floor). Host and gateway embed and strictly validate those inputs at
+build time. Neither reads them from its runtime environment or input bundle.
+An unconfigured development source build embeds no publisher trust and cannot
+activate a production release; malformed configured input fails the build.
+Disposable generated-key verification is separate from publisher provisioning.
+
+The selected setup adapter preserves the typed reverse connection: bootstrap-mode
+`agentic-org serve` connects to setup's private listener; `bootstrap` and `exit`
+are never ordinary `host.sock` methods. Both sides use the same human CLI/host
+executable, whose retained signing identifier is
+`com.ellosoft.agentic-org.org-office-host`, with the compiled team and hardened
+runtime checks. The retired desktop application's identifier does not admit this
+CLI. The existing explicit debug executable allowance remains debug-only. Before
+creating the registry, the bootstrap host holds the registered instance/root and
+host locks; it transfers those same locks and custody into the normal runtime
+without an unlocked restart. Replays verify credentials with the live account
+verifier and lockout rules before comparing the nonsecret fingerprint. The initial
+adapter admits HTTP loopback without a TLS pair; supplied TLS pairs remain
+unavailable until the actual host certificate match/validity/coverage verifier
+ships. That limitation is not a TLS validation success or setup readiness claim.
 
 ## 3. Instance selection and storage
 
@@ -257,6 +311,33 @@ agentic-org setup
 ```
 
 Setup is one resumable workflow: select/reserve default or --name <name>; verify a complete platform release; collect HQ organization name/slug, remote organization repository/state branch, valid bootstrap home-team choices and listener configuration; establish the instance administrator; provision HQ using protected host operations and the existing recovery-code flow; register/start the per-user service; probe local HQ service readiness and show its browser URL. Service registration is automatic; users do not run a separate install or service install step. Preserve the recovery delivery/deferred-collection behavior in the installation UX spec. Repeating setup resumes the same operation and reuses identity/data/configuration/service without changing roles, silently upgrading or duplicating HQ. Existing satellite-only state is not converted into HQ by rerunning setup.
+
+The local version-1 automation input for `setup --non-interactive --config <file>`
+is a strict JSON object with `version: 1`, absolute `root`, `login`,
+`organization` (the existing `selected_bootstrap::PlanV1`: version, name, slug,
+repository_remote_url, state_branch, home_team_name), and `listen` (the existing
+host-control ListenConfig). No password, TLS private key, owner/employee shortcut,
+satellite role or extra property belongs in this file. A password comes from the
+controlling terminal or an explicit owner-only `--password-file`; the latter is
+never copied into setup state. Configuration input is bounded to 64 KiB, and
+secret password input to 1024 UTF-8 bytes. Missing required automation input fails
+without a prompt. The initial local CLI adapter supports the existing loopback
+HTTP profile; unsupported listener/TLS profiles fail explicitly before bootstrap.
+This restriction is not a claim that remote HTTPS setup has shipped.
+
+Under the account-owned application base, `setup/<name>/setup.v1.json` freezes
+the validated nonsecret request, offline policy, separate bootstrap/HQ operation
+IDs and exact release pin before protected creation. Later monotonic fields name
+the immutable instance, completed HQ result, successful bootstrap Exit and service
+registration. `setup.lock` serializes this workflow separately from the instance
+writer and release-store locks. Reopen repeats original protected operations or
+verifies their original result; it never generates replacement operation IDs,
+changes a configured listener or activates a newer bundle implicitly. The CLI
+resolves services from this saved record, not a later HOME/cwd. A selected-image
+re-exec occurs before credentials when the installer is not the pinned host
+image. Setup records are protected operational metadata, not organization Git.
+These concrete adapter formats require implementation and runtime evidence; this
+paragraph does not assert completed setup or service readiness.
 
 The initial wizard and noninteractive setup schema offer no satellite role, invitation or --hq join option. Requests to use initial setup for joining are rejected before provisioning and direct the user to HQ's Add office flow. Satellite creation is initiated separately from HQ's authenticated UI or an HQ-issued onboarding command. That destination flow can ensure missing release/service prerequisites through the same internal foundation, but is not a mode of agentic-org setup. Its public command spelling is outside this initial-setup contract; do not invent a setup join flag.
 
@@ -468,6 +549,26 @@ Persist only the encrypted CA package as replicated organization data; the recov
 code and usable CA key never accompany it to a satellite. Record the escrow version
 and provisioning completion idempotently. Ordinary retries never rotate the code.
 
+[ADR-0007](../adr/0007-hq-creation-escrow.md) now fixes creation format
+REC-ESC-1. The HQ worker stores its usable PKCS#8 and exact public envelope in
+one local-only SQLCipher `office.db` record with organization, provisioning
+operation and completion version. That record is excluded from organization
+replication, selected acceptance capture, snapshot export and public reads. Its
+public envelope is the sole source for the copied
+`security/ca-escrow.v1.bin` record; the key/code never enter that projection.
+The initial record commits atomically on the existing office writer before a
+provisioned create succeeds. Reopen verifies the retained record, never generates
+a replacement for incomplete/mismatched committed material. Publishing the public
+copy is separately resumable from those same committed bytes. This storage
+contract does not claim a certificate/enrollment or HQ-loss promotion service.
+
+The new protected creation context binds an explicit canonical state root in
+its immutable retry intent. Completion waits for immutable publication of the
+copied envelope there. Ordinary reopen repairs a missing public file from the
+committed local record and refuses conflicting bytes without replacing them.
+Protected export reads only a separately typed public record, verifies that
+copy against committed bytes, and never serializes the local PKCS#8 holder.
+
 Stage the pending delivery secret in the host's credential provider, with only an
 opaque delivery handle in the setup journal. Before owner acknowledgement, an
 interrupted protected delivery resumes the same code/escrow; it does not silently
@@ -475,6 +576,30 @@ rotate a committed CA. On acknowledgement, erase the pending delivery secret and
 never expose the code through later status/read APIs. A lost already-acknowledged
 code requires the separately reviewed recovery/rotation policy, not cookie-only
 redisplay or an implicit setup reset.
+
+[ADR-0011](../adr/0011-protected-recovery-delivery.md) fixes selected protected
+delivery REC-DEL-1. The protected host registry owns a versioned delivery ledger
+bound to the completed HQ reservation and exact committed public package. It
+records delivery ordinals, persisted showing dates/counts and the acknowledgement
+actor/time, never the code. Each release requires a fresh macOS device-owner
+authentication and verified local-console, audit-session and foreground-terminal
+context. The private acknowledgement permission belongs to that live native
+connection and invocation; it is never a client capability or persisted token.
+Delivery plus its code-free audit commits before a secret response. Acknowledgement
+first commits a deletion intent, then deletes and verifies absent only that
+pending code, then records completion. Startup resumes an interrupted deletion
+before that HQ is ready; missing custody without that intent is an error.
+
+Package export uses a separate authenticated launch-v3 `recovery_public_read`
+descriptor, not the writer-control stream. Strict version-1 public frames are
+limited to 16 KiB, with exact instance/office/organization/create-operation
+bindings and at most 4475 original encrypted bytes. The sole worker source is
+`Office::hq_creation_public_record()`. No local private-key record enters the
+exchange. A native administrator exports to an explicitly selected new local
+0600 file without overwrite, and confirms that both package and code are stored
+off HQ. Platform authentication, production signing and disaster-recovery
+evidence remain separate acceptance obligations; this contract is not proof
+that any of them has passed.
 
 Setup offers code collection through the dedicated protected owner channel after HQ creation, before starting its registered service. As already specified in installation UX revision 5, the owner can defer collection/confirmation: HQ setup completes while recovery material remains Waiting or Shown, not confirmed. Noninteractive setup and setup over SSH on macOS receive no code or protected code output; the instance administrator collects it later through agentic-org recovery release at the HQ machine. Acknowledgement that the package/code are retained off HQ is required before marking recovery material collected, not before declaring the HQ service ready. Status JSON/logs never contain the code. A fixture must recover the same CA public identity with the code and fail
 closed for a wrong code or damaged package. Escrow is not a backup of office DB
@@ -559,3 +684,38 @@ port conflicts, interrupted enrollment, revoked/expired identity, incompatible
 versions, lost replies, stream gaps, slow clients, shutdown and orphan cleanup.
 Use temporary roots and fake runtimes. Real runtime and signed-platform checks are
 explicit opt-in acceptance runs. See [dogfood-run.md](../specs/dogfood-run.md).
+
+
+The selected native command is `agentic-org recovery release` (and `status`),
+with a saved `--name` or explicit `--host-socket`/`--instance-id`, an exact
+`--org-id`, and native administrator sign-in. `--package` chooses an explicit
+new local file; `--redeliver` requests a fresh authenticated showing of the same
+code. Setup offers the same flow on its existing native connection before Exit;
+deferral prints the later command and never implies retention. Native
+`recovery.status` version1 returns persisted state/dates/counts and code-free
+audit pages (32 delivery ordinals per page, all actions for each ordinal).
+`recovery.package` version1 returns the bound public record from the one-shot
+worker exchange, with no server filename. Browser/gateway/agent channels have
+no recovery-secret or package-export route. REC-1 HQ-loss recovery remains
+unsupported. These APIs do not imply physical-presence or production-release
+verification has passed.
+
+### Selected provisioning adapter persistence (implementation in progress)
+
+The additive `organization.provision.v1` operation preserves the legacy name-only
+contract. Protected host-registry schema 2 adds a separate selected provisioning
+reservation: account/fingerprint, normalized name and explicit slug, exact prepared
+UUIDv7 plan, owner security member, opaque recovery handle, nullable office-key
+fingerprint, and linked/completion status. Its replay window uses operation ULID
+time plus 30 days; unfinished reservations and their custody are never pruned as
+completed receipts. Schema-1 rows retain their identities and semantics.
+
+Credential staging precedes the reservation and is bound to its account,
+fingerprint and exact prepared IDs. A key-pending reservation may finish an
+add-only office-key installation only before office preparation starts; after the
+key fingerprint is recorded, absence/mismatch requires recovery. Interrupted
+publication re-reads the original item, never replaces it. All selected office
+folders/intents and required-writer markers are retained through legacy startup
+discard/sweep. Host completion follows actual selected worker readiness, with
+remote connectivity/publication explicitly unverified. No recovery code or
+office key enters the reservation or browser result.

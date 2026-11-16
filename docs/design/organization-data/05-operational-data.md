@@ -265,7 +265,129 @@ New tasks start with a `created` event at revision 1, including their initial pu
 
 Both pairs contain both keys, each an ID string or explicit null. The surrounding event supplies actor/time, task identity and revision. Historical IDs inside a payload describe the past; never validate them against today's team membership or rewrite them after reorganization.
 
-Event JSON uses the SQL scalar names except `change` and `source_metadata`, which are JSON objects projected into compact, sorted-key `change_json` and `source_metadata_json` strings. Expand optional scalar fields to explicit nulls and `source_metadata` to `{}`. `payload_sha256` hashes the UTF-8 JSON file with sorted object keys, compact separators, no ASCII escaping and the checksum field omitted. Identical event-identity retries compare the canonical hash before returning the original event; different content conflicts. Import verifies the actual hash, not merely the SQL column's format.
+Event JSON uses the SQL scalar names except `change` and `source_metadata`, which
+are objects projected into lossless canonical `change_json` and
+`source_metadata_json` text. Preserve authoritative complete event bytes and unknown
+extensions; a SQL numeric extraction or `Value` reserialization is not an event
+source. Identical event-identity retries compare the verified canonical hash;
+different content conflicts. Import verifies the actual hash, not its SQL format.
+
+### Task-event codec 2
+
+New events use `schema_version: 2`, explicitly selecting a new codec rather than
+redefining schema 1. Keep existing event bytes, hashes and identities unchanged.
+Admission dispatches only to supported codecs; unsupported schema-1 or future
+codecs remain retained/staged with unverified/unavailable coverage. Never hide
+known missing history behind a fabricated baseline.
+
+Codec 2 accepts one complete UTF-8 JSON value with JSON whitespace only around it.
+Reject BOM, trailing content, malformed numbers, unpaired surrogates and duplicate
+**decoded** object keys at every depth. Sort keys by Unicode scalar order (shorter
+prefix first), without normalization; preserve array order. Emit compact UTF-8
+without a final newline. Escape quote/backslash and use `\b`, `\f`, `\n`, `\r`,
+`\t`; other C0 controls use lowercase `\u00xx`. All other scalars, including
+U+2028/U+2029 and supplementary characters, are literal; `/` is not escaped.
+
+Numbers retain their exact original token matching
+`-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`; no float conversion or magnitude
+restriction applies. `1`, `1.0`, `1e0`, `1E+000` and negative zero are intentionally
+distinct hashed content. Hash canonical UTF-8 with SHA-256, omitting **only** the
+top-level `payload_sha256`; nested names remain. The checksum is required and is
+64 lowercase hexadecimal characters.
+
+Producers materialize schema, organization/task identity, `task_kind: task`,
+revision, occurred time, actor kind/ID, operation ID, change object, source metadata
+and `resource_profile: selected-task-resources/1` before hashing. Optional IDs are
+explicit nulls; producer-side absent source metadata becomes `{}`. Verifiers never
+repair absent required members. Header revision is a positive signed-i64 integer
+token without exponent/fraction; schema is exactly integer `2`. Filename, identity,
+attribution and timestamps must match their owning contracts. New accepted changes
+require actual known actors and UTC times. An explicit authorized import may retain
+genuine unknown actor/time values, including null `occurred_at`, consistently with
+document 08; SQL nullability is not permission to omit a new write's attribution.
+Unknown change tags
+and extensions remain in the checksum and retained representation.
+
+### Explicit legacy-work adoption profile 1
+
+[ADR-0010](../../adr/0010-legacy-task-adoption.md) selects the first bounded
+existing-work import. It keeps the adoption Action/Manifest wire version and
+codec 2 unchanged. The first newly wrapped event has
+`source_metadata.legacy_mapping.version: 1`, complete lossless
+`legacy_snapshot` and `legacy_event` objects, exact original-source SHA-256
+digests, explicit original kind/reference and selected owner/project/scope/number
+and principal mappings. Mappings describe the authorized import, not historical
+knowledge at original creation. Original selected event identities are immutable.
+
+This profile admits only a live version-1 work item with exactly its corresponding
+version-1 `Created` event and consistent ID, generation, type, original actor and
+time. The default selected event is `history_baseline` at revision 1 and import
+time with the authenticated migration actor. It retains the exact public selected
+Markdown and the complete original Created object, including its actual actor,
+time, unknown fields and numeric tokens. Earlier selected history remains
+unavailable. This is neither fabricated creation history nor a snapshot-only
+import that conceals a surviving event. Longer/gapped histories, tombstones,
+extra events or unsupported mappings remain intact in protected staging.
+
+Every copied source component must already be public legacy work information and
+be explicitly classified for this import. Unknown extension provenance requires
+explicit classification; private-note, memory, credential or unclassified
+provenance cannot become public through an owner flag. Do not read/copy private
+tables to construct metadata. The original DB objects, event/feed/origin positions
+and message watermarks remain untouched. Install selected state and its permanent
+legacy mutation gate in the same frozen acceptance transaction, allocating one
+journal ordinal and zero new work-event positions. Directory/source comparisons,
+number collision checks and account-bound exact retries apply before completion.
+
+Profile-1 mapping scalars are `source_kind: public_legacy_work`,
+`source_snapshot_sha256`, `source_event_sha256`, `source_generation`,
+`source_version`, `original_kind`, `original_reference`, `accountable_team_id`,
+nullable `project_id`, `scope_kind`, `scope_id` and `number`. `reporter` supplies
+`legacy_id`, `kind` and nullable `id`; `assignee` supplies nullable `legacy_id`
+and `employee_id`. `public_extensions` contains `snapshot` and `event` arrays
+of unique JSON Pointer paths explicitly classifying otherwise unknown public
+subtrees. These declarations cannot override recognized private provenance.
+Known fields retain their existing public legacy-work classification. Member
+mappings are checked against retained legacy members and trusted selected
+employees; the legacy owner designation cannot be mapped to an employee.
+
+The supplied revision-1 baseline is an unaccepted import template carrying those
+classified originals and exact public state. After verification, the writer
+constructs the new selected baseline with its actual import time, authenticated
+owner attribution and original adoption operation ID, retaining change, metadata
+and unknown extensions losslessly. This is an explicit first-wrap rule, not
+rehashing or editing any accepted selected event. The original template stays in
+protected staging. Frozen acceptance records the final bytes once; exact retries
+return the original receipt without repeating mapping or event construction.
+
+The resource profile limits input and canonical output independently to 16 MiB,
+container nesting to 64 (root counts as one), nodes to 200,000 (values/containers
+and keys), and each decoded string/key or raw numeric token to 8 MiB. Enforce
+checked budgets while scanning/emitting, before commit. Resource errors do not
+disclose or truncate payloads; oversized imports remain intact in staging.
+Recovery retains each acknowledged record's profile and decoder and never silently
+substitutes smaller limits. These are byte/work limits, not numeric-magnitude bans.
+
+### Exact public snapshots
+
+Created/baseline schema-2 events retain `change.known_facts` (an object of typed
+known public facts) and `change.public_snapshot`,
+either `{ "encoding": "utf-8-markdown", "text": "<exact public Markdown>" }`
+or `{ "encoding": "utf-8-markdown", "sha256": "<digest>", "byte_length": 0,
+"resource_profile": "selected-task-resources/1" }` with the actual byte count.
+The latter resolves only to immutable public bytes at
+`work-history/blobs/sha256/<digest>`. Verify length/hash and public classification;
+publish blobs with referencing events. Select the blob form when the single-string
+or canonical-event budget would be exceeded. Never convert unknown YAML extension
+numbers to JSON to construct full state. Private/unclassified originals remain
+protected staging, outside this public store.
+
+Blobs/chunks are <=64 MiB. Each manifest permits <=1,024 references and <=64 MiB
+aggregate referenced bytes, counting repeated references. All referenced bytes
+must be durable before the manifest. Protected journal blobs are separate from
+public snapshot blobs. Native/HTTP envelopes retain 1 MiB limits; authenticated,
+task-scoped content reads carry <=256 KiB raw bytes per chunk and check the fully
+encoded envelope budget as well.
 
 History is append-only. Fix a mistaken assignment or status with a new event; do not edit earlier facts. Preserve events when a task closes or its active file becomes a tombstone. The tombstone retains the final revision, reporter and last assignment pair in `record_metadata`, and `record_refs` continues resolving the task. The archive is shared task information under the task's visibility rules. Private notes, agent memory and credentials must not be copied into comments, event payloads or provenance metadata by default.
 
@@ -289,6 +411,8 @@ erDiagram
         TEXT change_json "required"
         TEXT source_metadata_json "required"
         TEXT payload_sha256 "required"
+        TEXT resource_profile "optional for retained schema 1"
+        BLOB event_bytes "required for schema 2; retained source bytes"
     }
 ```
 
@@ -300,8 +424,8 @@ CREATE TABLE task_events (
   task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind = 'task'),
   task_id TEXT NOT NULL,
   revision INTEGER NOT NULL CHECK (revision >= 1),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  occurred_at TEXT NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version IN (1, 2)),
+  occurred_at TEXT,
   actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'owner', 'system', 'unknown')),
   actor_id TEXT,
   operation_id TEXT,
@@ -312,6 +436,9 @@ CREATE TABLE task_events (
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+  resource_profile TEXT CHECK (resource_profile IS NULL OR resource_profile = 'selected-task-resources/1'),
+  event_bytes BLOB,
+  CHECK (schema_version <> 2 OR (resource_profile IS 'selected-task-resources/1' AND event_bytes IS NOT NULL)),
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (

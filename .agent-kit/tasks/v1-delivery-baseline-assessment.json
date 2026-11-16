@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "v1-delivery-baseline",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": false,
+    "deterministic_checks": true,
+    "low_risk": false,
+    "no_prior_failure": true,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "Existing solo kit/documentation at integration base73a39; owner plan17 independently IMPLEMENTATION_PLAN READY at e7a8cba3, no domain redesign."
+    ],
+    "precise_scope": [
+      "v1-delivery-baseline-contract.md and ignored source-manifest.json: governing documentation/guidance only, no Rust/app feature source."
+    ],
+    "localized_change": [
+      "Multiple governing contracts/checklist and guidance files; completeness/consistency must be reviewed, not a low-risk tiny edit."
+    ],
+    "deterministic_checks": [
+      "Draft schema suite54 tests, catalog/policy/preflight/diff/source integrity, configured kit checks, normal structural hook and independent/original/final reviews."
+    ],
+    "low_risk": [
+      "Security/durability guidance and unit acceptance boundaries require conservative review; no implementation enforcement waived."
+    ],
+    "no_prior_failure": [
+      "First bounded F0 documentation integration; no failed repair claim is imported from the older source bundle."
+    ],
+    "ambiguity_resolved": [
+      "Separate units and U1 combined minimum workspace approved by focused plan17 review; library/transport foundations explicitly non-usable, genuine signing final. No new domain/wire interface selected."
+    ]
+  }
+}

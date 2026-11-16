@@ -4,9 +4,9 @@ This change migrates implemented executable responsibilities. Application direct
 
 | Executable | Source/package | Implementation status |
 | --- | --- | --- |
-| agentic-org | apps/agentic-org / agentic-org | Human CLI dispatch and serve run the existing host library. setup is reserved for HQ-only onboarding but explicitly unavailable until protected bootstrap and service registration land. |
-| agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing office daemon, unchanged launch/state protocol and storage. |
-| agentic-org-web | apps/agentic-org-web / agentic-org-web | Existing HTTP/assets/TLS library retained; new executable supports help/version and refuses production startup until authenticated host handoff and backend composition land. |
+| agentic-org | apps/agentic-org / agentic-org | Human CLI composes org-host. Selected HQ setup journals its original inputs/operations, admits a complete pinned release, invokes protected bootstrap/provisioning, reconciles per-user launchd registration and probes local readiness. Missing trusted build inputs or platform prerequisites refuse setup. Recovery collection remains unfinished; end-to-end production setup is not verified. |
+| agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing daemon and legacy protocols retained, with versioned selected writer admission, canonical bootstrap/adoption, durable task acceptance and escrow prerequisites. |
+| agentic-org-web | apps/agentic-org-web / agentic-org-web | Supervised authenticated listener/control handoff, real account/session backend and selected-task routes are wired. Selected release startup independently authenticates the pinned manifest, kernel image and static assets before confinement and secrets. Production publisher/platform signing evidence remains required. |
 | agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
 
 The static browser application is `apps/agentic-org-ui`, frontend package
@@ -16,7 +16,7 @@ JavaScript service.
 
 ## Host extraction
 
-Host behavior lives in crates/org-host as a library, preserving its build guard. The human CLI in apps/agentic-org composes this library; it is not another executable, and there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Service managers must use serve when their registration implementation lands.
+Host behavior lives in crates/org-host as a library, preserving its build guard. The human CLI in apps/agentic-org composes this library; it is not another executable, and there is no app-to-app dependency or extra host daemon. Production startup is explicit through agentic-org serve. Plain agentic-org displays help and never starts a host implicitly. Selected service registration invokes the exact pinned CLI with serve and an optional instance name; protected setup state supplies its root, listener and release identity.
 
 Existing host integration tests and test-only fake/fixture binaries live in agentic-org alongside the composition they exercise. Test-support features keep fixtures out of a normal production build. Host unit tests remain beside the library. Tracked-source SQLCipher/build-opener and UID-ownership audits follow the moved files; they are not disabled.
 
@@ -28,11 +28,11 @@ No database migration, ID change, spool move, namespace reset, service installat
 
 Superseded application directories and package/executable aliases are removed. Cargo build/test commands select the same name as the application directory and production binary. org-host is library-only. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
 
-## Pending standalone integration
+## Selected integration status
 
-Initial agentic-org setup must create HQ only, automatically install/register/start its service and expose no satellite choice. Satellite onboarding is a separate HQ-initiated flow. Neither workflow is fabricated here: v1 has no wired protected bootstrap/service registration to migrate. The command returns failure before any provisioning and rejects satellite join flags with HQ guidance.
+Initial agentic-org setup creates HQ only and exposes no satellite choice. Satellite onboarding remains a separate, unavailable HQ-initiated flow. The selected implementation consumes a complete local directory or tar.gz release with build-pinned publisher trust; it never supplies a generated production trust key or an unsigned fallback. Setup resumes its protected original operation IDs and exact installed pin, including when the original input bundle is no longer present. An existing pin without its setup intent requires explicit repair/adoption. The launchd adapter has isolated real bootstrap/replay/conflict/bootout evidence; this does not establish genuine signed-release setup or a deployed user service. See [standalone server](standalone-server.md) and [ADR-0009](../adr/0009-complete-release-verification.md).
 
-Likewise, the web executable must receive the authenticated listener/control handoff and real browser authorization backend before production startup. A test-only loopback harness or UnavailableApi cannot establish that boundary. The new executable fails closed instead of exposing that harness as production. Installer downloads, signed offline bundles, update activation and production macOS/Linux service registration remain integration work, not claimed working functionality.
+The web executable receives the authenticated listener/control handoff and real browser authorization backend. Disposable Chromium evidence exercises protected bootstrap/adoption, supervised Rust services and the built static UI through the explicit debug image/custody path; it proves neither production signing nor normal setup/service deployment. WebKit verification remains unresolved. Installer downloads, recovery collection/export/ACK, authenticated production artifacts and Linux confinement/service support remain incomplete. Missing release trust or platform admission fails closed. No production mock backend is provided.
 
 ## Verification
 

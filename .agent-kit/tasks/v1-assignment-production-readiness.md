@@ -1,0 +1,9 @@
+# Owner clarification: production readiness
+
+Owner,2026-11-15: "we are not doing any workaroudn rights this is being build as a production ready service / app ?"
+
+Production readiness is the intended target, not a development-only demonstration. This clarifies the unchanged parent v1-assignment-integration-contract.md; it does not reduce assignment scope or authorize bypassing authentication, signed publisher/platform admission, custody, confinement, durable acceptance/recovery, setup/service lifecycle or actual static browser behavior. Generated temporary credentials, scripted/unsigned image admission and disposable test environments are verification fixtures only. Their passes do not establish real production signing, key provisioning, service deployment or full release readiness. Release builds must not expose development trust/admission overrides or silently accept missing trust/platform prerequisites.
+
+Before claiming production ready, inspect exact production build/configuration, authentic complete packaged artifacts and real supported-platform admission/service/browser/recovery evidence, plus full current checks and fresh independent code/output reviews. Unknown evidence stays unverified. Missing real release-owner inputs must be reported concretely after authorized implementation/verification work; do not substitute a generated test root, plaintext secret store, mock backend, in-memory persistence or manual setup shortcut as product behavior. No publishing/deployment, real private-key access, user organization mutation or external developer messaging is newly authorized by this clarification.
+
+Keep progress on full assignment, then notify owner and prioritize usable onboarding -> teams -> daily work -> specialized breadth. Component checkpoints remain separately scoped. Preserve parent metrics and original author contexts.

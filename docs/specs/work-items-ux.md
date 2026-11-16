@@ -2,7 +2,7 @@
 kind: spec
 title: "Typed tasks, bugs and project docs (UX)"
 status: for-review
-revision: 12
+revision: 13
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-15"
@@ -13,11 +13,13 @@ builds_on: [offices-and-teams-ux]
 
 # Spec · Typed tasks, bugs and project docs (UX)
 
-Selected target UX, revision 12, 2026-11-15. This is a documentation/data-model reconciliation, not a claim that these screens or mutation services have shipped. [Organization-data 02](../design/organization-data/02-project-structure.md), [03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the fields, sources and assignment/history semantics. See the [authority map](../design/documentation-authority.md) and [W7 current-contract mapping](../design/tasks-projects-docs.md#32-the-ports-org-work-defines).
+Selected target UX, revision 13, 2026-11-15. This is a documentation/data-model reconciliation, not a claim that these screens or mutation services have shipped. [Organization-data 02](../design/organization-data/02-project-structure.md), [03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the fields, sources and assignment/history semantics. See the [authority map](../design/documentation-authority.md) and [W7 current-contract mapping](../design/tasks-projects-docs.md#32-the-ports-org-work-defines).
 
 Criterion IDs remain stable. **Deferred** criteria below preserve earlier UX requirements without selecting the corresponding engines. Retired wording is available in [revision 11](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/work-items-ux.md).
 
 ## Changelog
+
+**Revision 13 (2026-11-15):** integrates project/Work navigation, task-view persistence, Output, reference lookup, event-time and copilot-field requirements; retains unselected Following/review/planning workflows as explicit follow-ups. Shared visual rules and existing criterion IDs remain authoritative.
 
 **Revision 12 (2026-11-15):** rewrites the active model, examples, flows and criteria around one typed task, required accountability, independent assignment, scoped T- references, organization Git knowledge, durable task history and separate author-private notes. Mandatory areas, old separate counters, office-owned data and automatic transition/checklist/process engines no longer appear as active target requirements. Earlier revisions' automatic behavior and code-repository doc claims are historical; the linked revision preserves that decision history.
 
@@ -68,48 +70,59 @@ Use **Accountable team**, **Assigned team** and **Assignee** together where need
 | Report bug, New task, New doc, Assignment | *Slide-over* (right, `max-w-lg` for Report bug, `max-w-md` for the others) |
 | Bug and task detail | Full-width page inside the project (breadcrumb Projects › checkout › Bugs › T-42), main column + *Description list* side column |
 | Close as…, Delete area, Mark as duplicate | *Modal dialog* |
-| Severity | *Badge* with an icon and the word, never color alone |
+| Severity | Separate meta text with an icon and word, never color alone |
 | Activity | *Feed with comments* (newest last, comment box at the bottom) |
 | Docs | Two panes: doc list (left, `w-64`) and reader/editor |
 
 ### 2.1 Severity and status tokens
 
-| Severity | Icon (Lucide) | Color | Screen reader |
-| --- | --- | --- | --- |
-| Critical | `flame` | red-400 on red-400/10 | "Severity critical" |
-| Major | `octagon-alert` | orange-400 on orange-400/10 | "Severity major" |
-| Minor | `info` | yellow-400 on yellow-400/10 | "Severity minor" |
-| Trivial | `feather` | gray-400 on gray-400/10 | "Severity trivial" |
+Follow the [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules):
+one work-status pill per row, with severity and priority as separate meta text.
+Use Heroicons as the screen is restyled, not a mixed icon family.
 
-The report form explains each level: **Critical**: "Data loss, money or security, or nobody can work." **Major**: "A main feature is broken, with no good way around it." **Minor**: "Something is wrong, but there's a way around it." **Trivial**: "Cosmetic: wording, spacing, a small glitch."
+| Severity | Meta presentation | Screen reader |
+| --- | --- | --- |
+| Critical | red-300 word with exclamation-triangle | "Severity critical" |
+| Major | neutral word with exclamation-circle | "Severity major" |
+| Minor | neutral word with minus-circle | "Severity minor" |
+| Trivial | neutral word with information-circle | "Severity trivial" |
+| Not set | "Severity not set" with question-mark-circle | "Severity not set" |
 
-| Priority | Icon | Shown as | Screen reader |
-| --- | --- | --- | --- |
-| Urgent | `chevrons-up` | amber-400 text and icon | "Priority urgent" |
-| High | `chevron-up` | gray-200 text and icon | "Priority high" |
-| Normal | `minus` | hidden on rows and cards; shown in detail views | "Priority normal" |
-| Low | `chevron-down` | gray-500 text and icon | "Priority low" |
+The report form explains each level: Critical means data loss, money/security or
+nobody can work; Major a main feature broken with no good workaround; Minor a
+problem with a workaround; Trivial cosmetic wording/spacing. Severity is not a
+colored badge competing with status. Priority is written as Urgent/High/Normal/
+Low, each displayed value with a neutral Heroicon (Urgent chevron-double-up,
+High arrow-up, Normal minus, Low arrow-down). Normal may be omitted on rows/cards;
+when shown it retains its word and icon. Priority never uses amber merely for urgency;
+amber means the work needs the owner. Keep lower-priority text contrast readable.
 
-Priority is never colored like severity (only Urgent gets a color, amber), so the two scales can't be mistaken for each other.
+| Work state | Pill tone |
+| --- | --- |
+| To do / bug New | gray |
+| In progress / bug Triaged or In progress | indigo |
+| Blocked on someone other than the owner | red |
+| Waiting on the owner | one amber Needs you signal instead of the ordinary pill |
+| Done / bug Fixed | green |
+| Closed or cancelled | neutral outline |
 
-| Bug status | Icon | Color | Task status | Icon | Color |
-| --- | --- | --- | --- | --- | --- |
-| New | `circle-dot` | blue | To do | `circle` | gray |
-| Triaged | `circle` | gray | In progress | `circle-play` | indigo |
-| In progress | `circle-play` | indigo | Blocked | `circle-alert` | amber |
-| Fixed | `circle-check` | green outline | Done | `circle-check` | green |
-| Closed · Verified | `check-check` | green | | | |
-| Closed · Duplicate, Won't fix, Can't reproduce | `circle-slash` | gray | | | |
+A Reopened count is a neutral textual fact with a rotate icon, not a second
+amber status. A scoped request keeps its neutral Scoped status; an associated
+approval appears in Inbox rather than adding a competing pill.
 
-A **Reopened** badge (`rotate-ccw`, amber, "Reopened 2×") adds to the status and never replaces it.
-
-The four task columns retain familiar vocabulary. Bug-specific statuses and the Reopened badge are retained presentation requirements for a separately selected lifecycle adapter; their old transition rules are not selected merely by this table. Completed/Cancelled are distinct resolution data. Neither completion nor cancellation automatically changes another record.
+The four task columns retain familiar vocabulary. Bug-specific statuses and the
+Reopened count remain presentation requirements for a separately selected
+lifecycle adapter; styling never enacts those transitions. Completed and
+Cancelled stay distinct resolution data. Neither automatically changes another
+record.
 
 ## 3. Flow 1 · Project page
 
-Projects → Reservations **P-8**. Header: **Accountable team: Payments**; **Contributors: Platform**; New task and Report bug. Tabs remain Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings, with clear type-filtered counts rather than separate entity counters.
+Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The integrated IA target replaces separate Tasks/Bugs tabs with **Overview | Work | Team | Activity | Conversations**, Overview by default. Work filters shared typed tasks by type. Backlog and Releases join after Work when their services are available; Insights is last when its separately gated analytics service exists. Routines stays deferred. Features, Debt, Docs and Settings do not appear merely because this navigation skeleton exists; their owning capability specs define their separately supported experiences.
 
-Overview shows owned backlog, assigned-team/individual summaries, open bugs by severity including Unset, pending questions and the Brief. Activity uses qualified references: “Ana assigned P-8/T-42 to Platform · Ana.” Projectless work appears in Work/team backlogs rather than an artificial project.
+Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Work shows the project's typed tasks with one status signal; Team shows accountable/contributing teams and then member rows, with only supported authorized association edits. Activity uses qualified references: “Ana assigned P-8/T-42 to Platform · Ana.” Conversations shows permitted project-linked threads. Empty feeds say **No activity yet** or **No conversations yet**. Projectless work appears in Work/team backlogs rather than an artificial project.
+
+Optional lead, due date and health show only when backed by supported explicit data; contributors never imply co-leads. The source's manual health control in the header's More menu remains pending a selected health field/write contract; no inferred health or invented planning date is saved. Progress denominators and Flow follow the separately gated analytics definitions in costs-and-insights-ux.md/project-status-ux.md.
 
 Settings includes project name/slug, accountable team, contributors and repositories. Each repository association shows its own required integration branch. Sharing a repository does not share a branch setting or create duplicate office caches. A project always has a team; invalid imported ownership is surfaced for resolution and cannot become a teamless accepted project. Archived project records remain readable. Loading uses skeletons; missing/tombstoned records explain their state and offer navigation. Disconnection keeps last known data readable and disables unavailable actions with visible reasons.
 
@@ -118,6 +131,14 @@ Settings includes project name/slug, accountable team, contributors and reposito
 Report bug opens from project, Work, command palette, task or supporting doc. In project context the required accountable team is shown from project ownership. Outside a project, choose **Project (optional)** and **Accountable team (required)**; selecting a project derives its team. No Area/General requirement appears.
 
 Fields: title (1–120 characters), What happened, optional severity with all four explanations and **Not set**, optional steps/expected result/environment, priority default Normal, optional assigned team and assignee. Store selected reproduction values in `details.what_happened`, `expected`, `steps` and `environment`, distinct from description; confirmation/reopen/closure/duplicate/affected-feature/suggested-employee evidence uses document 03's `task_details` mapping. Preserve those fields on import and tombstones; only unknown unsupported variants stay staged. A title and description plus valid accountability are sufficient to capture. Reporter comes from authentication and is not editable.
+
+When a configured copilot drafts the report, each filled field has a visible
+and accessibly named **Drafted** marker until that field is edited or explicitly
+kept. A severity suggestion says **Suggested by the copilot** or remains a
+nonselected hint; it never silently becomes a deliberate severity choice.
+Editing one field clears only its marker. A new attempt or Dismiss clears that
+panel's stale error while preserving typed text, Undo draft and the ordinary
+manual Report bug confirmation. See the existing [copilot contract](../design/smart-features.md#2-bugfrom_sentence-implemented-library-entry-version-2).
 
 After three title characters show up to three similar open bug-typed tasks in the selected scope. “This is the same bug” adds the report as an explicitly shared comment on the chosen existing record; it preserves that record's reporter and creates no second task. Clearly label suggestions from other scopes with qualified references. No match does not block reporting.
 
@@ -175,17 +196,29 @@ Required flag and linked task are data only. Earlier completion gates/“done an
 
 ### 9.2 Time on a task or bug (rev 4)
 
-Time views identify the interval, lifecycle endpoints and evidence coverage. Lead/cycle derive from known task events and saved waits, not current assignment. Open intervals say “so far”. A history baseline explicitly leaves earlier time unavailable. Overlapping wait spans count once; closing work cannot silently discard an unresolved question/span.
+Time views use the [shared duration definitions](costs-and-insights-ux.md#shared-duration-definitions) and identify endpoints and evidence coverage. Started is the first evidenced In progress entry; a verified direct To do → Done records start/completion together and has zero cycle time. Reopen preserves first Started. Lead/cycle end at last completion or now while open, exclude intervening Done/Cancelled spans and say “so far” while open. For example, start day 0, complete day 2, reopen day 9 and complete day 10 gives three days of cycle time.
 
-Before complete session coverage, show “Lead time 1 d 4 h · waiting on you 3 h · blocked 0 · the rest 1 d 1 h (working time isn't tracked yet)”. Never call untracked time idle. The detailed analytics/automatic-wait engine remains separate work. Token/cost totals come from the durable usage ledger, including helpers/reviewers and historic attribution; null/incomplete data remains explicit. Budgets and stop controls do not become implemented from displaying cost fields.
+Sum status intervals from actual recorded transitions; “Picked up by” requires an evidenced In progress transition after that assignment. Current assignment never proves historical work. A history baseline leaves earlier start/time unavailable, never zero. Waiting comes from saved spans independently of status; overlaps count once. Closing work cannot silently discard an unresolved question/span. Use the shared duration formatter and explicit units even for zero.
+
+Before complete session coverage, show “Lead time 28 h · waiting on you 3 h · blocked 0 min · the rest 25 h (working time isn't tracked yet)”. Never call untracked time idle. The detailed analytics/automatic-wait engine remains separate work. Token/cost totals come from the durable usage ledger, including helpers/reviewers and historic attribution; null/incomplete data remains explicit. Budgets and stop controls do not become implemented from displaying cost fields.
+
+### 9.3 Output
+
+The task page collects permitted deliverables in **Output**: existing document links and supported repository/branch/commit/file evidence, with a label and link only when the target has a valid resolver. Unresolved references retain their identity with an unavailable explanation. Show a recorded shared completion explanation when present; otherwise say **No outcome recorded**. Do not derive output from private notes, protected chat or the assignee's activity.
+
+Done is an attributed completion claim. Reviewed, merged, validated, included in a release and deployed are separate facts and appear only with their corresponding evidence. This view adds no outcome field, URL/path target kind, link-mutation command or completion gate; those require explicit contracts.
 
 ## 10. Flow 8 · Docs
+
+The initial project navigation follows §3. This reader/editor experience appears
+when its knowledge capability is served; it does not insert an unsupported Docs
+tab into the project skeleton.
 
 Two panes: Brief pinned first, then project/feature/release/deployment documents with title, kind, scope, status and last update. Header shows canonical organization Git path, explicit accountable employee when current, latest update and publication state. New doc chooses kind and required project, then at most one same-project feature/release/deployment. Default scope follows context, remains visible and is validated server-side. Current docs require an active owner; draft/deprecated docs can be unassigned.
 
 Example: `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`, title **Prevent overlapping table bookings**, project Reservations P-8, feature F-6. The definition itself is `features/<feature-id>/feature.md` with Purpose/How it works/Rules/Known limitations/Non-goals; it is not duplicated in the supporting list as a second authored record. Cross-feature architecture is a project document linked by relates_to rather than copied to several features. Release changelog describes product changes; deployment changelog describes technical delivery.
 
-Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Selected scoped task references render chips with type/status, resolving stable IDs. An ambiguous or historical reference stays visibly unresolved until mapped; do not parse old B-/REQ- into new T- numbers. Mention indexes are derived, not canonical relationship authority.
+Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Selected scoped task references render chips with type/status, resolving stable IDs. A local reference resolves only in its unambiguous owning scope: project/team for a task, project for a release and project plus release for a milestone. Global lookup lists each permitted match with its canonical qualified reference instead of selecting the first; a chat thread without scope never guesses. An ambiguous or historical reference stays visibly unresolved until mapped; do not parse old B-/REQ- into new T- numbers. Mention indexes are derived, not canonical relationship authority.
 
 Write/Preview, Save (⌘S), Cancel and unsaved-navigation prompts remain. Saving first durably persists a validated stable-ID record/history as appropriate, then separately reports publication; never claim Git merge or shared publication before acknowledgment. Exact organization Git editing/branch APIs remain implementation work. Preserve the older code-repository doc adapter's expected-blob/ref-CAS, safe paths/Git hardening, durable intents and no cross-agent-worktree writes when adapting it. An agent co-author trailer is a from-git claim, not authenticated provenance.
 
@@ -198,6 +231,23 @@ Projects need **no code repository** to read or write organization Git knowledge
 Work spans all project/team scopes with Tasks | Bugs | Requests and a knowledge/debt link. Columns include Project (or **No project**), Accountable team, Assigned team, Assignee and qualified reference. Saved filters distinguish **Owned by my team**, **Assigned to my team**, **Assigned to me**, **Reported by me**, Blocked and All. “My” derives from the admitted user/employee context, never a security owner flag. Project and No project filters combine with teams/type/status/severity/priority.
 
 Queue example: “Bug P-8/T-42 · Prevent overlapping reservations · Accountable Payments · Assigned Platform · Ana”; “Request TEAM-12/T-42 · Review onboarding · Accountable People · Unassigned”. Same local number is valid across these scopes. An individual's home-team move does not rewrite their recorded task's assigned team.
+
+The **Show** menu offers Needs me, Mine, By project and By assignee, retaining
+its choice in `?view=`. Default to Needs me when supported owner-waiting work
+exists, otherwise Mine; “my” still requires the admitted mapping above. By
+assignee includes people and agents. Created by me, Asked by me and Followed
+arrive only with their verified relationship/tracking services; requested-by is
+never inferred from reporter. List and Board use the same supported state data.
+
+Needs me is work actually waiting on the owner through an available source:
+owner blocks, review waits, linked hand-offs, open linked asks and reached task
+budget holds. Each row links its corresponding open Inbox/source item; a hand-off
+without a task stays in Chat/Inbox. A budget-caused block uses its Budget reached
+item, while a pre-existing independent owner block retains its own item. Empty
+copy is **Nothing needs you in Work**. These are read-view requirements, not
+selection of automatic review/wait/lifecycle engines.
+
+Remember the selected Tasks/Bugs/Requests tab separately for each authorized organization, in addition to board/list preference and filters. Reopening Work restores that tab even when its result is empty. An unavailable remembered tab falls back to a supported Work view without switching organization or clearing other view preferences.
 
 Needs you/triage/verification badges require their eventual lifecycle rule; preserve the intent to highlight owner questions and blocked work without inventing an automatic engine. Empty “No work yet” offers New task and New request with valid team capture even when there are no projects.
 
@@ -219,8 +269,8 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 **Project page (PRJ)**
 
-- PRJ-1 · Project tabs include Overview, Features, Tasks, Bugs, Debt/knowledge, Docs, Insights and Settings, using type-filtered task counts.
-- PRJ-2 · Overview shows task/bug summaries, questions, Brief and actor-attributed activity with qualified references.
+- PRJ-1 · The IA target uses Overview, Work, Team, Activity and Conversations with Projects back navigation. Work filters typed tasks. Backlog/Releases/Insights appear with their services; unsupported feature/debt/docs/settings/routine tabs are not fabricated. AC-IA17-1–4's source health editor remains pending its field/write contract.
+- PRJ-2 · Overview shows the living Brief, real open/blocked counts and five latest qualified activity entries. Team separates accountable/contributing teams from member rows; Conversations exposes only authorized linked threads. Empty states and optional lead/health/due fields are honest.
 - PRJ-3 · The header shows one required accountable team and optional contributors. Settings keeps repository integration branches on each project/repository association; invalid teamless imports require resolution.
 - PRJ-4 · When the accepting service is unavailable, writes have an accessible reason and last known data stays readable with a stale/read-only label.
 - PRJ-5 · Projects list accountable team separately from contributors, bug severity counts including unset, and lifecycle-supported triage counts.
@@ -236,12 +286,12 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - TSK-7 · A task moved by someone else moves on the board without a reload, and a toast names who moved it.
 - TSK-8 · The page shows linked bug tasks, immutable activity and per-repository branch/worktree evidence where known, independent of code repository existence.
 - TSK-9 · Board or List is remembered per project.
-- TSK-10 · *(new, rev 2)* Cards and rows show priority only when it isn't Normal, as an icon and a word. Urgent is amber, and the other levels use no color.
-- TSK-11 · Task/bug Time identifies known history/coverage, shows open time as so far and explicitly marks unavailable earlier history. Untracked time stays the rest, never idle; complete working/idle analytics require a separate implementation.
+- TSK-10 · *(new, rev 2)* Cards and rows show priority only when it isn't Normal, as an icon and a word. Priority is neutral; amber is reserved for a separate Needs you state, never urgency alone.
+- TSK-11 · Task/bug Time follows the shared duration definitions: retain first Started across reopen, exclude evidenced Done/Cancelled spans, show open time as so far and mark unavailable earlier history. A baseline never supplies a fabricated start or zero. Status time and saved waits use their actual intervals, not current assignment; untracked time stays the rest, never idle.
 
 **Checklists (CHK)** *(new, rev 4)*
 
-- CHK-1 · Tasks and bugs have a checklist of ordered steps. The card shows "n/m" and marks required steps left with an amber dot and the word "required".
+- CHK-1 · Tasks and bugs have a checklist of ordered steps. The card shows "n/m" and marks required steps left with a neutral lock icon and the word "required"; the flag alone is not an owner blocker.
 - CHK-2 · + Add step adds steps inline (Enter for the next, pasted lines become separate steps), each 1–200 characters.
 - CHK-3 · Ticking or unticking records who and when, shows it on the step, and appears in the activity.
 - CHK-4 · A step can be marked Required, shown with a lock icon and the word "Required".
@@ -260,7 +310,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - BUG-5 · The capture shows required Accountable team, optional Assigned team/Assignee and valid project context; suggestions do not change accountability or grant permissions.
 - BUG-6 · Environment shows only actual available office/app and per-repository branch/commit evidence and can be edited/cleared; selected legacy report detail is preserved through details/task_details; unknown variants retain controlled import staging.
 - BUG-7 · Reporting creates type bug in the shared T- scope with required accountability, immutable reporter and explicit assignment pair. Confirmation distinguishes accepted/number-pending from unsaved; no separate B- counter exists.
-- BUG-8 · A bug reported by an agent shows the agent as reporter (square avatar, "agent") everywhere a reporter shows.
+- BUG-8 · A bug reported by an agent shows that agent's immutable reporter identity, initial avatar and the word Agent; agent/person distinction never relies on avatar shape.
 - BUG-9 · Closing the form with text in it asks "Discard this bug report?".
 
 **Triage (TRI)**
@@ -282,6 +332,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - BUG-13 · Grouping by severity, priority, status, accountable/assigned team, assignee or none works and preserves row identity; no mandatory area group.
 - BUG-14 · **Lifecycle-dependent:** a Fixed row can show verify action and immutable reporter; the assignee is not relabeled historical fixer.
 - BUG-15 · The empty, no open bugs and no matches states show the copy from Flow 4, with Retry on failures and explicit read-only stale state when disconnected.
+- BUG-16 · Copilot field provenance is visible/accessibly named until edited/kept; suggested severity remains explicit. Retry/Dismiss clears only its panel's stale error, retaining input, Undo draft and manual submission.
 
 **Fix, verify, close and reopen (FIX)**
 
@@ -327,10 +378,12 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - WORK-2 · Saved filters distinguish Owned by my team, Assigned to my team, Assigned to me, Reported by me, Blocked and All; lifecycle-specific triage/verify filters require their selected rules.
 - WORK-3 · **Lifecycle-dependent:** badge counts actionable owner questions/verification/blocked work using explicitly selected rules; account ownership does not imply employee assignment.
 - WORK-4 · Every task type displays its type word/icon and T- reference in the selected scope; imported old references remain explicit historical mappings.
-- WORK-5 · *(rev 2)* Severity, priority and status always show an icon and a word, and screen readers announce them. Priority never uses severity's colors.
+- WORK-5 · Displayed severity, priority and status have a meaningful icon and word, announced to screen readers. Severity/priority remain separate meta text, with neutral priority icons and no amber except an actual owner blocker; Normal may be omitted on rows/cards. Each row has one work-status signal.
 - WORK-6 · Changes by others appear without a reload and never reorder a list while a menu is open in it.
 - WORK-7 · The admitted service actor is recorded for all accepted changes. Current permissive phase-1 handlers remain implementation evidence; no target permissions are granted by this UX or assignment.
-- WORK-8 · Within scope all types use T-n; outside use P-8/T-42 or TEAM-12/T-42. Pending number retains stable row identity and a copyable stable ID; replacing its label does not reorder rows.
+- WORK-8 · Within scope all types use T-n; outside use P-8/T-42 or TEAM-12/T-42. Global lookup lists all permitted scope-qualified matches; insufficient context never picks one. M-2 needs a release as well as a project. Pending number retains stable row identity and a copyable stable ID; replacing its label does not reorder rows.
+- WORK-9 · Work remembers its type tab per authorized organization independently of filters and board/list preferences; an empty queue preserves it and an unavailable view has a safe supported fallback.
+- WORK-10 · AC-IA18-1–3's Show views retain `?view=`, select the stated default and include both people and agents. Needs me and Inbox agree for supported sources, with no task row for an unlinked hand-off; unavailable source types are not inferred.
 
 **Assignment, history and private boundaries (selected additions)**
 
@@ -342,6 +395,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - DOC-10 · Each supporting doc requires project and at most one same-project feature/release/deployment; scope/path/kind agree, current requires an active accountable employee, and scope moves preserve ID without duplicate canonical copies.
 - DOC-11 · Feature definitions use stable-ID feature.md paths, local_slug plus derived project prefix, explicit owners/status and behavior/limitation sections; task completion never silently rewrites feature status.
 - TSK-17 · PN-01–06 in document 05 are required: author-only private CRUD/conflicts, no admin exception or shared existence metadata, durable recovery/closure continuity, unchanged privacy after assignment, explicit publish and documented retention/backup deletion. Shared note comments remain shared. Private runtime/store/access/UI are still unimplemented.
+- TSK-18 · Output shows only permitted resolvable recorded deliverables and any shared completion explanation; missing evidence is explicit. Done alone never implies review, merge, validation, release or deployment. Arbitrary URL/path writes and outcome gates remain deferred.
 
 ## 15. Open questions
 
@@ -357,3 +411,11 @@ Active criteria define selected UX intent and needed implementation evidence; th
 ## 16. Out of scope here (follow-ups)
 
 Areas · advanced checklist/templates/promotion/gates · Undo · automatic bug/feature/debt propagation · process execution · scheduling/memory · retrospective analytics · attachments until storage design · GitHub Issues import. Releases/milestones, usage and budgets have selected data in their owning documents; their lifecycle/enforcement services are not implemented by this spec. Target wire/mutation/import/organization Git adapters and private-note runtime/access/UI still require implementation.
+
+Retained task proposals still needing contracts:
+
+- **Following / AC-TK1–2:** neutral task-level unseen tracking distinct from Inbox, manual/automatic follow reasons, actual owner waits surviving filters, and per-reader last-seen clearing from any task entry point. Exclude self-caused changes and all private-note existence/activity. Watcher rows alone do not implement cursors or source adapters; nested-child rollups also require a subtask model.
+- **Source attribution / AC-TK3:** a future verified requested-by/message relationship remains distinct from immutable creator/reporter. Only a directly addressed/mentioned permitted message can establish it; source links retain their own access checks and the shared brief must be sufficient without exposing private content.
+- **Review / AC-TK5:** same-task optional review, explicit reviewer/outcome and no self-approval; actor/defaulting/transition/Inbox rules require a lifecycle contract and never grant private-note access.
+- **Shared brief/comment versions / AC-TK7:** retain attributed change rationale and failed drafts. Editing/deletion/redaction needs a retention decision reconciling immutable shared Git/events with secret-erasure expectations; do not promise erasure from exports/backups. Private notes follow PN-01–06 instead.
+- **Planning / AC-PL2–7:** backlog rank/batch/no-op behavior, dates, close/reopen/open-item disposition, planner authorization and progress denominators remain pending. Current milestone membership is independent of explicit multi-release manifests; no exclusive plan field or automatic rollover is selected.

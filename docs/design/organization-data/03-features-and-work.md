@@ -105,6 +105,31 @@ Team work:    teams/<team-id>/.../work/tasks/<task-id>.md
 
 The team path includes its full ancestor chain. Task scope and path must agree; a project task does not get a second canonical file under its team.
 
+### Selected assignment snapshot admission
+
+[ADR-0006 revision 4](../../adr/0006-selected-task-acceptance.md) selects an additive
+source-preserving editor for assignment. Snapshot schema version remains independent
+of event codec version. Preserve the exact public Markdown, including BOM, fences,
+line endings, extension spellings and body. Assignment replaces only the scalar
+tokens of `revision`, `assigned_team_id`, `assignee_id`, `updated_at`,
+`updated_by_kind` and `updated_by_id`; it never serializes the parsed value tree.
+
+The initial admitted representation is a block-root mapping with all six entries
+present as simple single-line entries with nonempty plain, single-quoted or
+double-quoted scalar tokens. Decoded root keys locate values; nested or body
+lookalikes are not properties. Reuse the strict parser's structural guards. Convert
+parser character offsets to UTF-8 byte offsets over the exact front-matter input;
+quoted token ends must exclude trailing whitespace/comments. Reparse the edited
+document and verify the intended values and unchanged nonmutable slices/body.
+Unsupported forms and numbers rejected by the safe parser stay intact in staging.
+
+Profile `selected-task-resources/1` retains front matter <=64 KiB, depth <=16 and
+<=10,000 parser events; body <=8 MiB. The profile is recorded in admission/history
+metadata, not a seventh mutable property. Only classified public snapshots can
+enter [history snapshot representations](05-operational-data.md#exact-public-snapshots).
+Opaque IDs remain unchanged; IDs incompatible with literal canonical paths remain
+staged rather than renamed or concatenated unchecked into a filesystem path.
+
 Task token/cost totals are derived from the [usage ledger](10-usage-and-cost-accounting.md), including reviewers/helpers and retained task identities after archival. They are not counters stored on task files. Attribution captures work scope and Build/Run classification when consumption occurs, rather than joining to the task's current parents later.
 
 ## Task file example

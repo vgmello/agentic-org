@@ -35,6 +35,124 @@ Instance roots, service names, sockets and orphan-key sweeps must be scoped with
 rewriting the existing credential service/signature identifiers. Cross-instance
 catalog loss is never proof of orphaned credentials.
 
+### Additive HQ creation context (REC-ESC-1)
+
+Launch v3 create has an optional `hq_creation` object with exactly
+`{version:1,operation_id:<canonical ULID>,escrow_profile:1,public_root:<absolute canonical state root>}`. Omission preserves
+legacy create semantics and does not claim selected bootstrap readiness. A
+protected host provisioning operation supplies this context, its stable
+`owner_member_id` security principal, and the retained recovery code over the
+existing post-admission handoff. Neither this object nor assignment grants
+provisioning authority. Unsupported versions/duplicates fail before mutation.
+
+For this context only, the worker durably freezes nonsecret request identity in
+`hq-creation.v1.json` under the office lock before initial preparation. The initial
+local SQLCipher transaction atomically stores operation/owner binding, usable CA
+key, public envelope and completion/version. The new local-only table is excluded
+from replication and selected journal capture. Interrupted preparation resumes
+only the identical intent; it verifies retained material rather than generating
+again. An empty version-zero database from interrupted initialization may finish;
+foreign schemas, missing committed material or changed input remain intact and
+require recovery. Existing legacy office identities and create behavior remain
+unchanged. This local intent does not establish protected writer custody or
+copy/restore authority. Those must be verified by the host before selected
+readiness. See [ADR-0007](../adr/0007-hq-creation-escrow.md).
+
+The explicit public root must already exist, resolve without symlink/path aliases,
+and be disjoint from the private office directory. It is frozen in the intent,
+not taken from a browser path. Before Created, exact committed public envelope
+bytes are immutably published there as `security/ca-escrow.v1.bin`. Reopen can
+repair absence from the retained local record; conflicting bytes cause recovery,
+with both identities preserved. A public-only read DTO excludes the usable key.
+
+### Gateway process entry (GW-SBX-MAC-1)
+
+The verified release's `agentic-org-web --serve` loads its sibling `ui/` public
+build before confinement. The host spawn closes unintended inherited descriptors
+with `POSIX_SPAWN_CLOEXEC_DEFAULT`, retaining only its three launch/stdio pipes;
+the child independently checks that exactly descriptors 0/1/2 remain. Unexpected
+descriptors cause process exit before readiness, rather than closing a descriptor
+potentially owned by another Rust value. Assets remain bounded immutable memory.
+After the ADR-0008 single-thread checks and parameterized policy succeed, only
+the exact rendezvous is connected. Strict bounded header reception accepts no
+early rights; the next marker must carry transfer then listener, with exact
+socket-type/CLOEXEC checks before `fds.received`. The same socket then carries
+host control; neither host.sock nor an office pathname is a fallback. Actual
+`tls.fetch` supplies the verified listener configuration before HTTP accepts.
+Host EOF terminates the gateway and all its browser/native authority.
+
+Gateway admission uses `com.ellosoft.agentic-org.org-gateway`, separately from the
+worker signing identifier, with the compiled Developer ID team, hardened runtime,
+no debug/injection entitlements and no Keychain access-group entitlement. The
+host rechecks the accepted reader's audit token, image continuity and kernel
+sandbox before sending either descriptor. The host-owned private connection is
+distinct from `host.sock`: only it can fetch the per-bind listener snapshot.
+Gateway office channels travel as `ChannelKind::Gateway` records on its admitted
+datagram transfer socket; native channels retain the existing stream-marker
+delivery and `ChannelKind::Local`. Both retain descriptors until their correlated
+receipt; sessions/grants remain connection-bound and end at control EOF.
+
+The private version-1 instance configuration has an optional `browser` listener
+snapshot, absent for existing native-only installations. Protected setup writes
+it under the instance lock; startup never takes browser configuration from HTTP
+or a request path. A bind uses one validated immutable snapshot. The initial
+host composition admits `http_loopback`; HTTPS remains unavailable until its
+stored pair has the required host-side parsing, matching and coverage checks.
+It must not bind or downgrade HTTPS through that missing path. Browser service
+starts only for a registered, protected HQ instance. Its child is supervised with
+bounded restart/backoff and killed/reaped on host shutdown; failures never publish
+selected task readiness. A failed browser leaves the native recovery/control
+connection available.
+
+### Selected identity carrier
+
+New selected organization and office entities use canonical lowercase UUIDv7
+text, including hyphens. Existing IDs retain their exact spelling. Launch-v3
+adds the explicit optional `id_profile: "selected_v1"` to its office context;
+absence retains its original alphanumeric-ID validator and bytes. The selected
+profile requires UUIDv7 office/organization IDs and explicit HQ creation context
+on create. Instance IDs, security-member IDs and operation IDs keep their own
+existing contracts. This does not confer writer or owner authority.
+
+The plaintext runtime marker uses `office.json` version 2 for this profile,
+requiring UUIDv7 office and organization IDs. Version 1 stays unchanged; readers
+retain the stored version and never rewrite an existing version-1 identity into
+version 2. The safe storage-path validator accepts the union of existing plain
+IDs and canonical UUIDv7 solely as a single path component. Legacy command and
+wire validators retain their narrower rules. Host custody/catalog and worker
+open/discard paths use the shared safe storage validator; no arbitrary opaque ID
+is interpolated into a path. Other incompatible imported IDs remain staged.
+Socket handles remain separately bounded and collision-checked. Version 2 is
+persistent compatibility state, not permission to run an older executable over
+selected acknowledged data.
+
+### Selected provisioning port (implementation in progress)
+
+The additive native `organization.provision.v1` call carries `session`, canonical
+ULID `operation_id` and a version-1 plan with explicit `name`, `slug`,
+`repository_remote_url`, `state_branch` and `home_team_name`. It preserves the
+name-only `organization.create` and existing HTTP DTOs. The host rechecks the live
+instance administrator and binds the operation/fingerprint to that account;
+organization ownership alone does not suffice. No storage path is a request field.
+The admitted initial profile creates one explicit root home team, an HR agent
+identity in it (execution remains unavailable without its separate configuration),
+and no owner employee. The protected owner security member remains distinct.
+
+The host freezes selected UUIDv7 entity IDs and key fingerprint in its protected
+SQLCipher reservation. The code first enters credential custody under the
+operation's opaque handle; the reservation contains no code/key. Retry verifies
+that binding and the original office key, never generates replacements for missing
+committed custody. A per-operation gate serializes worker attempts. Interrupted
+selected preparations/keys are retained and excluded from legacy discard/sweep.
+The launch context carries the exact nonsecret prepared bootstrap plan and IDs;
+worker intent retains them. The host resolves private/public roots inside the
+locked instance, installs protected writer custody before selected admission and
+keeps a pending outcome until coherent canonical bootstrap and worker readiness.
+Initial canonical files and trusted directory generation enter the existing work
+acceptance journal together; they do not allocate work-origin event positions.
+Remote connectivity/publication and HR execution remain explicitly unverified.
+This describes the intended adapter, not completed setup or adoption evidence.
+
 ## Target launch and recovery gate
 
 Launch-v2 examples in §§1–6 below preserve the exact baseline protocol and security
@@ -65,8 +183,43 @@ adopt/discard quarantine and bounded owned-child cleanup below still apply.
 
 ## Current launch-v2 evidence
 
-Current `crates/org-host/src/service/mod.rs` dispatches only registered-instance
-hello and count-only instance.status, refusing unregistered instances. The old
+### Selected host-control integration (in progress)
+
+A registered host with an opened protected account registry uses launch v3 for
+existing office starts. The rendezvous reader must match the admitted child audit
+token (and PID), immediately before any key is sent. The host retains transferred
+descriptors until `fds_received`; unknown receipts, timeout or a broken transfer
+connection close that worker's channel service. Unregistered legacy starts and
+the legacy create/discard contract retain launch v2 during this integration.
+This transition does not itself admit selected storage or publish its capability.
+
+On local host-control connections, `office.open_channel` carries its existing
+typed response followed by `HOST_SOCK_MARKER` and one descriptor. The client sends
+the additive typed `fds.received` call with `{of: channel_id}` on that same
+connection. The host retains its descriptor until that receipt; a five-second
+deadline or an unexpected receipt closes the connection. No other outbound frame
+may interleave between the response and its descriptor marker. Grants are issued
+only for a received channel recorded for the same live session and connection.
+Session end revokes its worker grants; it never changes task assignment authority.
+These are host-control API 1 additive methods, not a change to work event codecs.
+
+The additive `session.inspect {session}` operation returns a live protected
+account view (account, canonical login, administrator flag, linked organizations
+and office IDs) and integer `server_time_ms`, `absolute_expires_at_ms` and
+`idle_expires_at_ms`. It authorizes on the issuing connection and rechecks the
+registry. Expiration timestamps project the remaining monotonic lifetime onto
+the host's current wall clock; inspection never resets the absolute lifetime.
+This lets browser session responses report host authority rather than infer
+deadlines or permissions from a prior sign-in. It returns no handle, grant or key.
+
+Account sign-in, renewal and logout now have a production registry-backed
+implementation. Protected first bootstrap, selected writer admission, complete
+release/service composition and browser handoff still require their remaining
+integration and execution evidence; this section claims none of them complete.
+
+Current `crates/org-host/src/service/mod.rs` dispatches registered-instance
+hello, count-only instance.status and the registry-backed session/channel methods
+described above, refusing unregistered instances. The old
 sessionless host methods below are historical requirements, not currently exposed
 operations or a workaround for unavailable setup. The launch-v2 framing itself
 remains in crates/org-office-launch.
