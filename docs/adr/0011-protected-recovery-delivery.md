@@ -8,9 +8,10 @@ unchanged. This is not full recovery after losing HQ (REC-1).
 ## Requirement
 
 From the [standalone design](../design/standalone-server.md) and the
-[installation UX](../specs/server-installation-and-access-ux.md) (RCV-15, 19 to 22
-and 25 to 28): the recovery code is released only to the signed native CLI, run by
-a live instance administrator for the local HQ, with the OS user present at the
+[installation UX](../specs/server-installation-and-access-ux.md) (RCV-15, 19, 21,
+22 and 25 to 27): the recovery code is released only to the signed native CLI, run
+by the instance's administrator for the local HQ, signed in by approving the run in
+a browser (no password in the terminal), with the OS user present at the
 machine, and shown only on a terminal. One confirmation covers showing and
 recording in the same invocation; every redelivery needs a fresh confirmation. The
 audit is durable and code-free, and the code is erased after the owner acknowledges
@@ -177,12 +178,13 @@ The CLI writes the exact bytes to an explicitly chosen new local file
 and reports an export failure before the final acknowledgement. It never writes into
 an organization directory. Export does not claim an off-HQ backup.
 
-## CLI and setup
+## CLI
 
 `agentic-org recovery` release and status, with an explicit local package
 destination, are implemented in the `agentic-org` CLI library. It checks the
 terminal and local context before collecting credentials, then uses the saved
-instance context or an explicit instance, a live native sign-in, the exact
+instance context or an explicit instance, the administrator's sign-in approved in
+a signed-in browser, the exact
 organization, the current recovery state, Enter, one OS confirmation, the code on
 the terminal only, package export, the code's final group and a typed `yes` that
 covers both code and package kept off HQ. The code never appears in arguments,
@@ -190,9 +192,9 @@ standard output JSON, logs, error strings, screenshots, history or the package, 
 never goes to redirected output. There is no force or non-interactive override. A
 wrong group, cancel or `no` leaves the code shown and unconfirmed. Status is
 non-secret and states that recovery after losing HQ (REC-1) is not supported.
-Interactive setup runs this flow after protected HQ creation and before the
-registered service starts; deferring, a non-interactive run or SSH on macOS starts an
-otherwise ready HQ with the code Waiting and prints the exact later command.
+Setup creates no organization and runs no part of this flow. An organization is
+created in the browser; its code starts Waiting, its HQ is ready without it, and the
+browser shows the exact command to run on the HQ machine.
 
 ## Dependencies
 
@@ -223,8 +225,9 @@ and no web → host.
    count, actor and time, code reuse, an absent or corrupt handle, a deletion
    error, no redisplay in `ack_pending` or `acknowledged`, and no secret in status,
    audit or export. Other instance or user keys are never touched.
-5. The real CLI's protected setup: collect, defer, redelivery, package export and
-   off-HQ acknowledgement, through the normal pinned setup and service path. The
+5. The real CLI against an organization created through the browser on the normal
+   pinned service: collect, defer, redelivery, package export and off-HQ
+   acknowledgement. The
    same CA public identity is recovered from the exported package and the code; a
    wrong code or package fails. REC-1 is reported unsupported.
 

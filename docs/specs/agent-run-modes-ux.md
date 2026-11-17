@@ -27,7 +27,10 @@ follows [COST](costs-and-insights-ux.md) and document 17.
 v1 runs agents by explicit turns, and suspends and resumes an agent waiting on a
 required answer ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)).
 Automatic run modes (On call, Scheduled, Always on) and one-off agents are
-[not in v1](#5-not-in-v1).
+[not in v1](#5-not-in-v1) for ordinary agents. The built-in HR lead is never kept
+running: it runs only when called (a message to it, an `@hr` mention or a hire
+request starts one turn), and it stops when the turn ends
+([our organization in the app](our-org-in-the-app.md) §2a).
 
 ## 0. Decisions
 
@@ -87,9 +90,10 @@ the turn also has other records; a turn with none shows no amount.
 The employee's home team and identity are separate from the execution pool and
 model and from the office's local binding and readiness. A new employee without
 `execution.md` is not runnable; the first runtime or model is never chosen
-silently. HR bootstrap supplies a valid home team rather than inventing a team or
-creating a teamless employee. A failed HR execution does not block authorized
-manual hiring. Creating configuration does not start a model turn.
+silently. The built-in HR lead is created with the organization in its top-level
+team; every other agent is created only by an approved hire. A failed HR execution
+does not block hiring with the manual form. Creating configuration does not start a
+model turn.
 
 ## 3. States and edge cases
 
@@ -104,7 +108,7 @@ manual hiring. Creating configuration does not start a model turn.
 | Usage partial or unavailable | Totals marked incomplete; unknown usage is never zero or guaranteed capacity. Unknown usage alone warns rather than blocks. |
 | Cache or office loss | Protected receipts, usage, budget, extensions and execution authority are restored, then processes reconciled. Git alone cannot prove continuity. |
 | Agent suspended on a required ask | Presence reads "Waiting for an answer from <person or agent>" with the time since; it holds no turn, permit or subscription slot. The answer resumes it in the same session; a refused start check keeps it suspended with the reason ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). |
-| Run fails to start (runtime missing, signed out, trust) | The turn shows **Failed** with the reason and a fix. For the HR lead, hiring doesn't wait: its chip says **Can't start**, and Hire and Add agent record work without it (`our-org-in-the-app.md` §2a, HRL-6). |
+| Run fails to start (runtime missing, signed out, trust) | The turn shows **Failed** with the reason and a fix. For the HR lead, hiring doesn't wait: its chip says **Can't start**, and Hire works without it, with the manual form (`our-org-in-the-app.md` §2a, HRL-6). |
 
 ## 4. UX acceptance criteria (RUN)
 

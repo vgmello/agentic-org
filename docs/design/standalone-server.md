@@ -25,12 +25,12 @@ flowchart TD
     OS[launchd, systemd or a container runtime] --> Instance[agentic-org serve: instance host]
     Instance --> HQ
     Instance -->|Supervises| Web
-    Setup[agentic-org setup: HQ-only onboarding] --> OS
+    Setup[agentic-org setup: instance and registration link] --> OS
 ```
 
 HQ and satellite are persisted **office roles**. An instance is the local service,
 its catalog and its configuration; it may host several offices. An office belongs to
-one organization. A browser session, an instance administrator, an office identity
+one organization. A browser session, the instance's administrator, an office identity
 and an employee identity are distinct principals. An office certificate is never a
 person's session or permission to administer the instance.
 
@@ -44,7 +44,7 @@ and it never becomes HQ because its connection failed.
 
 | Executable | Role |
 | --- | --- |
-| `agentic-org` | The person's command line. `setup` creates the instance and its HQ; `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
+| `agentic-org` | The person's command line. `setup` creates the instance and prints the administrator's registration link; `admin reset` re-issues it or resets the administrator's password; `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
 | `agentic-org-web` | Browser HTTPS, sign-in, static assets, API responses and live events. No keys and no database. |
 | `agentic-org-office` | One HQ or satellite office: every domain rule, the one data writer, and the supervisor of its agents. |
 | `agent-os` | The agent's command line, with employee-scoped authority. |
@@ -104,11 +104,14 @@ and signature, its own loaded image and the UI bytes before it confines itself,
 reports ready or receives secrets. A missing release binding is accepted only by
 named debug fixtures; production refuses it.
 
-**Create organization** requires an authenticated **instance administrator**. Owning
-one organization grants no right to create another. Local protected setup establishes
-the first administrator and creates the first HQ; later creation enters through the
-web process's restricted host operation. The host checks the admitted web capability
-and an administrator grant bound to the protected administrator identity and the
+**Create organization** requires the authenticated **administrator**: the one
+account on the instance whose host record carries the administrator flag. The
+account registered from setup's link holds it; the administrator can hand it to
+another account, in one operation that never leaves two or none. Owning one
+organization grants no right to create another. Setup creates no account and no
+organization: every organization, including the first, is created in the browser
+through the web process's restricted host operation. The host checks the admitted
+web capability and an administrator grant bound to the administrator account and the
 requested action, never a role flag from the browser. It creates the key itself and
 returns an operation result, never a key. The same person may hold both roles;
 office certificates and agent session tokens grant neither. **Add office on this
@@ -147,8 +150,8 @@ retained signing identifier `com.ellosoft.agentic-org.org-office-host` and the
 compiled team and hardened-runtime checks on macOS. A debug executable allowance is
 debug-only. Before creating the registry, the bootstrap host holds the instance,
 root and host locks and hands those same locks and custody to the normal runtime
-without an unlocked restart. A replay verifies credentials with the live account
-verifier and lockout rules before comparing the nonsecret fingerprint. The setup
+without an unlocked restart. A replay compares the nonsecret fingerprint and never
+issues a second registration link. The setup
 adapter admits loopback HTTP without a TLS pair; a supplied TLS pair is refused until
 the host certificate verifier exists.
 
@@ -242,37 +245,41 @@ Sharing an OS user is not an isolation boundary between instances.
 
 ## 4. Setup and service lifecycle
 
-Initial installation is HQ-only:
+Initial installation creates the instance only:
 
 ```bash
 agentic-org setup
 ```
 
 Setup is one resumable workflow: select or reserve `default` or `--name <name>`;
-verify a complete platform release; collect the HQ organization name and slug, the
-remote organization repository and state branch, valid bootstrap home-team choices,
-the listener configuration and the agent isolation mode; establish the instance
-administrator; provision HQ through protected host operations with the recovery-code
-flow; register and start the service; probe local readiness and show the browser URL.
-Service registration is automatic. Repeating setup resumes the same operation and
-reuses identity, data, configuration and service without changing roles, upgrading
-silently or duplicating HQ. Existing satellite-only state is never converted into HQ.
+verify a complete platform release; collect the listener configuration and the
+agent isolation mode; report disk encryption and the file permissions it set;
+register and start the service; probe local readiness; and print one registration
+link to the instance's own address. Setup asks for no username and no password and
+creates no account, organization or office. The link works once, expires after 24
+hours, and is stored at the host only as a digest; whoever opens it chooses a
+username and a password in the browser and becomes the administrator
+([installation UX](../specs/server-installation-and-access-ux.md) §4a.2).
+`agentic-org admin reset` on the server machine issues a new link, which cancels the
+previous one: a registration link while no administrator exists, and afterwards a
+set-new-password link for the administrator's account and no other. Service
+registration is automatic. Repeating setup resumes the same operation and reuses
+identity, data, configuration and service without changing roles, upgrading silently
+or issuing a link. Existing satellite-only state is never converted into HQ.
 
 `setup --non-interactive --config <file>` takes a strict JSON object with
-`version: 1`, an absolute `root`, `login`, `organization` (`selected_bootstrap::PlanV1`:
-version, name, slug, `repository_remote_url`, `state_branch`, `home_team_name`) and
-`listen` (the host-control `ListenConfig`). It holds no password, TLS private key,
-owner or employee shortcut, satellite role or extra property. A password comes from
-the controlling terminal or an owner-only `--password-file`, never copied into setup
-state. Configuration is at most 64 KiB and a password at most 1024 UTF-8 bytes.
-Missing required input fails without a prompt. A container can run setup this way,
-without a terminal and offline. Unsupported listener or TLS profiles fail before
-bootstrap.
+`version: 1`, an absolute `root` and `listen` (the host-control `ListenConfig`). It
+holds no login, password, organization, TLS private key, satellite role or extra
+property. Configuration is at most 64 KiB. Missing required input fails without a
+prompt. Noninteractive setup prints no link; its status reports
+`administrator: none` until `agentic-org admin reset` is run in a terminal. A
+container can run setup this way, without a terminal and offline. Unsupported
+listener or TLS profiles fail before bootstrap.
 
 Under the account-owned application base, `setup/<name>/setup.v1.json` freezes the
-validated nonsecret request, offline policy, separate bootstrap and HQ operation IDs
-and the exact release pin before protected creation. Later fields record the
-instance, the completed HQ result, the bootstrap exit and the service registration.
+validated nonsecret request, offline policy, the bootstrap operation ID and the
+exact release pin before protected creation. Later fields record the instance, the
+bootstrap exit and the service registration.
 `setup.lock` serializes this workflow separately from the instance writer and release
 store. Reopening repeats the original protected operations or verifies their result;
 it never mints new operation IDs, changes a configured listener or activates a newer
@@ -284,7 +291,7 @@ The initial wizard and the noninteractive schema offer no satellite role, invita
 or join option. A request to join through setup is refused before provisioning and
 points to HQ's Add office flow.
 
-Offline HQ installation:
+Offline installation:
 
 ```bash
 agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
@@ -292,19 +299,21 @@ agentic-org setup --bundle ./release-linux-x64.tar.gz --offline
 
 The local bundle is verified with the same trust as online. No external fetch or
 update check happens, and the offline policy persists for background jobs until
-online operation is enabled. Missing prerequisites produce actionable errors. Offline
-setup creates HQ only. The organization repository is still registered as remote:
-setup checks URL and branch syntax and local credential configuration only, never
-fetches, probes Git authentication or discovers provider models, and saves the
-registration with connectivity and publication unverified. Local service readiness
-is distinct from repository publication and provider readiness. There is no
-local-only organization repository fallback.
+online operation is enabled. Missing prerequisites produce actionable errors.
+Offline setup creates the instance only. An organization created later on an
+offline instance still registers its repository as remote: creation checks URL and
+branch syntax and local credential configuration only, never fetches, probes Git
+authentication or discovers provider models, and saves the registration with
+connectivity and publication unverified
+([create organization](create-organization.md)). Local service readiness is distinct
+from repository publication and provider readiness. There is no local-only
+organization repository fallback.
 
 ### Provisioning reservation
 
 Protected host-registry provisioning keeps a separate reservation: account and
 fingerprint, normalized name and explicit slug, the exact prepared UUIDv7 ID plan,
-the owner security principal, an opaque recovery handle, a nullable office-key
+the creating administrator's account, an opaque recovery handle, a nullable office-key
 fingerprint, and linked and completion status. Its replay window is the operation
 ID's time plus 30 days; unfinished reservations and their custody are never pruned.
 Credential staging precedes the reservation and is bound to its account, fingerprint
@@ -320,8 +329,8 @@ On the destination, the flow issued by HQ reserves local instance and office
 identities, checks release compatibility, starts or reuses the host service and
 submits the invitation through the protected `office.join` on `host.sock`. Admission
 keeps destination consent, trusted peer checks and the administrator grant when the
-instance already has accounts. A satellite-only host starts its account registry
-with no accounts. No web child or new HQ is created. Unattended enrollment may stay
+instance already has an administrator. A satellite-only host starts its account
+registry with no accounts. No web child or new HQ is created. Unattended enrollment may stay
 `awaiting_approval`.
 
 The satellite generates and keeps its TLS identity key ([offices design](offices-hq-and-satellites.md)),
@@ -412,9 +421,13 @@ track its outcome.
 
 ## 6. Authentication, keys and platform gates
 
-Bootstrap is local and protected: setup initializes the owner's credentials, or a
-short-lived, single-use exchange bound to the instance does. There is no unclaimed
-public administration page and no reusable owner token in a URL.
+Bootstrap is a one-time link: setup prints a registration link bound to the
+instance, single-use, expiring after 24 hours and kept at the host only as a digest,
+with its secret after `#` so it never reaches a request line or log. Until it is
+redeemed no administration is possible, and `agentic-org admin reset` on the server
+machine replaces it. No password is typed in a terminal: terminal sign-in prints a
+10-minute approval link that a signed-in browser approves. There is no unclaimed
+reusable administration page and no reusable owner token in a URL.
 
 **A cookie alone never authenticates a browser operation.** Cookies are scoped by
 host, not port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)),
@@ -500,7 +513,7 @@ and refuses conflicting bytes. Export reads only a separately typed public recor
 checked against the committed bytes, and never serializes the private key.
 
 The pending recovery code is staged in the host's credential provider, with only an
-opaque handle in the setup journal. Before acknowledgement, an interrupted delivery
+opaque handle in the creation journal. Before acknowledgement, an interrupted delivery
 resumes the same code and escrow. On acknowledgement the pending secret is erased and
 never exposed again. A lost acknowledged code needs the separate recovery and
 rotation policy, never a redisplay or a setup reset.
@@ -526,18 +539,19 @@ and code are stored away from HQ.
 
 The commands are `agentic-org recovery release` and `agentic-org recovery status`,
 with a saved `--name` or an explicit `--host-socket` and `--instance-id`, an exact
-`--org-id`, and native administrator sign-in. `--package` chooses a new local file;
+`--org-id`, and the administrator's sign-in, approved in the browser (no password in
+the terminal). `--package` chooses a new local file;
 `--redeliver` asks for a fresh authenticated showing of the same code.
 `recovery.status` returns state, dates, counts and code-free audit pages (32 delivery
 ordinals per page). `recovery.package` returns the bound public record with no server
 file name. Browser, web and agent channels have no route to the recovery secret or
 package export.
 
-Setup offers code collection on its protected owner channel after HQ creation and
-before starting the service. The owner may defer: HQ setup completes while recovery
-material stays Waiting or Shown. Noninteractive setup and setup over SSH on macOS
-show no code; the administrator collects it later with `agentic-org recovery release`
-at the HQ machine. Acknowledging that package and code are kept away from HQ is
+Setup creates no organization and offers no code. After an organization is created
+in the browser, its code waits to be collected: the administrator collects it with
+`agentic-org recovery release --org '<organization>'` at the HQ machine, and the
+browser shows only its state. The organization is usable while recovery material
+stays Waiting or Shown. Acknowledging that package and code are kept away from HQ is
 required before recovery material is marked collected, not before HQ is ready. Status
 JSON and logs never contain the code. A fixture recovers the same CA public identity
 with the code and fails closed for a wrong code or a damaged package. Escrow is not a
