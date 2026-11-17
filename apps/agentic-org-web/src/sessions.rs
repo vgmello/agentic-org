@@ -22,7 +22,7 @@ use std::{
     collections::BTreeMap,
     ops::Bound::{Excluded, Unbounded},
     sync::{
-        mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError},
         Arc, Mutex,
     },
     thread,
@@ -35,18 +35,22 @@ const IDLE: Duration = Duration::from_secs(30 * 60);
 /// The browser map holds at most the host's gateway budget, never more, so the
 /// host's local reserve stays free for local sign-in.
 const MAX_SESSIONS: usize = org_host_control::ops::GATEWAY_SESSIONS;
-/// When expiry cleanup or capacity probes may start during a sign-in pass.
-/// Expected worst case on a healthy host, against the default 10 s
-/// `backend_timeout`: account.verify (password hashing, under 1 s) + the new
-/// session's inspect (milliseconds) + cleanup/probes started within these 2 s +
-/// the last call (milliseconds) is about
-/// 3 s, leaving over 6 s for pool queueing. A degraded host can still exceed it
-/// (each call keeps its 5 s deadline); the abandonment check before insertion
-/// then ends the new host session instead of binding it, and an abandonment
-/// after that check is undone when the reply cannot be delivered.
+/// One sign-in's single window, from its start, in which expiry cleanup
+/// (before account.verify) and capacity probes (after it) may start host
+/// calls. Both phases share it, and neither starts a call after it closes, so
+/// at most one cleanup/probe call is still in flight at the close. On a
+/// healthy host a sign-in therefore takes at most these 2 s + account.verify
+/// (password hashing, under 1 s) + the new session's inspect + that one call
+/// (+ the new session's end when admission fails; milliseconds each): about
+/// 3 s against the default 10 s `backend_timeout`, leaving about 7 s for pool
+/// queueing. A
+/// degraded host can exceed it (each call keeps its 5 s deadline); the
+/// abandonment check before insertion then ends the new host session instead
+/// of binding it, and an abandonment after that check is undone when the reply
+/// cannot be delivered.
 const CAPACITY_RECHECK: Duration = Duration::from_secs(2);
-/// Host ends queued behind one cleanup thread. A full queue drops the end: the
-/// host's own idle/absolute expiry still reclaims that session.
+/// Host ends queued behind one cleanup thread. Ends beyond it wait in the
+/// overflow list (see [`Cleanup`]) rather than being dropped.
 const CLEANUP_QUEUE: usize = 64;
 type ProofMac = Hmac<Sha256>;
 pub struct BrowserSessions {
@@ -58,7 +62,49 @@ pub struct BrowserSessions {
     /// Shared with a sign-in's delivery rollback, which may run after the call.
     sessions: Arc<Mutex<BTreeMap<[u8; 32], Arc<Session>>>>,
     capacity_cursor: Mutex<Option<[u8; 32]>>,
-    cleanup: SyncSender<Arc<SessionHandle>>,
+    cleanup: Cleanup,
+}
+/// Host ends owed for sessions whose browser binding is already gone. Each
+/// owed end is attempted once unless control EOF made it unnecessary: the
+/// bounded queue feeds the cleanup thread, and an end that does not fit waits
+/// in `overflow` (one entry per host handle, so no larger than the host's
+/// per-connection session budget) for that thread or the next sign-in.
+#[derive(Clone)]
+struct Cleanup {
+    queue: SyncSender<Arc<SessionHandle>>,
+    overflow: Arc<Overflow>,
+}
+impl Cleanup {
+    fn end_later(&self, handle: Arc<SessionHandle>) {
+        match self.queue.try_send(handle) {
+            Ok(()) => {}
+            Err(TrySendError::Full(handle)) => self.overflow.defer(handle),
+            // The caller holds a sender, so the receiver is gone only because
+            // the cleanup thread saw the control connection no longer live;
+            // that EOF ends every host session on this connection.
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+}
+#[derive(Default)]
+struct Overflow(Mutex<Vec<Arc<SessionHandle>>>);
+impl Overflow {
+    fn owed(&self) -> std::sync::MutexGuard<'_, Vec<Arc<SessionHandle>>> {
+        // Entries are plain handles: a panic elsewhere cannot corrupt them.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn defer(&self, handle: Arc<SessionHandle>) {
+        let mut owed = self.owed();
+        if !owed.iter().any(|known| Arc::ptr_eq(known, &handle)) {
+            owed.push(handle);
+        }
+    }
+    fn take(&self) -> Option<Arc<SessionHandle>> {
+        self.owed().pop()
+    }
+    fn is_empty(&self) -> bool {
+        self.owed().is_empty()
+    }
 }
 struct Session {
     handle: Arc<SessionHandle>,
@@ -77,13 +123,12 @@ pub struct Ticket {
 }
 /// The host end of a sign-out whose browser pairs are already invalid. It runs
 /// exactly once: [`SignOut::end`] asks the host directly; dropping it unexecuted
-/// (a refused body, a refused pool admission) queues the end on the cleanup
-/// thread instead. A full queue leaves the session to the host's own
-/// idle/absolute expiry, and control EOF ends it.
+/// (a refused body, a refused pool admission) owes the end to [`Cleanup`]
+/// instead, which never drops it while the control connection is live.
 pub struct SignOut {
     handle: Option<Arc<SessionHandle>>,
     host: Arc<HostControl>,
-    cleanup: SyncSender<Arc<SessionHandle>>,
+    cleanup: Cleanup,
 }
 impl SignOut {
     pub fn end(mut self) {
@@ -94,16 +139,14 @@ impl SignOut {
             // Ended, or the host had already ended or forgotten it.
             Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {}
             // Retry once on the cleanup thread.
-            Err(control::Failure::Unavailable) => {
-                let _ = self.cleanup.try_send(handle);
-            }
+            Err(control::Failure::Unavailable) => self.cleanup.end_later(handle),
         }
     }
 }
 impl Drop for SignOut {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            let _ = self.cleanup.try_send(handle);
+            self.cleanup.end_later(handle);
         }
     }
 }
@@ -157,16 +200,26 @@ fn datetime(ms: u64) -> Result<String, ApiReply> {
     Ok(time::format_ms(ms))
 }
 mod time;
-/// The single host-cleanup worker. It ends when the registry and any pending
-/// delivery rollbacks (the only senders) drop or the host control connection is
-/// no longer live.
-fn end_expired(host: &HostControl, queued: &Receiver<Arc<SessionHandle>>) {
+/// The single host-cleanup worker. It ends when the registry, pending delivery
+/// rollbacks and unexecuted sign-outs (the only senders) drop or the host
+/// control connection is no longer live. Whenever the queue is empty it ends one deferred overflow
+/// entry, so overflow drains without waiting for another sign-in.
+fn end_expired(host: &HostControl, queued: &Receiver<Arc<SessionHandle>>, overflow: &Overflow) {
     while host.live() {
-        match queued.recv_timeout(Duration::from_millis(100)) {
+        let wait = if overflow.is_empty() {
+            Duration::from_millis(100)
+        } else {
+            Duration::ZERO
+        };
+        match queued.recv_timeout(wait) {
             Ok(handle) => {
                 let _ = host.end(&handle);
             }
-            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(handle) = overflow.take() {
+                    let _ = host.end(&handle);
+                }
+            }
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -181,11 +234,17 @@ impl BrowserSessions {
             return Err(unavailable());
         }
         let suffix = hex(&Sha256::digest(instance.as_bytes()));
-        let (cleanup, queued) = mpsc::sync_channel(CLEANUP_QUEUE);
-        let ending = Arc::clone(&host);
+        let (queue, queued) = mpsc::sync_channel(CLEANUP_QUEUE);
+        let cleanup = Cleanup {
+            queue,
+            overflow: Arc::default(),
+        };
+        // The worker holds the overflow list but no sender, so dropping the
+        // registry (and any pending rollbacks) still disconnects its queue.
+        let (ending, owed) = (Arc::clone(&host), Arc::clone(&cleanup.overflow));
         thread::Builder::new()
             .name("gateway-session-cleanup".into())
-            .spawn(move || end_expired(&ending, &queued))
+            .spawn(move || end_expired(&ending, &queued, &owed))
             .map_err(|_| unavailable())?;
         Ok(Arc::new(Self {
             host,
@@ -231,10 +290,11 @@ impl BrowserSessions {
         watch: &Watch<'_>,
         respond: impl FnOnce(Established) -> Result<R, ApiReply>,
     ) -> Result<R, ApiReply> {
-        // Browser expiry can precede native expiry (for example after a capacity
-        // inspection renewed only the host clock). Release those host slots
-        // before account.verify asks for another one on the same connection.
-        self.reap_before_sign_in(CAPACITY_RECHECK, watch)?;
+        // Browser expiry can precede native expiry (the host clock renews on
+        // every authorized host call). Release those host slots before
+        // account.verify asks for another one on the same connection.
+        let window = Instant::now() + CAPACITY_RECHECK;
+        self.reap_before_sign_in(window, watch)?;
         let result = self.host.verify(&login, &password).map_err(|e| {
             if e == control::Failure::Denied {
                 denied()
@@ -262,7 +322,7 @@ impl BrowserSessions {
             created: Instant::now(),
             touched: Mutex::new(Instant::now()),
         };
-        self.establish(session, watch, respond)
+        self.establish(session, window, watch, respond)
     }
     fn prepare_established(
         &self,
@@ -284,6 +344,7 @@ impl BrowserSessions {
     fn establish<R>(
         &self,
         session: Session,
+        window: Instant,
         watch: &Watch<'_>,
         respond: impl FnOnce(Established) -> Result<R, ApiReply>,
     ) -> Result<R, ApiReply> {
@@ -294,7 +355,7 @@ impl BrowserSessions {
             let (key, session, result) = self.prepare_established(session)?;
             // Build the reply before binding: a construction failure binds nothing.
             let reply = respond(result)?;
-            self.reclaim_capacity()?;
+            self.reclaim_capacity_until(window)?;
             let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
             if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
                 return Err(unavailable());
@@ -306,8 +367,7 @@ impl BrowserSessions {
             sessions.insert(key, Arc::new(session));
             // The waiter can still give up after this check. If the reply then
             // cannot be delivered, nobody holds the new pair: evict it by its
-            // host handle and queue the host end (a full queue leaves it to the
-            // host's own expiry).
+            // host handle and owe the host end to the cleanup thread.
             let (map, cleanup, bound) = (
                 Arc::clone(&self.sessions),
                 self.cleanup.clone(),
@@ -317,24 +377,41 @@ impl BrowserSessions {
                 if let Ok(mut sessions) = map.lock() {
                     sessions.retain(|_, current| !Arc::ptr_eq(&current.handle, &bound));
                 }
-                let _ = cleanup.try_send(bound);
+                cleanup.end_later(bound);
             });
             Ok(reply)
         })();
         if admission.is_err() {
-            let _ = self.host.end(&handle);
+            // Nothing binds the new host session: a transient end failure owes
+            // the end to the cleanup thread rather than orphaning the slot.
+            if let Err(control::Failure::Unavailable) = self.host.end(&handle) {
+                self.cleanup.end_later(handle);
+            }
         }
         admission
     }
-    /// Runs only on sign-in's blocking worker. End expired authority directly,
-    /// with a bounded window for starting calls and the full native deadline for
-    /// each call. Remove a binding only once the host confirms it ended: entries
-    /// beyond the window or a failed call remain available for the next pass,
-    /// rather than overflowing the asynchronous cleanup queue and losing slots.
-    fn reap_before_sign_in(&self, window: Duration, watch: &Watch<'_>) -> Result<(), ApiReply> {
-        let started = Instant::now();
+    /// Runs only on sign-in's blocking worker. End owed and expired authority
+    /// directly, starting calls only before `window` closes, each with the full
+    /// native deadline. Remove a binding only once the host confirms it ended:
+    /// entries beyond the window or a failed call remain available for the
+    /// next pass, rather than overflowing the asynchronous cleanup queue.
+    fn reap_before_sign_in(&self, window: Instant, watch: &Watch<'_>) -> Result<(), ApiReply> {
+        // Ends already owed to the cleanup thread first: their bindings are gone.
+        while Instant::now() < window {
+            let Some(handle) = self.cleanup.overflow.take() else {
+                break;
+            };
+            if watch.abandoned() {
+                self.cleanup.overflow.defer(handle);
+                return Err(unavailable());
+            }
+            if let Err(control::Failure::Unavailable) = self.host.end(&handle) {
+                self.cleanup.overflow.defer(handle);
+                return Err(unavailable());
+            }
+        }
         for _ in 0..MAX_SESSIONS {
-            if started.elapsed() >= window {
+            if Instant::now() >= window {
                 break;
             }
             let expired = self
@@ -350,30 +427,36 @@ impl BrowserSessions {
             if watch.abandoned() {
                 return Err(unavailable());
             }
-            match self.host.end(&session.handle) {
-                Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {
-                    self.sessions
-                        .lock()
-                        .map_err(|_| unavailable())?
-                        .retain(|_, current| !Arc::ptr_eq(&current.handle, &session.handle));
-                }
-                Err(control::Failure::Unavailable) => return Err(unavailable()),
-            }
+            self.end_bound(&session)?;
         }
         Ok(())
     }
-    fn reclaim_capacity(&self) -> Result<(), ApiReply> {
-        self.reclaim_capacity_within(CAPACITY_RECHECK)
+    /// Ends a browser-expired binding's host session and removes the binding
+    /// once the host confirms the end; a transient failure keeps it for retry.
+    fn end_bound(&self, session: &Session) -> Result<(), ApiReply> {
+        match self.host.end(&session.handle) {
+            Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {
+                self.sessions
+                    .lock()
+                    .map_err(|_| unavailable())?
+                    .retain(|_, current| !Arc::ptr_eq(&current.handle, &session.handle));
+                Ok(())
+            }
+            Err(control::Failure::Unavailable) => Err(unavailable()),
+        }
     }
-    fn reclaim_capacity_within(&self, window: Duration) -> Result<(), ApiReply> {
+    #[cfg(test)]
+    fn reclaim_capacity(&self) -> Result<(), ApiReply> {
+        self.reclaim_capacity_until(Instant::now() + CAPACITY_RECHECK)
+    }
+    fn reclaim_capacity_until(&self, window: Instant) -> Result<(), ApiReply> {
         // Only sign-in's blocking worker probes the host, never authenticate/reap.
         // The window bounds when a probe may start, not how long it may take:
         // each probe keeps the normal per-call deadline, because truncating an
         // in-flight call would close the shared control connection and end every
-        // session. The scan therefore takes at most `window` plus one call deadline.
-        let started = Instant::now();
+        // session. The scan therefore ends at most one call deadline after it.
         for _ in 0..MAX_SESSIONS {
-            if started.elapsed() >= window {
+            if Instant::now() >= window {
                 break;
             }
             let session = {
@@ -392,12 +475,18 @@ impl BrowserSessions {
                 *cursor = Some(*key);
                 Arc::clone(session)
             };
-            match self.host.inspect(&session.handle) {
-                Err(control::Failure::Denied) => {
-                    self.session_failure(&session, control::Failure::Denied);
+            if !session.live() {
+                // An inspection would authorize, and so renew, the host idle
+                // clock of a pair the browser can no longer use: end it instead.
+                self.end_bound(&session)?;
+            } else {
+                match self.host.inspect(&session.handle) {
+                    Err(control::Failure::Denied) => {
+                        self.session_failure(&session, control::Failure::Denied);
+                    }
+                    Err(_) => return Err(unavailable()),
+                    Ok(_) => {}
                 }
-                Err(_) => return Err(unavailable()),
-                Ok(_) => {}
             }
             if self.sessions.lock().map_err(|_| unavailable())?.len() < MAX_SESSIONS {
                 break;
@@ -422,13 +511,13 @@ impl BrowserSessions {
             });
         // Browser expiry ends the host session too (§4), so an expired pair
         // does not hold a host slot until the host's own idle timeout. This
-        // runs on the async request path, so it only queues: the cleanup
-        // thread makes the host call. After control EOF the host has already
-        // ended every session on this connection.
+        // runs on the async request path, so it never calls the host: the end
+        // is owed to the cleanup thread (queued, or deferred when the queue is
+        // full). After control EOF the host has already ended every session on
+        // this connection.
         if host_live {
             for session in expired {
-                // Full or closed: dropped; the host's own expiry covers it.
-                let _ = self.cleanup.try_send(Arc::clone(&session.handle));
+                self.cleanup.end_later(Arc::clone(&session.handle));
             }
         }
         Ok(())

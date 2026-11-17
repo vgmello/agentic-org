@@ -42,6 +42,8 @@ struct Fixture {
     ended: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// Stalls every scripted `session.inspect` answer while non-zero.
     inspect_delay: Arc<Mutex<Duration>>,
+    /// Native handles named by each `session.inspect`, in call order.
+    inspected: Arc<Mutex<Vec<String>>>,
 }
 fn reply(
     request: &serde_json::Value,
@@ -101,6 +103,8 @@ impl Fixture {
         let ended_sessions = Arc::clone(&ended);
         let inspect_delay = Arc::new(Mutex::new(Duration::ZERO));
         let stall = Arc::clone(&inspect_delay);
+        let inspected = Arc::new(Mutex::new(Vec::new()));
+        let inspections = Arc::clone(&inspected);
         let thread = std::thread::spawn(move || {
             let mut host = BufReader::new(host);
             let mut issued = 0usize;
@@ -111,6 +115,10 @@ impl Fixture {
                     .unwrap()
                     .push(request["method"].as_str().unwrap().to_owned());
                 if request["method"] == "session.inspect" {
+                    inspections
+                        .lock()
+                        .unwrap()
+                        .push(request["params"]["session"].as_str().unwrap().to_owned());
                     let delay = *stall.lock().unwrap();
                     std::thread::sleep(delay);
                 }
@@ -165,6 +173,7 @@ impl Fixture {
             errors,
             ended,
             inspect_delay,
+            inspected,
         }
     }
     fn sign_in(&self) -> Established {
@@ -427,6 +436,33 @@ fn failed_sign_in_preparation_ends_only_the_new_host_session() {
 }
 
 #[test]
+fn a_failed_end_of_an_unbound_new_host_session_is_retried_not_orphaned() {
+    let f = Fixture::new();
+    // Preparation fails, and so does the first end of the new host session.
+    f.errors
+        .lock()
+        .unwrap()
+        .insert("session.inspect", "unavailable");
+    f.errors
+        .lock()
+        .unwrap()
+        .insert("session.end", "unavailable");
+    assert!(f
+        .sessions
+        .sign_in(LOGIN.into(), Password::new(PASSWORD.into()).unwrap())
+        .is_err());
+    assert!(f.sessions.sessions.lock().unwrap().is_empty());
+    assert!(ended_reaches(&f, 1));
+    assert!(f
+        .ended
+        .lock()
+        .unwrap()
+        .contains("synthetic native handle 1"));
+    assert_eq!(f.count("session.end"), 2);
+    assert!(f.sessions.host.live());
+}
+
+#[test]
 fn an_abandoned_sign_in_ends_its_new_host_session_instead_of_binding_it() {
     let f = Fixture::new();
     let live = f.sign_in();
@@ -658,7 +694,7 @@ fn sign_in_retains_expired_handles_after_a_bounded_or_failed_cleanup_pass() {
     // At most one native end fits this window. All remaining expired handles,
     // including those beyond the async queue's capacity, must remain retryable.
     f.sessions
-        .reap_before_sign_in(Duration::from_millis(1), &Watch::never())
+        .reap_before_sign_in(Instant::now() + Duration::from_millis(1), &Watch::never())
         .unwrap_or_else(|_| panic!("bounded cleanup"));
     let ended = f.count("session.end");
     assert!(ended <= 1);
@@ -695,6 +731,114 @@ fn sign_in_retains_expired_handles_after_a_bounded_or_failed_cleanup_pass() {
         MAX_SESSIONS - expired_count + 1
     );
     assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert!(f.sessions.host.live());
+}
+
+/// Waits up to 10 s for the scripted host to have ended `expected` sessions.
+fn ended_reaches(f: &Fixture, expected: usize) -> bool {
+    let until = Instant::now() + Duration::from_secs(10);
+    while f.ended.lock().unwrap().len() < expected && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    f.ended.lock().unwrap().len() >= expected
+}
+
+#[test]
+fn request_reaping_beyond_the_cleanup_queue_never_strands_capped_host_slots() {
+    // The scripted host enforces the real gateway budget, and each host end
+    // takes long enough that one request's reap overflows the cleanup queue.
+    let f = Fixture::scripted_with_capacity(false, Duration::from_millis(2), Some(MAX_SESSIONS));
+    let pairs: Vec<Established> = (0..MAX_SESSIONS).map(|_| f.sign_in()).collect();
+    let expired_count = CLEANUP_QUEUE + 8;
+    let (expired, live) = pairs.split_at(expired_count);
+    let keys: Vec<[u8; 32]> = expired.iter().map(|e| ticket(&f.sessions, e).key).collect();
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        let stale = Instant::now()
+            .checked_sub(IDLE + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+        for key in &keys {
+            *bindings[key].touched.lock().unwrap() = stale;
+        }
+    }
+    // Any authenticated request reaps every browser-expired binding at once.
+    assert!(f
+        .sessions
+        .authenticate(&parts(&live[0].cookie, live[0].proof.expose()))
+        .is_ok());
+    // No expired pair authorizes, whether its host end was queued or deferred.
+    for pair in expired {
+        assert!(f.refused(&pair.cookie, pair.proof.expose()));
+    }
+    // Every browser-expired host session is ended, none left to host expiry.
+    assert!(
+        ended_reaches(&f, expired_count),
+        "host ended {} of {expired_count} browser-expired sessions",
+        f.ended.lock().unwrap().len()
+    );
+    // So the gateway can again bind its whole budget through sign-in.
+    for _ in 0..expired_count {
+        let replacement = f
+            .sessions
+            .sign_in(LOGIN.into(), Password::new(PASSWORD.into()).unwrap());
+        assert!(
+            replacement.is_ok(),
+            "sign-in refused below the gateway budget"
+        );
+    }
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+    assert!(f.sessions.get(ticket(&f.sessions, &live[0])).is_ok());
+    assert!(f.sessions.host.live());
+}
+
+#[test]
+fn unexecuted_sign_outs_beyond_the_cleanup_queue_still_end_their_host_sessions() {
+    let f = Fixture::scripted(false, Duration::from_millis(2));
+    let count = CLEANUP_QUEUE + 8;
+    let pairs: Vec<Established> = (0..count).map(|_| f.sign_in()).collect();
+    // Each dropped sign-out (a refused body or pool admission) owes its end at
+    // once, faster than the cleanup thread drains the bounded queue.
+    for pair in &pairs {
+        let owed = f.sessions.begin_sign_out(ticket(&f.sessions, pair));
+        drop(owed.unwrap_or_else(|_| panic!("begin sign-out")));
+    }
+    assert!(f.sessions.sessions.lock().unwrap().is_empty());
+    assert!(
+        ended_reaches(&f, count),
+        "host ended {} of {count} signed-out sessions",
+        f.ended.lock().unwrap().len()
+    );
+    assert!(f.sessions.host.live());
+}
+
+#[test]
+fn capacity_probes_never_renew_a_browser_expired_host_session() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    for _ in 1..MAX_SESSIONS {
+        f.sign_in();
+    }
+    let live_key = ticket(&f.sessions, &live).key;
+    // A fresh scan starts at the first key: expire that binding so the probe
+    // reaches it whatever the machine load.
+    let (key, handle) = {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        let key = *bindings.keys().find(|key| **key != live_key).unwrap();
+        *bindings[&key].touched.lock().unwrap() = Instant::now()
+            .checked_sub(IDLE + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+        (key, bindings[&key].handle.expose().to_owned())
+    };
+    // Sign-in itself inspected every new session; count only the scan's probes.
+    f.inspected.lock().unwrap().clear();
+    // No request presents the expired pair, so only the capacity scan sees it.
+    assert!(f.sessions.reclaim_capacity().is_ok());
+    // An inspection authorizes, and so renews, the host idle clock: the scan
+    // must end the browser-expired session instead.
+    assert!(!f.inspected.lock().unwrap().contains(&handle));
+    assert!(f.ended.lock().unwrap().contains(&handle));
+    assert!(!f.sessions.sessions.lock().unwrap().contains_key(&key));
     assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
     assert!(f.sessions.host.live());
 }
@@ -757,7 +901,7 @@ fn an_exhausted_capacity_scan_keeps_the_control_connection_and_sessions() {
     let started = Instant::now();
     assert!(f
         .sessions
-        .reclaim_capacity_within(Duration::from_millis(100))
+        .reclaim_capacity_until(Instant::now() + Duration::from_millis(100))
         .is_ok());
     assert!(started.elapsed() >= Duration::from_millis(100));
     *f.inspect_delay.lock().unwrap() = Duration::ZERO;
@@ -793,10 +937,16 @@ fn bounded_capacity_scans_eventually_reach_revocations_after_a_live_prefix() {
     // Each window can start only one probe. Repeated scans must advance past
     // the same live prefix instead of permanently denying reauthentication.
     *f.inspect_delay.lock().unwrap() = window;
-    assert!(f.sessions.reclaim_capacity_within(window).is_ok());
+    assert!(f
+        .sessions
+        .reclaim_capacity_until(Instant::now() + window)
+        .is_ok());
     assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
     for _ in 0..3 {
-        assert!(f.sessions.reclaim_capacity_within(window).is_ok());
+        assert!(f
+            .sessions
+            .reclaim_capacity_until(Instant::now() + window)
+            .is_ok());
     }
     {
         let bindings = f.sessions.sessions.lock().unwrap();
@@ -824,7 +974,12 @@ fn bounded_capacity_scans_eventually_reach_revocations_after_a_live_prefix() {
             .insert(session.handle.expose().to_owned());
         *key
     };
-    assert!(f.sessions.reclaim_capacity().is_ok());
+    // Wrapping may need nearly a full lap of probes; the window is not under
+    // test here, so give a loaded machine time to start all of them.
+    assert!(f
+        .sessions
+        .reclaim_capacity_until(Instant::now() + Duration::from_secs(60))
+        .is_ok());
     {
         let bindings = f.sessions.sessions.lock().unwrap();
         assert!(!bindings.contains_key(&wrapped_key));
