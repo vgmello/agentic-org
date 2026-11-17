@@ -650,7 +650,6 @@ fn host_denial_evicts_the_pair_but_transient_errors_preserve_it() {
         ("get", "session.inspect"),
         ("refresh", "session.renew"),
         ("refresh", "session.inspect"),
-        ("sign-out", "session.end"),
     ] {
         for code in ["not_authorized", "unavailable"] {
             let f = Fixture::new();
@@ -661,7 +660,6 @@ fn host_denial_evicts_the_pair_but_transient_errors_preserve_it() {
             let result = match operation {
                 "get" => f.sessions.get(queued).map(|_| ()),
                 "refresh" => f.sessions.refresh(queued).map(|_| ()),
-                "sign-out" => f.sessions.sign_out(queued),
                 _ => unreachable!(),
             };
             let error = match result {
@@ -680,6 +678,45 @@ fn host_denial_evicts_the_pair_but_transient_errors_preserve_it() {
             assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
             assert!(f.sessions.host.live());
         }
+    }
+}
+
+#[test]
+fn sign_out_invalidates_the_pair_first_whatever_the_host_end_returns() {
+    for code in ["not_authorized", "unavailable", "storage_error"] {
+        let f = Fixture::new();
+        let pair = f.sign_in();
+        let live = f.sign_in();
+        let queued = ticket(&f.sessions, &pair);
+        f.errors.lock().unwrap().insert("session.end", code);
+        // The browser pair is invalid locally before the host is asked, so a
+        // host failure can never leave a signed-out pair usable.
+        if f.sessions.sign_out(queued).is_err() {
+            panic!("sign-out refused on host {code}");
+        }
+        assert!(f.refused(&pair.cookie, pair.proof.expose()), "{code}");
+        assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+        if code != "not_authorized" {
+            // A transient host failure queues the end for the cleanup thread.
+            let until = Instant::now() + Duration::from_secs(5);
+            while !f
+                .ended
+                .lock()
+                .unwrap()
+                .contains("synthetic native handle 1")
+                && Instant::now() < until
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(f
+                .ended
+                .lock()
+                .unwrap()
+                .contains("synthetic native handle 1"));
+            assert_eq!(f.count("session.end"), 2);
+        }
+        assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+        assert!(f.sessions.host.live());
     }
 }
 

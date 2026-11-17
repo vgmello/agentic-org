@@ -180,14 +180,13 @@ impl ApiBackend for SessionApi {
                 .refresh(ticket)
                 .and_then(|result| self.established(result))
                 .unwrap_or_else(|reply| reply),
-            Command::SignOut(ticket) => self
-                .sessions
-                .sign_out(ticket)
-                .and_then(|()| {
-                    ApiReply::json(StatusCode::OK, serde_json::json!({"result":{}}))
-                        .cookie(&self.sessions.clear_cookie())
-                })
-                .unwrap_or_else(|reply| reply),
+            // Every sign-out reply clears the browser's cookie half.
+            Command::SignOut(ticket) => match self.sessions.sign_out(ticket) {
+                Ok(()) => ApiReply::json(StatusCode::OK, serde_json::json!({"result":{}})),
+                Err(reply) => reply,
+            }
+            .cookie(&self.sessions.clear_cookie())
+            .unwrap_or_else(|reply| reply),
         }
     }
 }

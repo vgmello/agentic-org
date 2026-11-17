@@ -409,20 +409,30 @@ impl BrowserSessions {
         *ticket.session.touched.lock().map_err(|_| unavailable())? = Instant::now();
         self.view(&ticket.session)
     }
+    /// Sign-out succeeds once the browser pair is invalid locally; the host end
+    /// that follows cannot keep a signed-out pair usable (gateway-api-v1 §4).
     pub fn sign_out(&self, ticket: Ticket) -> Result<(), ApiReply> {
         self.current(&ticket)?;
         self.end_bound(&ticket)
     }
     fn end_bound(&self, ticket: &Ticket) -> Result<(), ApiReply> {
-        self.host
-            .end(&ticket.session.handle)
-            .map_err(|error| self.session_failure(&ticket.session, error))?;
-        // The host session is gone: evict every pair bound to it, including one
-        // a concurrent refresh rotated after this request passed current().
+        let handle = &ticket.session.handle;
+        // Invalidate locally first: evict every pair bound to this host session,
+        // including one a concurrent refresh rotated after this request passed
+        // current(). A refresh that has not swapped yet then finds its ticket gone.
         self.sessions
             .lock()
             .map_err(|_| unavailable())?
-            .retain(|_, current| !Arc::ptr_eq(&current.handle, &ticket.session.handle));
+            .retain(|_, current| !Arc::ptr_eq(&current.handle, handle));
+        match self.host.end(handle) {
+            // Ended, or the host had already ended or forgotten it.
+            Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {}
+            // Retry once on the cleanup thread; a full queue leaves the session
+            // to the host's own idle/absolute expiry, and control EOF ends it.
+            Err(control::Failure::Unavailable) => {
+                let _ = self.cleanup.try_send(Arc::clone(handle));
+            }
+        }
         Ok(())
     }
     pub fn refresh(&self, ticket: Ticket) -> Result<Established, ApiReply> {
