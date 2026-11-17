@@ -524,6 +524,7 @@ offices/
     <li>The stable <code>id</code> is immutable and is what foreign keys, sync and file names use. IDs are UUIDv7 (RFC 9562), written as lowercase hyphenated text; SQLite stores them as text and an engine with a native UUID type uses that. The newer HQ-creation path in the host already mints them; the rest of the code mints ULIDs and is to change.</li>
     <li>A task is numbered by the office that creates it, in the same local save: <code>T-</code>, the office's letter, and the next number of that office's one sequence. It is never unnumbered and its reference is unique in the organization on its own.</li>
     <li>A feature created while HQ is unreachable is saved with <code>number: null</code>. The organization authority allocates HQ numbers in one serialized transaction. No client ever computes <code>MAX + 1</code>.</li>
+    <li>A task has a status from one closed list (todo, in progress, blocked, cancelled, done; done or cancelled is finished), a priority (urgent, high, normal, low) and, optionally, an effort in whole points.</li>
     <li>Gaps are allowed and numbers are never reused. A type change, a reassignment or a move to another project or office never renumbers.</li>
     <li>A task reference needs nothing in front. HQ-numbered records are qualified outside their scope: <code>P-8/F-6</code>, <code>P-8/R-3/M-2</code>.</li>
     <li>Commands that need a project, such as creating or listing tasks, take it from the agent's context; an agent with no project, or meaning another one, must name it.</li>
