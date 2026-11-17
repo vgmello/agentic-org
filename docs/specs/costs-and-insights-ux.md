@@ -66,7 +66,7 @@ builds_on: [work-items-ux, our-org-in-the-app, decisions-and-tech-debt-ux]
                                             └────────────────┘
  Insights
   ⚠ T-A13 "Disable Pay while submitting" cost 4× the median task in App ($18 vs $4.50)  [Open]
-  ⓘ Agents waited 30 h for your answers this month, most on ada's questions (19 h)        [See]
+  ⓘ Agents waited 30 h for your answers this month, most on sam's questions (19 h)        [See]
   ⓘ codex-dev's tasks finish 2× faster than the team median this month                  [Open]
  By team            Cost       Working   Tasks  Cost/task   Median lead time
   Office            ≈ $171     — †       22     ≈ $7.80     1.6 d

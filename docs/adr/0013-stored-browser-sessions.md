@@ -6,8 +6,8 @@ plan entry F-01). Implementation pending. Amends
 rules in [server installation and access UX](../specs/server-installation-and-access-ux.md)
 section 4a.4. Where those say that a restart ends sessions, this ADR governs.
 
-"Web" in this ADR means the `agentic-org-web` process, which older documents call the
-web.
+"Web" in this ADR means the `agentic-org-web` process; code identifiers still call it
+the gateway until they are renamed.
 
 ## Context
 
@@ -59,12 +59,13 @@ web.
    host, an update, or a lost control connection leaves stored sessions valid. A cache
    entry is trusted only while the control connection that validated it is alive;
    after a reconnect the web process validates again.
-5. **Ending a session is still immediate.** On sign-out, expiry, password change,
-   unlink or revoke, the host deletes the record first and then tells the web process
-   to drop its cache entry and close that session's stream. A deleted record can never
-   be validated again. When a session's organization links or administrator role
-   change, the host pushes a session-changed message on the same channel, so the
-   cached session view is never stale.
+5. **Ending a session is still immediate.** On sign-out, expiry, password change, or
+   when the account's access is removed, the host deletes the record first and then
+   tells the web process to drop its cache entry and close that session's stream. A
+   deleted record can never be validated again. When an account gains access to a
+   further organization, or the administrator role or an organization's ownership
+   changes hands, the session continues and the host pushes a session-changed message
+   on the same channel, so the cached session view is never stale.
 6. **The host owns sessions, and the web process still stores nothing and signs
    nothing.** Accounts,
    password verification, lockout and revocation are the host's, per instance. The
@@ -103,7 +104,7 @@ web.
 | --- | --- |
 | SES-1 | After the web process is restarted, a signed-in browser's next request succeeds without signing in again. |
 | SES-2 | After the host is restarted, the same holds once the service is ready. |
-| SES-3 | Sign-out, expiry, password change, unlink and revoke each make the next request fail with `not_authorized`, including when the web process has the session cached. |
+| SES-3 | Sign-out, expiry, password change and removing the account's access each make the next request fail with `not_authorized`, including when the web process has the session cached. |
 | SES-4 | The host database contains no raw cookie or proof value; a copy of it cannot be used to act as a signed-in person. |
 | SES-5 | The web process opens no database, persists nothing and holds no session-signing key; it validates an unknown cookie with exactly one host call and then serves from memory. |
 | SES-7 | A session ends after 30 days without use, including across a restart, with stored last-activity never more than the reporting interval behind; a session in use is never ended by age, and a refresh keeps its ID. |

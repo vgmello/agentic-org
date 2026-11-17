@@ -280,7 +280,7 @@ none. Whoever creates it owns it. The mechanics are in
 
 | State | What shows |
 | --- | --- |
-| Waiting for running agents | “Waiting for 3 agents to stop: Kai, Remy, Riley. Their active work and process cleanup must finish first.” Spinner, authorized agent list with supported **Pause** control (below), then “Side Project is created once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** remains available and fields are read-only. One agent: “Waiting for 1 agent to stop: Remy.” No run-mode badges or sleep prediction. See **Waiting for running agents** below. Cancel cancels this operation: “Side Project wasn't created”, returning to the retained form. If creation already began, show “Too late to cancel: Side Project is being created now” and Creating…. Closing the panel does not cancel it. |
+| Waiting for running agents | “Waiting for 3 agents to stop: Kai, Juno, Nadia. Their active work and process cleanup must finish first.” Spinner, authorized agent list with supported **Pause** control (below), then “Side Project is created once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** remains available and fields are read-only. One agent: “Waiting for 1 agent to stop: Juno.” No run-mode badges or sleep prediction. See **Waiting for running agents** below. Cancel cancels this operation: “Side Project wasn't created”, returning to the retained form. If creation already began, show “Too late to cancel: Side Project is being created now” and Creating…. Closing the panel does not cancel it. |
 | Creating | **Creating…**, disabled. Name is read-only. **Cancel** becomes **Close**, with "Closing this panel doesn't stop it." A second click sends nothing. |
 | Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". Teams shows the Side Project team, with you as its lead and the HR lead in it. |
 | Ready | The organization's pages load as usual. The recovery-code notice shows for its owner once the code is waiting to be collected (a new organization starts as Being prepared, `server-installation-and-access-ux.md` §4a.6). |
@@ -298,13 +298,13 @@ none. Whoever creates it owns it. The mechanics are in
 
   ```text
   Kai     Lumen Labs · Turn running                             [Pause]
-  Remy    Lumen Labs · Cleanup required, last observed idle             [Pause]
-  Riley   Lumen Labs · Stop pending at office
+  Juno    Lumen Labs · Cleanup required, last observed idle             [Pause]
+  Nadia   Lumen Labs · Stop pending at office
   ```
 
   - Profile navigation does not cancel the operation; the switcher's waiting entry reopens it.
   - **Pause** uses the usual authorized dialog (`our-org-in-the-app.md` §9, DEAL-3), when that capability is supported. Show **Pause requested · stop pending at office** until confirmed. Pause acceptance alone does not remove the blocker: current work and any retained process/descendants still need verified cleanup. Explain an unavailable action or required explicit safe stop/drain; never predict that a mode will send the employee to sleep.
-  - Agents in organizations this account does not own are counted, not named. Show “1 agent in Other Org · Ask its owner to finish or safely stop the work”, with no link/Pause; admin status alone grants no organization access. Main copy can read “Waiting for 3 agents to stop: Kai, Remy, 1 agent in Other Org.”
+  - Agents in organizations this account does not own are counted, not named. Show “1 agent in Other Org · Ask its owner to finish or safely stop the work”, with no link/Pause; admin status alone grants no organization access. Main copy can read “Waiting for 3 agents to stop: Kai, Juno, 1 agent in Other Org.”
   - Without authorized per-employee lifecycle evidence, show counts only, with no fabricated rows, mode labels or controls.
 - No time limit: wait for verified quiescence or Cancel. `agentic-org doctor` without a session shows supported counts by organization and no names: “Creating Side Project: waiting for 3 agents to stop (2 in Lumen Labs, 1 in Other Org), since 14:05.” Unknown lifecycle evidence stays explicit.
 - **Cancel** uses this same operation ID from this panel, its waiting switcher entry or another authorized browser tab. It cancels only the layout operation, never resumes or restarts agents or clears independent manual/security/budget holds.
@@ -461,7 +461,7 @@ Status: waiting for approval at HQ · checked 14:05
 Joining Lumen Labs as "Studio Mac" (instance default)
 Waiting for 3 running agents to stop…
   Kai · Lumen Labs · Turn running · Pause or safely stop it in the app
-  Remy · Lumen Labs · Process cleanup pending
+  Juno · Lumen Labs · Process cleanup pending
   1 agent in Other Org · ask its owner to finish or safely stop the work
 Active work and process cleanup must finish first.
 No agent is automatically stopped or restarted for this.
@@ -638,7 +638,7 @@ key and a worker on HQ's instance (`standalone-server.md`, "Create organization"
 - Inviting, approving and removing a satellite stay open to any authorized owner
   (OFC-7).
 
-**Waiting for running agents**. Adding an office on this instance uses §5a's verified active-turn/process/drain boundary. An idle retained process or unresolved cleanup still blocks; an employment, presence or mode label never proves work is stopped. The form shows “Waiting for 3 agents to stop: Kai, Remy, Riley. Their active work and process cleanup must finish first”, spinner, the authorized profile/state list with supported Pause controls, then “Office 2 is added once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** stays available and fields are read-only.
+**Waiting for running agents**. Adding an office on this instance uses §5a's verified active-turn/process/drain boundary. An idle retained process or unresolved cleanup still blocks; an employment, presence or mode label never proves work is stopped. The form shows “Waiting for 3 agents to stop: Kai, Juno, Nadia. Their active work and process cleanup must finish first”, spinner, the authorized profile/state list with supported Pause controls, then “Office 2 is added once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** stays available and fields are read-only.
 
 Admission needs confirmed cleanup; unknown evidence keeps waiting. The authorized controls, per-organization privacy, singular/count-only forms, independent holds and absence of automatic mode restart follow §5a. Pause requests alone never remove a blocker before verified cleanup.
 - **Cancel** cancels that same Add office (its operation ID), as for Create
@@ -731,7 +731,7 @@ not inferred from a robot glyph, color or avatar shape:
 | Avatar | Circle with initials | Circle with initials |
 | Kind label | Agent | Person |
 | Secondary text | Executing office and freshness, or **Unplaced** | Contact if any; never execution office |
-| Screen reader | “Riley, agent” | “Sam Ortiz, person” |
+| Screen reader | “Nadia, agent” | “Sam Ortiz, person” |
 | Home-team card | Agents row | People row |
 
 Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employee `status` (`active | paused | inactive`) and observed process status are separate.
@@ -821,13 +821,13 @@ Lead        [No lead                    ] optional, direct member only
 **Move home team…** takes one required destination and an optional home-team title. An employee has exactly one home team.
 
 ```text
-Move Riley's home team
+Move Nadia's home team
 From       App · TEAM-3
 To         [Office · TEAM-5           ▾] required
 Title      [frontend lead             ] optional
-Riley leads App. Resolve or clear that appointment before the move.
+Nadia leads App. Resolve or clear that appointment before the move.
 Current task assignments and project participation do not change automatically.
-                                             [Cancel] [Move Riley]
+                                             [Cancel] [Move Nadia]
 ```
 
 The move uses the expected employee revision and updates profile `home_team_id` plus stable-ID path together, resolving any old-team lead appointment in the same recoverable change. No transient teamless record. Preserve ID, handle, reporting and history. File/workspace changes require an explicit controller plan; no recursive workspace deletion. On stale revision retain input and show current home/lead state. The move is one operation, never a sequence of separate calls.
@@ -845,7 +845,7 @@ Draw `reports_to_employee_id` separately from team hierarchy. The owner bar can 
 
 Nodes show shape/name/handle, Agent or Person, one Home team and number of explicit reports; agents show office/Unplaced and freshness. Always explain: “Reporting lines are explicit. Team leads also manage their team's subtree; ordinary ancestor-team members do not.”
 
-**Change manager…** (node menu, quick view or drag shortcut) offers active eligible employees plus **No explicit manager**. The employee itself is absent and descendants in the reporting graph are disabled with “Reports to Riley”. Save uses expected revision; toast names the selected manager, node moves with focus retained. A concurrent loop or conflict refreshes current lines and preserves input. Editing one graph does not silently rewrite the other; show both sources of responsibility when relevant. Deactivation/lead moves resolve live references explicitly rather than fabricating a new reporting line.
+**Change manager…** (node menu, quick view or drag shortcut) offers active eligible employees plus **No explicit manager**. The employee itself is absent and descendants in the reporting graph are disabled with “Reports to Nadia”. Save uses expected revision; toast names the selected manager, node moves with focus retained. A concurrent loop or conflict refreshes current lines and preserves input. Editing one graph does not silently rewrite the other; show both sources of responsibility when relevant. Deactivation/lead moves resolve live references explicitly rather than fabricating a new reporting line.
 
 ### 7.9 Give a project to a team, or share it
 
@@ -860,7 +860,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - Prefer **Archive** to preserve team IDs/history. Explain how current employees, owned projects/tasks and live assignments/lead appointments will be resolved before admitting an incompatible lifecycle change.
 - Delete is blocked while child teams, home employees, accountable projects/tasks or other durable references remain. List blockers with links and explicit move/reassign/archive actions. No cascade into teamless employees or ownerless projects; no silent history deletion. “Checkout still has 1 child team and 2 home employees. Resolve them first.”
 - Loading: owner bar/root then skeleton cards/nodes. Large organization (>30 teams or >50 reporting nodes): collapse below level two; keep expand/collapse and keyboard navigation, without Fit/zoom. Live updates apply in place, retaining selection; removed/archived card focus goes to its parent or a stable ancestor.
-- Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Riley's home team is Office, so Riley cannot lead Checkout”; “Choose an accountable owner team”).
+- Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Nadia's home team is Office, so Nadia cannot lead Checkout”; “Choose an accountable owner team”).
 
 ## 8. UX acceptance criteria
 

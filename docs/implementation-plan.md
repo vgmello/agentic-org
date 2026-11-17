@@ -138,8 +138,10 @@ Three things to know about the order:
   password, and is signed in as the instance administrator. With no organization yet,
   the application offers to create one.
 - **Build:**
-  - `agentic-org-web` is started by the host with a listener handed to it, serves the
-    static UI and `/api/v1`, and confines itself before handling input.
+  - `agentic-org-web` is started by the host through the same launch contract as an
+    office worker, with its own identifier and a listener handed to it, serves the
+    static UI and `/api/v1`, and confines itself before handling input. The separate
+    web rendezvous lines are deleted.
   - Registration through a one-time link: the page asks for a username and a
     password, and the host creates the account. The account created from setup's link
     is the server's administrator. Exactly one account is the administrator at any
@@ -171,6 +173,15 @@ Three things to know about the order:
     Sessions are digests kept in memory. These handlers answer only for a registered
     instance, and only the test entry registers one: the production entry serves
     `hello` and `instance.status`.
+  - The web process has its own rendezvous lines (`GatewayFirstLine`,
+    `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from
+    the office worker's in `crates/org-office-launch/src/v3.rs`.
+  - To delete with the stored sessions of ADR-0013: the absolute session lifetime
+    (`ABSOLUTE`, `absolute_expires_at_ms` in `crates/org-host/src/service/authentication.rs`
+    and `crates/org-host-control/src/ops.rs`), the `absolute_expires_at` field of the
+    wire session and its test vectors (`crates/org-proto/src/gateway/session.rs`), the
+    field the UI decoder requires (`apps/agentic-org-ui/src/lib/platform/http/wire.ts`),
+    and the per-account session cap.
 - **Done when:** registration from the link works once and only once; SES-1 to SES-7
   and the SIGN criteria for first access, sign-in, sign-out and expiry pass against a real instance, in a browser.
 - **Needs:** A2.
@@ -797,7 +808,7 @@ product without it.
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
 | L8 | Private task notes | [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks), FC-053 |
 | L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
-| L10 | Rename `gateway` to `web` in code identifiers | mechanical; any time |
+| L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant (`GATEWAY_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`) is checked at release admission, so it changes together with the release signing set-up |
 
 ## Checklist rows that ride with an increment
 
