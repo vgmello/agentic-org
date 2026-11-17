@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "24e032a654ca3b9b3256ca0731dfb67f475911c65b335279d5bba73ace112de5"
+      "sha256": "d11dc7cc8775bf671e9a166a568da91c463fbadbd4b6622a339baf6a11b885b6"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "9c6dffada686eaa934baa32c777ae7cf6d4f77200c70155a1fdc9ced2f1cd166"
+      "sha256": "5a8988b5c0c7ca17240a9f0d1cef68f72696c2b7b351ed7b64e1b547400ab6e7"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
@@ -126,7 +126,7 @@
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "c5fcc222d87a355b6d8794abdc6e735cfcfd97b518bf604c2d369c826393b6de"
+      "sha256": "07dcc3c5054d671db3848612ee0b37ccb2d2b4824f328f5e565a0a7f5eaec3f5"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
@@ -154,7 +154,7 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "a8ee9a993a1a3f83f95bca7cfd0121368a60d2fdfe13c7ed9471419243576130"
+      "sha256": "16d2709b0a13b719ffec88a8e14ebc617becd1091f69ee8716013d7caddd2cea"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -182,15 +182,15 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "90c63c945a3b4bff87cee63e09d795804f670a83f0802838ed120dbc6759ae29"
+      "sha256": "caacb59302ed8246cb1e444c09a2b01553d2f7a1c74cb9cca528f5c44dc8f205"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "0107bb5910214700a7c9911f300471d950f03916a5168372828925831b334d00"
+      "sha256": "1a8378c94ec45a7d92438370d90fdfbec661e6ec154e03ac1992a8a1b7706a0a"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "2e0bec8570b59b02e8345d34a3d370be5e8b1ac2041181acefce453f2a2fbd5e"
+      "sha256": "093f01ee6979ae90d5cc818a21cf9fc59caf97f18f9a82bceab017b0b7aea833"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",

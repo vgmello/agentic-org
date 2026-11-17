@@ -43,7 +43,7 @@ strings in place of source objects. Keep original payloads/codecs where no lossl
 mapping is defined. Use document 11/ADR-0002 full-envelope/platform flush guarantees.
 Do not acknowledge until domain change, source evidence and protected receipt/result
 have one recoverable commit boundary (this is the durable class; [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md)
-lets named messaging operations be acknowledged at commit); independent SQL/file writes do not establish it.
+lets named messaging and non-critical task-activity operations be acknowledged at commit); independent SQL/file writes do not establish it.
 
 ### Selected immutable work acceptance
 

@@ -3,12 +3,14 @@
 Status: ACTIVE for implementation architecture, revision 1; not implementation acceptance. Owner: local Codex lead.
 Canonical path: docs/adr/0007-hq-creation-escrow.md.
 
-**Amendment required (2026-11-17).** [ADR-0016](0016-no-application-level-data-encryption.md)
-removes SQLCipher. This ADR keeps the usable CA key in office-local SQLCipher storage
-and commits it in the worker's initial SQLCipher transaction. Before SQLCipher is
-removed, the CA private key needs a protected location outside any plaintext
-database, such as the host's credential provider, and the atomic-commit steps below
-must be restated for it. The escrow envelope format and recovery code are unaffected.
+**Amended by [ADR-0016](0016-no-application-level-data-encryption.md) (2026-11-17).**
+SQLCipher is removed. The usable CA private key stays in the worker's local-only PKI
+record and is still committed in the one initial writer transaction, but its bytes are
+stored encrypted with the host-held office secrets key instead of relying on
+whole-database encryption. The host still never receives the CA key. Where the steps
+below say "SQLCipher storage" or "SQLCipher writer transaction", read "the office
+database, with the private key wrapped". The escrow envelope format and recovery code
+are unaffected.
 
 ## Why this decision is needed
 
