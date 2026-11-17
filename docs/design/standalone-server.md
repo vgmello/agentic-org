@@ -6,7 +6,7 @@
 Status: **selected target implementation design**, reconciled 2026-11-15; original
 standalone proposal 2026-11-09. The product decisions were
 made by the owner in the architecture discussion; wire formats, platform adapters
-and release mechanics still require review and implementation. Owner: ada.
+and release mechanics still require review and implementation. Owner: lead.
 Base inspected: `v1` at `7a8827875e41cac45b75cbf170d6703417652379`.
 
 Implements [server installation and access](../specs/server-installation-and-access-ux.md)
@@ -23,9 +23,9 @@ source-to-target reorganization plan under the [architecture rules](../architect
 
 ```mermaid
 flowchart TD
-    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| Gateway[agentic-org-web: instance browser HTTP]
-    Gateway -->|Authorized local operations| HQ[agentic-org-office: HQ office]
-    Gateway -->|Restricted create/list operations| Instance
+    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| Web[agentic-org-web: instance browser HTTP]
+    Web -->|Authorized local operations| HQ[agentic-org-office: HQ office]
+    Web -->|Restricted create/list operations| Instance
     HQ --> HQWork[HQ storage and local agent supervision]
     Sat[Satellite office] -->|Outbound authenticated duplex connection| HQ
     Sat --> SatWork[Satellite storage and local agent supervision]
@@ -33,7 +33,7 @@ flowchart TD
     CLI -->|Local authenticated protocol| Sat
     OS[launchd or systemd] --> Instance[agentic-org serve: instance host]
     Instance --> HQ
-    Instance -->|Supervises| Gateway
+    Instance -->|Supervises| Web
     Setup[agentic-org setup: HQ-only onboarding] --> OS
 ```
 
@@ -60,6 +60,10 @@ alone cannot make them real. See [executable migration](executable-migration.md)
 for implemented entry points.
 
 ## 2. Release, install and runtime boundaries
+
+**Platform amendment (owner decision 2026-11-17, [ADR-0017](../adr/0017-linux-and-container-hosting.md)).** macOS and Linux are both v1, and an instance may run as the main process of a container. Statements below that defer Linux, or that assume launchd, the keychain or a code signature, describe the macOS implementation of a platform contract.
+
+**Implementation status (2026-11-17):** designed, not reachable. Release verification exists as a library (`org-release`, linked into `org-host`) and is not called by any command. There is no bootstrap, download, installer or updater. The four executables build from source and are started by hand.
 
 Use one user-facing executable, `agentic-org`, for setup and local
 lifecycle commands. The bootstrap only resolves the platform/version, downloads
@@ -102,13 +106,13 @@ from target names and lists affected workspace, tests, build and packaging refer
 The first release must verify download authenticity, executable signatures where
 applicable, checksums of embedded helpers and architecture compatibility. Extract
 to a private staging directory; reject path traversal and symlink redirection;
-publish a complete release atomically. A release pin selects setup, host, worker, gateway, assets
+publish a complete release atomically. A release pin selects setup, host, worker, web, assets
 and `agent-os` together. The short bootstrap trusts a configured release signing
 key; a checksum downloaded from an unauthenticated source is not sufficient.
 
 ### Browser listener and privilege boundary
 
-The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) keeps browser-specific response mapping at the gateway and reusable use cases in their owning Rust modules, ready for future integration API adapters.
+The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) keeps browser-specific response mapping at the web process and reusable use cases in their owning Rust modules, ready for future integration API adapters.
 
 **Chosen topology:** one `agentic-org-web` helper (`apps/agentic-org-web/`; executable present, production handoff pending)
 per instance terminates browser HTTP/TLS, serves `agentic-org-ui` assets and manages browser
@@ -117,7 +121,7 @@ a supervised child of `agentic-org serve`, separately from each `agentic-org-off
 An instance with no HQ has no public browser listener. Office enrollment/mTLS still
 terminates at its reviewed federation component, not this browser proxy.
 
-The gateway receives browser-session/TLS material and narrowly scoped host/office
+The web process receives browser-session/TLS material and narrowly scoped host/office
 clients, never office database keys or the host's key-access entitlement. It does
 not open office databases. The host retains catalog locking, credential custody,
 worker provisioning and private launch. Typed local operations preserve actor,
@@ -128,11 +132,11 @@ process controls must enforce this separation within the stated same-UID limits.
 Selected production startup binds this handoff to the verified complete release.
 The host consumes a recovered release-store pin into a privately constructed
 runtime token, retains its store lock, verifies its own kernel-loaded image and
-selects worker/gateway paths from that release before opening custody. The v1
-nonsecret gateway first line additionally carries `release` with `version:1`,
+selects worker/web paths from that release before opening custody. The v1
+nonsecret web first line additionally carries `release` with `version:1`,
 `release_id`, lowercase full `manifest_sha256` and positive integer `sequence`.
 The complete frame stays within 1024 bytes and rejects unknown/duplicate fields.
-The gateway independently checks this binding against its embedded publisher
+The web process independently checks this binding against its embedded publisher
 registry, exact sibling manifest/signature, own kernel image and authenticated UI
 bytes before confinement/readiness/secrets. An omitted release binding is retained
 only for explicitly named debug/legacy fixtures; production refuses it. This
@@ -141,8 +145,8 @@ describes the selected integration, not evidence of production signing or setup.
 **Create organization** requires an authenticated **instance administrator**.
 Owning one organization alone grants no right to create another. Local protected
 setup establishes the first instance administrator and creates the first HQ;
-later browser creation enters through the gateway's restricted host operation.
-The host validates the admitted gateway capability and administrator grant, bound
+later browser creation enters through the web process's restricted host operation.
+The host validates the admitted web capability and administrator grant, bound
 to the protected instance administrator identity and requested action (never a
 browser-supplied role flag), before provisioning, creates the key itself and returns an operation result, never a key.
 The same human may hold both roles, but office certificates and employee tokens
@@ -151,7 +155,7 @@ grant neither. Tests cover two HQs on one listener and rejected owner-only creat
 on the host, so it needs the same instance-administrator grant; owning the
 organization is not enough. Inviting, approving or removing a satellite stays open
 to any authorized owner (OFC-7); OFC-7's "add" for the same-instance case needs a
-spec follow-up. The gateway op is an open point for X-02 §12 Q9 (a draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3"). (2026-11-10,
+spec follow-up. The web process op is an open point for X-02 §12 Q9 (a draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3"). (2026-11-10,
 post-merge review question.)
 
 ### Setup executable package identity
@@ -182,7 +186,7 @@ The separate `staging/` directory holds frozen compressed inputs; it is never a
 source of automatic release selection. No output tree is made writable to publish.
 Its trusted build inputs are `ORG_RELEASE_TRUST_REGISTRY` (a public registry file,
 not a signing private key) and `ORG_RELEASE_MIN_SEQUENCE` (the positive compiled
-freshness floor). Host and gateway embed and strictly validate those inputs at
+freshness floor). Host and web embed and strictly validate those inputs at
 build time. Neither reads them from its runtime environment or input bundle.
 An unconfigured development source build embeds no publisher trust and cannot
 activate a production release; malformed configured input fails the build.
@@ -224,36 +228,37 @@ configuration is server-managed and readable only by authorized local users. It
 names office IDs, release pin, endpoints and references to credentials, not inline
 private keys. Binaries live outside mutable data and file modes remain private.
 
-The instance resolver must provision each organization's selected data root and a
-protected organization operational root. The [authority map](documentation-authority.md)
-links the owning contracts. The target hierarchy is:
+The instance resolver must provision each organization's selected data root. The
+[organization-data index](organization-data/README.md#shared-storage-contract) owns
+the layout: one root, with protected sources under `durable/` and rebuildable
+caches under `runtime/<office-id>/`. The target hierarchy is:
 
 ```text
-<organization-data-root>/<organization-id>/
-├── durable/
+<data-root>/<organization-id>/
+├── durable/                  # sources: back up all of it; never removed by cleanup
 │   ├── state/                # ordinary organization Git files
 │   ├── journal/              # acknowledged unpublished changes
-│   ├── authority/            # numbering and recovery evidence
-│   ├── accounting/           # durable usage streams/checkpoints
+│   ├── authority/            # numbering, placement generations, permits (06, 11)
+│   ├── accounting/           # durable usage streams/checkpoints (10)
+│   ├── messaging/            # protected envelopes and attachments (15)
+│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── budgets/              # policies, periods, events, extensions/holds (17)
+│   ├── private/              # HQ only: author-private task notes (05)
 │   ├── local/offices/        # private local bindings, never Git
 │   └── checkpoints/          # local/unpushed code recovery
-└── runtime/<office-id>/
+└── runtime/<office-id>/      # caches: rebuildable
     ├── office.db             # projections and explicitly transient state
     ├── repositories/<repository-id>.git/
     └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
-<organization-operational-root>/
-├── messaging/                # protected envelopes and attachments (15)
-├── recovery/                 # receipts, streams, snapshots, cleanup (16)
-└── budgets/                  # policies, periods, events, extensions/holds (17)
 ```
 
 Private task notes are a separate durable author-private database, with no owner
 or administrator read exception. Authentication/CA pins, local credentials and
-execution journals retain their protected stores outside Git. The operational
-root and private stores cannot be children whose only copies disappear on cache
-cleanup. Organization Git must be remote, using explicit organization slug,
+execution journals retain their protected stores outside Git. Nothing under
+`durable/` may be a child of a directory that cache cleanup removes; cleanup
+is limited to `runtime/<office-id>/`. Organization Git must be remote, using explicit organization slug,
 repository ID and state branch. Code repositories may be local-only. Projects
 associate many registered repos, each with required integration branch; each
 office caches a repo once regardless of how many projects use it.
@@ -299,9 +304,16 @@ agent-readable just because everything is under one root. OS-user sharing is not
 a security isolation boundary between instances; stronger isolation needs separate
 users/containers. The runtime sandbox/permission model must still enforce its denies.
 
+**Amended 2026-11-17.** [ADR-0015](../adr/0015-agent-isolation-modes.md) makes agent
+isolation a selectable mode: `same-user` (the behaviour described here) and
+`dedicated-user`, an OS account that setup provisions and that cannot read the
+organization data root. [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
+removes application-level encryption of organization data, so file permissions, disk
+encryption and the isolation mode are what protect it.
+
 ## 4. Setup and service lifecycle
 
-**Implementation status at merged v1 700d5a37:** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
+**Implementation status (2026-11-17, unchanged in substance since merged v1 700d5a37):** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.
 
 
 Initial installation is HQ-only. After obtaining the platform executable, the user runs:
@@ -409,7 +421,7 @@ it is distinct from deliberate deletion of a disposable test instance.
 ## 5. HTTP and browser contract
 
 The initial typed `/api/v1` surface and shared conformance fixtures are specified
-in [gateway-api-v1.md](gateway-api-v1.md). Contract publication precedes endpoint
+in [web-api-v1.md](web-api-v1.md). Contract publication precedes endpoint
 implementation; availability is advertised only when the real operation is wired.
 
 Serve static assets and `/api/v1/` from the same HQ origin. Hashed assets can be
@@ -477,7 +489,7 @@ public admin interface or place a reusable owner token in a browser URL.
 host, not port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5));
 SameSite does not isolate `localhost` ports. Each login creates an opaque HttpOnly
 session cookie, with an instance-specific name, and an independent random 256-bit
-origin proof. The gateway validates the pair, bound to instance, principal and the
+origin proof. The web process validates the pair, bound to instance, principal and the
 configured browser origin (scheme/host/port), on every protected read, mutation,
 stream, refresh and logout. Cookie-only requests cannot obtain or rotate a proof.
 
@@ -695,20 +707,22 @@ deferral prints the later command and never implies retention. Native
 `recovery.status` version1 returns persisted state/dates/counts and code-free
 audit pages (32 delivery ordinals per page, all actions for each ordinal).
 `recovery.package` version1 returns the bound public record from the one-shot
-worker exchange, with no server filename. Browser/gateway/agent channels have
+worker exchange, with no server filename. Browser/web/agent channels have
 no recovery-secret or package-export route. REC-1 HQ-loss recovery remains
 unsupported. These APIs do not imply physical-presence or production-release
 verification has passed.
 
 ### Selected provisioning adapter persistence (implementation in progress)
 
-The additive `organization.provision.v1` operation preserves the legacy name-only
-contract. Protected host-registry schema 2 adds a separate selected provisioning
+The `organization.provision.v1` operation in the code keeps a name-only request beside
+it; under the owner's decision of 2026-11-17 the create request is changed in place to
+the [selected payload](web-api-v1.md#selected-create-organization-payload) and the
+name-only form is removed. Protected host-registry schema 2 adds a separate selected provisioning
 reservation: account/fingerprint, normalized name and explicit slug, exact prepared
-UUIDv7 plan, owner security member, opaque recovery handle, nullable office-key
+UUIDv7 ID plan, owner security member, opaque recovery handle, nullable office-key
 fingerprint, and linked/completion status. Its replay window uses operation ULID
 time plus 30 days; unfinished reservations and their custody are never pruned as
-completed receipts. Schema-1 rows retain their identities and semantics.
+completed receipts.
 
 Credential staging precedes the reservation and is bound to its account,
 fingerprint and exact prepared IDs. A key-pending reservation may finish an

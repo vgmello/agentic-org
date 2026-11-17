@@ -54,22 +54,27 @@ The owner-requested [v1 project structure](docs/design/project-structure.md) def
    - For documentation/workflow-only changes, run relevant kit/catalog checks and review the changed instructions; no unrelated application test run is required.
 4. **Never write to a user's organization workspace from tests.** Use temporary directories.
 
-## Live messaging during the standalone cutover
+## The goal: work inside the product as soon as possible
 
-The installed `~/.local/bin/org-agent` CLI currently uses live Phase A spool state; this branch builds its replacement as agent-os. Do not overwrite the installed CLI or move/reset its spool as part of building/testing the new executable. The
-standalone proposal does not redirect it now. Before switching the team, preserve
-pending asks, replies and read/triage state through the conditional cutover in
-[ADR-0003](docs/adr/0003-agent-messaging-office-first.md#live-phase-a-coordination-cutover-and-person-started-context).
-Standalone person-started commands must select an explicit instance/office or saved
-context; managed employees use their injected binding. Old coordination data must
-not be discarded under the desktop-app no-migration decision.
+Owner direction, 2026-11-17. Two engineers and their agents are building this
+product, and they are to be onboarded onto it as early as it can carry them, so that
+they talk to each other, track their tasks and run their agents through the product
+they are building. The lead's reading of what that means for the order of work:
+creating an organization, signing in, people and teams, tasks and chat come first,
+because they are what onboarding needs. As each milestone lands, the people and agents building
+the product start using that feature.
+
+Nothing from before is carried over. The earlier command-line tool that the former
+development team used to message each other, and its message queue, are dropped:
+they are not preserved, imported or cut over, and no rule protects them. Standalone
+person-started commands select an explicit instance and office or a saved context;
+managed employees use their injected binding.
 
 ## Local coordination
 
-Use local subagents through the installed agentic kit when needed. Do not use the
-installed messaging CLI for routine development coordination, status, review or
-approval. Preserve its executable and live spool data for the product cutover;
-this preservation requirement does not require contacting offline developers.
+Use local subagents through the installed agentic kit when needed. Until the product
+can carry the team's own coordination (see the goal above), coordinate through the kit
+and this repository.
 
 ### Architecture ownership and efficient parallel work
 

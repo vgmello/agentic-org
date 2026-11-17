@@ -3,6 +3,15 @@
 Status: ACTIVE for implementation architecture, revision 1; not implementation acceptance. Owner: local Codex lead.
 Canonical path: docs/adr/0007-hq-creation-escrow.md.
 
+**Amended by [ADR-0016](0016-no-application-level-data-encryption.md) (2026-11-17).**
+SQLCipher is removed. The usable CA private key stays in the worker's local-only PKI
+record and is still committed in the one initial writer transaction, but its bytes are
+stored encrypted with the host-held office secrets key instead of relying on
+whole-database encryption. The host still never receives the CA key. Where the steps
+below say "SQLCipher storage" or "SQLCipher writer transaction", read "the office
+database, with the private key wrapped". The escrow envelope format and recovery code
+are unaffected.
+
 ## Why this decision is needed
 
 The original fullstack/architecture author (session 01a1dfb4-1d26-7100-9ea4-72b53756ef23) found a planned missing prerequisite while implementing ADR-0006 P6/P9 and plan section 4: authorities mandate Argon2id/encrypted CA escrow but no concrete envelope/KDF/code format exists. This is not evidence that task acceptance or its reviewed writer/journal architecture is invalid. Preserve ADR-0006 revision 4 and its other verified premises. Pause dependent escrow/setup completion only; authenticated selected transport and UI can continue. The original author remains implementation owner; this lead proposal answers its format question and requires independent architecture review before activation.
@@ -10,9 +19,9 @@ The original fullstack/architecture author (session 01a1dfb4-1d26-7100-9ea4-72b5
 ## Premises and authority (2026-11-15)
 
 E1 REQUIRED: new HQ creation provisions encrypted CA escrow plus a server-generated code of at least 128 random bits, Argon2id, protected one-time delivery and idempotent retries. Sources: docs/design/standalone-server.md, CA escrow and explicit recovery gate; docs/design/offices-hq-and-satellites.md, Losing HQ and Where code lives. Verified requirement, not implemented fact.
-E2 REQUIRED: pending delivery secret belongs to host credential provider; only opaque handle enters setup journal. No usable CA key/code in replicated organization data, gateway/browser/status/logs. ACK erases pending code; no later redisplay or implicit rotation. Waiting/Shown need not prevent HQ readiness. Same authorities plus docs/specs/server-installation-and-access-ux.md recovery collection. Verified requirement.
+E2 REQUIRED: pending delivery secret belongs to host credential provider; only opaque handle enters setup journal. No usable CA key/code in replicated organization data, web process/browser/status/logs. ACK erases pending code; no later redisplay or implicit rotation. Waiting/Shown need not prevent HQ readiness. Same authorities plus docs/specs/server-installation-and-access-ux.md recovery collection. Verified requirement.
 E3 REQUIRED: existing device-bound office database key custody and distinct principals remain unchanged. Setup/host never receive an office TLS identity private key. org-pki owns PKI adapter behavior; org-office domain remains certificate/network independent. REC-1 manual HQ-loss replacement and promotion remain separate release work. Same sources and ADR-0005. Verified requirement.
-E4 OBSERVED: crates/org-pki is absent; RecoveryCode is only a nonempty redacted secret wrapper, launch-v3 carries a code but worker has not created escrow. No current envelope format in inspected authorities. Targeted source evidence: crates/org-proto/src/recovery.rs, crates/org-office-launch/src/v3.rs, apps/agentic-org-office/src/launch.rs; docs/design/project-structure.md. Recheck before integration.
+E4 OBSERVED (at the time of writing; `crates/org-pki` has since been added and implements the envelope): crates/org-pki is absent; RecoveryCode is only a nonempty redacted secret wrapper, launch-v3 carries a code but worker has not created escrow. No current envelope format in inspected authorities. Targeted source evidence: crates/org-proto/src/recovery.rs, crates/org-office-launch/src/v3.rs, apps/agentic-org-office/src/launch.rs; docs/design/project-structure.md. Recheck before integration.
 E5 OBSERVED: maintained ring 0.17.14, argon2 0.5.3 and zeroize 1.9.1 are cached/pinned in the current workspace lock. Argon2's zeroize feature plus caller-owned Zeroizing<Vec<Block>> is necessary to wipe its large working allocation; alloc alone does not establish that. No custom cipher, KDF, elliptic-curve implementation or certificate encoder is authorized.
 E6 FEASIBILITY: ignored disposable probe at escrow-design/probe uses those exact versions. It generates/imports a P-256 PKCS#8 key, derives the fixed profile, encrypts/decrypts it, restores matching public identity and verifies a signature; wrong code, ciphertext corruption and wrong AAD fail. Probe log/receipt records actual completion. It does not prove production persistence, complete envelope parsing, X.509 issuance, protected delivery, platform custody or disaster recovery. ring's opaque internal private-key/document allocations are not claimed to be fully zeroized.
 
@@ -62,7 +71,7 @@ Rejected: Docker/provider services (unnecessary); placeholder RecoveryCode/nonem
 
 - Exact code format, parser normalization/rejection/size cap and deterministic KDF/envelope fixtures, profile/version rejection before KDF, strict length/EOF and public-key binding.
 - Round trip identical CA public identity plus signature verification; wrong code/org, changed header/key/salt/nonce/ciphertext/tag, malformed PKCS#8, truncation/oversize fail without leaking secret input.
-- Real worker initial SQLCipher create/reopen and injected before/after-commit/reply-loss paths prove one CA/package, retained host code and no ordinary retry rotation. Existing acknowledged HQ restarts without code. Dedicated local-only key never appears in copied state, history, Git, status, gateway, logs or export.
+- Real worker initial SQLCipher create/reopen and injected before/after-commit/reply-loss paths prove one CA/package, retained host code and no ordinary retry rotation. Existing acknowledged HQ restarts without code. Dedicated local-only key never appears in copied state, history, Git, status, web, logs or export.
 - Production protected collect/defer/export/ACK/restart tests with temporary credential roots; ACK removes pending code and later release refuses redisplay, while Waiting/Shown do not block otherwise ready HQ.
 - Compile/workspace checks, actual setup/adoption/task/browser acceptance and complete local code/original-author/final review remain mandatory. Passing this probe/review proves none of those.
 - Before any committed creation, disable unfinished provisioning capability to roll back. After committed CA/package, preserve key/envelope/version and code handle, pause incompatible setup and forward-repair; no old executable allowed to rotate/discard them. REC-1 remains open.

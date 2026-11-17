@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Org Architecture Overview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: engineering reference sheet. Sticky section index on the left, one reading column,
+   diagrams break out to full column width. Status (built / partial / target / deferred) is the
+   one encoding that repeats on every component, edge and table row. */
+:root {
+  --bg: #f2f4f8;
+  --surface: #ffffff;
+  --sunken: #e9edf3;
+  --ink: #152030;
+  --muted: #56637a;
+  --line: #cbd3e0;
+  --accent: #2346c4;
+  --accent-soft: #e2e8fb;
+  --ok: #17794d;
+  --ok-soft: #dcf1e6;
+  --part: #9a5c06;
+  --part-soft: #f8ead0;
+  --target: #6646c2;
+  --target-soft: #ebe5fa;
+  --defer: #667086;
+  --defer-soft: #e4e7ee;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d131e;
+    --surface: #151d2c;
+    --sunken: #101825;
+    --ink: #e5eaf4;
+    --muted: #9ba8c0;
+    --line: #2c374b;
+    --accent: #8ea6ff;
+    --accent-soft: #1b2648;
+    --ok: #52c890;
+    --ok-soft: #123324;
+    --part: #e3ab4c;
+    --part-soft: #3a2b0e;
+    --target: #b5a0ff;
+    --target-soft: #29204a;
+    --defer: #8f99ae;
+    --defer-soft: #222a39;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d131e;
+  --surface: #151d2c;
+  --sunken: #101825;
+  --ink: #e5eaf4;
+  --muted: #9ba8c0;
+  --line: #2c374b;
+  --accent: #8ea6ff;
+  --accent-soft: #1b2648;
+  --ok: #52c890;
+  --ok-soft: #123324;
+  --part: #e3ab4c;
+  --part-soft: #3a2b0e;
+  --target: #b5a0ff;
+  --target-soft: #29204a;
+  --defer: #8f99ae;
+  --defer-soft: #222a39;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-block: 28px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 48px;
+}
+.toc {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 20px);
+  align-self: start;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.toc .doc-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; counter-reset: sec; }
+.toc li { counter-increment: sec; }
+.toc a {
+  display: grid; grid-template-columns: 22px 1fr; gap: 4px;
+  padding: 5px 8px; border-radius: 4px;
+  color: var(--muted); text-decoration: none;
+}
+.toc .sibling a::before { content: none !important; }
+.toc a::before { content: counter(sec); font-family: var(--font-mono); font-size: 11px; padding-top: 2px; }
+.toc a:hover { color: var(--ink); background: var(--sunken); }
+.toc a:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toc .sibling { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+
+main { min-width: 0; }
+header.doc-head { padding-bottom: 26px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--accent); margin: 0 0 10px;
+}
+h1 { font-size: clamp(30px, 4.6vw, 44px); line-height: 1.1; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 14px; text-wrap: balance; }
+.lede { font-size: 18px; line-height: 1.55; color: var(--muted); max-width: 68ch; margin: 0; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 18px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.meta b { color: var(--ink); font-weight: 500; }
+
+section { padding-top: 44px; scroll-margin-top: 12px; }
+h2 {
+  font-size: 25px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance;
+  display: flex; gap: 12px; align-items: baseline;
+}
+h2 .num { font-family: var(--font-mono); font-size: 13px; font-weight: 400; color: var(--accent); flex: none; }
+h3 { font-size: 17.5px; line-height: 1.3; font-weight: 600; margin: 30px 0 6px; text-wrap: balance; }
+h4 { font-size: 12px; font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 22px 0 6px; }
+p, ul, ol { max-width: 72ch; margin: 10px 0; }
+main ul, main ol { padding-left: 22px; }
+main li { margin: 4px 0; }
+main li::marker { color: var(--muted); }
+a { color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--sunken); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+.sec-lede { color: var(--muted); margin-top: 0; }
+strong { font-weight: 600; }
+
+/* status vocabulary */
+.st {
+  display: inline-block; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; font-weight: 500;
+  padding: 1px 7px; border-radius: 3px; white-space: nowrap; vertical-align: 1px;
+}
+.st.ok { color: var(--ok); background: var(--ok-soft); }
+.st.part { color: var(--part); background: var(--part-soft); }
+.st.target { color: var(--target); background: var(--target-soft); }
+.st.defer { color: var(--defer); background: var(--defer-soft); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13.5px; color: var(--muted); margin: 14px 0; padding: 12px 14px; background: var(--sunken); border-radius: 6px; max-width: none; }
+.legend span.item { display: inline-flex; gap: 8px; align-items: baseline; }
+
+/* figures */
+figure { margin: 22px 0; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.fig-scroll svg { display: block; width: 100%; height: auto; min-width: 720px; color: var(--ink); font-family: var(--font-body); }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 8px; max-width: 78ch; }
+figcaption b { color: var(--ink); font-weight: 600; }
+.d-box { fill: var(--surface); stroke: currentColor; stroke-width: 1.3; }
+.d-box.sunk { fill: var(--sunken); }
+.d-box.accent { fill: var(--accent-soft); stroke: var(--accent); }
+.d-box.target { stroke: var(--target); stroke-dasharray: 5 4; fill: var(--target-soft); }
+.d-box.part { stroke: var(--part); fill: var(--part-soft); }
+.d-box.ok { stroke: var(--ok); fill: var(--ok-soft); }
+.d-zone { fill: none; stroke: var(--line); stroke-width: 1.3; }
+.d-zone.fill { fill: var(--sunken); }
+.d-zone.trust { stroke: var(--muted); stroke-dasharray: 2 4; }
+.d-t { fill: currentColor; font-size: 13px; font-weight: 600; }
+.d-s { fill: var(--muted); font-size: 11px; }
+.d-m { fill: var(--muted); font-size: 10.5px; font-family: var(--font-mono); }
+.d-z { fill: var(--muted); font-size: 10.5px; font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.d-e { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.d-e.target { stroke: var(--target); stroke-dasharray: 5 4; }
+.d-e.part { stroke: var(--part); }
+.d-ah.part { fill: var(--part); }
+.d-l.part { fill: var(--part); }
+.d-e.accent { stroke: var(--accent); stroke-width: 1.8; }
+.d-e.soft { stroke: var(--muted); }
+.d-l { fill: currentColor; font-size: 11px; }
+.d-l.target { fill: var(--target); }
+.d-l.accent { fill: var(--accent); }
+.d-lbg { fill: var(--surface); }
+.d-lbg.sunk { fill: var(--sunken); }
+.d-ah { fill: currentColor; }
+.d-ah.target { fill: var(--target); }
+.d-ah.accent { fill: var(--accent); }
+.d-ah.soft { fill: var(--muted); }
+
+/* tables */
+.tbl { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.45; }
+th { text-align: left; font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--sunken); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; }
+td.k { font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tbl.wide table { min-width: 860px; }
+
+/* principle / rule list */
+.rules { list-style: none; padding: 0; margin: 16px 0; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 0 32px; }
+.rules li { margin: 0; padding: 14px 0; border-top: 1px solid var(--line); }
+.rules b { display: block; font-weight: 600; margin-bottom: 2px; }
+.rules span { color: var(--muted); font-size: 14.5px; }
+
+/* callouts */
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; max-width: 78ch; font-size: 15px; }
+.note.warn { border-color: var(--part); background: var(--part-soft); }
+.note.gap { border-color: var(--target); background: var(--target-soft); }
+.note p { margin: 4px 0; }
+.note b:first-child { font-weight: 600; }
+
+/* flows */
+.flow { list-style: none; padding: 0; margin: 14px 0; max-width: none; counter-reset: step; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.flow li { counter-increment: step; margin: 0; padding: 11px 14px 11px 46px; border-bottom: 1px solid var(--line); position: relative; font-size: 14.5px; }
+.flow li:last-child { border-bottom: 0; }
+.flow li::before { content: counter(step); position: absolute; left: 14px; top: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--accent); width: 20px; }
+.hop { font-family: var(--font-mono); font-size: 12px; color: var(--muted); display: block; margin-bottom: 1px; }
+.hop i { font-style: normal; color: var(--accent); }
+
+details { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin: 12px 0; }
+summary { cursor: pointer; padding: 11px 14px; font-weight: 600; font-size: 15px; }
+details > .body { padding: 0 14px 12px; }
+details .tbl { border: 0; border-top: 1px solid var(--line); border-radius: 0; margin: 0; }
+
+pre.tree { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 16px 0; }
+pre.tree .c { color: var(--muted); }
+pre.tree .a { color: var(--accent); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 32px; margin: 14px 0; }
+.cols > div { min-width: 0; }
+.src { font-size: 12.5px; color: var(--muted); font-family: var(--font-mono); margin-top: 6px; max-width: none; overflow-wrap: anywhere; }
+footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .page { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-block: 18px 56px; }
+  .toc { position: static; max-height: none; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--surface); }
+  .toc ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  section { padding-top: 34px; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+</style>
+</head>
+<body>
+<div class="page">
+<nav class="toc" aria-label="Sections">
+  <div class="doc-id">Agentic Org · AO-ARCH-1</div>
+  <ol>
+    <li><a href="#product">The product</a></li>
+    <li><a href="#glance">System at a glance</a></li>
+    <li><a href="#parts">The runtime parts</a></li>
+    <li><a href="#domain">Domain model</a></li>
+    <li><a href="#truth">Where truth lives</a></li>
+    <li><a href="#rules">Rules everything aims at</a></li>
+    <li><a href="#authority">Who decides what</a></li>
+    <li><a href="#code">Code map</a></li>
+    <li><a href="#status">Where we are</a></li>
+    <li><a href="#tensions">Decided, and what is left</a></li>
+    <li><a href="#followups">Review follow-ups</a></li>
+    <li><a href="#handoff">Reaching the agents</a></li>
+    <li><a href="#reading">Reading map</a></li>
+  </ol>
+  <div class="sibling">Companions: <a href="system-architecture.html">System architecture</a> · <a href="../design/conflict-resolution-plan.md">Conflict register</a></div>
+</nav>
+
+<main>
+<header class="doc-head">
+  <p class="eyebrow">Agentic Org · Architecture</p>
+  <h1>Architecture overview</h1>
+  <p class="lede">Agentic Org is a self-hosted server that runs an organization of AI agents and people: teams, projects, tasks, chat and spend, with agents launched and supervised on machines you control. This page is the map. It names the parts, what each one owns, where truth lives, and how far the code is from the selected design.</p>
+  <div class="meta">
+    <span>Branch <b>v1-integration @ 55c7d76</b></span>
+    <span>Data contract <b>organization-data rev 2.10</b></span>
+    <span>Written <b>2026-11-17</b> · revised after owner review</span>
+  </div>
+</header>
+
+<div class="legend" role="note" aria-label="Status vocabulary">
+  <span class="item"><span class="st ok">Runs today</span> on the production path</span>
+  <span class="item"><span class="st part">Built, not reachable</span> code and tests exist; no shipped entry point reaches it</span>
+  <span class="item"><span class="st target">Designed</span> selected in the design, no code</span>
+  <span class="item"><span class="st defer">Deferred</span> not selected for v1</span>
+</div>
+
+<section id="product">
+  <h2><span class="num">01</span>The product in one minute</h2>
+  <p>An owner installs one server, creates an organization, and staffs it with employees. Some employees are people and some are AI agents. The server keeps the organization's structure and work as files in a Git repository, runs each agent as a supervised child process, routes messages between employees, and accounts for what the agents spend.</p>
+  <ul>
+    <li><strong>Organization.</strong> A tree of teams. Every employee, agent or person, has exactly one home team.</li>
+    <li><strong>Offices.</strong> The machines where agents run. One office is HQ and holds organization authority. Satellites are additional machines running the same worker.</li>
+    <li><strong>Work.</strong> Projects contain features and typed tasks (task, bug, request). Releases and deployments record what shipped.</li>
+    <li><strong>Two front doors.</strong> People use a browser. Agents use the <code>agent-os</code> command-line tool.</li>
+    <li><strong>Files first.</strong> Definitions and open work are files in the organization's Git repository. Databases index them.</li>
+  </ul>
+  <p>The architecture was a desktop app and is now a standalone server with browser access (ADR-0005). The desktop shell is removed. Nothing was deployed under the old shape, so there is no user data to migrate.</p>
+</section>
+
+<section id="glance">
+  <h2><span class="num">02</span>System at a glance</h2>
+  <p class="sec-lede">Four executables, one static web app, and agent runtimes that the office worker starts.</p>
+  <figure><div class="fig-scroll"><svg viewBox="0 0 1180 590" role="img" aria-label="Agentic Org runtime: a browser talks to agentic-org-web, which sends typed commands to the office worker; the host starts both; the office is the only writer and supervises agent runtimes." xmlns="http://www.w3.org/2000/svg"><rect class="d-zone " x="300" y="24" width="600" height="512" rx="8"/><text class="d-z" x="312" y="42">One server instance · one OS user</text><rect class="d-box " x="320" y="50" width="560" height="64" rx="5"/><text class="d-t" x="600" y="80.5" text-anchor="middle">agentic-org serve · host</text><text class="d-s" x="600" y="94.5" text-anchor="middle">starts and watches the other processes; holds DB keys, accounts, release pins</text><rect class="d-box part" x="320" y="180" width="180" height="84" rx="5"/><text class="d-t" x="410" y="213.5" text-anchor="middle">agentic-org-web</text><text class="d-s" x="410" y="227.5" text-anchor="middle">web server for the browser</text><text class="d-s" x="410" y="241.5" text-anchor="middle">HTTPS · /api/v1 · static UI</text><rect class="d-box accent" x="590" y="170" width="220" height="104" rx="5"/><text class="d-t" x="700" y="206.5" text-anchor="middle">agentic-org-office (HQ)</text><text class="d-s" x="700" y="220.5" text-anchor="middle">all domain rules</text><text class="d-s" x="700" y="234.5" text-anchor="middle">the only database writer</text><text class="d-s" x="700" y="248.5" text-anchor="middle">agent supervisor and router</text><rect class="d-box sunk" x="590" y="330" width="220" height="64" rx="5"/><text class="d-t" x="700" y="360.5" text-anchor="middle">Office data</text><text class="d-s" x="700" y="374.5" text-anchor="middle">SQLite + durable files</text><rect class="d-box target" x="320" y="430" width="180" height="84" rx="5"/><text class="d-t" x="410" y="463.5" text-anchor="middle">Agent runtimes</text><text class="d-s" x="410" y="477.5" text-anchor="middle">claude · codex · agy CLIs</text><text class="d-s" x="410" y="491.5" text-anchor="middle">one main process per employee</text><rect class="d-box " x="590" y="448" width="150" height="52" rx="5"/><text class="d-t" x="665" y="472.5" text-anchor="middle">agent-os</text><text class="d-s" x="665" y="486.5" text-anchor="middle">agent-facing CLI</text><rect class="d-box part" x="20" y="186" width="160" height="72" rx="5"/><text class="d-t" x="100" y="213.5" text-anchor="middle">Browser</text><text class="d-s" x="100" y="227.5" text-anchor="middle">agentic-org-ui</text><text class="d-s" x="100" y="241.5" text-anchor="middle">static SvelteKit app</text><rect class="d-box target" x="960" y="50" width="200" height="64" rx="5"/><text class="d-t" x="1060" y="80.5" text-anchor="middle">Organization Git remote</text><text class="d-s" x="1060" y="94.5" text-anchor="middle">definitions + open work</text><rect class="d-box target" x="960" y="170" width="200" height="72" rx="5"/><text class="d-t" x="1060" y="197.5" text-anchor="middle">Satellite office</text><text class="d-s" x="1060" y="211.5" text-anchor="middle">same worker binary,</text><text class="d-s" x="1060" y="225.5" text-anchor="middle">another machine</text><rect class="d-box target" x="960" y="436" width="200" height="72" rx="5"/><text class="d-t" x="1060" y="470.5" text-anchor="middle">Model providers</text><text class="d-s" x="1060" y="484.5" text-anchor="middle">subscriptions · API keys</text><path class="d-e " d="M700 114 L700 170"/><polygon class="d-ah " points="700,170 703.6,162.0 696.4,162.0"/><path class="d-e part" d="M410 114 L410 180"/><polygon class="d-ah part" points="410,180 413.6,172.0 406.4,172.0"/><path class="d-e part" d="M180 222 L320 222"/><polygon class="d-ah part" points="320,222 312.0,218.4 312.0,225.6"/><path class="d-e part" d="M500 222 L590 222"/><polygon class="d-ah part" points="590,222 582.0,218.4 582.0,225.6"/><path class="d-e " d="M700 274 L700 330"/><polygon class="d-ah " points="700,330 703.6,322.0 696.4,322.0"/><path class="d-e target" d="M620 274 L620 300 L410 300 L410 430"/><polygon class="d-ah target" points="410,430 413.6,422.0 406.4,422.0"/><path class="d-e target" d="M500 474 L590 474"/><polygon class="d-ah target" points="590,474 582.0,470.4 582.0,477.6"/><path class="d-e " d="M740 474 L850 474 L850 250 L810 250"/><polygon class="d-ah " points="810,250 818.0,253.6 818.0,246.4"/><path class="d-e target" d="M790 170 L790 140 L930 140 L930 82 L960 82"/><polygon class="d-ah target" points="960,82 952.0,78.4 952.0,85.6"/><path class="d-e target" d="M960 205 L810 205"/><polygon class="d-ah target" points="810,205 818.0,208.6 818.0,201.4"/><polygon class="d-ah target" points="960,205 952.0,201.4 952.0,208.6"/><path class="d-e target" d="M410 514 L410 560 L1060 560 L1060 508"/><polygon class="d-ah target" points="1060,508 1056.4,516.0 1063.6,516.0"/><rect class="d-lbg " x="633.0" y="135.0" width="133.9" height="17" rx="2"/><text class="d-l " x="700" y="146.0" text-anchor="middle">spawns · hands DB key</text><rect class="d-lbg " x="337.1" y="139.0" width="145.7" height="17" rx="2"/><text class="d-l part" x="410" y="150.0" text-anchor="middle">spawns · hands listener</text><rect class="d-lbg " x="214.3" y="208.5" width="51.3" height="30" rx="2"/><text class="d-l part" x="240" y="219.5" text-anchor="middle">HTTPS</text><text class="d-l part" x="240" y="232.5" text-anchor="middle">/api/v1</text><rect class="d-lbg " x="516.4" y="208.5" width="57.2" height="30" rx="2"/><text class="d-l part" x="545" y="219.5" text-anchor="middle">typed</text><text class="d-l part" x="545" y="232.5" text-anchor="middle">commands</text><rect class="d-lbg " x="662.5" y="295.0" width="74.9" height="17" rx="2"/><text class="d-l " x="700" y="306.0" text-anchor="middle">sole writer</text><rect class="d-lbg " x="436.3" y="293.0" width="157.5" height="17" rx="2"/><text class="d-l target" x="515" y="304.0" text-anchor="middle">spawns · stdio JSON lines</text><rect class="d-lbg " x="519.4" y="467.0" width="51.3" height="17" rx="2"/><text class="d-l target" x="545" y="478.0" text-anchor="middle">invokes</text><rect class="d-lbg " x="812.5" y="374.5" width="74.9" height="30" rx="2"/><text class="d-l " x="850" y="385.5" text-anchor="middle">Unix socket</text><text class="d-l " x="850" y="398.5" text-anchor="middle">org-proto</text><rect class="d-lbg " x="812.8" y="133.0" width="98.5" height="17" rx="2"/><text class="d-l target" x="862" y="144.0" text-anchor="middle">publishes state</text><rect class="d-lbg " x="824.0" y="198.0" width="122.1" height="17" rx="2"/><text class="d-l target" x="885" y="209.0" text-anchor="middle">outbound TLS · sync</text><rect class="d-lbg sunk" x="570.7" y="553.0" width="328.6" height="17" rx="2"/><text class="d-l target" x="735" y="564.0" text-anchor="middle">model calls go through the vendor CLI's own connection</text></svg></div><figcaption><b>The runtime in one picture.</b> Black lines run on the production path today. Amber lines are built and tested but nothing shipped reaches them yet. Dashed violet lines are designed and have no code. The office worker is the centre: every rule and every write goes through it.</figcaption></figure>
+  <div class="note warn"><p><b>Read the colours first.</b> Today the black path is: the host starts an office worker and hands it its database key, the worker serves organization, work and messaging commands on a Unix socket, and <code>agent-os</code> talks to it. Browser access, organization setup, agent launching, Git and satellites are amber or violet.</p></div>
+</section>
+
+<section id="parts">
+  <h2><span class="num">03</span>The runtime parts</h2>
+  <p class="sec-lede">Each part has one job and a short list of things it must never do. Those "never" columns are the process boundaries the design depends on.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Part</th><th>What it is</th><th>Owns</th><th>Must never</th><th>Today</th></tr></thead>
+    <tbody>
+      <tr><td class="k">agentic-org</td><td>Human CLI. <code>serve</code> is the host, started by the OS service manager. Host logic is the library <code>crates/org-host</code>.</td><td>Office database keys, accounts and sessions, instance catalog, release pins, launching the worker and web processes. Installing and updating every part, itself included.</td><td>Run domain rules or open an office database.</td><td><span class="st ok">Runs today</span> <code>serve</code> supervises workers on macOS. <span class="st part">Built, not reachable</span> accounts, journal, TLS pair. <code>setup</code> refuses, and no install or update path runs yet.</td></tr>
+      <tr><td class="k">agentic-org-office</td><td>One worker per office. HQ and satellite are roles of the same binary.</td><td>Every domain rule, the single database writer, agent supervision and routing, the office TLS identity, the CA key at HQ.</td><td>Read a key store. Start without the host.</td><td><span class="st ok">Runs today</span> organization, work and messaging commands over a Unix socket. <span class="st target">Designed</span> agent launching.</td></tr>
+      <tr><td class="k">agentic-org-web</td><td>One per instance. The web server for the browser: HTTPS, <code>/api/v1</code>, live events, static assets.</td><td>Browser sessions in memory. Nothing durable, so today a restart of this process signs everyone out (changeable; see below).</td><td>Hold a database key, open a database, or apply business rules.</td><td><span class="st part">Built, not reachable</span> HTTP stack exists as a library; the binary refuses to open a listener.</td></tr>
+      <tr><td class="k">agentic-org-ui</td><td>Static SvelteKit single-page app served by the web process. No Node server.</td><td>View state only. The server is the authority.</td><td>Fall back to sample data when the API is missing.</td><td><span class="st part">Built, not reachable</span> 334 source files; the production build has no backend and shows unavailable.</td></tr>
+      <tr><td class="k">agent-os</td><td>The agent-facing CLI. Agents call it as a tool; people can run it by hand. It starts once per agent action, so it is built to be very small and fast.</td><td>Nothing durable.</td><td>Gain host or administrator authority.</td><td><span class="st ok">Runs today</span> messaging, directory and status, over the file spool or the office socket.</td></tr>
+      <tr><td class="k">Agent runtimes</td><td>Vendor CLIs (<code>claude</code>, <code>codex</code>, <code>agy</code>) run as children of the office worker. One main process per employee. The model each one uses comes from the agent's model profile, an ordered pool of provider connections.</td><td>Their own conversation context.</td><td>Hold push tokens or see another task's files.</td><td><span class="st target">Designed</span> the port and process primitives exist; no adapter, no launcher.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Naming.</strong> This page says <em>web</em> for <code>agentic-org-web</code>. Older design documents and some code identifiers call the same process the gateway (<code>gateway-api-v1.md</code>, <code>ChannelKind::Gateway</code>). There is no model gateway: agents reach model providers through the vendor CLI's own connection.</p>
+
+  <h3>Install and update: a person installs one thing</h3>
+  <p>A person installs only <code>agentic-org</code>. Everything else arrives through it.</p>
+  <ul>
+    <li><strong>Install.</strong> A small bootstrap downloads and verifies <code>agentic-org</code> and runs <code>setup</code>. Setup fetches the rest as one complete signed release (the office worker, the web server, <code>agent-os</code> and the UI), verifies it, and pins it. An offline install takes a local bundle and makes no network request.</li>
+    <li><strong>Update, including itself.</strong> A release always contains all four executables and the UI, so updating is one operation. The running host looks for a new release in the background, stages and verifies it, drains the instance, switches the pin, and the service restarts on the new <code>agentic-org</code>. <code>agentic-org upgrade</code> does the same on demand.</li>
+    <li><strong>Safety rules.</strong> The previous release is kept. An executable is never rolled back alone after an incompatible data change. An update source that cannot be reached never blocks startup.</li>
+  </ul>
+  <p><span class="st target">Designed</span> The standalone design gives <code>serve</code> "the host, key custody, child supervision and update management". The release verifier library exists; no download, staging or activation runs yet (checklist rows FC-022 and FC-154).</p>
+
+  <h3>Web sessions: why they are in memory today, and how to stop signing people out</h3>
+  <p>Today two things live only in memory: the web process's link between a browser's cookie and its session, and the host's own list of sessions (a map in memory, not a database table). The design ties a session's life to the connection between the web process and the host, so when either restarts, every browser is signed out.</p>
+  <p>It was designed that way for three reasons. None of them is a hard requirement.</p>
+  <ul>
+    <li>The web process faces the network, so it is sandboxed and given no key and no database. It has nowhere to keep anything.</li>
+    <li>Ending a session is instant and certain: remove it from the list. Sign-out, a password change and removing someone's access all take effect at once.</li>
+    <li>A restarted web process cannot pick up sessions it did not create.</li>
+  </ul>
+  <p><strong>You are right that this is not needed.</strong> There are two ways to keep people signed in across restarts. In both, the web process still holds no secret, and the state belongs to the host, because accounts are per instance and the host owns them.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Approach</th><th>How it works</th><th>Ending a session early</th><th>What it adds</th></tr></thead>
+    <tbody>
+      <tr><td>Signed tokens (your proposal)</td><td>At setup the host generates a key pair and keeps the private key in its custody. At sign-in it signs a token. The web process gets only the public key and checks each request's token itself. Nothing is stored per session.</td><td>Not instant by default: a signed token stays valid until it expires. It needs a short life (minutes) with renewal through the host, plus a per-account "sessions valid from" marker in the host database so a password change or "sign out everywhere" takes effect at once.</td><td>Key generation and rotation, a token format, clock handling, the marker.</td></tr>
+      <tr><td>Stored sessions at the host</td><td>The host writes each session as a row in its database. The browser keeps today's random cookie. After a restart the web process asks the host once per cookie and carries on.</td><td>Instant, exactly as today.</td><td>One small table and one lookup after a restart.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><p><b>Decided 2026-11-17 (ADR-0013).</b> v1 uses stored sessions with the cookie. The web process keeps them in memory and re-checks a cookie with the host once after a restart; sign-out deletes the session from the store and from memory. Signed tokens are a v2 option.</p></div>
+  <p><strong>It does not go to the database on every request.</strong> The web process asks the host only the first time it sees a cookie, for example after a restart. After that it answers from memory. The store holds a fingerprint of the cookie, never the cookie itself, so a copy of the database cannot be used to act as someone.</p>
+  <p><strong>Why the host, and not the web process, would own a key.</strong> The web process does not check passwords. It passes the sign-in to the host, which owns the accounts, checks the password and applies lockout. So the host is the one that knows who you are. The web process is also the part exposed to the network, which is why it is given no secrets and no storage: if it held a signing key, breaking into it would let someone create a valid session for any account, including the owner. And with no storage of its own it could only keep a key it made at start-up, which would sign everyone out on restart again. For v1 the question does not arise, because nothing is signed.</p>
+  <p><strong>Testing the API.</strong> A test signs in exactly as a browser does: it creates a throwaway instance with a test account, calls the sign-in endpoint, keeps the cookie and the second value it returns, and sends both on every call. That is the supported way to script the API in v1. There is no test-only shortcut in a production build. Tokens for scripts and other non-browser clients come with the v2 token work.</p>
+
+  <h3>agent-os speed: where 15 ms comes from, and how to get to 1 to 2 ms</h3>
+  <p>The 15 ms figure is the target for <em>sending</em>, which is a write. It is not the cost of <code>agent-os</code> as a whole; reading an inbox is targeted at under 2 ms. ADR-0003 breaks a send down like this (design estimates for an Apple Silicon Mac):</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Step</th><th>Estimate</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Start the <code>agent-os</code> process</td><td class="n">about 2 ms</td><td>The operating system loading and starting a program.</td></tr>
+      <tr><td>Connect to the office and identify</td><td class="n">about 0.5 ms</td><td>One local socket exchange.</td></tr>
+      <tr><td>Wait for the disk</td><td class="n">6 to 10 ms</td><td>The rule "answer only after the write would survive a power cut". On a Mac that needs a full flush to the drive, which is slow.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>What "waiting for the disk" means.</strong> There already is a local office database, on the same machine. Saving to it has two stages. First the database accepts the write: it is recorded and visible, but still sitting in the operating system's memory. That takes microseconds. Second, the operating system is told to push it onto the physical drive, so it would survive the power being cut. That takes milliseconds, and on a Mac the reliable version of it is especially slow. Today the office waits for the second stage before it answers.</p>
+  <p>I measured both stages on the Linux machine this was analysed on. A database commit that waits for the drive took 0.29 ms; one that does not wait took 0.013 ms, about twenty times faster. On a Mac the gap is larger, because the wait is the 6 to 10 ms above.</p>
+  <div class="note"><p><b>Decided in direction 2026-11-17 (ADR-0014).</b> "The database accepted it" is enough for chosen operations. The office answers as soon as the write is committed, and pushes it to the drive within a short bounded time afterwards. The target is a median of 1 ms and 2 ms at worst for nearly all calls. What you accept: a message acknowledged in the instant before a power cut can be lost. A crash of the office alone loses nothing.</p></div>
+  <p>So the software is not slow. It is waiting for the disk because of a durability rule, and it pays for a fresh process every call. The writer already batches, so sixteen agents sending at once share one flush, but a single send still waits for one.</p>
+  <p><strong>I measured the process start.</strong> On the Linux machine this was analysed on, starting a program that does nothing takes about 1.1 ms, and <code>agent-os --version</code> about 1.5 ms (median of 1,000 runs; 95% under 2.2 ms). A Mac is typically slower at this. A budget of 1 to 2 ms is therefore used up by starting the process, before any work is done.</p>
+  <p>Getting to 1 to 2 ms needs two changes, and both are available:</p>
+  <ol>
+    <li><strong>Answer once the database has accepted the write.</strong> This is the decision above, and you set its scope: messaging (send, reply, mark read or done, status) and non-critical task activity (comments, checklist ticks, watching) use the fast answer. One exception: a comment that asks the owner a question, or answers one, stays strict, because it starts or ends a wait. Creating a task, changing its status, assigning it, organization changes, numbering and budget actions keep waiting for the drive, because losing one of those silently is worse.</li>
+    <li><strong>Stop starting a process per call.</strong> Keep one <code>agent-os</code> process open for each agent session and send requests down it. Each call is then one exchange on an open local socket, which takes a fraction of a millisecond. The session design already gives every agent an office-provided tool configuration that a long-running helper fits into.</li>
+  </ol>
+  <p><strong>Kept independent of the database.</strong> You asked that this survive a later move to PostgreSQL. So each operation states once, in the domain code, whether it needs the fast or the strict answer. The storage layer decides how to deliver that for the database in use. Domain code never mentions a database setting, so a second database only has to honour the same two promises.</p>
+  <p>With both, a send lands well inside 1 ms. With only the first, a Mac is bounded by process start at roughly 2 to 3 ms. For scale: one model call takes hundreds of milliseconds to seconds, so this matters for load with many agents more than for what one agent feels.</p>
+  <p>Two smaller facts. The binary built here is 1.56 MB on Linux, above the 1 MB target; the target was written for a Mac build and I could not check that. The speed decision is ADR-0014 and register entry F-02.</p>
+  <p><strong>Send and ask (decided 2026-11-17, register entry E-02).</strong> A plain send answers in single-digit milliseconds in every topology, also when the recipient is in another office. The sender's office saves the message locally and answers. Relaying it through HQ to the other office happens afterwards and is retried until it arrives or the message expires; a failure becomes a delivery notice, never a slower send. An ask is the one operation that holds its caller. It always has a deadline, the sender may say how long a reply is expected to take, and it returns a timeout when the deadline passes.</p>
+  <p><strong>Asking and waiting (decided 2026-11-17, ADR-0020).</strong> When an agent asks a person or another agent, it waits for a bounded time: a setting, 10 minutes by default, the same for both. The agent says whether the answer is <em>required</em>, meaning it cannot continue without it.</p>
+  <ul>
+    <li><strong>Answered in time:</strong> the agent gets the answer and carries on.</li>
+    <li><strong>Not answered, not required:</strong> the ask returns a timeout. The agent decides: carry on, ask someone else, or declare that it does need this answer.</li>
+    <li><strong>Not answered, required:</strong> the system tells the agent to finish or stop its background work, then shuts the agent down. Its context is on disk. The question stays open.</li>
+    <li><strong>When the answer arrives:</strong> the system starts the agent again in the same session and hands it the answer. For the person, the agent was simply idle until they replied.</li>
+  </ul>
+  <p>A stopped agent holds no model turn, no subscription slot and spends nothing. The agent is always told before it is stopped and given a grace period of 2 minutes by default; anything still running after that is stopped and the agent is told on resume. People see in their inbox which questions are holding an agent up.</p>
+
+  <h3>How an agent gets its model</h3>
+  <ol>
+    <li>An agent has an <strong>execution config</strong>: its system prompt, one <strong>model profile</strong> and one model name. Without it the agent cannot run. The system never picks a default.</li>
+    <li>A model profile is an <strong>ordered pool</strong> of 1 to 64 <strong>provider connections</strong>. Each connection is one subscription, API credential or cloud identity, registered once for the organization.</li>
+    <li>Each office holds its own <strong>binding</strong> for a connection: the private credential, never shared and never in Git. Two offices can bind the same connection and then share its quota.</li>
+    <li>When a turn starts, the office freezes the pool order into the turn and walks it: skip a connection that is not ready, full or cooling down, and ask HQ for a permit on the first that fits. If that connection fails mid-turn in a safe way, it moves to the next one for the same model.</li>
+  </ol>
+  <p><span class="st target">Designed</span> (organization data documents 11 and 14). The system architecture page shows the full turn.</p>
+</section>
+
+<section id="domain">
+  <h2><span class="num">04</span>Domain model</h2>
+  <p class="sec-lede">The selected relationships from <code>docs/design/organization-data</code>. Readable references such as <code>T-B37</code> are labels; every record's identity is an immutable stable ID.</p>
+  <figure><div class="fig-scroll"><svg viewBox="0 0 1090 596" role="img" aria-label="Core entities: an organization has offices and a team tree; employees have one home team; projects own features and tasks; tasks have an accountable team and an optional assignee. Processes, standards and documents attach to organization, team and project." xmlns="http://www.w3.org/2000/svg"><rect class="d-box " x="40" y="40" width="200" height="56" rx="5"/><text class="d-t" x="140" y="66.5" text-anchor="middle">Organization</text><text class="d-m" x="140" y="80.5" text-anchor="middle">slug</text><rect class="d-box " x="310" y="40" width="200" height="56" rx="5"/><text class="d-t" x="410" y="66.5" text-anchor="middle">Team</text><text class="d-m" x="410" y="80.5" text-anchor="middle">TEAM-12 · nested</text><rect class="d-box " x="580" y="40" width="200" height="56" rx="5"/><text class="d-t" x="680" y="66.5" text-anchor="middle">Project</text><text class="d-m" x="680" y="80.5" text-anchor="middle">P-8 · slug</text><rect class="d-box " x="850" y="40" width="200" height="56" rx="5"/><text class="d-t" x="950" y="66.5" text-anchor="middle">Repository</text><text class="d-s" x="950" y="80.5" text-anchor="middle">remote or local</text><rect class="d-box " x="40" y="160" width="200" height="56" rx="5"/><text class="d-t" x="140" y="186.5" text-anchor="middle">Office</text><text class="d-s" x="140" y="200.5" text-anchor="middle">hq or satellite</text><rect class="d-box " x="310" y="160" width="200" height="56" rx="5"/><text class="d-t" x="410" y="186.5" text-anchor="middle">Employee</text><text class="d-s" x="410" y="200.5" text-anchor="middle">agent or person · @handle</text><rect class="d-box accent" x="580" y="160" width="200" height="56" rx="5"/><text class="d-t" x="680" y="186.5" text-anchor="middle">Task</text><text class="d-m" x="680" y="200.5" text-anchor="middle">T-B37 · task | bug | request</text><rect class="d-box " x="850" y="160" width="200" height="56" rx="5"/><text class="d-t" x="950" y="186.5" text-anchor="middle">Feature</text><text class="d-m" x="950" y="200.5" text-anchor="middle">F-6 · project/slug</text><rect class="d-box " x="40" y="280" width="200" height="56" rx="5"/><text class="d-t" x="140" y="306.5" text-anchor="middle">Execution config</text><text class="d-s" x="140" y="320.5" text-anchor="middle">model + system prompt</text><rect class="d-box " x="310" y="280" width="200" height="56" rx="5"/><text class="d-t" x="410" y="306.5" text-anchor="middle">Model profile</text><text class="d-s" x="410" y="320.5" text-anchor="middle">ordered pool</text><rect class="d-box " x="580" y="280" width="200" height="56" rx="5"/><text class="d-t" x="680" y="306.5" text-anchor="middle">Release</text><text class="d-m" x="680" y="320.5" text-anchor="middle">R-3 · milestones M-2</text><rect class="d-box " x="850" y="280" width="200" height="56" rx="5"/><text class="d-t" x="950" y="306.5" text-anchor="middle">Deployment</text><text class="d-s" x="950" y="320.5" text-anchor="middle">attempt + snapshots</text><rect class="d-box " x="310" y="400" width="200" height="56" rx="5"/><text class="d-t" x="410" y="426.5" text-anchor="middle">Provider connection</text><text class="d-s" x="410" y="440.5" text-anchor="middle">one per subscription</text><path class="d-e " d="M240 68 L310 68"/><polygon class="d-ah " points="310,68 302.0,64.4 302.0,71.6"/><path class="d-e " d="M140 96 L140 160"/><polygon class="d-ah " points="140,160 143.6,152.0 136.4,152.0"/><path class="d-e " d="M510 58 L580 58"/><polygon class="d-ah " points="580,58 572.0,54.4 572.0,61.6"/><path class="d-e " d="M780 68 L850 68"/><polygon class="d-ah " points="850,68 842.0,64.4 842.0,71.6"/><path class="d-e " d="M410 96 L410 160"/><polygon class="d-ah " points="410,160 413.6,152.0 406.4,152.0"/><path class="d-e " d="M510 84 L545 84 L545 172 L580 172"/><polygon class="d-ah " points="580,172 572.0,168.4 572.0,175.6"/><path class="d-e " d="M510 202 L580 202"/><polygon class="d-ah " points="580,202 572.0,198.4 572.0,205.6"/><path class="d-e " d="M680 96 L680 160"/><polygon class="d-ah " points="680,160 683.6,152.0 676.4,152.0"/><path class="d-e " d="M780 188 L850 188"/><polygon class="d-ah " points="850,188 842.0,184.4 842.0,191.6"/><path class="d-e " d="M770 96 L770 120 L950 120 L950 160"/><polygon class="d-ah " points="950,160 953.6,152.0 946.4,152.0"/><path class="d-e " d="M680 280 L680 216"/><polygon class="d-ah " points="680,216 676.4,224.0 683.6,224.0"/><path class="d-e " d="M780 308 L850 308"/><polygon class="d-ah " points="850,308 842.0,304.4 842.0,311.6"/><path class="d-e " d="M310 188 L240 188"/><polygon class="d-ah " points="240,188 248.0,191.6 248.0,184.4"/><path class="d-e " d="M360 216 L360 248 L140 248 L140 280"/><polygon class="d-ah " points="140,280 143.6,272.0 136.4,272.0"/><path class="d-e " d="M240 308 L310 308"/><polygon class="d-ah " points="310,308 302.0,304.4 302.0,311.6"/><path class="d-e " d="M410 336 L410 400"/><polygon class="d-ah " points="410,400 413.6,392.0 406.4,392.0"/><rect class="d-zone fill" x="20" y="484" width="1050" height="96" rx="8"/><text class="d-z" x="32" y="502">Guidance and knowledge · files stored beside the records they belong to</text><rect class="d-box " x="40" y="512" width="470" height="52" rx="5"/><text class="d-t" x="275" y="536.5" text-anchor="middle">Process · Standard</text><text class="d-s" x="275" y="550.5" text-anchor="middle">one set each for the organization, every team and every project</text><rect class="d-box " x="580" y="512" width="470" height="52" rx="5"/><text class="d-t" x="815" y="536.5" text-anchor="middle">Document</text><text class="d-s" x="815" y="550.5" text-anchor="middle">project knowledge: brief · design · decision · report · changelog</text><rect class="d-lbg " x="261.1" y="61.0" width="27.7" height="17" rx="2"/><text class="d-l " x="275" y="72.0" text-anchor="middle">has</text><rect class="d-lbg " x="73.0" y="121.0" width="133.9" height="17" rx="2"/><text class="d-l " x="140" y="132.0" text-anchor="middle">1..n · exactly one HQ</text><rect class="d-lbg " x="528.2" y="51.0" width="33.6" height="17" rx="2"/><text class="d-l " x="545" y="62.0" text-anchor="middle">owns</text><rect class="d-lbg " x="795.3" y="61.0" width="39.5" height="17" rx="2"/><text class="d-l " x="815" y="72.0" text-anchor="middle">links</text><rect class="d-lbg " x="337.1" y="121.0" width="145.7" height="17" rx="2"/><text class="d-l " x="410" y="132.0" text-anchor="middle">home team · exactly one</text><rect class="d-lbg " x="507.6" y="116.5" width="74.9" height="30" rx="2"/><text class="d-l " x="545" y="127.5" text-anchor="middle">accountable</text><text class="d-l " x="545" y="140.5" text-anchor="middle">(required)</text><rect class="d-lbg " x="516.4" y="195.0" width="57.2" height="17" rx="2"/><text class="d-l " x="545" y="206.0" text-anchor="middle">assignee</text><rect class="d-lbg " x="627.8" y="121.0" width="104.4" height="17" rx="2"/><text class="d-l " x="680" y="132.0" text-anchor="middle">optional project</text><rect class="d-lbg " x="798.2" y="181.0" width="33.6" height="17" rx="2"/><text class="d-l " x="815" y="192.0" text-anchor="middle">0..1</text><rect class="d-lbg " x="826.6" y="113.0" width="86.7" height="17" rx="2"/><text class="d-l " x="870" y="124.0" text-anchor="middle">1..n features</text><rect class="d-lbg " x="627.8" y="241.0" width="104.4" height="17" rx="2"/><text class="d-l " x="680" y="252.0" text-anchor="middle">ships (manifest)</text><rect class="d-lbg " x="798.2" y="301.0" width="33.6" height="17" rx="2"/><text class="d-l " x="815" y="312.0" text-anchor="middle">1..n</text><rect class="d-lbg " x="243.4" y="181.0" width="63.1" height="17" rx="2"/><text class="d-l " x="275" y="192.0" text-anchor="middle">placed at</text><rect class="d-lbg " x="191.9" y="241.0" width="116.2" height="17" rx="2"/><text class="d-l " x="250" y="252.0" text-anchor="middle">agents only · 0..1</text><rect class="d-lbg " x="249.3" y="301.0" width="51.3" height="17" rx="2"/><text class="d-l " x="275" y="312.0" text-anchor="middle">selects</text><rect class="d-lbg " x="337.1" y="361.0" width="145.7" height="17" rx="2"/><text class="d-l " x="410" y="372.0" text-anchor="middle">1..64 in priority order</text></svg></div><figcaption><b>The selected domain model.</b> Teams and projects belong to the organization, never to an office. A task always has an accountable team; project, feature and assignee are optional and independent. Offices only place agents. Each project-repository link carries its own integration branch. Processes, standards and documents are first-class records too; the next two parts explain them.</figcaption></figure>
+  <ul class="rules">
+    <li><b>One home team, one lead per team</b><span>Every employee belongs to exactly one team. The team lead is a direct member of that team and manages everyone else in it and in every team beneath it, including the leads of those sub-teams. No other member gets authority from where they sit. A separate, optional reports-to line between two people covers exceptions.</span></li>
+    <li><b>Accountable team is required</b><span>The accountable team is the one answerable if the task does not get done. It is not necessarily the team doing the work. For a project task it is the project's owner team.</span></li>
+    <li><b>Who does the work is separate</b><span>Assigned team and assignee say who is working on it. Either can be outside the project and outside the accountable team. They are an optional pair, replaced together. Assignment never moves a file, renumbers, or grants access.</span></li>
+    <li><b>One task entity</b><span>Bugs and requests are task types. Changing type never changes ID or number.</span></li>
+    <li><b>Offices place agents</b><span>Teams, projects and counters belong to the organization. An office only hosts agents and caches data.</span></li>
+    <li><b>Repositories are shared</b><span>Registered once per organization. Each project link carries its own integration branch.</span></li>
+    <li><b>Status is data</b><span>Task and feature status are stored values that an authorized person or agent sets. Nothing changes status automatically in v1; see "no transition engine" below.</span></li>
+    <li><b>Models are explicit</b><span>An agent runs only with an execution config that names a model profile and model. The system never picks a default.</span></li>
+  </ul>
+
+  <h3>What "no transition engine" means</h3>
+  <p>A transition engine is code that decides which status changes are allowed, who may make them, and what happens automatically as a result. Examples: a task cannot become done without a review; a feature becomes live when its last task closes; closing a parent closes its children; a checklist must be complete before a status change.</p>
+  <p>The earlier design had several of these (triage, Undo, checklist promotion, automatic feature transitions, request approval). v1 does not carry them over. In v1:</p>
+  <ul>
+    <li>An authorized person or agent sets a status to any valid value.</li>
+    <li>The change is recorded in the task's history with who made it and when.</li>
+    <li>Nothing moves on its own. The one guard is that a feature in progress or live must have an owner.</li>
+  </ul>
+  <p>The reason is scope. Each engine is a product decision with its own rules, and carrying them over silently would lock in behaviour nobody chose for the new model. The valid status words still need to be published so every screen and agent uses the same ones (register entry C-02).</p>
+
+  <h3>Processes and standards</h3>
+  <p>Processes (how we do something) and standards (rules work must meet) are first-class records. The organization has a set, every team at any depth has its own set, and every project has its own set.</p>
+  <figure><div class="fig-scroll"><svg viewBox="0 0 1100 300" role="img" aria-label="Processes and standards exist at three scopes: organization, team (nested) and project. Lower scopes inherit from higher ones unless a higher scope locks an entry against override." xmlns="http://www.w3.org/2000/svg"><rect class="d-box " x="30" y="56" width="300" height="116" rx="5"/><text class="d-t" x="180" y="98.5" text-anchor="middle">Organization scope</text><text class="d-m" x="180" y="112.5" text-anchor="middle">processes/&lt;id&gt;.md</text><text class="d-m" x="180" y="126.5" text-anchor="middle">standards/&lt;id&gt;.md</text><text class="d-s" x="180" y="140.5" text-anchor="middle">applies to every team and project</text><rect class="d-box " x="400" y="56" width="300" height="116" rx="5"/><text class="d-t" x="550" y="98.5" text-anchor="middle">Team scope · any depth</text><text class="d-m" x="550" y="112.5" text-anchor="middle">teams/&lt;id&gt;/…/processes/</text><text class="d-m" x="550" y="126.5" text-anchor="middle">teams/&lt;id&gt;/…/standards/</text><text class="d-s" x="550" y="140.5" text-anchor="middle">adds its own, or overrides one above</text><rect class="d-box " x="770" y="56" width="300" height="116" rx="5"/><text class="d-t" x="920" y="98.5" text-anchor="middle">Project scope</text><text class="d-m" x="920" y="112.5" text-anchor="middle">projects/&lt;id&gt;/processes/</text><text class="d-m" x="920" y="126.5" text-anchor="middle">projects/&lt;id&gt;/standards/</text><text class="d-s" x="920" y="140.5" text-anchor="middle">adds its own, or overrides one above</text><path class="d-e target" d="M330 114 L400 114"/><polygon class="d-ah target" points="400,114 392.0,110.4 392.0,117.6"/><path class="d-e target" d="M700 114 L770 114"/><polygon class="d-ah target" points="770,114 762.0,110.4 762.0,117.6"/><rect class="d-zone fill" x="30" y="206" width="1040" height="70" rx="8"/><text class="d-l" x="550" y="236" text-anchor="middle">An entry marked overridable: false cannot be replaced by any lower scope.</text><text class="d-m" x="550" y="258" text-anchor="middle">Each entry: Markdown with front matter · kind process | standard · status draft | current | deprecated · an owner</text><rect class="d-lbg " x="324.6" y="91.0" width="80.8" height="17" rx="2"/><text class="d-l target" x="365" y="102.0" text-anchor="middle">inherited by</text><rect class="d-lbg " x="694.6" y="91.0" width="80.8" height="17" rx="2"/><text class="d-l target" x="735" y="102.0" text-anchor="middle">inherited by</text></svg></div><figcaption><b>Processes and standards at three scopes.</b> The files, their scope and the override lock are selected data. The dashed arrows are resolution, selected for v1 on 2026-11-17 and not yet built: working out which entries apply to a given task, and handing them to the agent. An entry marked not overridable cannot be replaced lower down and always reaches the agent as a must-follow instruction.</figcaption></figure>
+  <ul>
+    <li><strong>Selected for v1:</strong> the files, their scope, their lifecycle and owner, and the override lock. A lock set at a higher scope cannot be defeated by an edit lower down.</li>
+    <li><strong>Selected for v1 on 2026-11-17 (register entry C-14):</strong> resolution, meaning which documents apply to a piece of work. Start with the organization's. Apply the accountable team's chain from the top team down. Then the project's. A lower level may add a document, or replace one from above with the same key, unless the upper one is marked not overridable.</li>
+    <li><strong>What the agent receives:</strong> every non-overridable document is always included, in a marked section of the agent's system instructions that says it must be followed. Overridable documents are guidance the agent applies with judgment. Guidance on the product's own commands ships as built-in skills.</li>
+    <li><strong>Not selected:</strong> mechanically blocking an action that breaks a process, and approval workflows.</li>
+  </ul>
+  <p>Because an employee has one home team and a task has one accountable team, there is one chain and nothing to reconcile between teams. The <code>org-process</code> library implements an earlier, more complicated rule and has no caller yet; it is to be simplified and called when an agent is launched.</p>
+
+  <h3>Project documentation</h3>
+  <p>A project's knowledge is a set of Markdown documents in the organization repository, under the project's folder. Each document belongs to the project and to at most one of a feature, a release or a deployment.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Document</th><th>Where it lives</th><th>What it is for</th></tr></thead>
+    <tbody>
+      <tr><td>Brief</td><td class="k">projects/&lt;id&gt;/brief.md</td><td>What the project is and why. One per project.</td></tr>
+      <tr><td>Decisions, designs, reports</td><td class="k">projects/&lt;id&gt;/decisions/ · designs/ · reports/</td><td>Project-wide knowledge.</td></tr>
+      <tr><td>Feature definition</td><td class="k">…/features/&lt;id&gt;/feature.md</td><td>What the feature does and its known limits. This is the feature record itself.</td></tr>
+      <tr><td>Feature decisions, designs, reports</td><td class="k">…/features/&lt;id&gt;/decisions/ · designs/ · reports/</td><td>Knowledge about one feature.</td></tr>
+      <tr><td>Release changelog and documents</td><td class="k">…/releases/&lt;id&gt;/changelog.md · documents/</td><td>Product changes in a release.</td></tr>
+      <tr><td>Deployment changelog and documents</td><td class="k">…/deployments/&lt;id&gt;/changelog.md · documents/</td><td>Technical changes in one deployment.</td></tr>
+      <tr><td>Project processes and standards</td><td class="k">projects/&lt;id&gt;/processes/ · standards/</td><td>The project's own guidance, as above.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Every document has an owner and a status of draft, current or deprecated. These are records in the organization repository, separate from the <code>docs/</code> folder of a code repository. <span class="st target">Designed</span>: none of this is authored through the product yet. You asked for a fuller walkthrough of how project documentation works; it is on the follow-up list.</p>
+</section>
+
+<section id="truth">
+  <h2><span class="num">05</span>Where truth lives</h2>
+  <p class="sec-lede">The design separates sources from caches, because that decides what a backup must contain and what can be thrown away.</p>
+  <figure><div class="fig-scroll"><svg viewBox="0 0 1100 420" role="img" aria-label="Durable sources versus rebuildable caches: organization Git, protected operational sources, private stores and host custody are sources; the office database and runtime workspaces are rebuilt from them." xmlns="http://www.w3.org/2000/svg"><rect class="d-zone fill" x="20" y="24" width="1060" height="196" rx="8"/><text class="d-z" x="32" y="42">Durable sources · losing one loses data</text><rect class="d-box " x="40" y="56" width="240" height="140" rx="5"/><text class="d-t" x="160" y="103.5" text-anchor="middle">Organization Git</text><text class="d-s" x="160" y="117.5" text-anchor="middle">teams, projects, features, tasks</text><text class="d-s" x="160" y="131.5" text-anchor="middle">published task history</text><text class="d-s" x="160" y="145.5" text-anchor="middle">numbering allocations</text><text class="d-s" x="160" y="159.5" text-anchor="middle">remote required</text><rect class="d-box " x="300" y="56" width="240" height="140" rx="5"/><text class="d-t" x="420" y="103.5" text-anchor="middle">Protected operational sources</text><text class="d-s" x="420" y="117.5" text-anchor="middle">chat envelopes · budgets</text><text class="d-s" x="420" y="131.5" text-anchor="middle">usage ledger (JSONL)</text><text class="d-s" x="420" y="145.5" text-anchor="middle">acceptance journals · receipts</text><text class="d-s" x="420" y="159.5" text-anchor="middle">local, backed up, never in Git</text><rect class="d-box " x="560" y="56" width="240" height="140" rx="5"/><text class="d-t" x="680" y="103.5" text-anchor="middle">Private stores</text><text class="d-s" x="680" y="117.5" text-anchor="middle">author-private task notes</text><text class="d-s" x="680" y="131.5" text-anchor="middle">encrypted, HQ only</text><text class="d-s" x="680" y="145.5" text-anchor="middle">not visible to owners or admins</text><text class="d-s" x="680" y="159.5" text-anchor="middle">never replicated through Git</text><rect class="d-box " x="820" y="56" width="240" height="140" rx="5"/><text class="d-t" x="940" y="103.5" text-anchor="middle">Host custody</text><text class="d-s" x="940" y="117.5" text-anchor="middle">office database keys</text><text class="d-s" x="940" y="131.5" text-anchor="middle">accounts · sessions</text><text class="d-s" x="940" y="145.5" text-anchor="middle">CA pins · release pins</text><text class="d-s" x="940" y="159.5" text-anchor="middle">outside the instance root</text><rect class="d-zone " x="20" y="284" width="1060" height="116" rx="8"/><text class="d-z" x="32" y="302">Rebuildable caches</text><text class="d-s" x="1060" y="302" text-anchor="end">safe to delete once sources and processes are reconciled</text><rect class="d-box sunk" x="200" y="318" width="300" height="62" rx="5"/><text class="d-t" x="350" y="347.5" text-anchor="middle">Office projection (office.db)</text><text class="d-s" x="350" y="361.5" text-anchor="middle">indexed copy for queries + transient state</text><rect class="d-box sunk" x="600" y="318" width="300" height="62" rx="5"/><text class="d-t" x="750" y="347.5" text-anchor="middle">Runtime workspaces</text><text class="d-s" x="750" y="361.5" text-anchor="middle">bare clones · one worktree per task</text><path class="d-e " d="M160 196 L160 252 L280 252 L280 318"/><polygon class="d-ah " points="280,318 283.6,310.0 276.4,310.0"/><path class="d-e " d="M420 196 L420 318"/><polygon class="d-ah " points="420,318 423.6,310.0 416.4,310.0"/><text class="d-s" x="680" y="256" text-anchor="middle">never copied into a cache</text><text class="d-s" x="940" y="256" text-anchor="middle">never copied into a cache</text><rect class="d-lbg " x="191.4" y="245.0" width="57.2" height="17" rx="2"/><text class="d-l " x="220" y="256.0" text-anchor="middle">rebuilds</text><rect class="d-lbg " x="391.4" y="245.0" width="57.2" height="17" rx="2"/><text class="d-l " x="420" y="256.0" text-anchor="middle">rebuilds</text></svg></div><figcaption><b>What is a source and what is a cache.</b> This is the selected target. The code today still treats the per-office <code>org.db</code> and <code>office.db</code> as authoritative; moving to files-plus-projection is pending migration work.</figcaption></figure>
+  <div class="tbl"><table>
+    <thead><tr><th>If you lose</th><th>You can restore from</th><th>You cannot recover</th></tr></thead>
+    <tbody>
+      <tr><td>The office database</td><td>Organization Git plus the operational sources. Rebind credentials, reconcile processes.</td><td>Nothing, if the sources are intact.</td></tr>
+      <tr><td>The operational sources</td><td>A valid backup with verified identity, epoch and digests.</td><td>Anything after the backup. Gaps must be disclosed.</td></tr>
+      <tr><td>Sources and backups</td><td>Organization Git restores published definitions, open work, published task history, and every number allocated up to the last publish.</td><td>Chat, receipts, usage history, budgets, and numbers allocated since the last publish.</td></tr>
+      <tr><td>Host custody (keys)</td><td>Not supported. Startup never recreates a missing key.</td><td>The encrypted databases it protected. This is a direct cost of encrypting; see below.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Git publication is hourly and asynchronous. It is a publication target and never the point at which a change is acknowledged. A machine restore needs the unpublished journals too.</p>
+  <p><strong>Numbering is already in Git.</strong> Counters and every allocation are files in the organization repository (<code>identity/counters/</code>, <code>identity/allocations/</code>) and go out with the hourly publish. Only allocations made since the last publish exist solely in the local numbering journal. If that journal is lost, allocation pauses until a safe high-water mark is established; a number is never guessed from the open tasks.</p>
+
+  <h3>File formats</h3>
+  <p>The format follows who writes the file and how it changes.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Format</th><th>Used when</th><th>Examples</th></tr></thead>
+    <tbody>
+      <tr><td>Markdown with YAML front matter</td><td>A person or agent writes prose, and the record also has fields.</td><td>Tasks, features, profiles, roles, processes, standards, documents, releases, milestones, deployments</td></tr>
+      <tr><td>YAML</td><td>Pure configuration or a list, with no prose body.</td><td><code>organization.yaml</code>, <code>team.yaml</code>, <code>project.yaml</code>, <code>repositories.yaml</code>, flag settings, counters, allocations, prices</td></tr>
+      <tr><td>JSON</td><td>The system writes one immutable record, hashed and never hand-edited.</td><td>Task history events, message envelopes, receipts, budget events</td></tr>
+      <tr><td>JSON Lines</td><td>The system appends to a stream.</td><td>Usage ledger, office origin streams</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Task history: what it is and what it buys</h3>
+  <p>A task file holds the task as it is now. Task history is the list of changes that got it there: one small JSON file per accepted change, at <code>work-history/tasks/&lt;task-id&gt;/&lt;revision&gt;.json</code>. Each records what changed (created, assignment, status, a comment, a link), the old and new values, who did it and when.</p>
+  <p>It is separate from the task's own fields because the current state cannot tell you how it got there. Three things depend on it:</p>
+  <ul>
+    <li><strong>Accountability.</strong> Who reported the task, who reassigned it and when, and what its status was on a given day, still answerable after the task is closed or archived.</li>
+    <li><strong>Rebuilding.</strong> An office database rebuilt from files gets the same history back. Without the files, history would live only in a cache the design calls disposable.</li>
+    <li><strong>Safe retries.</strong> Each change has a revision number, so a repeated or conflicting change from another office is detected and never silently overwrites.</li>
+  </ul>
+  <p>If history were lost, the tasks themselves and their final state would survive; the record of who did what and when would not. Whether that history belongs in Git, or should stay as a local protected source and be published in a more compact form, is a fair question. It is recorded as register entry C-13 with the options.</p>
+
+  <h3>Encryption, explained by who can still read the data</h3>
+  <p>There are three different protections, and they stop different people. The third one is "application-level encryption".</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Protection</th><th>What it does</th><th>Who can still read the data</th></tr></thead>
+    <tbody>
+      <tr><td>Disk encryption (FileVault on a Mac)</td><td>Scrambles the whole disk. It unlocks when the machine is on and someone is logged in.</td><td>Every program running on the machine. It only protects a machine that is stolen or switched off.</td></tr>
+      <tr><td>File permissions</td><td>The operating system refuses other user accounts access to the files.</td><td>Any program running under the <em>same</em> user account.</td></tr>
+      <tr><td>Application-level encryption (SQLCipher)</td><td>The contents of the database file itself are scrambled. A program needs the key to read it, even if it can open the file.</td><td>Only a program that holds the key. Here that is the office worker, which gets it from the host.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The third one exists here for one main reason: <strong>today agents run under the same user account as the server.</strong> File permissions therefore do not stop an agent. An agent can run shell commands, and if one got past its tool restrictions it could open the database file directly. With application-level encryption that file is useless to it, because the key is held where an agent cannot reach it. A second, smaller benefit is that a copied or backed-up data folder cannot be read elsewhere.</p>
+  <p>The costs are real: the host must be a signed program with special permission to reach the key or it refuses to start; Linux had no agreed place to keep the key; and a lost key means lost data with no way back.</p>
+  <p>This is why your suggestion matters. <strong>If agents run as a different user account, plain file permissions do the job, and application-level encryption loses its main reason to exist.</strong></p>
+
+  <h3>Running agents apart from the data</h3>
+  <p>The current design runs agents as the same user and relies on each vendor tool's own sandbox for the commands it runs, plus the office approving or denying actions. The design says plainly that sharing a user is not isolation and that separate users or containers are the stronger option, left for later. There are four levels, and they can coexist.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Level</th><th>What it is</th><th>What it needs</th><th>Limits</th></tr></thead>
+    <tbody>
+      <tr><td>0 · Tool sandbox only (today's design)</td><td>The vendor tool restricts the commands it runs. The office approves or denies.</td><td>Nothing.</td><td>The vendor tool itself is unrestricted and runs as the same user as the data.</td></tr>
+      <tr><td>1 · Operating-system sandbox, same user</td><td>The whole agent process and everything it starts runs inside an OS sandbox that denies the data folders.</td><td>No administrator rights.</td><td>On a Mac, a sandboxed program generally cannot start another sandbox, and the vendor tools and Swift's build tools start their own. This needs a test before relying on it.</td></tr>
+      <tr><td>2 · Separate user account</td><td>Agents run as a dedicated account that owns only their workspaces. The data folders are closed to it by ordinary permissions.</td><td>One administrator step at install, and a small launcher to start and stop agents.</td><td>For iOS work, Xcode signing identities, simulators and the vendor sign-in belong to a user's own session, so they must be set up for that account.</td></tr>
+      <tr><td>3 · Container or virtual machine</td><td>A fully separate file system.</td><td>A container runtime, or a virtual machine.</td><td>Cannot use the host's Xcode directly, so not for iOS builds.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>A separate user is not a re-architecture.</strong> The shape stays the same: the office starts each agent through the process library. Four things change:</p>
+  <ul>
+    <li>The launch description gains an isolation setting. Today it carries only program, arguments, working directory and environment.</li>
+    <li>A small privileged launcher is installed at setup, because an ordinary program cannot start or stop a process that belongs to another user. Start, stop and cleanup go through it.</li>
+    <li>Agent workspaces are owned by, or shared with, the agent account. The data root is closed to it.</li>
+    <li>Each vendor sign-in is stored under the agent account, which fits the selected rule that credentials are bound per office.</li>
+  </ul>
+  <p><strong>Keeping it extensible.</strong> Isolation becomes a named, replaceable part of the launch contract, chosen per agent. An agent that builds iOS features can run at level 0 or 1 while the others run at level 2, and a container level can be added later without touching the rest. The execution contract already requires every runtime to declare which isolation it supports.</p>
+  <h3>A private home for every agent</h3>
+  <p>Decided 2026-11-17 (register entry A-08, ADR-0015 decisions 10 to 12). Each agent gets its own home directory, created and controlled by the office. The vendor folders an agent tool looks for, such as <code>~/.claude</code>, are redirected into it. The agent sees a vendor folder that contains only what the office put there: the office's settings, the agent's own transcripts and one sign-in. Your own vendor folders are never read or written by an office-run agent.</p>
+  <p><strong>Where the sign-in comes from.</strong> From the subscription pool. For each launch the pool selects a connection, and the office makes that connection's sign-in available inside the agent's home. Moving an agent to another subscription is a controlled relaunch.</p>
+  <p><strong>Is changing the root directory (chroot) a cheap sandbox?</strong> I evaluated it. It needs administrator rights on both systems, and on a Mac it is not workable: tools, compilers and Xcode need the system volume, which a changed root hides. The same protection is available another way on each system: a private mount view on Linux, which needs no administrator rights, and a sandbox profile on a Mac that denies everything outside the agent's home and workspace. That is level 1 in the table above, recorded as the reserved <code>os-sandbox</code> mode. The private home gives you the "virtual folder" now; the stronger wall is a later mode, not v1. One test is needed first: how each vendor tool is pointed at a relocated sign-in, and where a Mac's Keychain entry is looked up.</p>
+  <h3>macOS and Linux, including containers</h3>
+  <p>Decided 2026-11-17 (register entry B-09, ADR-0017). Both systems are v1, and an office can run inside a container. Today the host starts office workers only on a Mac. The differences are put behind five small contracts, each with a Mac and a Linux implementation: checking that a started program is the one intended, where the host keeps its secrets, confining the web process, how the service is started and restarted, and agent isolation. Nothing else may branch on the operating system, and a missing piece refuses to start instead of running unprotected. One honest limit: Linux has no equivalent of a Mac's code signature, so that check is weaker there against someone who can already replace files as the service user.</p>
+  <div class="note"><p><b>Decided 2026-11-17.</b> Two decisions.</p>
+  <p><b>Isolation (ADR-0015).</b> Isolation is a setting in the launch contract with two v1 values: the same user as today, and a dedicated user, one per instance, that setup creates with one administrator step. The office's local socket will also admit that account; today it admits only its own user. If setup has no administrator rights it carries on in same-user mode and says so. An agent set to the dedicated user is never quietly started as the same user. A short test on a Mac comes before the dedicated user becomes the default.</p>
+  <p><b>Encryption (ADR-0016).</b> Application-level encryption is removed. Organization data is protected by disk encryption, file permissions and the isolation setting. In same-user mode that means the vendor tool's sandbox and the office's rules are all that stand between an agent and the data, and the product will say so.</p></div>
+  <p><strong>Private keys stay protected, by your choice of 2026-11-17.</strong> Secrets are different from data. An office holds a few private keys: the organization's certificate authority key today, and later each office's TLS identity key and the key used when inviting a new office. They stay in the office's own store, each one encrypted with a single key per office that the host keeps and hands over at start-up. The host never sees the private keys themselves. If that one key were lost, the office would still open all its data; only the functions that need a private key would stop, and each key can be recovered or reissued. The cost is that one host-held key per office remains, in a much smaller role than before.</p>
+</section>
+
+<section id="rules">
+  <h2><span class="num">06</span>Rules everything aims at</h2>
+  <p class="sec-lede">These are the invariants repeated across the ADRs and data contracts. A change that breaks one needs a recorded decision.</p>
+  <ul class="rules">
+    <li><b>The browser is a client</b><span>Clients never open SQL. All state changes go through the office worker. ADR-0001.</span></li>
+    <li><b>One writer per database</b><span>One write connection on one thread. Transactions, deduplication, outbox and sequence allocation stay atomic. ADR-0002.</span></li>
+    <li><b>Keys stay with the host</b><span>The worker receives its key at launch. The worker and web process never touch a key store.</span></li>
+    <li><b>Files are canonical</b><span>SQLite is an indexed projection. A valid row is never launch authority or an authorization grant.</span></li>
+    <li><b>Acknowledge after durable evidence</b><span>A command completes only when its journal record is readable. ADR-0006.</span></li>
+    <li><b>HQ is the authority</b><span>Offices never increment shared counters. Numbers are allocated once, in one serialized place, and never reused.</span></li>
+    <li><b>Stable IDs never change</b><span>UUIDv7, the published standard (RFC 9562). The newer HQ-creation code already uses it; the rest uses ULIDs and is to change.</span></li>
+    <li><b>Every mutation is idempotent</b><span>One operation ID per intent. An unknown outcome is resolved by lookup, never by a fresh ID.</span></li>
+    <li><b>Credentials stay office-local</b><span>Never in Git, command payloads, journals or logs. Agents never hold a push token.</span></li>
+    <li><b>Fail closed, no mocks</b><span>A missing capability shows unavailable. Missing trust or platform support refuses to start.</span></li>
+    <li><b>Nothing promotes itself</b><span>No automatic failover. A restored office or stale authority is fenced by epochs and generations.</span></li>
+    <li><b>Apps compose crates</b><span>Logic lives in libraries, binaries stay thin, no source cycles, domain modules contain vertical slices.</span></li>
+  </ul>
+
+  <h3>Why one writer, and can the database be replaced later?</h3>
+  <p><strong>Is one writer efficient?</strong> For SQLite, yes. SQLite itself allows one write transaction at a time, whatever the language. Several write connections would only queue on its lock. One dedicated writer that batches is how SQLite gets throughput: many commands share a single flush to disk. Reads are not affected; they run in parallel on their own connections.</p>
+  <p><strong>What else the rule does.</strong> It also makes ordering simple: allocating a sequence number, checking for a duplicate and writing an outbox entry happen together or not at all. That guarantee is the part worth keeping under any database.</p>
+  <p><strong>Could it move to PostgreSQL later without a re-architecture?</strong> Mostly yes, and the code is already shaped for it:</p>
+  <ul>
+    <li>SQL lives in two crates only: <code>org-office</code> and <code>org-host</code>. The domain crates (<code>org-work</code>, <code>org-mailbox</code>, <code>org-sync</code>) contain no SQL. They define the storage operations they need, and the store implements them.</li>
+    <li>Inside <code>org-office</code>, 23 of the 26 files that use SQLite sit under its private <code>store</code> folder. That is about 14,700 lines, but it is not one file: it is split by area, as the table below shows. Its first line states the rule: "The only module that knows SQLite … replacing the engine means replacing this file and its submodules."</li>
+    <li>The domain crates reach storage through small interfaces (<code>WorkStore</code>, <code>MessageStore</code>, <code>OrgStore</code>), so a second implementation can sit beside the first. Replication also has a test suite that is independent of the engine, which a new engine would have to pass.</li>
+    <li>In the selected design the database is a rebuildable index of files, which lowers the stakes of changing it further.</li>
+  </ul>
+  <div class="tbl"><table>
+    <thead><tr><th>Part of the store</th><th>Lines</th><th>What it holds</th></tr></thead>
+    <tbody>
+      <tr><td>Engine</td><td class="n">1,900</td><td>Connections, the single writer, batching, encryption setup</td></tr>
+      <tr><td>Organization</td><td class="n">6,400</td><td>Teams, members and projects, plus replication and snapshots</td></tr>
+      <tr><td>Accepted-write journal</td><td class="n">2,700</td><td>The durable journal for task assignment</td></tr>
+      <tr><td>Work</td><td class="n">1,500</td><td>Tasks, activity, metadata</td></tr>
+      <tr><td>Messages</td><td class="n">800</td><td>Message tables</td></tr>
+      <tr><td>Other</td><td class="n">1,400</td><td>HQ creation, status, origin streams, owned processes</td></tr>
+    </tbody>
+  </table></div>
+  <p>What "extensible to PostgreSQL" still needs, when the time comes: the store's own entry points become selectable at start-up (today the office uses one concrete store type), and each area gets a second implementation behind the same interfaces. Nothing in the domain rules, the wire contract or the UI changes.</p>
+  <p>With PostgreSQL the single connection would no longer be needed; the ordering guarantee would come from transactions. Three things would make a move harder than it should be: two files outside the store module use SQL directly, the contracts name SQLite mechanisms such as <code>BEGIN IMMEDIATE</code>, and encryption is tied to SQLCipher. Nothing needs to be built for PostgreSQL now.</p>
+  <p><strong>Decided 2026-11-17 (register entry B-13, ADR-0018).</strong> PostgreSQL must be possible later, so the rule is written down now: only the storage adapters know which database is in use; the guarantees are stated without naming a database; the store is chosen at one place at start-up; and every storage contract gets a test suite that any database must pass, as replication already has. The contract wording no longer names a database statement. The code work is to move the two stray files behind the store, add the selection point and write three suites; messaging and replication already have one. It is best done together with the storage rebuild, which touches the same code.</p>
+
+  <h3>Task numbers come from the office that creates the task</h3>
+  <p>Decided 2026-11-17 (register entry C-12, ADR-0019). You asked that creating a task never waits for HQ, because tasks are what agents create all day.</p>
+  <ul>
+    <li><strong>The reference is <code>T-</code>, the office's letter, and a number.</strong> HQ is <code>A</code>, the second office <code>B</code>. HQ's first task is <code>T-A1</code>; the second office's thirty-seventh is <code>T-B37</code>.</li>
+    <li><strong>Each office counts all its own tasks in one sequence,</strong> whatever project or team they are in. So <code>T-B37</code> is unique in the organization and complete on its own; it never needs a project in front.</li>
+    <li><strong>The office numbers the task itself,</strong> in the same local save. No round trip to HQ, online or offline, and a task never shows "Pending number".</li>
+    <li><strong>The reference never changes:</strong> not when the task is reassigned, moved to another project, or when the agent moves to another office. The letter says where the number was made, not where the task lives.</li>
+    <li><strong>Never reused.</strong> An office keeps a durable mark above the last number it used. If an office cannot prove its sequence, for example after being restored from an old backup, it gets a new letter from HQ before it creates another task.</li>
+    <li><strong>Tasks only.</strong> Teams, projects, features, releases and milestones are created less often and keep their numbers from HQ. A feature created while HQ is unreachable is usable by its permanent ID and shows "Pending number" until HQ registers it.</li>
+  </ul>
+  <p><strong>Which project a command means.</strong> Finding a task by its reference never needs a project. Commands that do need one, such as creating or listing tasks, take it from the agent's context: <code>agent-os</code> knows the project of the task the agent is working on, or the project the agent is assigned to. If the agent has no project, or means another one, it must say which.</p>
+  <p><strong>Creating a task is fast.</strong> Decided 2026-11-17: creating a task uses the fast acknowledgement. The office answers once its database has the task and flushes to the drive just after. That is safe for numbering, because the durable mark prevents a number from being given twice.</p>
+</section>
+
+<section id="authority">
+  <h2><span class="num">07</span>Who decides what</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Authority</th><th>Decides</th></tr></thead>
+    <tbody>
+      <tr><td>HQ office</td><td>Creates teams, projects, releases and milestones. Allocates task and feature numbers and registers feature slugs. Issues model-connection permits and cooldowns. Holds placement generations, budget control state and usage corrections. Hosts the private-notes store. Serves the browser.</td></tr>
+      <tr><td>Any office, also offline</td><td>Creates tasks and features (the number stays empty until HQ allocates it). Accepts local work durably. Runs the agents placed there. A satellite that cannot reach HQ cannot start a new model turn.</td></tr>
+      <tr><td>Host</td><td>Creates and guards office keys. Verifies accounts and sessions. Pins the installed release. Starts, restarts and discards workers.</td></tr>
+      <tr><td>Person with owner authority</td><td>Raises or clears budgets, corrects cost attribution, approves a satellite, releases the recovery code. Instance administrator authority, not organization ownership, creates organizations.</td></tr>
+      <tr><td>Agents</td><td>Act within their employee scope through <code>agent-os</code>. An execution config cannot grant itself permissions. An agent project manager may set a first budget or lower one, never raise it.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="code">
+  <h2><span class="num">08</span>Code map</h2>
+  <p class="sec-lede">Where each capability lives in the Rust workspace, and what state it is in. Sizes are source lines including in-file tests.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Capability</th><th>Home</th><th>Size</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Organization: teams, members, projects</td><td class="k">org-office</td><td class="n">48.9k</td><td><span class="st ok">Runs today</span> on the older many-to-many membership model; single home team is pending.</td></tr>
+      <tr><td>Work: tasks, bugs, checklists</td><td class="k">org-work + org-office</td><td class="n">14.2k</td><td><span class="st ok">Runs today</span> writes. Reads such as list and snapshot are defined but not served. Typed-task identity pending.</td></tr>
+      <tr><td>Messaging</td><td class="k">org-mailbox, org-spool</td><td class="n">8.3k + 4.9k</td><td><span class="st ok">Runs today</span> send, inbox, read, wait. Ask, reply and threads are defined but not served by the office.</td></tr>
+      <tr><td>Host lifecycle and key custody</td><td class="k">org-host</td><td class="n">24.0k</td><td><span class="st ok">Runs today</span> supervision, macOS only. <span class="st part">Built, not reachable</span> accounts, registry, creation.</td></tr>
+      <tr><td>Web server for the browser</td><td class="k">agentic-org-web</td><td class="n">4.4k</td><td><span class="st part">Built, not reachable</span></td></tr>
+      <tr><td>Agent execution</td><td class="k">org-runtime, org-supervise</td><td class="n">6.1k + 10.1k</td><td><span class="st part">Built, not reachable</span> port and process primitives. <span class="st target">Designed</span> adapters, router, session runner.</td></tr>
+      <tr><td>Federation</td><td class="k">org-sync, org-sync-proto, org-pki</td><td class="n">7.7k + 0.8k + 0.5k</td><td><span class="st part">Built, not reachable</span> replication policy, CA and escrow. <span class="st target">Designed</span> transport and enrollment.</td></tr>
+      <tr><td>Release verification</td><td class="k">org-release</td><td class="n">2.0k</td><td><span class="st part">Built, not reachable</span> no consumer.</td></tr>
+      <tr><td>Processes and standards</td><td class="k">org-process, org-docs</td><td class="n">6.5k + 1.3k</td><td><span class="st part">Built, not reachable</span> earlier resolution rules. <span class="st target">Designed</span> v1 resolution, selected 2026-11-17. <span class="st defer">Deferred</span> enforcement.</td></tr>
+      <tr><td>Draft suggestions</td><td class="k">org-copilot</td><td class="n">3.1k</td><td><span class="st part">Built, not reachable</span> two features with a fake runtime.</td></tr>
+      <tr><td>Local Git</td><td class="k">org-git (planned)</td><td class="n">0</td><td><span class="st target">Designed</span> no Git code exists. Plain Git with the office's own credentials; the design was rewritten on 2026-11-17.</td></tr>
+      <tr><td>GitHub and other hosting providers</td><td class="k">org-github (not planned for v1)</td><td class="n">0</td><td><span class="st defer">Deferred</span> to v2 by owner decision.</td></tr>
+      <tr><td>Usage, pricing, budgets</td><td>No home yet</td><td class="n">0</td><td><span class="st target">Designed</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="status">
+  <h2><span class="num">09</span>Where we are</h2>
+  <p class="sec-lede">The feature checklist has 165 rows. These counts are rows of different sizes and are not a completion percentage. Done means source evidence for the row's exact scope.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Area</th><th>Rows</th><th>Done</th><th>In progress</th><th>Planned</th><th>Blocked</th><th>Deferred</th></tr></thead>
+    <tbody>
+      <tr><td>01 Application and browser</td><td class="n">9</td><td class="n">2</td><td class="n">3</td><td class="n">3</td><td class="n">0</td><td class="n">1</td></tr>
+      <tr><td>02 Installation, access and office operations</td><td class="n">21</td><td class="n">1</td><td class="n">12</td><td class="n">6</td><td class="n">2</td><td class="n">0</td></tr>
+      <tr><td>03 Organization, people and teams</td><td class="n">13</td><td class="n">1</td><td class="n">11</td><td class="n">1</td><td class="n">0</td><td class="n">0</td></tr>
+      <tr><td>04 Projects, tasks, bugs and requests</td><td class="n">23</td><td class="n">0</td><td class="n">16</td><td class="n">2</td><td class="n">0</td><td class="n">5</td></tr>
+      <tr><td>05 Feature definitions, knowledge and delivery</td><td class="n">14</td><td class="n">0</td><td class="n">1</td><td class="n">12</td><td class="n">0</td><td class="n">1</td></tr>
+      <tr><td>06 Chat and agent messaging</td><td class="n">13</td><td class="n">2</td><td class="n">6</td><td class="n">4</td><td class="n">0</td><td class="n">1</td></tr>
+      <tr><td>07 Usage, costs and budgets</td><td class="n">11</td><td class="n">0</td><td class="n">0</td><td class="n">10</td><td class="n">0</td><td class="n">1</td></tr>
+      <tr><td>08 Execution, providers and supervision</td><td class="n">14</td><td class="n">1</td><td class="n">2</td><td class="n">7</td><td class="n">0</td><td class="n">4</td></tr>
+      <tr><td>09 Roles, processes and retrospectives</td><td class="n">9</td><td class="n">0</td><td class="n">3</td><td class="n">1</td><td class="n">0</td><td class="n">5</td></tr>
+      <tr><td>10 Project health and reports</td><td class="n">5</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">5</td></tr>
+      <tr><td>11 Copilot drafting</td><td class="n">17</td><td class="n">1</td><td class="n">2</td><td class="n">0</td><td class="n">0</td><td class="n">14</td></tr>
+      <tr><td>12 Git, identity, synchronization and recovery</td><td class="n">13</td><td class="n">1</td><td class="n">4</td><td class="n">5</td><td class="n">0</td><td class="n">3</td></tr>
+      <tr><td>13 Session inspection and private memory</td><td class="n">3</td><td class="n">0</td><td class="n">0</td><td class="n">2</td><td class="n">0</td><td class="n">1</td></tr>
+      <tr><td><strong>Total</strong></td><td class="n"><strong>165</strong></td><td class="n"><strong>9</strong></td><td class="n"><strong>60</strong></td><td class="n"><strong>53</strong></td><td class="n"><strong>2</strong></td><td class="n"><strong>41</strong></td></tr>
+    </tbody>
+  </table></div>
+  <p class="src">Source: docs/FEATURE-AREAS.md, area summary, as of 2026-11-17.</p>
+
+  <h3>What the gap looks like</h3>
+  <p>The libraries are deep and the entry points are closed. Three things are true at once:</p>
+  <ul>
+    <li>No shipped path creates an organization. <code>agentic-org setup</code> refuses, and <code>host.sock</code> answers only <code>hello</code> and a status count. Organization creation is exercised from tests.</li>
+    <li>No shipped path reaches the browser. The web binary refuses to listen, and the production UI build has no backend adapter.</li>
+    <li>No code launches an agent. There are no runtime adapters, no model routing, no usage ledger and no Git operations.</li>
+  </ul>
+  <div class="note"><p><b>My reading of the dependency order.</b> The three Blocked rows chain together: HQ bootstrap (FC-012) unlocks the production browser service (FC-013), which unlocks sign-in (FC-014). Domain screens need those. Separately, the usage ledger (FC-084) gates every cost and budget row, and runtime adapters (FC-101) gate execution. This ordering is inferred from the checklist, not stated in one place.</p></div>
+</section>
+
+<section id="tensions">
+  <h2><span class="num">10</span>What was decided, and what is left</h2>
+  <p class="sec-lede">Every entry in the <a href="../design/conflict-resolution-plan.md">conflict register</a> has now been reviewed by the owner. 34 are fixed in the documents. 18 are decided and written down as requirements, with code still to change. All your answers are in; what is left is code. One rule sits above all of them: nothing has shipped, so nothing old is kept for compatibility, and where a rebuild gives the cleaner result, rebuild.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Topic</th><th>Decision</th><th>What is left</th><th>Entry</th></tr></thead>
+    <tbody>
+      <tr><td>Task numbers</td><td>Minted by the creating office, one sequence per office, with a letter: <code>T-B37</code>. Tasks only. Creating a task uses the fast acknowledgement. In the data contract.</td><td>Code.</td><td class="k">C-12</td></tr>
+      <tr><td>IDs</td><td>UUIDv7 everywhere, the published standard.</td><td>Code: most of it mints ULIDs today.</td><td class="k">B-04</td></tr>
+      <tr><td>Session view and questions</td><td>Your two requirement documents are in the repository: a read-only console built from the agent tool's conversation files (REQ-05), and structured questions rendered as choice, yes/no or free-text components (REQ-04), built with shadcn-svelte and Bits UI in the product's own chat. No external channels, no React. A default value is preselected.</td><td>Code.</td><td class="k">A-07</td></tr>
+      <tr><td>Anything from before</td><td>Dropped. The earlier command-line tool and its message queue are not carried over. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td>Nothing.</td><td class="k">D-01</td></tr>
+      <tr><td>Asking and waiting</td><td>An ask waits a bounded time. A required ask left unanswered stops the agent, after telling it, and the answer starts it again in the same session.</td><td>Code, with the agent launch path.</td><td class="k">ADR-0020</td></tr>
+      <tr><td>Storage</td><td>Rebuild the store against the selected files and tables; no migration of the old tables. Keep the database replaceable.</td><td>Code. The largest piece of v1; needs its own plan.</td><td class="k">B-01, B-13</td></tr>
+      <tr><td>Host and web</td><td>One launch contract, per-person grants instead of the app token, seven web channels, host serves work reads, stored sessions.</td><td>Code.</td><td class="k">B-06 to B-08, B-10, F-01</td></tr>
+      <tr><td>Platforms</td><td>macOS and Linux, including an office in a container.</td><td>Three short designs, then code.</td><td class="k">B-09</td></tr>
+      <tr><td>Agents</td><td>Isolation modes, a private home per agent, sign-in from the subscription pool.</td><td>A test per vendor tool, then code.</td><td class="k">F-03, A-08</td></tr>
+      <tr><td>Model shapes</td><td>Single home team, one typed task, no areas. Remove the old shapes.</td><td>Code.</td><td class="k">B-02, B-03, B-05</td></tr>
+      <tr><td>Create organization</td><td>The request carries slug, repository, state branch and, when bootstrap employees are planned, the initial team.</td><td>Code.</td><td class="k">A-09</td></tr>
+      <tr><td>Speed and encryption</td><td>Fast acknowledgement for messaging; no application-level encryption.</td><td>Code and measurement on a Mac.</td><td class="k">F-02, E-01</td></tr>
+      <tr><td>Names in code</td><td>"gateway" becomes "web" in the code too.</td><td>A mechanical rename in 83 source files.</td><td class="k">D-07</td></tr>
+    </tbody>
+  </table></div>
+  <p>Fixed in the documents with nothing left: the storage layout, HQ as authority, budget checks, relocation, hash formats, the messaging merge and its file layout, GitHub moved to v2 and the Git design rewritten, the data contract clean-ups (status lists, derived completion, one employee status, the owner marker, the instance, diagrams, the usage writer, traceability), process and standard resolution, the library table, and the old names in the documents.</p>
+</section>
+
+<section id="followups">
+  <h2><span class="num">11</span>Review follow-ups</h2>
+  <p class="sec-lede">What came out of the owner's review of this page on 2026-11-17: where each question is answered, and which ones became entries in the conflict register.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Question raised</th><th>Answered in</th><th>Register entry</th></tr></thead>
+    <tbody>
+      <tr><td>Does <code>agentic-org</code> update everything, itself included?</td><td>Part 03, install and update</td><td>None. Status tracked by FC-022 and FC-154.</td></tr>
+      <tr><td>What does keeping web sessions in memory do to the user?</td><td>Part 03, web sessions</td><td>F-01.</td></tr>
+      <tr><td><code>agent-os</code> must be extremely efficient</td><td>Part 03, agent-os targets</td><td>E-02, decided: a send relays after it answers; an ask always has a deadline.</td></tr>
+      <tr><td>Is the model profile pool covered?</td><td>Part 03, how an agent gets its model</td><td>None.</td></tr>
+      <tr><td>Say "web", not "gateway"</td><td>Changed on all three pages</td><td>D-07: documents fixed; code identifiers still to rename.</td></tr>
+      <tr><td>Processes and standards are missing as a primitive</td><td>Part 04, diagram and its own part</td><td>C-14, decided: resolution is selected for v1.</td></tr>
+      <tr><td>Project documentation and standards are missing</td><td>Part 04, project documentation</td><td>None yet. <strong>Still owed: a fuller walkthrough of how project documentation works.</strong></td></tr>
+      <tr><td>Does a team lead manage everyone under the team?</td><td>Part 04, one home team</td><td>Confirms B-02.</td></tr>
+      <tr><td>Accountable team versus who is doing the work</td><td>Part 04, two rules reworded</td><td>Confirms B-03.</td></tr>
+      <tr><td>What is a transition engine?</td><td>Part 04, its own part</td><td>C-02, fixed: task status is todo, in progress, blocked, cancelled, done; milestone and release completion is derived. Every task also has a priority (urgent, high, normal, low) and may have an effort in points.</td></tr>
+      <tr><td>Why keep task history, and in what format?</td><td>Part 05, task history and file formats</td><td>C-13, kept as designed, with a written trigger to revisit.</td></tr>
+      <tr><td>Why encrypt? Is it needed?</td><td>Part 05, encryption</td><td>E-01, reframed around this question.</td></tr>
+      <tr><td>Can numbering go to Git hourly?</td><td>Part 05: it already does</td><td>None.</td></tr>
+      <tr><td>One writer, and replacing the database later</td><td>Part 06</td><td>B-13, decided: ADR-0018.</td></tr>
+      <tr><td>Numbers for an offline office</td><td>Part 06</td><td>C-12, decided: task numbers are minted by the creating office (ADR-0019).</td></tr>
+      <tr><td>Second round: why are web sessions in memory; can we sign tokens instead?</td><td>Part 03, web sessions</td><td>F-01, decided: ADR-0013.</td></tr>
+      <tr><td>Second round: 15 ms is too slow for agent-os; target 1 to 2 ms</td><td>Part 03, agent-os speed</td><td>F-02, decided in direction: ADR-0014.</td></tr>
+      <tr><td>Second round: explain encryption; run agents as a different user; keep isolation replaceable</td><td>Part 05, encryption and running agents apart</td><td>F-03 and E-01, decided: ADR-0015 and ADR-0016.</td></tr>
+      <tr><td>Second round: why one 14,000-line store module; can it extend to PostgreSQL?</td><td>Part 06: it is split by area</td><td>B-13.</td></tr>
+      <tr><td>Third round: the 52 register notes</td><td>Part 10, and each part they touch</td><td>All entries; see the register for what was applied to each.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="handoff">
+  <h2><span class="num">12</span>How these changes reach the implementing agents</h2>
+  <p class="sec-lede">These pages are for people. Agents work from the repository. Every decision made in this review is written there in four places, so an agent that resumes work meets it whichever way it comes in.</p>
+  <div class="tbl wide"><table>
+    <thead><tr><th>Route</th><th>What an agent finds there</th></tr></thead>
+    <tbody>
+      <tr><td>Decision records</td><td>ADR-0004 and ADR-0013 to ADR-0020 in <code>docs/adr/</code>: the decision, why, and numbered acceptance criteria to build and test against.</td></tr>
+      <tr><td>Amendment notes</td><td>A dated note at the exact place in each older document where the rule changed, pointing to the new ADR. More than twenty documents carry one.</td></tr>
+      <tr><td>Feature checklist</td><td>Rows FC-159 to FC-166 in <code>docs/FEATURES.md</code>, and updated notes on the rows the decisions change. This is the list agents take work from.</td></tr>
+      <tr><td>Agent guidance</td><td>The security guidance that is attached to assignments touching credentials, storage or protocols now names the four decisions and what not to build meanwhile.</td></tr>
+      <tr><td>The plan</td><td><code>docs/design/conflict-resolution-plan.md</code> opens with a handoff section: the rules that apply to everything, the decisions in force with what each changes, and a suggested order of work.</td></tr>
+    </tbody>
+  </table></div>
+  <p>To restart the agents, point them at the handoff section of the plan. What they must not do is carry anything over from before: no migration, no import, no old names.</p>
+</section>
+
+<section id="reading">
+  <h2><span class="num">13</span>Reading map</h2>
+  <p class="sec-lede">Which document answers which question. The organization-data set wins for target data. Code wins for current behaviour. A target contract never proves that something shipped.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Question</th><th>Read</th></tr></thead>
+    <tbody>
+      <tr><td>Entities, fields, canonical files, draft SQL</td><td><code>docs/design/organization-data/</code> (README, then documents 01 to 17)</td></tr>
+      <tr><td>Which document owns a topic</td><td><code>docs/design/documentation-authority.md</code></td></tr>
+      <tr><td>Process boundaries and installation</td><td><code>standalone-server.md</code>, <code>office-host-boundary.md</code>, ADR-0005, 0008, 0009</td></tr>
+      <tr><td>Browser API (the web server's contract)</td><td><code>gateway-api-v1.md</code>, <code>rust-browser-bff-and-static-sveltekit.md</code></td></tr>
+      <tr><td>Agent execution and supervision</td><td>Documents 11 and 14, <code>agent-sessions.md</code>, <code>employee-supervision.md</code></td></tr>
+      <tr><td>Storage and durability</td><td>ADR-0002, ADR-0006, document 16</td></tr>
+      <tr><td>Offices and federation</td><td><code>offices-hq-and-satellites.md</code>, ADR-0001</td></tr>
+      <tr><td>What is implemented</td><td><code>executable-migration.md</code>, <code>docs/FEATURES.md</code>, and the source</td></tr>
+      <tr><td>Code layout and boundaries</td><td><code>docs/architecture-rules.md</code>, <code>project-structure.md</code></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer class="doc-foot">
+  Built from the repository at <code>v1-integration @ 55c7d76</code>: the organization-data contracts, ADRs 0001 to 0020, the design and UX documents, and a read of every crate and app. Implementation claims were checked against source, not run.
+</footer>
+</main>
+</div>
+</body>
+</html>

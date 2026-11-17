@@ -1,6 +1,6 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Structural draft for v1. Document revision 2.6. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Status: **selected** data contract, revision 2.8. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 
@@ -12,28 +12,30 @@ The authored tables organizations, repositories, roles, teams, offices, structur
 
 | Field | Meaning |
 | --- | --- |
-| `created_at` | Original creation time, quoted UTC timestamp; never replaced by import time |
+| `created_at` | Original creation time, quoted UTC timestamp; never replaced by a later time |
 | `created_by_kind` | `employee`, `owner`, `system` or `unknown` |
 | `created_by_id` | Stable employee ID only when creator kind is employee; otherwise null |
 | `updated_at` | Time of the latest content/metadata change |
 | `updated_by_kind` | Same actor vocabulary as creator |
 | `updated_by_id` | Stable employee ID only when updater kind is employee; otherwise null |
 
-These fields are top-level front-matter/YAML scalars matching the SQL columns. New accepted records must supply actual timestamps and known actor kinds; legacy import can preserve null times and `unknown` actors when the source lacks them. Do not fabricate provenance. The SQL projection allows those unknown import values; publication validation distinguishes new writes from legacy staging. `owner` uses the existing organization-owner designation; `system` means framework/integration automation. Neither is an employee profile. This attribution does not grant authorization or replace authentication/audit infrastructure.
+These fields are top-level front-matter/YAML scalars matching the SQL columns. Accepted records must supply actual timestamps and known actor kinds. Do not fabricate provenance. The SQL projection's columns still admit `unknown` and null; validation requires real values for every accepted write. `owner` uses the existing organization-owner designation; `system` means framework/integration automation. Neither is an employee profile. This attribution does not grant authorization or replace authentication/audit infrastructure.
 
-Updating an entity preserves creation fields, advances its revision, and updates its update fields. Nested arrays/association rows inherit the owning entity's update metadata; comments keep their own existing author/time fields. Tombstones retain original record provenance in a YAML `record_metadata` map together with deleted-record identity. SQLite projects that map as `record_metadata_json`, serialized as an object with lexically sorted keys; a missing map defaults to `{}` for legacy imports. These common fields describe current attribution. Tasks additionally retain the immutable activity history defined in [operational data](05-operational-data.md#task-activity-history); full organization-wide event history remains unselected.
+Updating an entity preserves creation fields, advances its revision, and updates its update fields. Nested arrays/association rows inherit the owning entity's update metadata; comments keep their own existing author/time fields. Tombstones retain original record provenance in a YAML `record_metadata` map together with deleted-record identity. SQLite projects that map as `record_metadata_json`, serialized as an object with lexically sorted keys; a missing map defaults to `{}`. These common fields describe current attribution. Tasks additionally retain the immutable activity history defined in [operational data](05-operational-data.md#task-activity-history); full organization-wide event history remains unselected.
 
-For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/originator and is never overwritten by assignment, triage or closure. The service derives it from the admitted actor, as v1 does; callers cannot claim another reporter through a normal create command. Current responsibility is the explicit nullable pair `assigned_team_id`/`assignee_id`, independent of owning `team_id`. Reassigning either records the old and new pair, actor and time atomically. A fix/closure event records who reported that transition; it does not prove that actor performed all the work or replace recorded usage contributors.
+For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/originator and is never overwritten by assignment, triage or closure. The service derives it from the admitted actor, as the code does today; callers cannot claim another reporter through a normal create command. Current responsibility is the explicit nullable pair `assigned_team_id`/`assignee_id`, independent of owning `team_id`. Reassigning either records the old and new pair, actor and time atomically. A fix/closure event records who reported that transition; it does not prove that actor performed all the work or replace recorded usage contributors.
 
 ## Lifecycle data
 
 | Record | Fields / states |
 | --- | --- |
 | Team | `status: active | archived` (default active) |
-| Employee | `status: active | inactive` (default active) |
+| Employee | `status: active | paused | inactive` (default active); `paused` for agents only |
 | Supporting document or process/standard content | `status: draft | current | deprecated` (default draft) |
 | Project | Existing `archived: false | true` |
-| Feature/task/release/milestone | Existing status fields; this change does not port their v1 transition engines |
+| Task | `status: todo | in_progress | blocked | cancelled | done`, set by an authorized actor; `done` or `cancelled` is finished; no transition engine. `priority: urgent | high | normal | low`; optional `effort`, a whole number of points |
+| Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
+| Milestone, release | No stored status; done is derived from task status (document 02) |
 
 Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; import/publication checks this without erasing historical rows. Existing current documents and live features retain their recorded owners until explicitly reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
 
@@ -61,10 +63,10 @@ The `entity_relationships` view presents both authored and derived relationships
 
 ```yaml
 links:
-  - id: 01J00000000000000000000095
+  - id: 01930000-0000-7000-8000-000000000095
     kind: depends_on
     target_kind: task
-    target_id: 01J00000000000000000000041
+    target_id: 01930000-0000-7000-8000-000000000041
 ```
 
 ## Relationships
@@ -101,6 +103,26 @@ erDiagram
 | --- | --- |
 | `links` | Source entity's `links[]`, with IDs and fields above. |
 | `entity_relationships` (view) | Derived from links, task feature membership and supporting-document scope; no authored file. |
+
+## Hash codec registry
+
+Several contracts store a SHA-256 over canonical content. They do not all canonicalize the same way, on purpose: each form is frozen with the records already written in it. This registry lists those forms. The owning document keeps the field list (what is hashed); this section owns the set of forms (how bytes are produced).
+
+| Codec ID | Canonical form | Defined in | Used for |
+| --- | --- | --- | --- |
+| `canonical-json/2` | Task-event codec 2: keys sorted by Unicode scalar order, compact UTF-8, exact original number tokens, duplicate decoded keys rejected. Exactly one top-level field is omitted: the record's own checksum field, named by the owning document (`payload_sha256` for task events, `envelope_sha256` for document 11 journal envelopes, whose `payload_sha256` is hashed as content) | [Document 05](05-operational-data.md#task-event-codec) | Task events; assignment fingerprint version 1 ([12](12-task-assignment-and-history.md)); work-acceptance journal envelope digests ([16](16-recovery-and-office-continuity.md)); execution command and supervisor-journal digests ([11](11-model-profiles-and-agent-execution.md)) |
+| `sorted-compact-json/1` | UTF-8 JSON, lexically sorted keys, compact separators, no ASCII escaping, nullable fields expanded, checksum field omitted | [Document 10](10-usage-and-cost-accounting.md#durable-storage-and-multi-office-recovery) | Usage event `payload_sha256` |
+| `jcs-rfc8785/1` | RFC 8785 canonical JSON over the listed immutable message columns | [Document 15](15-messaging-and-chat.md#storage-and-durability) | Message `content_sha256` |
+| `raw-bytes/1` | The exact stored bytes, no canonicalization | This section | Content-addressed files: message attachments, `work-history/blobs/sha256/`, recovery snapshot and result content |
+
+
+Rules that keep this extensible:
+
+1. **One codec per stored hash, known without guessing.** The record's `schema_version` selects the codec. A verifier never tries codecs in turn until one matches.
+2. **Additive only.** A new canonical form gets a new codec ID and a new `schema_version` on the records that use it. Existing bytes and hashes are never re-encoded, recomputed or renamed.
+3. **New record families reuse a registered codec.** The default for new JSON records is `canonical-json/2`: it is specified to the byte, keeps integer amounts and ordinals as exact tokens instead of floating-point numbers, and already has an implementation. Introducing another form needs a row here first.
+4. **SHA-256 throughout, lowercase hexadecimal, 64 characters.** A different algorithm is a new codec ID, not a parameter.
+5. **Shared test vectors.** Each codec has fixed input/output vectors that every implementation, in any language, must reproduce. A verification failure fails closed; it never falls back to another codec.
 
 ## SQLite tables and views
 

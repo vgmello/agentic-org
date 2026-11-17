@@ -155,7 +155,7 @@ pub struct Established {
     pub proof: org_proto::gateway::SessionProof,
     pub cookie: Zeroizing<String>,
 }
-/// The single protected-auth failure shape (gateway-api-v1 §4): 401
+/// The single protected-auth failure shape (web-api-v1 §4): 401
 /// `not_authorized` with `session_reason: session_ended`. Unknown login, wrong
 /// password, a missing/mismatched pair and an ended session are indistinguishable.
 fn denied() -> ApiReply {
@@ -588,7 +588,7 @@ impl BrowserSessions {
         self.view(&ticket.session)
     }
     /// Sign-out succeeds once the browser pair is invalid locally; the host end
-    /// that follows cannot keep a signed-out pair usable (gateway-api-v1 §4).
+    /// that follows cannot keep a signed-out pair usable (web-api-v1 §4).
     pub fn sign_out(&self, ticket: Ticket) -> Result<(), ApiReply> {
         self.current(&ticket)?;
         self.begin_sign_out(ticket)?.end();
@@ -759,7 +759,7 @@ impl BrowserSessions {
     }
 }
 
-/// `Set-Cookie` for the browser pair's cookie half (gateway-api-v1 §4): HttpOnly,
+/// `Set-Cookie` for the browser pair's cookie half (web-api-v1 §4): HttpOnly,
 /// SameSite=Strict, Path=/api/v1, never a Domain, and Secure whenever the
 /// configured origin is HTTPS. `clear` expires the cookie with the same scope.
 fn set_cookie(name: &str, value: &str, secure: bool, clear: bool) -> Zeroizing<String> {

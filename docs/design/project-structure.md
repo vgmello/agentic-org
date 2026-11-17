@@ -93,7 +93,7 @@ crates/
         resolve_effective.rs         # Deferred target engine, not selected structural data
         publish_revision.rs
       policy.rs                      # Office integration; pure rules in org-process
-    store/                           # Private SQLCipher/transaction adapters
+    store/                           # Private storage adapters (the only place that knows the engine, ADR-0018)
     office.rs                        # Office lifecycle and public facade
 
   org-work/src/
@@ -126,13 +126,14 @@ crates/
   org-supervise/                    # OS process ownership and cleanup
   org-sync/                         # Replication library; target source adaptation pending
   org-sync-proto/                   # Versioned sync contracts
+  org-pki/                          # Recovery-code escrow envelope; used by the office worker
+  org-release/                      # Release manifest verification; used by org-host
   # Planned components, absent from this revision:
   org-git/                          # Local Git adapter
   org-office-sessions/              # Office session coordination
   org-runtime-claude/               # Harness adapters behind org-runtime
   org-runtime-codex/
   org-runtime-agy/
-  org-pki/
   # Deferred v2 integration, not a standalone-v1 dependency:
   org-github/
 
@@ -160,7 +161,7 @@ deduplication, outbox writes, and sequence allocation atomic as their designs re
 Source dependencies point from adapters/composition toward policies and contracts:
 
 ```text
-instance gateway -> typed authorized host/office client operations
+web process -> typed authorized host/office client operations
 per-office server -> public use-case APIs / selected runtime and sync adapters
 office storage implementations -> work and messaging ports
 work and messaging -> their required protocol vocabulary
@@ -172,10 +173,27 @@ The standalone design chooses one `agentic-org-web` process per instance for bro
 HTTP/TLS, routing all authorized HQ organizations on the same listener. The host
 keeps office keys/catalog provisioning; each `agentic-org-office` remains one office worker.
 Create organization requires instance-admin authority, not just organization
-ownership. Keep gateway endpoint code focused on principal authorization, decoding,
+ownership. Keep web endpoint code focused on principal authorization, decoding,
 typed public operations and result mapping; never return an office key to it. A small HTTP adapter crate remains an option
 when its dependency boundary or actual callers justify extraction. Do not depend on
 one runnable application's library from another to assemble the service.
+
+### Libraries that are built but not yet reached
+
+Owner request 2026-11-17 (conflict plan entry B-11): say what each one is for, whether
+to continue it, and when. "Reached" means a person or agent can exercise it through a
+running executable.
+
+| Library | Purpose | Reached today | Decision | Work continues when |
+| --- | --- | --- | --- | --- |
+| `org-process` | Parses process and standard documents and computes the effective set for a piece of work | No. Nothing depends on it. | **Continue.** Resolution is now selected (processes design, decision 4). Simplify it to the one-chain rule first. | With the agent launch path: the office calls it to build the agent's instructions (FC-110, FC-112). |
+| `org-copilot` | Bounded draft-only helper: proposes text for a person to accept | No. Nothing depends on it. | **Parked.** Keep compiling and tested; add nothing. | After a vendor runtime adapter exists (FC-101), since it needs a model to call. |
+| `org-release` | Verifies a signed release manifest and its files | Linked into `org-host`; no setup or update command calls it yet. | **Continue.** | With `agentic-org setup` and update (FC-010, FC-011). |
+| `org-pki` | Seals and recovers the office CA key with the recovery code | Linked into the office worker; reachable only through HQ creation, which setup does not start yet. | **Continue.** Also gains the office-secrets-key wrapping of ADR-0016. | With HQ creation through setup (FC-016, FC-162). |
+| `org-sync`, `org-sync-proto` | Replication of organization changes between HQ and satellite offices | Linked into the office; no satellite can be enrolled. | **Parked until the storage move.** Its source adapter must read the canonical files, not the legacy tables (B-01). | After the store reads and writes the selected files; then satellite enrolment. |
+| `org-runtime`, `org-supervise` | The contract for vendor runtimes, and process start, stop and cleanup | Linked into the office worker; no agent is launched. | **Continue.** This is the next foundation for running agents. | With the first vendor adapter and the launch path (FC-101), using the isolation modes of ADR-0015. |
+| `org-host` `hostdb` | The host's accounts, sessions and office registry storage | Compiled; marked unused outside tests. | **Continue.** | With stored browser sessions and setup (FC-159, FC-010). |
+| `org-spool` | Offline queue for the agent CLI when the office is not running | Yes, through `agent-os`. | **Review when the agent CLI changes.** The session mode of ADR-0014 may make it unnecessary. | When the agent CLI moves to session mode (FC-160). |
 
 ## 4. Proposed Svelte/TypeScript layout
 
@@ -293,7 +311,7 @@ stop pending until acknowledged, as the employee and session designs require; re
 | --- | --- | --- |
 | 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
 | 2. Application naming | Rename retained browser sources to `apps/agentic-org-ui`; rename server app/package/binary to `apps/agentic-org-office` / `agentic-org-office`; use distinct `agentic-org` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
-| 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve public compatibility where retained, visibility, transactions, invariants, and acyclic source direction |
+| 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve visibility, transactions, invariants, and acyclic source direction |
 | 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
 | 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |
 | 6. Runtime/federation acceptance | Implement the planned session/harness/sync capabilities according to their designs | Run platform, isolation, reconnect, durability, and cleanup evidence required by PR #5 |

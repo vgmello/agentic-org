@@ -3,7 +3,7 @@ kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
 revision: 9
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-09"
 updated: "2026-11-15"
 requested_by: owner
@@ -24,7 +24,7 @@ and unlink behavior is unchanged; editable pages still keep text on reauthentica
 wizard inputs, storage/runtime boundaries and bootstrap readiness; adds SRV-35–41
 for remote organization Git, valid home teams, target execution, protected-source
 restore and budget/chat privacy. Existing account, accessibility, recovery-delivery
-and failure criteria remain. Old wire/launch codecs require versioned adaptation;
+and failure criteria remain. The wire/launch codecs in the code change in place;
 setup, services and production browser startup remain unavailable. Offline setup
 validates required remote registration locally with zero external requests and
 reports remote connectivity/publication unverified until authorized online. Earlier revision
@@ -178,6 +178,15 @@ cannot create competing identities.
 
 ## 2. Wizard and automation
 
+> **Amended 2026-11-17.** Setup gains two steps. Under
+> [ADR-0015](../adr/0015-agent-isolation-modes.md) it offers the agent isolation mode
+> and, for `dedicated-user`, performs one administrator step that creates the agent
+> account and installs its launcher; without administrator rights it continues in
+> `same-user` and says so. Under
+> [ADR-0016](../adr/0016-no-application-level-data-encryption.md) it reports whether
+> operating-system disk encryption is on and which file permissions it set, because
+> organization data is no longer encrypted by the application.
+
 For a new instance the wizard establishes, in order:
 
 1. Instance name and data location, using platform defaults unless explicitly set.
@@ -192,7 +201,7 @@ For a new instance the wizard establishes, in order:
    the valid home team required for each bootstrap employee, including HR and any optional owner-person profile. The initial team's
    name/lead is not inferred. No create-or-join selector, invitation input, satellite
    role or --hq join option is present; later HQ-issued enrollment is separate.
-3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
+3. HQ instance-admin/owner access, web listening/TLS configuration, and protected
    CA escrow/recovery-code provisioning (setup offers the code once the HQ is
    created, before step 5 starts the service, as in X-02 §6.2; collecting it and
    acknowledging its off-HQ retention can be deferred: §4a.2, A94).
@@ -224,12 +233,12 @@ Before-login macOS execution is outside this v1 default.
 
 ## 3. Files, identity and tools
 
-The instance resolves configured organization data and protected operational roots;
+The instance resolves the configured organization data root, with protected sources under `durable/` and caches under `runtime/<office-id>/`;
 executables live separately. Organization Git is remote and its latest content is
 mirrored as ordinary durable files. `organization.yaml` stores stable ID, slug,
 name, repository ID and state branch. Team/employee/project/task paths use stable
-IDs. New IDs use UUIDv7; existing IDs and current operation-ID codecs are preserved.
-Readable task references are scoped T- for every type, never implicit B-/REQ-
+IDs. IDs use UUIDv7.
+Readable task references are office-minted T- for every type, never implicit B-/REQ-
 renames. [The storage tree](../design/standalone-server.md#3-instance-selection-and-storage)
 defines durable state, authority, journal, usage archive, bindings and checkpoints
 separately from runtime office projections, one cache per office/repository, and
@@ -787,7 +796,7 @@ A note above the form says why the visitor is here, when the page knows:
 | Arrived because | Note |
 | --- | --- |
 | They signed out | "You signed out." |
-| HQ restarted (when HQ says so, A84) | "HQ restarted, so everyone was signed out. Sign in again." |
+| HQ restarted (when HQ says so, A84). *No longer occurs under ADR-0013.* | "HQ restarted, so everyone was signed out. Sign in again." |
 | Their session ended for any other reason, or the reason is unknown | "Your session ended. Sign in again." |
 
 When HQ is stopped, the browser can't load this page at all and shows its own
@@ -795,11 +804,15 @@ error. The table covers a page that loaded and then can't reach HQ.
 
 ### 4a.4 Session end, signing in again, and sign out
 
+> **Amended by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17).** A
+> restart or update of the service no longer signs people out. The "session ended"
+> states below still apply to sign-out, expiry, password change and removed access.
+
 **When a session ends.** It expires (A83), the account's password is changed or
 reset *(rev 5: X-02 §4.1, §6.2; A85 resolved)*, the account is unlinked from
 an organization or revoked (`agentic-org account unlink` or `revoke`, §4a.2;
 X-02 §4.1) *(review of 0802754)*, or HQ
-restarts, if the gateway ends sessions when its listener stops (the plan's
+restarts, if the web process ends sessions when its listener stops (the plan's
 starting point; not yet decided in `standalone-server.md` §6, A84). Signing out
 in another tab is different: every tab goes to the sign-in page (Sign out, below). A missing session proof (cleared site
 data, a private window) counts as an ended session.
@@ -961,7 +974,7 @@ lost. Under O-2 the host generates the code, the worker creates the authority an
 the encrypted package, and the host keeps the code until it is collected with
 `agentic-org recovery release` on the HQ machine. This is the same for every
 organization: the first one from setup, and each one created in the browser.
-**The code never passes through the gateway or the browser.** It shows only its
+**The code never passes through the web process or the browser.** It shows only its
 state.
 
 **Who can show the code** *(rev 5, X-02 §6.2, §6.4)*. Only an **instance admin**,
@@ -1254,7 +1267,7 @@ Inviting people to sign in, account screens in the browser, password change or
 reset in the browser, sign-in with another provider, two-step sign-in, showing
 the recovery code in the browser, and recovering after losing HQ (REC-1).
 
-### 4a.9 Open questions for ada
+### 4a.9 Open questions for the lead
 
 - ~~A80~~ · *Resolved (Rowan, X-02 §6.2 and §6.4, approved by ada; rev 5):* the
   recovery command is `agentic-org recovery release --org <organization>`, with
@@ -1273,6 +1286,7 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
 - A83 · Session lifetime: idle and absolute expiry, whether activity extends it,
   and whether an idle expiry should also hide what the page shows (§4a.4 keeps
   the page visible).
+- **A84 is answered by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17): a restart does not end browser sessions.** The original question follows for the record.
 - A84 · Does an HQ restart end every session (the plan's starting point for B1-06),
   or do sessions survive it? When HQ refuses a request because the session ended,
   does it say why (expired, signed out, HQ restarted, password changed, and,
@@ -1389,25 +1403,25 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-22 · The retained browser application's source/package is `apps/agentic-org-ui` / `agentic-org-ui`; worker source/package/executable are apps/agentic-org-office / agentic-org-office. Browser server and agent CLI use apps/agentic-org-web / agentic-org-web and apps/agent-os / agent-os; host library crates/org-host is composed by agentic-org serve. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
 - SRV-23 · Default/lab and a hostile same-host port cannot authenticate, read, mutate, stream, refresh, recover a proof or logout another origin using a copied/overwritten cookie alone. Every protected path requires the valid instance/origin-bound cookie+proof pair; proofs never enter URLs/logs/redirects.
-- SRV-24 · Two HQ organizations share one instance gateway listener. The gateway has no office DB key/key entitlement; the host retains provisioning/private launch. Instance-admin creation succeeds; organization-owner-only, employee and office-certificate callers cannot create organizations.
+- SRV-24 · Two HQ organizations share one web process listener. The web process has no office DB key/key entitlement; the host retains provisioning/private launch. Instance-admin creation succeeds; organization-owner-only, employee and office-certificate callers cannot create organizations.
 - SRV-25 · HQ creation idempotently provisions versioned encrypted CA escrow, protected one-time recovery-code delivery and off-HQ retention acknowledgement. A fixture recovers the same CA identity with the code and refuses wrong-code/damaged escrow; no code/usable CA key is replicated or logged. REC-1 remains an explicit production-recovery release decision.
-- SRV-26 · *(rev 5)* No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user is not claimed in v1.0; a dedicated OS user per instance is a Wave C hardened mode. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; gateway/CLI helpers cannot obtain raw office keys through any interface the product provides.
+- SRV-26 · *(rev 5)* No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user is not claimed in v1.0; a dedicated OS user per instance is a Wave C hardened mode. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; web/CLI helpers cannot obtain raw office keys through any interface the product provides.
 - SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
 - SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. Known-offline new goals are rejected without a write/queue; uncertain forwarded replies follow EMP-3.
-- SRV-29 · All create/update home overrides, including home/clear_home, absolute paths and traversal, are rejected before filesystem access. Launch cwd derives from managed IDs and the actual selected office/employee/task/repository workspace. Current legacy paths remain explicit until the separately verified target sandbox migration; response paths stay read-only under PROF-4.
+- SRV-29 · All create/update home overrides, including home/clear_home, absolute paths and traversal, are rejected before filesystem access. Launch cwd derives from managed IDs and the actual selected office/employee/task/repository workspace. The code's current paths remain explicit until the target sandbox layout is separately verified; response paths stay read-only under PROF-4.
 - SRV-30 · Add agent record follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision an employee, home or messaging binding before approval. The explicit built-in bootstrap exception still requires valid home-team references and separate execution readiness; it cannot create a teamless runnable HR employee.
-- SRV-31 · A fixture-based live Phase A cutover preserves unresolved asks/replies, deadlines and read/triage state across interruption/retry. Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Fresh organizations need no spool import.
-- SRV-32 · The first standalone local API negotiates version 2 and rejects unsupported peers before dispatch; version-1 statements remain historical/additive. HTTP/launch/sync version spaces are independent. Cargo package agentic-org at apps/agentic-org owns the CLI, including setup dispatch; no separate setup package exists, and the retired Tauri member cannot overwrite the staged CLI artifact.
+- SRV-31 · Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Nothing is imported from the earlier coordination tool's message queue.
+- SRV-32 · The local API is version 1, changes in place until v1 ships and rejects unsupported peers before dispatch. HTTP/launch/sync version spaces are independent. Cargo package agentic-org at apps/agentic-org owns the CLI, including setup dispatch; no separate setup package exists, and the retired Tauri member cannot overwrite the staged CLI artifact.
 
 - SRV-33 · Initial HQ setup automatically verifies components and registers/starts one service. No install/service-install prerequisite or create-or-join question appears. Repeating/resuming setup preserves the same HQ and service. Satellite input in unattended initial configuration is refused before provisioning; an existing satellite is never converted into HQ.
 - SRV-34 · setup --bundle <path> --offline verifies a complete local HQ release without any external request or enrollment, including repository fetch/auth probes, provider/model probes and update checks. Validate the mandatory remote organization URL/state branch and local credential references/configuration locally; retain them as remote, with connectivity/publication readiness unverified or pending until online operation is authorized. Background jobs honor offline policy. Untrusted/incomplete bundles and missing local platform prerequisites fail explicitly without fetching. HQ readiness does not assert remote or agent-provider readiness. Missing service-manager support reports foreground serve instructions.
-- SRV-35 · Setup/create persists explicit organization slug, remote repository registration and state branch; rejects local-only organization Git, invalid/duplicate slug, invalid/missing branch and invalid local credential references/configuration with actionable safe errors. Offline setup validates these locally without contacting the repository, and reports remote connectivity/publication unverified or pending. Authorized online validation/publication reports remote credential/connectivity failures separately without fabricating readiness or recreating HQ. Lost replies/repeated setup preserve the same plan/IDs; additional target fields require a reviewed wire/launch adapter, not guessed fields in existing DTOs.
+- SRV-35 · Setup/create persists explicit organization slug, remote repository registration and state branch; rejects local-only organization Git, invalid/duplicate slug, invalid/missing branch and invalid local credential references/configuration with actionable safe errors. Offline setup validates these locally without contacting the repository, and reports remote connectivity/publication unverified or pending. Authorized online validation/publication reports remote credential/connectivity failures separately without fabricating readiness or recreating HQ. Lost replies/repeated setup preserve the same plan/IDs; additional target fields require a reviewed wire/launch contract change, not guessed fields in existing DTOs.
 - SRV-36 · Every committed bootstrap employee has one valid home team, including HR and an optional owner-person; team lead is a direct member. Owner authentication/admin rights remain independent from profile flags. Missing team blocks bootstrap completion without selecting an invented HR team.
 - SRV-37 · Agent identity is independent from execution profile/model, connection order, credentials and placement. Missing config, stale entitlement/auth, absent shared permit or unverified prior cleanup produces explicit not-ready/recovery-required state. Restart does not launch a duplicate process or allocate replacement placement authority from a cache.
 - SRV-38 · A disposable projection rebuild reproduces acknowledged domain/receipt/stream/allocation state from verified Git plus protected sources. Missing/corrupt source, wrong identity/hash/epoch or old high-water fails explicitly; unknown commands are reconciled before retry. Legitimate keys remain necessary; no fabricated usage, receipt, budget capacity or authority.
-- SRV-39 · Restore/import preserves protected chat visibility and original source hashes/codecs. Mixed-recipient directed-thread bodies, counts, previews, attachments and search do not leak across recipients; shared projection access never grants author-private note access or reveals note existence in shared receipts.
+- SRV-39 · Restore preserves protected chat visibility. Message bodies, counts, previews, attachments and search do not leak to anyone outside a message's audience; shared projection access never grants author-private note access or reveals note existence in shared receipts.
 - SRV-40 · Budget policy revisions, one-time extensions, notices and independent manual/security/budget holds survive restart/rebuild. Stop pending remains distinct from acknowledged held; releasing one reason never releases another. Release caps warn only; incomplete usage and cost/amount access scopes (including only the own-agent CLI exception) remain explicit. Runtime evaluation/pausing is unavailable until implemented.
-- SRV-41 · Target runtime path migration proves sandbox denies, one office/repository cache, association-specific integration branch and retained worktrees/checkpoints across handoff/placement change. Deletion cannot erase sole acknowledged protected sources, private stores, live spool or local-only/unpushed code recovery.
+- SRV-41 · The target runtime path layout proves sandbox denies, one office/repository cache, association-specific integration branch and retained worktrees/checkpoints across handoff/placement change. Deletion cannot erase sole acknowledged protected sources, private stores or local-only/unpushed code recovery.
 
 
 **Sign in, session and first access (SIGN)** *(new, rev 4, §4a)*
@@ -1427,7 +1441,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-14 · *(rev 5)* With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other, and the other stays on its page with its text, except when its page belongs to an organization the account no longer owns (SIGN-43).
 - SIGN-15 · *(rev 9)* On a page without editable fields, Not now closes the dialog and shows "You're signed out." with Sign in. On an editable page it shows "You're signed out. Text you haven't saved is still here…" with Sign in (after an unlink from that page's organization, SIGN-43's bar instead); the page sends no changes while signed out.
 - SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
-- SIGN-17 · When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
+- SIGN-17 · *(Superseded by [ADR-0013](../adr/0013-stored-browser-sessions.md): an HQ restart no longer ends a browser session, so the restart-specific dialog is not shown. The rest applies when the host ends a session for another reason.)* When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
 - SIGN-18 · The account menu in the top bar shows "Signed in as <username>", "Instance admin" only for an account with the grant, and Sign out. It has no password or account form.
 - SIGN-19 · Sign out with text that isn't saved asks "Sign out? Text you haven't saved in any open tab of this HQ will be lost." first. Stay keeps the page.
 - SIGN-20 · Sign out ends the session at HQ: every open tab of that HQ shows the sign-in page with "You signed out.", Back shows no organization data, and a session in another browser still works.
@@ -1456,7 +1470,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-43 · *(rev 9; originally rev 5, reviewed in rev 6)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, the next sign-in from any tab of this HQ, from the "Sign in again" dialog or from a page showing the Not now bar, succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. Focus is on the organization list's heading (or the no-organization page's), and "You no longer own <organization>." is announced through the polite live region. Every other open tab of this HQ on a page of an organization the account no longer owns also opens the organization list with that line, and keeps none of its text, even a tab that chose Not now; tabs on organizations it still owns behave as SIGN-14 says. The dialog shows "You no longer own <organization>, so you were signed out." and warns that signing in, here or in another tab, loses that page's unsaved text only when HQ gives that reason (A84), and after Not now its bar reads "You're signed out. Text you haven't saved here is lost when you sign in, here or in another tab: copy it first."; otherwise it shows its usual copy. On a page without editable fields, omit the unsaved-text sentence and use the simple signed-out bar defined in §4a.4. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
-- RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
+- RCV-1 · The recovery code never passes through the web process or reaches the browser: a fixture code appears in no web request or response, HTTP response, event, page, notice or copied text.
 - RCV-2 · *(rev 5)* While the code is waiting, the organization's owner sees the notice on every page of that organization, with `agentic-org recovery release --org '<organization>'` and Copy command, and no close button. Other accounts don't see it.
 - RCV-3 · While the code is waiting, Needs you shows "Collect the recovery code for <organization> on <HQ machine>.", and the item opens the Recovery row. Without Needs you, the notice and the row still show.
 - RCV-4 · *(rev 5)* The Recovery row in Settings › Organization shows the exact copy for each state: being prepared, waiting to be collected, shown but not confirmed, collected on <date>, couldn't be prepared with its reason, and status unknown.

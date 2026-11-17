@@ -1,6 +1,12 @@
 # GW-01: browser gateway sessions on the native host boundary
 
-- Status: ACTIVE (revision 3, architecture READY 2026-11-17 after focused recheck; r2 D1 clause superseded)
+- Status: PARTLY SUPERSEDED (revision 3, architecture READY 2026-11-17 after focused recheck; r2 D1 clause superseded)
+- Superseded in part (2026-11-17, owner architecture review, origin `af79d274`): [ADR-0013](../../docs/adr/0013-stored-browser-sessions.md)
+  replaces premise P-1 (in-memory pair to host-session mapping) and the session lifetime rules: browser sessions become stored host
+  records that survive web and host restarts, with a total and per-account cap instead of the per-connection cap (FC-159, Track A).
+  Still in force: host supervision and admission of the web process, the sandbox-verified handoff, the release/bundle guards and the
+  browser cookie/proof contract (ADR-0013 decision 2). Integrated with open items: final review 13 B1/B2 (start-eligibility tests
+  for an Active HQ without authentication and for a non-Active HQ) and web fix `85f9adf8` without an independent review.
 - Scope: F4 in `.agent-kit/tasks/v1-incremental-delivery.md`; contract `.agent-kit/tasks/v1-f4-gateway-sessions-contract.md`.
   Request: continue toward the complete v1 delivery (user, 2026-11-17).
 - Architecture owner: Claude lead (hybrid profile, Opus).
@@ -11,13 +17,13 @@
 ## Intent and premises
 
 The outcome is a real host-supervised `agentic-org-web` process serving version plus session
-sign-in/GET/refresh/sign-out (gateway-api-v1 §2 rows 1-5, §4). It is internal until U1 adds the built UI.
+sign-in/GET/refresh/sign-out (web-api-v1 §2 rows 1-5, §4). It is internal until U1 adds the built UI.
 Non-negotiable: §4 cookie/proof/origin rules, host-owned authority, no task-service import, no unsigned
 production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these belongs to the owner via the spec.
 
 | ID | Claim (kind) | Source | State | Consequence / recheck |
 | --- | --- | --- | --- | --- |
-| P-1 | The gateway holds only an in-memory pair→host-session mapping; the host owns accounts/expiry/revocation (requirement) | gateway-api-v1.md §4 | VERIFIED (spec) | Design core |
+| P-1 | The gateway holds only an in-memory pair→host-session mapping; the host owns accounts/expiry/revocation (requirement) | web-api-v1.md §4 | VERIFIED (spec) | Design core |
 | P-2 | Host control ops AccountVerify/SessionRenew/Inspect/End/Grant and org_proto gateway session views exist unchanged at HEAD (fact) | closure-inventory-1 §absent; org-proto/src/gateway/session.rs:148 | VERIFIED by read-only inventory (Opus Explore) | If changed: adapt web to HEAD types, never revert host |
 | P-3 | HEAD channel structures (ChannelSlot, MAX_GATEWAY_CHANNELS, receipt map) are newer than the reservoir and must be kept (fact) | closure-inventory-1; native-host-boundary N5 | VERIFIED (diff direction) | Taking reservoir bytes would regress CH-LIFE-1r2 |
 | P-4 | Missing host closure: GatewayConnection (~40 lines), Service::gateway_ready, gateway.rs supervisor, lib composition, gateway_binding (+8), require_build_trust (+3). GATEWAY_SIGNING_ID exists (server_check.rs:44); ServerCheck::Gateway and gateway_for_build exist but are #[cfg(test)] (server_check.rs:60-61,110-111): ungate, not import (fact) | closure-inventory-1 + r1 review F4, lead-verified | VERIFIED for presence; compile closure UNVERIFIED | Early compile is the first checkpoint |
@@ -79,7 +85,7 @@ production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these be
   ARCHITECTURE, base e5152b4e: CHANGES_REQUIRED, F1-F8 (P1: proof derivation, U1 office-channel claim; P2: channel-budget
   consumer, stale P-4, dependency edges, zero-test risk/Secure; P3: gateway_ready condition, sign-in limits). The first
   reviewer attempt hit its 16-turn limit with no report. The lead verified F1 (reservoir sessions.rs:97-200, independent
-  draws with an HMAC digest), F2 (gateway-api-v1.md:57) and F4 (server_check.rs:44,60,110). All findings are resolved in r2.
+  draws with an HMAC digest), F2 (web-api-v1.md:57) and F4 (server_check.rs:44,60,110). All findings are resolved in r2.
   Still UNVERIFIED and checked at the writer's CHECKPOINT C: P-5 separability, HEAD control-EOF ending all sessions, and
   whether `session.renew` permits an atomic pair swap.
 - r2: fresh Opus High focused recheck (claude-opus-5-5): READY. F1-F8 RESOLVED; no new blocking issues. Conditions applied by the lead:

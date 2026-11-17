@@ -1,6 +1,6 @@
 # Release deployment records
 
-Structural draft for v1. Document revision 2.6. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
+Status: **selected** data contract, revision 2.6. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
 
 ## Relationships
 
@@ -18,8 +18,8 @@ erDiagram
         INTEGER revision "required"
         TEXT project_id FK "required"
         TEXT release_id FK "required"
-        TEXT environment FK "required"
-        TEXT target FK "required"
+        TEXT environment "required, free text"
+        TEXT target "required, free text"
         TEXT operation "required"
         TEXT rollback_of_id FK "optional"
         TEXT baseline_deployment_id FK "optional"
@@ -68,10 +68,10 @@ projects/<project-id>/releases/<release-id>/
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000090
+id: 01930000-0000-7000-8000-000000000090
 revision: 1
-project_id: 01J00000000000000000000010
-release_id: 01J00000000000000000000032
+project_id: 01930000-0000-7000-8000-000000000010
+release_id: 01930000-0000-7000-8000-000000000032
 environment: production
 target: primary
 operation: deploy
@@ -82,12 +82,12 @@ finished_at: "2026-11-14T11:03:00Z"
 external_url: https://example.com/jobs/deploy-90
 created_at: "2026-11-14T10:59:00Z"
 created_by_kind: employee
-created_by_id: 01J00000000000000000000030
+created_by_id: 01930000-0000-7000-8000-000000000030
 updated_at: "2026-11-14T11:03:00Z"
 updated_by_kind: employee
-updated_by_id: 01J00000000000000000000030
+updated_by_id: 01930000-0000-7000-8000-000000000030
 repository_commits:
-  01J00000000000000000000002: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  01930000-0000-7000-8000-000000000002: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ---
 Reservations release R-3 deployed to production/primary. Validation passed.
 ```

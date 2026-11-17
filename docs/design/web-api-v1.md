@@ -1,6 +1,6 @@
 # Web HTTP API v1
 
-Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. gateway in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
+Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. `gateway` in existing module names (`org_proto::gateway`), fixtures and wire fields is the code's current spelling of that contract namespace, not another executable; renaming it to web is decided and still to do (conflict plan entry D-07). This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
 
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
@@ -8,13 +8,13 @@ Owner naming amendment (2026-11-15): the target browser executable is agentic-or
 Wire `api_version: 1`, `contract_revision: 2`. The core follows design revision 2;
 the organization mutation codec in §9 follows Rowan's approved design revision 3.
 Both were agreed 2026-11-10 by Rowan (technical lead) and ada. This publishes types and shared
-conformance fixtures before the gateway implementation; it does not advertise
+conformance fixtures before the web process implementation; it does not advertise
 runtime availability. Basis: `standalone-server.md` §5–6 and approved X-02 rev13
 (see `office-host-boundary.md` §3 for its agents-repository location).
 
 ## 1. Scope and placement
 
-Publish the first `/api/v1` contract before gateway implementation (B1-05/06).
+Publish the first `/api/v1` contract before web implementation (B1-05/06).
 Cover version/capabilities, browser authentication, instance/organization/office
 status, operation outcomes/lookup, and multiplexed feeds. Later typed domain
 operations extend it before their screens connect. Section 9 adds their codec;
@@ -23,7 +23,7 @@ HTTP composition and enablement remain separate. This is not a JSON-RPC tunnel.
 Approved placement: `org_proto::gateway` owns transport-neutral browser wire DTOs;
 `crates/org-proto/test-vectors/v2/gateway-*.json` owns the core shared examples;
 `test-vectors/v2/gateway/` owns organization mutation and encoding-guard vectors.
-`org-host-control` remains private to host/gateway/setup; no browser import
+`org-host-control` remains private to host/web/setup; no browser import
 of host-control methods or secrets. `org-proto` versions, launch v3, host-control
 v1 and HTTP `/api/v1` remain independent version spaces.
 
@@ -51,7 +51,7 @@ SPA HTML. Unknown operations do not forward to a local socket.
 | GET `/api/v1/capabilities` | capability view (§7) | Pair; authorized scopes only |
 | GET `/api/v1/instance` | instance view (§3) | Pair; host-derived status, no catalog paths or private listener/socket credentials |
 | GET `/api/v1/organizations` | `{organizations:[...]}` | Pair; host `organization.list`, linked organizations only |
-| POST `/api/v1/organizations` | command envelope with `{name}` | Pair; host `organization.create`, instance admin only |
+| POST `/api/v1/organizations` | command envelope with `{name}` in the code today; the contract is the [selected payload](#selected-create-organization-payload) | Pair; host `organization.create`, instance admin only |
 | POST `/api/v1/organizations/operations/{id}/cancel` | `{}` → dedicated cancellation result (§5) | Pair binds selected instance; host `organization.cancel`, same account/admin, original create ID |
 | GET `/api/v1/organizations/{org}/offices` | `{offices:[...]}` | Pair; host `office.list` narrowed to an authorized organization |
 | GET `/api/v1/organizations/{org}/snapshot` | `{snapshot:OrgSnapshot,resume_cursor}` | Pair; canonical `org.snapshot` on selected HQ, cursor at the same snapshot position |
@@ -63,7 +63,7 @@ SPA HTML. Unknown operations do not forward to a local socket.
 Lookup query spelling is fixed: `instance_id` is always required; `kind=host`
 forbids `org_id` and `office_id`, `kind=org` requires `org_id` and forbids
 `office_id`, and `kind=work|msg` requires both `org_id` and `office_id`.
-The gateway resolves HQ for `org`; work/message lookups go to the office that
+The web process resolves HQ for `org`; work/message lookups go to the office that
 admitted the ID. All IDs are 1..64 ASCII letters/digits, matching the existing
 plain office-ID shape. Empty values, repeated keys (even identical values), unknown
 keys and malformed IDs are HTTP 400 `invalid_request`, checked before authorization.
@@ -80,14 +80,14 @@ Existing OrgSnapshot and positions are reused. The response's opaque resume
 cursor continues exactly after the snapshot position, without a gap or duplicate;
 a raw Position alone is not a browser resume token.
 
-## Selected target adaptation and compatibility
+## Selected target adaptation
 
 ### Selected task assignment capability (additive contract)
 
 ADR-0006 r4 selects `selected_tasks_v1` as a separately negotiated contract. Its
 codecs do not make it available: runtime publication requires verified recovery,
 directory generation, writer admission, host authentication and actual service
-composition. Existing revision-2 routes/validators remain compatible; the gateway
+composition. The web process
 contract revision must advance when this capability is wired.
 
 Native `task.set_assignment` takes `{change_id,task_id,command}` on an authenticated
@@ -101,18 +101,20 @@ HTTP `POST /api/v1/organizations/{org}/tasks/{task}/assignment` takes the existi
 command, with `expected_revision` a canonical positive decimal **string** through
 `9223372036854775807`. Decode raw bytes directly into strict object DTOs; never
 collapse duplicate wrapper/scope/command keys through `Value`. Selected IDs are
-opaque, nonempty values resolved by registries; unchanged legacy plain-ID/ULID
-validators are not their policy. Operation IDs keep existing ULID admission rules.
+opaque, nonempty values resolved by registries; the code's plain-ID/ULID
+validators are not their policy. Operation IDs are ULIDs in the code today and
+become UUIDv7 with every other ID (identity contract).
 
 The task namespace also supplies authorized list/detail/history/assignment-target
-reads, task-scoped content-reference chunks, and authenticated adoption staging and
-commit calls. Keep work lookup at `GET /api/v1/operations/work/{id}` with its fixed
+reads and task-scoped content-reference chunks. The adoption staging and commit
+calls of the earlier text are withdrawn with legacy adoption
+([ADR-0010](../adr/0010-legacy-task-adoption.md)). Keep work lookup at `GET /api/v1/operations/work/{id}` with its fixed
 instance/org/office query fields, using the selected scope adapter for selected IDs.
 Completion returns compact revision/event identity, pair and admitting office;
 full revisions are strings. Chunks are <=256 KiB raw and <=1 MiB fully encoded.
-The additive native read adapter is `task.selected.read` with an authenticated
+The native read is `task.selected.read` with an authenticated
 principal and an object query tagged by `kind`: `status`, `list`, `detail`,
-`history`, `targets` or `chunk`. It never changes legacy work reads. Pages contain
+`history`, `targets` or `chunk`. Pages contain
 at most 50 compact cards/references. Queue filters distinguish accountable team,
 assigned team and assigned employee. Snapshot/event content references include
 the authorized task, exact revision, kind, digest and byte length. `chunk` rechecks
@@ -120,15 +122,15 @@ the same task/actor scope and exact reference, returns at most 256 KiB raw bytes
 as hexadecimal (therefore <=512 KiB encoded content), and never accepts a path or
 an unrestricted blob URL. Clients concatenate bytes before UTF-8 decoding.
 Display previews may be shortened explicitly; original source bytes, IDs and
-numeric tokens remain in the referenced content. History coverage comes from
-verified adoption evidence; absence is `unknown`, never invented completeness.
+numeric tokens remain in the referenced content. History coverage that is not
+established is `unknown`, never invented completeness.
 HTTP adapters preserve decimal-string entity revisions in every card/reference.
 The `selected_tasks_v1` capability requires a live verified host admission,
 coherent journal/files, protected owner binding and admitted directory generation;
 field/configuration presence alone does not enable it.
 
-The selected HTTP adapter uses contract revision 3, separately from retained
-revision-2 vectors. `GET /api/v1/organizations/{org}/tasks` takes exact
+The selected HTTP routes use contract revision 3; the revision-2 vectors cover
+the earlier routes. `GET /api/v1/organizations/{org}/tasks` takes exact
 `instance_id`, `office_id`, `kind=status|list`; list additionally takes
 `queue=all|owned|assigned_team|assigned_employee`, an explicit `target_id` for
 non-all queues, optional `after`, and `limit` (1–50). The task path supplies
@@ -153,30 +155,52 @@ assignment fields at its decision barrier and remains part of the protected
 receipt. Earlier receipts without that coverage retain its absence. Selected
 `operation.get {kind:"work",id}` uses `status: committed` with that result, or
 `status: rejected` with `{code,message,current?}` in `refusal`; the selected
-adapter preserves current state rather than reducing it to legacy `ApiError`.
+route returns current state rather than reducing it to the plain `ApiError`.
 Every revision in browser assignment results and lookup refusals is a decimal
 string too. Errors after possible publication are unresolved; clients keep the
 original operation ID for reconciliation.
 All reads/chunks/lookups recheck actor/scope; a content reference is not authority.
 Session cookies/proofs and no-store/error rules below apply unchanged.
 
-The wire tables and examples in §§2–9 describe the published HTTP v1 revision 2
-contract, including its current ULID operation admission, native `member` names,
-name-only organization create and multi-membership operations. They are retained
-exactly as protocol evidence. They do not implement the later selected
-[organization-data model](organization-data/README.md). No route below becomes
-available merely because its codec exists. A selected-target adapter needs
-reviewed version/capability negotiation and conformance vectors before enablement;
-never reinterpret an existing command as a different mutation behind the same DTO.
+### Selected create-organization payload
 
-| Published v1 revision 2 surface | Selected target and required adaptation |
+Owner decision 2026-11-17 (conflict plan entries A-09 and A-12): nothing has shipped,
+so the version 1 contract is changed in place, and what the organization needs the API
+carries. `POST /api/v1/organizations` accepts the fields the
+[create-organization design](create-organization.md) and
+[organization structure](organization-data/01-organization-structure.md) require:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Display name |
+| `slug` | yes | Lowercase kebab-case, unique in the instance's organization catalog; never recalculated after a rename |
+| `organization_repository` | yes | Registration of the remote Git repository that holds the organization's files: `kind: remote`, a `remote_url`, and a reference to an office-held credential. Never a secret value. Setup validates syntax only and makes no network request. |
+| `state_branch` | yes | The branch organization files are published to. There is no default. |
+| `initial_team` | when the plan includes bootstrap employees | The root team to create at HQ for them, by name; HQ allocates its number. A resumed plan may name an existing team instead. No lead, team name or reporting line is inferred. |
+
+The result adds `slug` and, when a team was created, its ID and reference to the
+organization view. These fields are the ones the [create flow](create-organization.md#create-flow)
+and [organization structure](organization-data/01-organization-structure.md) already require; this section adds none. The name-only request in the tables below is what the code accepts today and is
+not a second supported shape. The code change is tracked by FC-018.
+
+The wire tables and examples in §§2–9 describe HTTP v1 revision 2 as the code
+implements it, including its current ULID operation admission, native `member` names,
+name-only organization create and multi-membership operations. Nothing has shipped
+([no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships)),
+so they are evidence of the code, not a published contract to preserve. They do not implement the later selected
+[organization-data model](organization-data/README.md). No route below becomes
+available merely because its codec exists. Because nothing has shipped, a route is changed in place to the selected shape when
+its target is built; no adapter, version negotiation or second DTO is kept. A changed
+route still needs its conformance vectors updated in the same change.
+
+| HTTP v1 revision 2 surface in the code | Selected target |
 | --- | --- |
-| `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. Publish a validated extended/versioned provisioning contract; offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
-| OrganizationView / OrgSnapshot / `member_id` | Map retained stable member IDs to employee IDs without changing wire spelling. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. Old snapshots must not imply those target fields already exist. |
-| `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Current multi-membership rules remain current wire semantics. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. Preserve unmapped memberships in controlled import staging. |
+| `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. The request is changed in place to the [selected payload](#selected-create-organization-payload); offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
+| OrganizationView / OrgSnapshot / `member_id` | The code's `member_id` identifies what the target calls an employee. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. The current snapshot shapes do not carry those target fields. |
+| `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Multi-membership is what the code does today. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. |
 | `project.add_team`, `project.remove_team` | Target project requires `owner_team_id` plus optional contributors. Publish a mutation distinguishing transfer of accountability from contributor editing; an old linked-team list does not select an owner or require an Area. Areas remain unselected. |
-| Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. Current command versions/legacy B-/REQ- references cannot be renamed or stripped into selected numbering. |
-| Current ULID operation IDs / plain-ID lookup checks | Preserve current admission and retained IDs. New stable entity IDs use UUIDv7, independently of operation IDs. ID validators, filenames and scoped reference resolvers require explicit versioned adaptation before accepting new IDs through legacy restrictions. |
+| Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. The code's per-kind B-/REQ- numbering is replaced, not converted. |
+| Current ULID operation IDs / plain-ID lookup checks | In the target every ID is a UUIDv7, operation IDs included (identity contract); the code's operation IDs are ULIDs today. ID validators, filenames and scoped reference resolvers change with it. |
 | Protected domain views and lookup outcomes | Read only authorized projections of protected chat, usage, budget and recovery sources. Private task notes stay author-only in a separate durable DB, with no owner/admin exception or shared receipt disclosing their existence. Never expose raw paths, source envelopes, amounts or private result blobs through a generic SQL or lookup endpoint. |
 
 Readiness and runtime operations must map to document 11's selected profile/model,
@@ -208,7 +232,7 @@ calculation; validate a nonnegative JavaScript-safe integer at runtime.
 
 Only sign-in and refresh add `proof` in the no-store response. Host session handles,
 grant MACs and channels never appear in this view. `server_time_ms` lets FE-1 mint
-ULIDs with the server offset; gateway prechecks `clock_skew`, owner rechecks it.
+ULIDs with the server offset; web prechecks `clock_skew`, owner rechecks it.
 Host defaults are 12 h absolute/30 min idle; refresh cannot extend absolute expiry.
 
 Instance view: `{instance_id,name,server_version,gateway_status,listen_scheme,tls,
@@ -248,7 +272,7 @@ mismatch is refused before dispatch; authorized identity comes from the pair,
 never from a supplied account/member/principal. Foreign authorized-scope lookups
 use `not_found`; absent/bad pair uses `not_authorized`.
 
-There is exactly **one operation ID**. Gateway maps it to host `operation_id`, org
+There is exactly **one operation ID**. The web process maps it to host `operation_id`, org
 `command_id`, work `change_id` or `msg.send.id` without generating another ID.
 Operation IDs are idempotency keys, not ordering keys (D-GW3, ada
 `01M72X7AAJTVZZW4MCQ6GSK2RV`). Secure random ULIDs need no same-millisecond
@@ -261,7 +285,7 @@ time, never the raw local clock; HQ rejects a new ID over five minutes ahead wit
 clock_skew or over29days old with expired. No browser operation registry/outbox.
 Native field does not also appear in browser params. `expected_version` stays in
 the operation's typed params, with the existing per-entity semantics; no second
-envelope version competes with it. Gateway reconstructs the existing typed params
+envelope version competes with it. Web reconstructs the existing typed params
 before hashing/dispatch. Business params are otherwise unchanged. Retired
 `home`/`clear_home`/`profile.home`/`app_token` are refused on presence, including null.
 
@@ -279,7 +303,7 @@ to the target presented by pinned Hyper `=1.12.0` and lockfile `http` `1.5.0`.
 fragments from a request's target URI; [RFC 9112 §3.2.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.1)
 defines origin-form using only path and query. A client-sent literal `#` is
 malformed, but `http` truncates it and everything after it before routing.
-The gateway accepts this parser behavior: validation and authorization use the
+The web process accepts this parser behavior: validation and authorization use the
 same retained path, and discarded bytes do not select routes or static files
 or appear in responses. A raw wire regression pins status, body and policy
 headers to those of the equivalent effective API target. No parser fork or
@@ -295,10 +319,17 @@ unresolved: it cannot prove which of those histories occurred.
 
 ## 4. Browser sessions and failures
 
-Gateway keeps only the in-memory mapping between the random browser cookie/proof
+> **Amended by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17).**
+> Sessions are stored at the host and cached in memory by the web process. A restart
+> of either process, an update or a lost control connection no longer ends a session,
+> and control EOF no longer ends host sessions. Sign-out, expiry, password change and
+> unlink still end a session immediately. The cookie and proof contract below is
+> unchanged. Where this section says a restart loses sessions, ADR-0013 governs.
+
+The web process keeps only the in-memory mapping between the random browser cookie/proof
 pair and host-issued session handle on its admitted control connection. Host owns
 accounts, password verification, expiry, grants and revocation. Worker owns domain
-authorization. Gateway does not open any registry or office DB and has no DB key.
+authorization. The web process does not open any registry or office DB and has no DB key.
 
 Cookie name is instance-specific; HttpOnly, SameSite=Strict, Path=/api/v1, no
 Domain, Secure in HTTPS. Explicit configured loopback HTTP can omit Secure; pair
@@ -316,9 +347,9 @@ Only sign-in accepts passwords. Unknown login and wrong password have identical
 messages reveal no account existence. B1-06 tunes concrete budgets.
 
 On logout, expiry, password change, unlink/revoke or control EOF, invalidate the
-pair and stream. Control EOF ends all host sessions on that connection. A gateway
+pair and stream. Control EOF ends all host sessions on that connection. A web process
 restart loses mappings; require reauthentication. A browser cannot infer restart
-from an unknown cookie: use generic `session_ended` unless the gateway has trusted
+from an unknown cookie: use generic `session_ended` unless the web process has trusted
 evidence. No automatic resend after sign-in. Same-account reauth retains user
 drafts; switching account clears the old account's views in all tabs (SRV §4a).
 
@@ -340,7 +371,7 @@ Discriminated mutation response:
 ```
 
 `accepted` requires a durable owner journal/ledger record binding ID, fingerprint,
-account/scope and outcome; placing work in a gateway memory queue is insufficient.
+account/scope and outcome; placing work in a web process memory queue is insufficient.
 `completed` proves owner commit. `rejected` is confirmed refusal; it must not be
 used for timeout/connection loss after possible dispatch. `unknown` is unresolved,
 not durable success/failure; the UI keeps the ID and performs lookup. Never mint a
@@ -415,7 +446,7 @@ internal path. The JSON domain code is authoritative; HTTP is classification:
 | 410 | expired |
 | 413 | too_large (body refused before forwarding) |
 | 426 | unsupported_version (refresh/update, no mock fallback) |
-| 429 | rate_limited (new gateway code) with retry_after_ms; confirmed pre-dispatch rejected, safe to retry after delay |
+| 429 | rate_limited (new web code) with retry_after_ms; confirmed pre-dispatch rejected, safe to retry after delay |
 | 503 | not_ready, unavailable, storage_error, confirmed pre-dispatch timeout |
 | 504 | outcome unknown after possible dispatch, including timeout; never rejected or accepted |
 
@@ -452,7 +483,7 @@ SSE `event: frame`, JSON `data` tagged by `type`:
 No SSE global `id`/Last-Event-ID is used as a substitute for per-feed cursors.
 Expired/foreign/ahead cursors require resync; unauthorized subscriptions are
 refused before streaming headers, and rechecked after reconnect/session changes.
-Gateway refreshes worker subscription grants before expiry; worker revocation
+Web refreshes worker subscription grants before expiry; worker revocation
 ends subscriptions. A browser frame never contains worker grant/channel material.
 
 For organization durable feeds, the snapshot response includes `resume_cursor`
@@ -464,7 +495,7 @@ when its snapshot endpoint is published. Reconnect preserves order, drops duplic
 changes and requests snapshot_required. Coalesce reloads, not durable changes.
 For nonreplayable host status, subscribe BEFORE list on the same host connection;
 publish its baseline before buffered newer events, and re-list after every gap.
-An opaque gateway generation cursor cannot claim host journal replay support.
+An opaque web generation cursor cannot claim host journal replay support.
 Ephemeral message/presence hints trigger authoritative listings after any gap.
 
 One streaming fetch per origin/instance/principal across eight tabs, owned by a
@@ -508,13 +539,13 @@ refusal/possible-send unknown; cursor per feed, epoch/reset/slow consumer; optio
 fields and unknown enum compatibility. Typed readers assert expected values and
 reject invalid fixtures; mutation probe proves wrong expectations fail.
 
-No live gateway security claim from DTO tests. B1-05/06/08 must exercise real
+No live web security claim from DTO tests. B1-05/06/08 must exercise real
 admission, cross-port cookie attacks, session/stream revocation, limits, eight tabs
 and loss/reconnect. Domain vectors remain in org-office/org-work (B1-03).
 
 Decision record (Rowan `01M72QXR241XRPW9QBY098EB06`, ada as cited above):
 
-1. **D1 approved:** additive gateway DTO module in org-proto, routes §2 frozen;
+1. **D1 approved:** additive web DTO module in org-proto, routes §2 frozen;
    scope fields explicit, one ID, expected versions in typed params.
 2. **D2 decided:** authoritative JSON outcome; completed200, accepted202,
    unknown504; error class table above, rate_limited429 pre-dispatch only.
@@ -535,7 +566,7 @@ Decision record (Rowan `01M72QXR241XRPW9QBY098EB06`, ada as cited above):
 Architecture: existing Ca of org-proto makes changes additive and narrow; no
 host-control/public coupling and no new crates/dependencies. Shared wire types
 reference existing org/domain DTOs intentionally; domain policy never imports HTTP
-transport behavior. Gateway composition routes to typed host/client capabilities.
+transport behavior. Web composition routes to typed host/client capabilities.
 
 ## 9. Organization mutation codec (wire revision 2)
 
@@ -594,8 +625,8 @@ The classifier consumes a correlated native reply with a numeric native ID:
 - Confirmed domain refusals retain their public code/message and the §5 class.
   Literal error code unknown remains unknown504. Unexpected native errors,
   including not_bound and unknown native refusal names, become sanitized
-  unavailable503 with an invariant issue. Native errors cannot supply gateway
-  session, cancellation or identity hints. Rate limiting is gateway-owned.
+  unavailable503 with an invariant issue. Native errors cannot supply web
+  session, cancellation or identity hints. Rate limiting is web-owned.
   The native code allowlist is explicit and exhaustive: codes belonging to
   HTTP admission or other domains (including unsupported_version and timeout)
   cannot pass through with a native message. HTTP admission can still emit

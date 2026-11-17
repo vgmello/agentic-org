@@ -1,12 +1,13 @@
 # Design: create an organization through standalone HQ
 
 Status: **selected target flow; implementation pending**, revision 2, 2026-11-15.
-Owner: ada. [Organization data](organization-data/01-organization-structure.md)
+Owner: lead. [Organization data](organization-data/01-organization-structure.md)
 owns the records below; [ADR-0005](../adr/0005-standalone-server-v1.md) and
 [installation UX](../specs/server-installation-and-access-ux.md) own installation.
 The current `agentic-org setup` refuses before provisioning: protected bootstrap,
 service registration and production browser handoff remain unavailable. The
-published name-only create contract is existing evidence, not this complete target.
+name-only create request is what the code accepts today. The contract is the
+[selected payload](web-api-v1.md#selected-create-organization-payload) (owner decision 2026-11-17).
 
 ## Setup and ownership
 
@@ -17,7 +18,7 @@ Organization ownership alone never authorizes creating an organization.
 
 The owner account remains a host security principal. An optional person profile
 representing that owner must have a valid home team like every other employee;
-`is_owner` neither grants login nor creates a teamless profile. The built-in HR
+No employee field grants login or ownership, and no profile is teamless. The built-in HR
 bootstrap exception permits approved system provisioning, not invalid employees.
 HR requires a selected valid home team before its profile is committed. No team
 name, lead appointment or reporting line is inferred from the word HR.
@@ -45,7 +46,7 @@ name, lead appointment or reporting line is inferred from the word HR.
    team content remains a product choice; it is not selected by this document.
 3. Submit one operation ID bound to actor, instance and the validated plan.
    `agentic-org-web` authenticates and authorizes before invoking a typed restricted
-   host operation. The host verifies the gateway capability and administrator
+   host operation. The host verifies the web process capability and administrator
    grant. No browser HTTP parser or raw-key access lives in the host operation.
    Reserve the name, slug, IDs and plan under the catalog lock, then provision
    outside it. New entity IDs use UUIDv7; retained IDs and current ULID operation
@@ -64,13 +65,13 @@ name, lead appointment or reporting line is inferred from the word HR.
    `agentic-org-office` using its private launch contract. The worker owns its
    stored `office.json` marker. Retain adopt-versus-discard and quarantine rules:
    never discard a committed office after a lost response, nor invent replacement
-   keys. The current launch-v2 first line cannot carry the full target plan; its
-   versioned adaptation and the cross-store durable commit/recovery boundary must
+   keys. The launch-v2 first line in the code cannot carry the full target plan; the
+   launch contract that replaces it and the cross-store durable commit/recovery boundary must
    be implemented before this flow is enabled. Do not add guessed wire fields.
 6. Provision versioned encrypted CA escrow and the same owner recovery code on
    retry. Protected delivery may remain Waiting or Shown, not confirmed while HQ
    becomes usable. Require off-HQ retention acknowledgement only before reporting
-   recovery material collected; never send the code through the gateway.
+   recovery material collected; never send the code through the web process.
    [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) still gates
    the supported manual HQ-loss recovery procedure.
 7. Return the durable organization/office identity and separate server, runtime
@@ -94,11 +95,11 @@ separate readiness state; do not infer them from offline validation or discard a
 already-created HQ because a later publication fails. Preserve entered safe
 fields and show the failing step; never log credentials or recovery material.
 
-The currently published [HTTP v1 contract](gateway-api-v1.md) accepts `{name}` and
-returns its existing view. It must stay exact until a reviewed versioned adapter
-covers the additional target fields and validates all required references. Do not
-silently insert them into revision 2 DTOs or advertise target readiness through
-that old result. Local service repair must remain available when HTTP is down.
+The code's create request accepts `{name}` and returns its existing view. Nothing
+has shipped, so the version 1 request is changed in place to the
+[selected payload](web-api-v1.md#selected-create-organization-payload), which carries
+the fields of this flow (owner decision 2026-11-17, conflict plan entries A-09 and
+A-12). No second request shape and no adapter are kept. Local service repair must remain available when HTTP is down.
 
 ## Verification
 

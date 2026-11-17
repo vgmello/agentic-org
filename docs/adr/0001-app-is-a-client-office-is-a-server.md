@@ -1,7 +1,7 @@
 # ADR-0001 · The app is a client; offices serve organization data
 
 Status: accepted 2026-11-08; reconciled with the selected organization data model
-2026-11-15. Owner: ada. [ADR-0005](0005-standalone-server-v1.md) owns standalone
+2026-11-15. Owner: lead. [ADR-0005](0005-standalone-server-v1.md) owns standalone
 deployment. The [authority map](../design/documentation-authority.md) separates
 selected target contracts from implemented protocols and deferred engines.
 
@@ -18,7 +18,7 @@ selected target contracts from implemented protocols and deferred engines.
 - **A task** has a required accountable team and an optional project. A project
   task's accountable team is its project's owner. Current assigned team and
   individual assignee are independent nullable fields. Task, bug and request are
-  types of the same task entity and use the same scoped T- sequence. Assigning
+  types of the same task entity and use the same T- references. Assigning
   work changes neither its reporter nor its stable identity or number.
 - **An office** belongs to one organization. The organization has one HQ and may
   have satellites. Offices place agents and execute work; they do not own teams,
@@ -62,27 +62,24 @@ The owning relationships and field contracts are in organization-data documents
    queries, search, feeds and exports as well as writes. An office replica or a
    shared schema is not a grant to expose every record to every agent.
 4. **Creation and numbering authority are explicit.** HQ creates teams, projects,
-   releases and milestones. Any office can durably save tasks/features while
-   disconnected, with a stable ID and pending final number. The shared authority
-   allocates numbers and registers feature slugs; replicas never increment
-   counters independently. Acknowledged allocation evidence must survive loss of
-   a cache and cannot rely on hourly Git publication. New IDs use UUIDv7; old
-   stable IDs and explicit legacy reference mappings are preserved. Document
+   releases and milestones. Any office can durably save tasks and features while
+   disconnected. A task gets its final reference from the creating office at once;
+   a feature has a stable ID and a pending number until the shared authority
+   allocates it and registers its slug. Replicas never increment HQ's counters. Acknowledged allocation evidence must survive loss of
+   a cache and cannot rely on hourly Git publication. IDs use UUIDv7. Document
    [06](../design/organization-data/06-identity-and-numbering.md) owns the scopes.
-5. **Contracts remain intentionally versioned.** Existing local `org-proto`,
-   HTTP `/api/v1`, sync and private launch versions are distinct. The standalone
-   plan calls for local API_VERSION 2 when breaking app-only calls/home mutation
-   fields and changing authority; this documentation does not claim that transition
-   is deployed. Retained versions are additive-only. Update host, worker, client,
-   agent helpers and fixtures together and reject unsupported versions before
-   dispatch. The current HTTP mutation codec is documented in
-   [gateway-api-v1.md](../design/gateway-api-v1.md); target relationship changes
-   require explicit mappings, not reinterpretation of existing fields.
+5. **Contracts are versioned, and nothing has shipped.** Local `org-proto`, HTTP
+   `/api/v1`, sync and private launch versions are distinct. Until the owner declares
+   v1 shipped, the local API version is 1 and contracts change in place; no retained
+   version, adapter or mapping is kept
+   ([pre-release rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+   Update host, worker, client, agent helpers and fixtures together and reject
+   unsupported versions before dispatch. What the HTTP mutation codec does today is
+   documented in [web-api-v1.md](../design/web-api-v1.md).
 6. **The agent CLI stays small and office-first.** `agent-os` communicates with
-   its bound office; cross-office delivery is routed through HQ. Preserve live
-   Phase A spool asks, replies, deadlines and triage until the separately verified
-   [messaging cutover](0003-agent-messaging-office-first.md#live-phase-a-coordination-cutover-and-person-started-context).
-   An installed legacy CLI is not replaced merely because executable names changed.
+   its bound office; cross-office delivery is routed through HQ. Nothing is
+   carried over from the earlier coordination tool's message queue (owner decision
+   2026-11-17).
 7. **Repository layout:** `crates/` holds libraries and `apps/` holds runnable or
    shipped applications. Apps compose libraries; library code does not depend on
    applications. A table does not imply a crate, database or public API.

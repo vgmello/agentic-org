@@ -99,7 +99,7 @@ A feature is a registry entry. Nothing else in the system knows what a feature d
 | `template` | The versioned prompt text with exactly two holes, `{{schema}}` and `{{data}}`. Fixed at compile time. |
 | `input_schema` | The JSON Schema of `input`. It carries the per-field caps. |
 | `draft_schema` | The JSON Schema of the `draft` the runtime must return. |
-| `context` | The kinds of context the office may attach (data, capped). None for `text.improve`; `area` for the current v2 compatibility schema of `bug.from_sentence`; areas remain deferred in the selected target. |
+| `context` | The kinds of context the office may attach (data, capped). None for `text.improve`; `area` for the current version-2 schema of `bug.from_sentence`; areas remain deferred in the selected target. |
 
 The schema dialect is a small subset of JSON Schema (`type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`), which the crate checks itself. A `minLength` of 1 or more also refuses a string of only whitespace. A schema using anything else is rejected when the registry is built. The same documents can be handed to a runtime that has native structured output (`claude -p --json-schema`), but the crate never relies on that: it always validates.
 
@@ -110,20 +110,18 @@ The schema dialect is a small subset of JSON Schema (`type`, `properties`, `requ
 
 #### 2. `bug.from_sentence` (implemented library entry, version 2)
 
-**Current-contract compatibility.** The exact v2 output fields/area context below
-match crates/org-copilot/src/builtin.rs and the existing `bug.report` shape. Keep
-them compatible until a reviewed versioned adapter replaces them; documentation
-reconciliation does not silently rename commands or remove accepted fields.
+**What the code does today.** The exact v2 output fields/area context below
+match crates/org-copilot/src/builtin.rs and the existing `bug.report` shape. They
+are replaced in place by the selected task form described next.
 
 The selected domain destination is one extensible task entity of type bug, with
 required accountable team, optional project, immutable creator/reporter and
 independent nullable assigned_team_id/assignee_id (changed atomically with expected
 revision). A project bug uses its project's owner team; a projectless bug uses its
-team scope. New records use T- references such as P-8/T-42 or TEAM-12/T-42; legacy
-B-/REQ- IDs require explicit mappings, never prefix substitution or renumbering.
+team scope. Records use T- references such as T-A42.
 The confirmation form must resolve these fields through the normal task mutation,
-retain bug detail and create its durable event history. Areas are unselected:
-this v2 area behavior is legacy evidence, not a target area requirement. A future
+retain bug detail and create its durable event history. Areas are removed (owner decision 2026-11-17, conflict plan entry B-05: the `area.*` calls and tables leave the code, and a task's accountable team supplies that context). Areas are unselected:
+this v2 area behavior is what the code does today, not a target area requirement. A future
 feature version must define the selected task-form mapping and omit unselected
 area dependencies rather than promoting them through context resolution.
 

@@ -1,4 +1,4 @@
-//! Production session routes (gateway-api-v1 §2 rows 1-5). Native authority is
+//! Production session routes (web-api-v1 §2 rows 1-5). Native authority is
 //! the admitted HostControl, never a test capability flag. Every other
 //! `/api/v1` route is a JSON 404; nothing forwards to a local socket.
 use super::{BrowserSessions, Established, SecretBody, SignOut, Ticket};
@@ -96,7 +96,7 @@ impl ApiBackend for SessionApi {
             if request.uri.query().is_some() {
                 return Err(invalid());
             }
-            // Missing API routes are JSON 404 (gateway-api-v1 §2), decided from
+            // Missing API routes are JSON 404 (web-api-v1 §2), decided from
             // the path shape alone before any session lookup.
             let known = parts.len() == 3
                 || (parts.len() == 4

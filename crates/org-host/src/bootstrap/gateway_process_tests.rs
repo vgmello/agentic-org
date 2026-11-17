@@ -77,7 +77,7 @@ fn sign_in(address: SocketAddr, login: &str, password: &str) -> Reply {
     http(address, "POST", "/api/v1/session/sign-in", "", &body)
 }
 
-/// The single protected-auth refusal (gateway-api-v1 §4), with no cookie issued.
+/// The single protected-auth refusal (web-api-v1 §4), with no cookie issued.
 fn assert_refused(reply: &Reply, what: &str) {
     assert_eq!(reply.status, 401, "{what}: {}", reply.headers);
     assert_eq!(reply.body["error"]["code"], "not_authorized", "{what}");

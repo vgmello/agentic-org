@@ -122,7 +122,7 @@ Requirements below are not claims that draft SQL or legacy APIs ship them. Each 
 | 12 | Assignment and truthful history import | Current vertical contract; queues and actual complete-pair acceptance. |
 | 13 | Private notes pointer | Document 05 owns the single contract. |
 | 14 | Providers, pools, credential bindings | Runtime/API/UI assessment and implementation. |
-| 15 | Messaging/chat, delivery recovery | Preserve pending asks/replies/triage through explicit cutover. |
+| 15 | Messaging/chat, delivery recovery | No earlier message queue is carried over (owner, 2026-11-17). |
 | 16 | Receipts/checkpoints/cleanup/office continuity | Durable evidence at every affected boundary; no destructive reset. |
 | 17 | Budgets/extensions/holds/stops | Runtime/API/UI and enforcement evidence. |
 

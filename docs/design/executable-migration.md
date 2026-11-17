@@ -2,28 +2,39 @@
 
 This change migrates implemented executable responsibilities. Application directories, Cargo packages and executable names use the same names. Reusable domain/protocol libraries retain their existing org-* names. It does not complete the separate standalone installer, production web authentication or agent execution/pool designs.
 
+## Where the entry points stand (2026-11-17)
+
+The delivery units merged since the F0 baseline are internal foundations. None opened an entry point.
+
+| Unit | What it added | Reachable by a person or agent |
+| --- | --- | --- |
+| F1a | Release manifest verifier (`org-release`) | No |
+| F1b | Socket admission and confinement primitives; host and web release adapters | No |
+| F2a, F2b | Work-file codec and the durable acceptance journal in the office | No |
+| F3a, F3b, F3c | Recovery-code escrow (`org-pki`), the worker's HQ creation and admission provider, protected host creation and recovery delivery | No: nothing starts HQ creation |
+| F4 | Host-supervised `agentic-org-web` handoff (sandbox and release-image checks) and browser session routes with connection-bound sessions | No: started only by debug/test instance composition |
+
+| Executable | Status now |
+| --- | --- |
+| `agentic-org` | `serve`, help and version work. `setup` still refuses without changing state. The host socket answers only `hello` and `instance.status`. |
+| `agentic-org-office` | Runs when started by the host on macOS. Serves the local socket for `agent-os`. Contains the HQ creation provider, which nothing calls. |
+| `agentic-org-web` | Help and version. [`--serve` runs only after a verified host handoff](../../apps/agentic-org-web/src/main.rs) and otherwise refuses without opening a listener; the host starts it only through debug/test instance composition (F4). Signed release acceptance is pending. |
+| `agent-os` | Works against a running office: messaging, directory and work calls. |
+
+Still to come before a person can use the product (Track A of the [v1 kickoff](../processes/v1-kickoff-prompt.md)): stored browser sessions replacing F4's connection-bound ones ([ADR-0013](../adr/0013-stored-browser-sessions.md), FC-159), the production `agentic-org serve` launch, setup and the web work reads.
+
 ## F0 integration baseline
 
 F0 imports documentation only over integration base
 `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. It adds no setup, authentication,
 selected-task or release implementation. At this baseline:
 
-| Executable | Implementation status at the F0 baseline (historical; see current status below) |
+| Executable | Implementation status at the F0 baseline (historical; see the current status above) |
 | --- | --- |
 | agentic-org | Human CLI composes org-host; [setup refuses without changing state](../../apps/agentic-org/src/lib.rs) because protected bootstrap and service registration are not wired. |
 | agentic-org-office | Existing daemon and legacy protocols remain. The selected writer/bootstrap/adoption/task-acceptance and escrow additions below have not been imported. |
 | agentic-org-web | Help/version are available; [service startup refuses without opening a listener](../../apps/agentic-org-web/src/main.rs). Authenticated handoff and the browser backend are not wired. |
-| agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
-
-## Current status after F3c and F4
-
-F3c is accepted and integrated at `67860707`. F4 is the current unit on its branch.
-This table re-verifies only the two rows whose status changed since F0.
-
-| Executable | Current implementation status |
-| --- | --- |
-| agentic-org | serve runs the host lifecycle and does not start the browser gateway; the production `agentic-org serve` instance launcher is U1-owned and unavailable. [setup still refuses without changing state](../../apps/agentic-org/src/lib.rs): F3c implements protected bootstrap in the host library, but service registration and the CLI setup path are not wired. |
-| agentic-org-web | [`--serve` runs only after a verified host handoff](../../apps/agentic-org-web/src/main.rs) and otherwise refuses without opening a listener. F4 implements the host-supervised handoff and the browser session backend, started only through debug/test instance composition. Signed release acceptance is pending. |
+| agent-os | Existing employee CLI, with its binding, environment variables and offline queue behaviour. |
 
 ## Preserved reservoir evidence
 
@@ -40,7 +51,7 @@ the source commit of each delivered unit.
 | agentic-org | apps/agentic-org / agentic-org | Human CLI composes org-host. Selected HQ setup journals its original inputs/operations, admits a complete pinned release, invokes protected bootstrap/provisioning, reconciles per-user launchd registration and probes local readiness. Missing trusted build inputs or platform prerequisites refuse setup. Recovery collection remains unfinished; end-to-end production setup is not verified. |
 | agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing daemon and legacy protocols retained, with versioned selected writer admission, canonical bootstrap/adoption, durable task acceptance and escrow prerequisites. |
 | agentic-org-web | apps/agentic-org-web / agentic-org-web | Supervised authenticated listener/control handoff, real account/session backend and selected-task routes are wired. Selected release startup independently authenticates the pinned manifest, kernel image and static assets before confinement and secrets. Production publisher/platform signing evidence remains required. |
-| agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+| agent-os | apps/agent-os / agent-os | Existing employee CLI, with its binding, environment variables and offline queue behaviour. |
 
 The static browser application is `apps/agentic-org-ui`, frontend package
 `agentic-org-ui`. CI, build scripts and licensed UI containment use that path. It
@@ -57,7 +68,7 @@ The host's sibling executable discovery now selects agentic-org-office. Code-sig
 
 ## State and live tooling
 
-No database migration, ID change, spool move, namespace reset, service installation or interaction with a running user's organization is performed by this source migration. The previously installed live CLI remains untouched until a separately verified cutover. New build/test invocations use agent-os. CLI help and generated messaging/process hints use the new name while wire field names, ORG_AGENT/ORG_OFFICE bindings and deduplication semantics stay unchanged.
+No database migration, ID change, namespace reset, service installation or interaction with a running user's organization is performed by this source migration. New build/test invocations use agent-os. CLI help and generated messaging/process hints use the new name while wire field names, ORG_AGENT/ORG_OFFICE bindings and deduplication semantics stay unchanged.
 
 Superseded application directories and package/executable aliases are removed. Cargo build/test commands select the same name as the application directory and production binary. org-host is library-only. Test-only fixture names and the legacy relay dispatch behavior are not new production service executables.
 

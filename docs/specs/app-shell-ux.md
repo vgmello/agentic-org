@@ -3,7 +3,7 @@ kind: spec
 title: "App shell: navigation and shared interaction standards (UX)"
 status: for-review
 revision: 2
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-10"
 updated: "2026-11-15"
 requested_by: ac-product-designer-eden
@@ -173,7 +173,7 @@ Every page, everyone's:
 
 ## 3. Unavailable pages
 
-Production areas the gateway doesn't serve show an unavailable page instead of
+Production areas the web process doesn't serve show an unavailable page instead of
 sample data (`server-installation-and-access-ux.md` SRV-18). Exact copy:
 
 **The root, `/`:**

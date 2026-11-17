@@ -2,7 +2,7 @@
 
 Status: **source audit with reconciled target replacement checklist**, 2026-11-15.
 Historical audit baseline: 2026-11-09.
-Owner: ada. Base: `v1` at `7a8827875e41cac45b75cbf170d6703417652379`.
+Owner: lead. Base: `v1` at `7a8827875e41cac45b75cbf170d6703417652379`.
 Implements [ADR-0005](../adr/0005-standalone-server-v1.md), the
 [server design](standalone-server.md) and
 [SRV requirements](../specs/server-installation-and-access-ux.md).
@@ -22,14 +22,14 @@ historical implementation evidence, not approval to port their obsolete semantic
 
 | Existing assumption being replaced | Required replacement before removal/migration |
 | --- | --- |
-| Name-only organization bootstrap | Explicit slug, remote organization repository ID/URL and state branch; valid chosen team for every HR/optional owner-person employee. Offline validation uses only URL/branch syntax and local credential configuration, makes zero external requests and leaves connectivity/publication unverified until authorized online; no local-only organization fallback. Update typed provisioning and durable retry boundary; do not add unpublished fields to launch v2/HTTP revision 2. |
-| Multi-membership/teamless employees | One required home team, optional role/reporting and direct-member lead. Require an explicit home-team import choice and retain other associations in staging. Preserve owner principal independently of `is_owner`. |
+| Name-only organization bootstrap | Explicit slug, remote organization repository ID/URL and state branch; valid chosen team for every HR/optional owner-person employee. Offline validation uses only URL/branch syntax and local credential configuration, makes zero external requests and leaves connectivity/publication unverified until authorized online; no local-only organization fallback. Update typed provisioning and the durable retry boundary, and change the create request in place to the [selected payload](web-api-v1.md#selected-create-organization-payload). |
+| Multi-membership/teamless employees | One required home team, optional role/reporting and direct-member lead. The owner principal is a host account, independent of any employee record. |
 | Project linked teams/local bare paths | Required accountable owner team, optional contributors, organization repository registrations and many project/repo associations with required integration branch. One office cache per repo. Code repos can be local; organization Git must be remote. |
-| Separate bug/request counters or DTO identity | One extensible task entity, required accountable team, optional project, independent assignment pair and immutable reporter/history. New stable IDs UUIDv7; preserve old IDs and explicit B-/REQ- reference mappings without renumbering. |
+| Separate bug/request counters or DTO identity | One extensible task entity, required accountable team, optional project, independent assignment pair and immutable reporter/history. Stable IDs are UUIDv7; there are no B-/REQ- references. |
 | Office SQLite as the complete source | Git definitions/open work plus durable journals/allocations, protected chat, receipts/streams/snapshots/cleanup, usage archive, execution authority and budget history. Extract and verify these sources before any cache removal. Private notes remain in a separate author-only durable DB with no admin exception. |
 | Agent runtime/model embedded in identity | `profile.md` identity, separate `execution.md`, ordered model profiles/connections, local credentials, shared permits and durable placement generation. Verify old-process cleanup/fence before replacement launch; logical turns/attempts/processes are separate. |
 | Old office worktree allowlists | Target team/employee/task/repository paths with derived Git/credential/managed-state/other-task denies. Preserve worktrees through handoff and protected local/unpushed code checkpoints. A renamed allowlist is not migration evidence. |
-| Shared thread participant union | Protected per-message visibility for imported directed threads, filtered previews/counts/search, and immutable original v1 codec/envelope alongside normalized hash. Never drop unresolved live asks/read/triage before conditional cutover. |
+| Shared thread participant union | Protected message visibility with filtered previews/counts/search and the normalized content hash (document 15). |
 | Spend reconstructed from a rollup or Git | Restore protected accounting/budget policy versions, periods, extension-use/notices and independent holds. Preserve unknown usage and stop-pending distinction; release caps warn only. Do not claim an implemented evaluator/admission service. |
 
 Areas, Undo, advanced checklist execution, retrospectives, automatic scheduling/
@@ -43,7 +43,7 @@ The owner-requested [project structure](project-structure.md) and
 [architecture rules](../architecture-rules.md) define the target layout.
 Paths in the source-audit tables below include the completed worker rename.
 The UI is now at `apps/agentic-org-ui` (package `agentic-org-ui`), with the Tauri shell subsequently removed in F1-03. The `apps/desktop` paths below identify the historical audit
-baseline: resolve their suffixes under `apps/agentic-org-ui` for current source. The remaining gateway replacements are still pending. Production areas without adapters
+baseline: resolve their suffixes under `apps/agentic-org-ui` for current source. The remaining web replacements are still pending. Production areas without adapters
 render unavailable; native/import wiring and the shell workspace member are removed.
 
 | Inspected name/path | Target and required follow-through |
@@ -53,8 +53,8 @@ render unavailable; native/import wiring and the shell workspace member are remo
 | Web and human CLI applications | apps/agentic-org-web and apps/agentic-org use matching package/executable names. Host extraction to crates/org-host and agentic-org serve composition are implemented; apps/agent-os owns the agent CLI. Tauri is removed. HQ setup/service registration and production web handoff remain pending; no separate setup or host executable is added. |
 | Workspace and consumer references | Update Cargo members/paths/lockfile, frontend package/lockfile, test helper binary paths and environment references, build/release/signing checks, host helper resolution and documentation atomically with the source move. |
 | Ownership and licensing paths | Update AGENTS.md and links to the renamed applications. Keep the same owners and Tailwind Plus containment within the product UI; no standalone UI kit extraction. |
-| Managed home inputs | Retire `member.update_agent.home` / `clear_home` and other caller home overrides under API_VERSION 2; keep the response path read-only and derived from the launcher's managed instance/office/member path. Update callers and forged-path tests. |
-| Protocol transition | Advance local org-proto from 1 to 2 with host/worker/client/CLI consumers and fixtures; retained versions remain additive-only and unsupported peers fail before dispatch. |
+| Managed home inputs | Retire `member.update_agent.home` / `clear_home` and other caller home overrides; keep the response path read-only and derived from the launcher's managed instance/office/member path. Update callers and forged-path tests. |
+| Protocol version | The local org-proto version is 1 and its contract changes in place until v1 ships; host/worker/client/CLI consumers and fixtures change together, and unsupported peers fail before dispatch. |
 | Domain/feature organization | Group use cases inside their owning organization, work, messaging, employee and process modules; preserve public APIs, transaction boundaries and private SQL. See the project structure for the sequence. |
 
 The human setup/release command is `agentic-org`. Host behavior is the `org-host`
@@ -100,14 +100,14 @@ frontend directory would discard the browser application we intend to keep.
 
 Audited against `v1` at `0a83d76` (2026-11-10), then integrated with F1-01 at
 `a0748a0`. Relative source paths below now live under `apps/agentic-org-ui`; historical
-`apps/desktop` references retain their audit provenance. This audit does not implement the gateway, projects/areas or runtime,
+`apps/desktop` references retain their audit provenance. This audit does not implement the web process, projects/areas or runtime,
 and does not delete the shell. B1-10 remains the owner of project/area commands.
 
 **F1-03 (done, 2026-11-10).** `apps/agentic-org-ui/src-tauri` and its workspace
 membership are removed, including the shell implementation, Rust seed and legacy
 Rust vector runners. The desktop-wrapper `test-vectors/command-shapes.json` and
 `src/lib/office/shapes.test.ts` are retired. The rows below preserve the audit baseline
-and future gateway obligations; they do not claim those shell files still exist.
+and future web obligations; they do not claim those shell files still exist.
 Domain-owned JSON fixtures and canonical Rust readers remain in `org-office`,
 `org-work` and `org-proto`. The TypeScript seed/parity readers remain with test
 fakes, and `src/lib/office/wire-shapes.test.ts` preserves the independent canonical
@@ -115,21 +115,21 @@ payload gate. Production uses explicit unavailable defaults until real adapters 
 
 | File | Observed behavior and disposition |
 | --- | --- |
-| `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity against the current multi-membership model; target home-team semantics need distinct versioned adapters/vectors. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
+| `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity against the current multi-membership model; target home-team semantics need their own vectors. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
 | `src-tauri/src/org_engine/projects.rs` | Preserve exact historical project/area cases as evidence. Selected project work needs owner-team/contributor reconciliation, scoped numbering and repository associations. General areas and their area/team/lead reconciliation cases remain unselected proposals; retain in the deferred fixture set rather than treating them as selected canonical behavior. Do not transplant fabricated repository paths or pretend repository creation occurred. The canonical command/write ports do not implement this model yet. |
-| `src-tauri/src/org_agent_rules.rs` | Delete the duplicate validators. `org-office::rules::decide` already enforces trimmed/control-free bounded profile text, handle uniqueness/reservations, known runtimes, legacy schedule/run-mode consistency and offboard restrictions. Schedule/run-mode cases describe the earlier runtime only; they do not select automatic scheduling for the target. Its runtime-alias checks are stricter than the mock's literal-name check and stay authoritative. Legacy caller-supplied `home` validation is not a new standalone capability: X-02/B1-07 retire home overrides under protocol v2 and report managed paths read-only. |
-| `src-tauri/src/org_command.rs` | Delete the app-local tagged enum and dispatch mirror. Reuse typed `org-proto` contracts and canonical request parsers at the authorized gateway/worker boundary. Merely having a wire call type does not mean the worker implements it. |
+| `src-tauri/src/org_agent_rules.rs` | Delete the duplicate validators. `org-office::rules::decide` already enforces trimmed/control-free bounded profile text, handle uniqueness/reservations, known runtimes, legacy schedule/run-mode consistency and offboard restrictions. Schedule/run-mode cases describe the earlier runtime only; they do not select automatic scheduling for the target. Its runtime-alias checks are stricter than the mock's literal-name check and stay authoritative. Caller-supplied `home` validation is not a standalone capability: X-02/B1-07 retire home overrides and report managed paths read-only. |
+| `src-tauri/src/org_command.rs` | Delete the app-local tagged enum and dispatch mirror. Reuse typed `org-proto` contracts and canonical request parsers at the authorized web/worker boundary. Merely having a wire call type does not mean the worker implements it. |
 | `src-tauri/src/work_engine.rs` | Delete the mock engine after the canonical vector reader is preserved. `org-work` already owns task/bug transitions, text/ID checks, project/team/recipient checks, checklist guards, fix-link edge rules, numbering, idempotency and time figures through its transaction/read ports. The canonical implementation additionally enforces caller authority, ULID age, durable refusals, per-field conflicts and versioned waiting events; do not replace those with the mock's loose IDs, whole-record version checks or answer cache. See the explicit work-vector differences below. Paged snapshot/list integration belongs to B1-11. |
 | `src-tauri/src/org_mock.rs` | Keep invented seed data only as test fixtures. The preserved `org-office/test-vectors/organization.json` is checked against both the legacy Rust seed and the TypeScript seed. Canonical rules do not depend on an application library. |
 | `src-tauri/src/mock.rs` | Delete the mock office/runtime. Organization-name vectors already live in `org-proto/test-vectors/organization-names.json` and are exercised by protocol tests. Keep the explicit distinction between test data and unavailable production capabilities. |
 | `src-tauri/src/lib.rs` | Delete invoke handlers, Tauri emitters, startup locks/epochs and desktop restart-on-error orchestration. Preserve canonical payload shapes separately from app-local `CommandError.source`, `OrgView.sample` and `Connection` wrappers. A browser read must never install/start a service. Unknown mutation outcomes must remain unknown until looked up using the same operation ID. |
 | `src-tauri/src/office.rs` | Delete the desktop `OfficeConnection`/login-service seam and setup-only errors (`not_installed`, `needs_approval`, `turned_off`). Preserve typed operations, read-only status checks and an explicit `unavailable` result when an area is not implemented; no production mock fallback. |
-| `src-tauri/src/real.rs` | Re-home typed host/office calls, scope checks, bounded reconnect and outcome handling in B1-05/B1-06/B1-08/B1-09. Preserve the error/retry distinctions below. Retire app-token binding, code-signature desktop admission, account-wide discovery and automatic login-service installation. Gateway authority comes from X-02, never browser credentials masquerading as a desktop token. |
+| `src-tauri/src/real.rs` | Re-home typed host/office calls, scope checks, bounded reconnect and outcome handling in B1-05/B1-06/B1-08/B1-09. Preserve the error/retry distinctions below. Retire app-token binding, code-signature desktop admission, account-wide discovery and automatic login-service installation. Web authority comes from X-02, never browser credentials masquerading as a desktop token. |
 | `src-tauri/src/org_feed.rs` | Reproduce snapshot-position-to-subscription continuity on the same authenticated worker channel; on disconnect or `snapshot_required`, reconnect, reauthorize, take a new snapshot and resume from its position. Emit baseline after subscription succeeds, and liveness loss once rather than on every failed retry. Unknown/malformed event payloads do not terminate the stream. Retain stop responsiveness and retry-during-connect handling. |
 | `src-tauri/src/status_feed.rs` | Reproduce the ordering `hello/capability -> subscribe -> office.list` on one channel, followed by changes; a list taken before subscribing can lose an update. Reconnect starts with a fresh list. Do not subscribe to a host lacking the capability or start the host from this listener. |
 | `src-tauri/src/pacing.rs` | Reproduce bounded reconnect pauses `1, 2, 4, 8, 16, 30, 30...` seconds. Reset before the next wait only after a connection lasted at least 10 seconds; an immediately closed subscription must not create a one-second retry loop. Check stop at most every 250 ms; Retry shortens remaining delay to one second, never zero. |
 | `src-tauri/src/connections.rs` | Delete local desktop connection discovery and `connections.json` persistence. Browser organization selection is a preference; authorized organization/office discovery comes from the server. Do not carry filesystem endpoints or cached desktop authority into browser state. |
-| `src-tauri/src/stdio.rs` | Delete only shell startup wiring. Preserve existing host/worker descriptor hygiene (`org-server::fdswap` and host spawning); no change to control-pipe ownership is needed by this audit. |
+| `src-tauri/src/stdio.rs` | Delete only shell startup wiring. Preserve existing host/worker descriptor hygiene (`agentic-org-office::fdswap` and host spawning); no change to control-pipe ownership is needed by this audit. |
 | `src/lib/org/live.ts` and `load.ts` | Retain UI-side ordering/coalescing when transport changes: compare `(epoch, seq)`, keep one reload in flight per organization, catch up after a burst, accept the newly loaded baseline after restore and stop retrying a reload that made no progress. Coalescing is here, not in the Rust feed modules. F1-06 must coordinate one shared browser stream across tabs rather than one stream per shell organization. |
 | `test-vectors/org-commands.json` | Moved intact to `crates/org-office/test-vectors/org-commands.json`. Canonical reader: `org-office/src/rules/vectors.rs`; legacy Rust and TypeScript readers now use the same domain-owned file. See `deferred-org-commands.json` for every case not yet supported canonically. |
 | `test-vectors/work-commands.json` | Moved to `crates/org-work/test-vectors/work-commands.json`. Canonical reader: `org-work/src/tests/vectors.rs`, through `WorkService`/real read construction with disposable in-memory ports. Preserve all 29 legacy scenarios and identify deliberate canonical differences explicitly; do not silently substitute actual results or current versions. |
@@ -158,23 +158,23 @@ asserted explicitly rather than changing production behavior to match the mock.
 Task `reopen_count` is not the bug reopen counter in the canonical contract.
 Adding/removing a fix link changes the task; the bug's `fixed_by` is a read model,
 not an invented extra versioned bug update. Preserve those distinctions in both
-the vector runner and B1-11 gateway integration.
+the vector runner and B1-11 web integration.
 
 **`real.rs` error and retry disposition.** Preserve the behavior, not desktop text
 that tells a browser to manipulate local installation:
 
-| Existing result | Meaning to retain in gateway/client integration |
+| Existing result | Meaning to retain in web/client integration |
 | --- | --- |
 | Office `ApiError` | Pass through the typed domain refusal unchanged; authorization/validation stays server-owned. |
 | `not_ready` before admission | Bounded backoff is safe only when the server guarantees nothing ran. After the deadline, show unavailable/starting; do not restart a healthy host. |
-| Too-large request before send | Validation/size refusal, not an unknown committed mutation. The gateway contract chooses its typed code. |
+| Too-large request before send | Validation/size refusal, not an unknown committed mutation. The web process contract chooses its typed code. |
 | Wrong version, unreachable office, invalid endpoint, malformed response | Explicit unavailable/update/protocol failure; never substitute mock data or infer success. |
 | Mutation timeout/disconnect/I/O after possible send | Preserve unknown outcome and the same command/change ID for lookup/retry. `create_organization` was deliberately sent once; `org_command` retained its `command_id`. Do not convert uncertain outcomes to a fresh operation. |
 | Lost cached connection | Evict only the exact failed `Arc<Client>`; another caller may already have replaced it. Drop outside the cache lock. Reconnect/re-resolve scope once, with bounded resource use. |
 | Starting/offline/pending/unavailable/update-needed status | Show the reason/freshness and avoid futile calls; a remembered status may be refreshed once. Status is not authorization and must not choose an office belonging to another organization. |
 | Restart conflict (already starting) | Idempotent acknowledgement, not an instruction to restart the host again. Keep permission/capability failures distinct. |
 
-**Tests to reproduce when the gateway/stream replaces the shell.** Keep the
+**Tests to reproduce when the web process/stream replaces the shell.** Keep the
 `org_feed` tests for snapshot-position subscription, unknown events, reconnect,
 `snapshot_required`, immediate-close backoff, one liveness transition, stop,
 bounded Retry and Retry-during-connect. Keep the five `status_feed` cases for
@@ -189,7 +189,7 @@ not a claim that an HTTP listener or shared browser stream already exists.
 F1-03 removed the shell after the independent crate readers and fixture
 references landed. Its production callers now use explicit unavailable states.
 Domain-owned fixtures/readers, the canonical wire payload gate and the documented
-future gateway test obligations remain. No
+future web test obligations remain. No
 Tauri-only type or mock library becomes a dependency of a canonical crate.
 
 ## 3. Production mock audit
@@ -222,9 +222,9 @@ names current source locations and remaining work.
 | `crates/org-office/` | Retain canonical rules, SQLCipher storage, one writer, transactional outbox/sequence allocation and private filesystem handling. |
 | `crates/org-client/`, `org-proto/`, `org-office-launch/` | Retain local agent/host/worker contracts where needed. Change instance discovery and browser principal authorization; remove unused app-only calls/types and tests in the same change. Versioning for the new release remains; old desktop callers need no bridge. |
 | `apps/org-agent/`, `crates/org-mailbox/` | Employee tooling and messaging semantics are retained in apps/agent-os / agent-os. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small agent-os executable from the pinned release; do not alias it to the human/key-custody CLI. |
-| `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases are not required; preserve live Phase A coordination through ADR-0003's conditional verified cutover before switching that team. |
+| `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases are not required. |
 | `crates/org-runtime/`, `org-work/`, `org-copilot/` | Retain contracts/domain logic. Runtime adapters/session orchestration remain necessary; a static web server is not their implementation. |
-| Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates are absent on the inspected branch. No existing replication implementation can be merely moved. |
+| Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates now exist (`crates/org-sync`, `crates/org-sync-proto`, `crates/org-pki`); the statement that they were absent described an earlier branch. No existing replication implementation can be merely moved. |
 
 ## 5. Documentation and acceptance changes
 
@@ -249,8 +249,8 @@ Exercise the source replacement table above using §6a of
 Remove a disposable projection only after recording complete protected-source
 coverage and safe process shutdown. Missing coverage must yield recovery required;
 a valid Git checkout cannot stand in for chat, usage, budget or authority backup.
-Preserve credentials/signing namespaces, live spool and opaque unmapped source
-payloads until the corresponding reviewed replacement/cutover is verified.
+Keep credentials/signing namespaces until the corresponding reviewed replacement
+is verified.
 
 Before considering the implementation complete:
 

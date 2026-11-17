@@ -1,10 +1,36 @@
 # Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
+> **Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
+> (2026-11-17).** Organization data is no longer encrypted by the application. Database
+> encryption is to be removed. The per-office key, its custody and its delivery at
+> launch stay, renamed the office secrets key and used only to wrap an office's
+> private keys; a missing key no longer prevents an office from opening its data.
+> Writer custody and the private launch itself stay. Until the code changes, this document describes the
+> current implementation.
+
 Status: **current launch-v2 evidence plus selected target adaptation**, reconciled
 2026-11-15. The host library is `crates/org-host`, composed by `agentic-org serve`;
 the office executable is `agentic-org-office`. [Executable migration](executable-migration.md)
 records implemented versus unavailable commands. No key-store namespace, signing
 identifier, grant namespace or persisted identity is renamed by those filenames.
+
+## Owner decisions 2026-11-17 that this document must be read with
+
+Nothing has shipped, so there are no protocol versions to keep side by side. Where the
+text below says "launch v2" it describes what the host code writes today, and where it
+says "launch v3" or "pending" it describes the contract. The requirements are:
+
+| Entry | Requirement | Code today |
+| --- | --- | --- |
+| B-06 | **There is one launch contract.** It is the verified-rendezvous design described here as launch v3: the host passes a rendezvous, the worker connects to it and is admitted by its process identity, and secrets and office facts travel over that connection. The older first-line contract is removed, not kept as a fallback, and the version number restarts at 1. | The host implements both. It uses the rendezvous form only for a registered, protected instance and falls back to the first-line form otherwise (`crates/org-host/src/supervisor/child.rs`). The worker implements both. Remaining work: remove the first-line form and the gate. |
+| B-07 | **People are authorized by grants.** Every request made for a person carries that person's principal and a host-issued grant, which the worker verifies ([ADR-0006](../adr/0006-selected-task-acceptance.md), [ADR-0012](../adr/0012-office-channel-lifecycle.md)). `app_token` and the `office.app_token` call are removed. | The launch line still carries `app_token`; the worker stores the grant key unused. |
+| B-08 | **Seven web channels per office.** The host refuses the eighth, matching the worker and ADR-0012. | Already seven: the host's channel registry enforces `MAX_GATEWAY_CHANNELS` and a test asserts the eighth is refused. The figure of 63 in ADR-0012 was observed at an earlier commit. Nothing to change. |
+| B-10 | **The host serves the work reads the web needs** through the office channel, so the browser reads tasks, projects and people through the same path as commands. | `host.sock` dispatches only `hello` and `instance.status`. |
+| F-03 | **No database key.** `db_key` leaves the launch contract with [ADR-0016](../adr/0016-no-application-level-data-encryption.md); the host passes the office secrets key instead. | The launch line carries `db_key`. |
+| B-09 | **macOS and Linux, including a container** ([ADR-0017](../adr/0017-linux-and-container-hosting.md)). Process admission, the credential provider, confinement and service lifecycle are platform contracts with a macOS and a Linux implementation. The macOS-only statements below describe the code today. | Workers start only on macOS. |
+
+These are requirements for implementation, tracked in the [feature checklist](../FEATURES.md):
+B-06 and B-07 under FC-017, B-10 under FC-013, F-03 under FC-162 and B-09 under FC-164.
 
 ## Selected provisioning and storage responsibilities
 
@@ -21,15 +47,15 @@ RPC method or managed storage path.
 | Organization identity and HQ bootstrap | Typed provisioning plan records explicit slug, remote organization repository registration and `state_branch`, office definition and initial team choices. Every bootstrap employee, including HR and any owner-person, needs a valid home team; identity is distinct from execution config. See [create flow](create-organization.md). |
 | `durable/state/` | Ordinary organization Git files, stable-ID hierarchy. Current organization/office markers remain local catalog evidence, not replacements for those files. |
 | `durable/journal/`, `durable/authority/`, accounting and code checkpoints | Protected acknowledged unpublished changes, allocations, usage streams and local/unpushed work recovery. Preserve before acknowledging; Git publication alone is insufficient. |
-| Operational messaging/recovery/budget roots | Worker/domain-owned durable source envelopes, attachments, receipts/results, streams/high-waters, snapshots/cleanup, policy versions/periods/extensions/holds. Resolve/configure protected roots before opening caches; never put their only copies in disposable SQLite or shared Git. |
+| `durable/messaging/`, `durable/recovery/`, `durable/budgets/` | Worker/domain-owned durable source envelopes, attachments, receipts/results, streams/high-waters, snapshots/cleanup, policy versions/periods/extensions/holds. Resolve the one [storage root](organization-data/README.md#shared-storage-contract) before opening caches; never put their only copies in disposable SQLite or shared Git. |
 | Private notes and credentials | Separate durable author-private notes DB with no administrator read exception; host/private authentication stores and local credential bindings stay protected. Shared receipts must not reveal private-note existence. |
 | `runtime/<office-id>/office.db` and repository caches | Rebuildable projection/transient state only after complete source verification. One bare cache per office/repository, no project integration-branch policy embedded in the cache. |
 | Task workspaces | Employee/team hierarchy from [document 04](organization-data/04-agent-structure.md#runtime-location), project/task/repository stable IDs; retained through handoff until closure, with explicit safe migration when placement changes. |
 
 The current worker's encrypted `org.db`/`office.db` still contain authoritative
-records and machine credentials. They are **not currently disposable target
-projections**. Adopting the target requires lossless source extraction, verified
-restore and separately reviewed paths/sandbox policies. Preserve Git-metadata,
+records and machine credentials. They are **not disposable projections in the
+code today**; they become so only when the store writes the selected durable
+sources, with verified restore and separately reviewed paths/sandbox policies. Preserve Git-metadata,
 credential, other-task and managed-state denies; do not relabel an old allowlist.
 Instance roots, service names, sockets and orphan-key sweeps must be scoped without
 rewriting the existing credential service/signature identifiers. Cross-instance
@@ -38,8 +64,8 @@ catalog loss is never proof of orphaned credentials.
 ### Additive HQ creation context (REC-ESC-1)
 
 Launch v3 create has an optional `hq_creation` object with exactly
-`{version:1,operation_id:<canonical ULID>,escrow_profile:1,public_root:<absolute canonical state root>}`. Omission preserves
-legacy create semantics and does not claim selected bootstrap readiness. A
+`{version:1,operation_id:<canonical ULID>,escrow_profile:1,public_root:<absolute canonical state root>}`. In the code today the object is optional and a create without it is the earlier
+create; under the decision of 2026-11-17 every create carries it (FC-142). A
 protected host provisioning operation supplies this context, its stable
 `owner_member_id` security principal, and the retained recovery code over the
 existing post-admission handoff. Neither this object nor assignment grants
@@ -53,8 +79,7 @@ from replication and selected journal capture. Interrupted preparation resumes
 only the identical intent; it verifies retained material rather than generating
 again. An empty version-zero database from interrupted initialization may finish;
 foreign schemas, missing committed material or changed input remain intact and
-require recovery. Existing legacy office identities and create behavior remain
-unchanged. This local intent does not establish protected writer custody or
+require recovery. This local intent does not establish protected writer custody or
 copy/restore authority. Those must be verified by the host before selected
 readiness. See [ADR-0007](../adr/0007-hq-creation-escrow.md).
 
@@ -65,7 +90,7 @@ bytes are immutably published there as `security/ca-escrow.v1.bin`. Reopen can
 repair absence from the retained local record; conflicting bytes cause recovery,
 with both identities preserved. A public-only read DTO excludes the usable key.
 
-### Gateway process entry (GW-SBX-MAC-1)
+### Web process entry (GW-SBX-MAC-1)
 
 The verified release's `agentic-org-web --serve` loads its sibling `ui/` public
 build before confinement. The host spawn closes unintended inherited descriptors
@@ -79,18 +104,20 @@ early rights; the next marker must carry transfer then listener, with exact
 socket-type/CLOEXEC checks before `fds.received`. The same socket then carries
 host control; neither host.sock nor an office pathname is a fallback. Actual
 `tls.fetch` supplies the verified listener configuration before HTTP accepts.
-Host EOF terminates the gateway and all its browser/native authority.
+Host EOF terminates the web process and all its browser/native authority.
 
-Gateway admission uses `com.ellosoft.agentic-org.org-gateway`, separately from the
+Web admission uses `com.ellosoft.agentic-org.org-gateway`, separately from the
 worker signing identifier, with the compiled Developer ID team, hardened runtime,
 no debug/injection entitlements and no Keychain access-group entitlement. The
 host rechecks the accepted reader's audit token, image continuity and kernel
 sandbox before sending either descriptor. The host-owned private connection is
 distinct from `host.sock`: only it can fetch the per-bind listener snapshot.
-Gateway office channels travel as `ChannelKind::Gateway` records on its admitted
+Web office channels travel as `ChannelKind::Gateway` records on its admitted
 datagram transfer socket; native channels retain the existing stream-marker
 delivery and `ChannelKind::Local`. Both retain descriptors until their correlated
-receipt; sessions/grants remain connection-bound and end at control EOF.
+receipt; sessions/grants remain connection-bound and end at control EOF. (Amended by
+[ADR-0013](../adr/0013-stored-browser-sessions.md): browser sessions are stored at the
+host and no longer end at control EOF; native sessions stay connection-bound.)
 
 The private version-1 instance configuration has an optional `browser` listener
 snapshot, absent for existing native-only installations. Protected setup writes
@@ -106,25 +133,30 @@ connection available.
 
 ### Selected identity carrier
 
-New selected organization and office entities use canonical lowercase UUIDv7
-text, including hyphens. Existing IDs retain their exact spelling. Launch-v3
-adds the explicit optional `id_profile: "selected_v1"` to its office context;
-absence retains its original alphanumeric-ID validator and bytes. The selected
-profile requires UUIDv7 office/organization IDs and explicit HQ creation context
-on create. Instance IDs, security-member IDs and operation IDs keep their own
-existing contracts. This does not confer writer or owner authority.
+> **Owner decision 2026-11-17 (conflict plan entry B-04): every ID is a UUIDv7.** The
+> `selected_v1` profile below is therefore the target for all records, not a second
+> profile beside an older one. Nothing has shipped, so the older alphanumeric-ID
+> validator, the version-1 marker and the union path validator are removed instead of
+> kept, and the check that an HQ create carries its creation context applies to every
+> create (FC-142).
+
+**What the code does today (replaced by the decision above).** Organization and
+office entities created under the selected profile use canonical lowercase UUIDv7
+text, including hyphens. Launch-v3 adds the explicit optional
+`id_profile: "selected_v1"` to its office context; without it the code applies
+its older alphanumeric-ID validator. The selected profile requires UUIDv7
+office/organization IDs and explicit HQ creation context on create. The profile
+does not cover instance IDs, security-member IDs or operation IDs. This does not
+confer writer or owner authority.
 
 The plaintext runtime marker uses `office.json` version 2 for this profile,
-requiring UUIDv7 office and organization IDs. Version 1 stays unchanged; readers
-retain the stored version and never rewrite an existing version-1 identity into
-version 2. The safe storage-path validator accepts the union of existing plain
-IDs and canonical UUIDv7 solely as a single path component. Legacy command and
-wire validators retain their narrower rules. Host custody/catalog and worker
+requiring UUIDv7 office and organization IDs; the code also still reads
+version 1. The safe storage-path validator accepts both the older plain
+IDs and canonical UUIDv7, solely as a single path component, and the command and
+wire validators keep their narrower rules. Host custody/catalog and worker
 open/discard paths use the shared safe storage validator; no arbitrary opaque ID
-is interpolated into a path. Other incompatible imported IDs remain staged.
-Socket handles remain separately bounded and collision-checked. Version 2 is
-persistent compatibility state, not permission to run an older executable over
-selected acknowledged data.
+is interpolated into a path.
+Socket handles remain separately bounded and collision-checked.
 
 ### Selected provisioning port (implementation in progress)
 
@@ -156,12 +188,12 @@ This describes the intended adapter, not completed setup or adoption evidence.
 ## Target launch and recovery gate
 
 Launch-v2 examples in §§1–6 below preserve the exact baseline protocol and security
-review. Their `org-server`/`org-office-host` names identify historical executables;
-current filenames are `agentic-org-office`/`agentic-org` and reusable host code is
+review. The executables had other names at that review; today they are
+`agentic-org-office` and `agentic-org`, and reusable host code is
 `org-host`. `office.json` v1 and launch v2 are independent of organization-data
 `schema_version`/`revision`. No extra slug/repository/home-team fields are added to
-the v2 first line by this documentation change. A reviewed versioned provisioner
-must bridge the full selected create plan and current stored-marker adoption rules
+the v2 first line by this documentation change. A reviewed provisioner
+must carry the full selected create plan and current stored-marker adoption rules
 before enabling target creation. Initial setup and production web handoff remain
 unavailable; launch v3 and satellite create remain separate pending contracts.
 
@@ -205,8 +237,8 @@ A registered host with an opened protected account registry uses launch v3 for
 existing office starts. The rendezvous reader must match the admitted child audit
 token (and PID), immediately before any key is sent. The host retains transferred
 descriptors until `fds_received`; unknown receipts, timeout or a broken transfer
-connection close that worker's channel service. Unregistered legacy starts and
-the legacy create/discard contract retain launch v2 during this integration.
+connection close that worker's channel service. In the code today, unregistered starts and
+the earlier create/discard contract still use launch v2.
 This transition does not itself admit selected storage or publish its capability.
 
 On local host-control connections, `office.open_channel` carries its existing
@@ -243,13 +275,13 @@ remains in crates/org-office-launch.
 ### Phase-1 launch-v2 evidence
 
 The remaining numbered sections record the inspected phase-1 host/worker contract
-and its review constraints, including the macOS app-token caller path. Retain exact
-wire/key/signature values for compatibility and implementation review. The retired
+and its review constraints, including the macOS app-token caller path. Exact
+wire/key/signature values are kept here for implementation review. The retired
 signed-Tauri public caller, account-wide home and bundle-relative installation are
 not target installation requirements; standalone principal grants, scoped instances
 and verified packaged helper admission replace those roles without relaxing custody.
-Where code differs, describe it as implementation evidence and resolve/version the
-contract explicitly; this documentation does not enact a migration or override code.
+Where code differs, describe it as implementation evidence and resolve the
+contract explicitly; this documentation does not override code.
 
 ## 1. Who owns what on disk
 
@@ -261,8 +293,8 @@ or changing credential identities implicitly.
 | Path | Written by | Read by |
 | --- | --- | --- |
 | `<home>/host.lock` | host: **the single-host lock**, an exclusive `flock` held for the host's whole life. A second host on the same home exits at once, so one host creates every office. Inside it, the **catalog mutex** (in-process) guards only a create's name check and reservation (see 4). | host |
-| `<home>/host.sock` | host (0600) | app, `org-agent` (run by hand; office-run sessions compute their socket path, §3) |
-| `<home>/run/<handle>.sock` | server (0600) | app, `org-agent` (address from the host's `office.list`, or computed when `ORG_OFFICE` is set, as in office-run sessions, §3) |
+| `<home>/host.sock` | host (0600) | app, `agent-os` (run by hand; office-run sessions compute their socket path, §3) |
+| `<home>/run/<handle>.sock` | server (0600) | app, `agent-os` (address from the host's `office.list`, or computed when `ORG_OFFICE` is set, as in office-run sessions, §3) |
 | `<home>/offices/<office-id>/` | **server** creates it (0700) on `--create` | host lists the folder names |
 | `…/office.lock` | server: `flock` from before it opens anything until it exits | nobody else, ever |
 | `…/office.json` | server, **written last** on `--create` (tmp + rename + fsync): this is the "stored" marker | host (the catalog) |
@@ -275,7 +307,7 @@ A satellite whose `office.json` records a terminal join `state` stays in the cat
 The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
 started or discarded.
 - **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
-  failed before `office.json` was in place, it runs `org-server --discard <id>`, with the office's
+  failed before `office.json` was in place, it runs `agentic-org-office --discard <id>`, with the office's
   key on the first line, or `"db_key": null` when it holds none for that id (amended 2026-11-08: key
   custody). The server takes the lock (same wait), and removes the folder only if the office never
   finished (with no folder, it takes no lock, creates nothing and reports `discarded`, see 3):
@@ -329,9 +361,9 @@ is unrelated to HQ's `OfficeInfo.status: pending` (an invited office).
 ## 2. Starting a server
 
 ```
-org-server --create          # create a new office from the pipe message, then serve it
-org-server --office <id>     # serve an existing office
-org-server --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
+agentic-org-office --create          # create a new office from the pipe message, then serve it
+agentic-org-office --office <id>     # serve an existing office
+agentic-org-office --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
 ```
 - The host always sets `ORG_OFFICE_HOME` explicitly on the child, so both use the same home.
 - No details on the command line beyond the office id (the design: details travel through the pipe).
@@ -368,7 +400,7 @@ org-server --discard <id>    # remove an unfinished office, then exit (the host 
 >
 > Pending in X-02 §12 Q9, not yet in its §5: the office temp handle on the first line (at startup,
 > before it starts any worker, the host allocates and claims one for every catalog office that lacks
-> one, so offices created under v2 aren't stranded), the `joined` event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
+> one), the `joined` event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
 > record that asks workers to refresh sandbox policies.
 >
 > **Until then:** a satellite create is refused (below); office-run sessions don't launch, because they need
@@ -452,7 +484,7 @@ first line is `invalid_request`.
 - (amended 2026-11-08: agent sessions rev 3.3, ada) **Children, for the watchdog.** After `ready`, the server also sends a line for each agent runtime it spawns, and one when that child is reaped and cleaned up ([`agent-sessions.md`](agent-sessions.md), "Processes and safety"):
   `{"v":2,"event":"child","pgid":4250,"pid":4250,"started_at":"…","mark":"…"}` and `{"v":2,"event":"child_gone","pgid":4250}` (amended 2026-11-08: key custody: `"v":2`, like every pipe line).
   The host keeps them in memory only, and when the server dies it runs the orphan cleanup on them before it restarts the server. The mark isn't a secret.
-  Office-run agents' tools can't connect to `host.sock` (a fixed deny in `agent-sessions.md`). `org-agent` there always has `ORG_OFFICE`, so it computes its office's socket path (`org_proto::location::office_socket_path`) and never needs `host.sock` or `office.list`.
+  Office-run agents' tools can't connect to `host.sock` (a fixed deny in `agent-sessions.md`). `agent-os` there always has `ORG_OFFICE`, so it computes its office's socket path (`org_proto::location::office_socket_path`) and never needs `host.sock` or `office.list`.
 - (amended 2026-11-08: agent sessions rev 3.3, ada) **A host ignores an event it doesn't know** (it logs the event's name once), so a server can add events without a host change. Only `failed` codes have their own unknown rule (above).
 
 ## 4. What the host does
@@ -551,7 +583,7 @@ first line is `invalid_request`.
     check). A child that fails, or whose token can't be taken, is killed and reaped and gets
     nothing; the start counts as `storage_error`. A release host with no team id compiled in starts no server at all (logged as a
     WARNING). This stops a same-user process that runs the signed host from a copy, a symlink or a
-    hard link next to its own `org-server` from receiving the keys, with one **residual
+    hard link next to its own `agentic-org-office` from receiving the keys, with one **residual
     risk (open)**: any same-user process can resume a suspended child (`SIGCONT`). An attacker that
     resumes the child before the host takes its token (stopping or starving the host, e.g. a copy
     of the host it launched itself, makes that easy), lets it fork a helper that
@@ -560,11 +592,11 @@ first line is `invalid_request`.
     Closing that needs the key handed only to an authenticated reader (e.g. a per-spawn socket
     whose peer audit token must equal the admitted one): a launch-contract and server change.
     Debug builds don't check (their servers are unsigned; logged at startup).
-  - **Historical no-desktop-migration decision:** no compatibility import is required from the undeployed desktop. This does not authorize discarding real local office state, protected source journals, credentials or live spool. Use disposable development fixtures only.
+  - **Historical no-desktop-migration decision:** no compatibility import is required from the undeployed desktop. This does not authorize discarding real local office state, protected source journals or credentials. Use disposable development fixtures only.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,
-    and the office-home rules. The server is the `org-server` next to the host's own
+    and the office-home rules. The server is the `agentic-org-office` next to the host's own
     executable (canonical path), and is admitted only if it passes the signature check. Release
     builds refuse `--home`, `--server-bin` and `--app-team-id`; debug builds keep them. (amended
     2026-11-08: review M1) At startup a release host also reads its own signing information once
@@ -579,7 +611,7 @@ first line is `invalid_request`.
     build. If it needs a provisioning profile, the host ships as a helper app bundle
     (`Contents/Library/LoginItems/…`). The legacy-ACL fallback is used only if the Data Protection
     keychain proves impossible, and then it goes back to ada first.
-  - **Why:** a same-user process could stop the host and run the signed `org-server` itself with
+  - **Why:** a same-user process could stop the host and run the signed `agentic-org-office` itself with
     its own app token, and a Keychain item owned by the server would trust that server. With the host
     holding the keys, a server started by anyone else gets no key and can't open `org.db`.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
@@ -605,17 +637,17 @@ integration tests to `apps/agentic-org`, and the worker to
   `organization.create`, `organization.list`, `office.list`, `office.restart`, `office.app_token`,
   `subscribe`), and (amended 2026-11-08: key custody) `keys` (the key store: the Data Protection
   keychain in release builds, the dev-keys files in debug builds).
-- The supervisor takes the server program's path as config (default: the `org-server` next to
+- The supervisor takes the server program's path as config (default: the `agentic-org-office` next to
   the host binary in the app bundle; a release build uses only that one, next to the host's own
   executable (canonical path), and admits it only if it passes the signature check, see Key
   custody). The host's tests use a **fake office server** (a test helper binary
   that follows section 3), so the host is tested without SQLCipher or the Keychain (its keys go to the
   dev-keys files or an in-memory store), and doesn't wait for server-dev's work to land. The fake must never ship: it's an example or a dev-only bin the bundle never picks up.
 - The host doesn't depend on `org-office` (no SQLCipher in the login service) or on
-  `org-server`'s library (an app doesn't depend on an app).
+  `agentic-org-office`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
-1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).
+1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. The lead owns it as a contract. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).
 2. **The name rule is `org_proto::OrganizationName`** (ada, branch `ada/proto-org-name`): `parse(&str) -> Result<_, NameError>`, `.as_str()` (trimmed), `.key()` (Unicode lowercase of the trimmed name, no normalization). `NameError` is `Empty | TooLong | ControlChar` with `.message()`, mapping to `invalid_name`.
 3. **The minimal listener** lives in one module (`service/listener.rs`), uses only `org_proto::frame` and the typed `Call`/`EventKind`, and grows no router. It's swapped for server-dev's shared crate once that's extracted.
 4. The design's "`--create --role hq`" (line 35) is wrong. Only `--create` goes on the command line. ada fixes the wording.

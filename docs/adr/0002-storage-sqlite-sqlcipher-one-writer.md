@@ -1,11 +1,29 @@
 # ADR-0002 · Storage: SQLite with SQLCipher, one writer
 
-Status: accepted 2026-11-08; reconciled 2026-11-15. Owner: ada.
+Status: accepted 2026-11-08; reconciled 2026-11-15. Owner: lead.
 Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md). Standalone platform
 and instance boundaries follow [ADR-0005](0005-standalone-server-v1.md).
 The selected source/storage contract follows the
 [authority map](../design/documentation-authority.md); no schema migration or
 production recovery implementation is performed by this decision.
+
+**Layout precedence (2026-11-17).** The engine, single-writer, durability and
+key-custody decisions below stand. Where data lives on disk is owned by the newer
+[organization-data storage contract](../design/organization-data/README.md#shared-storage-contract):
+one root with sources under `durable/` and the SQLite projection under
+`runtime/<office-id>/`. The per-office `org.db` and `office.db` described here are
+the current implementation and stay authoritative until an approved migration.
+
+**Amended 2026-11-17 by two owner decisions.**
+[ADR-0016](0016-no-application-level-data-encryption.md) supersedes the SQLCipher
+requirement of decision 1 and the database-key custody of decision 2: organization
+data is no longer encrypted by the application. The per-office key remains only to
+wrap an office's private keys. The
+choice of SQLite, the single writer and WAL stand.
+[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) amends decision 4:
+named operations may be acknowledged once committed, with the full flush following
+within a bounded interval; every other operation keeps the full-flush rule. Until the
+code changes, the text below describes the current implementation.
 
 ## Context
 - Many agents will talk to an office server at once, and their writes must not fail or stall each other.

@@ -3,7 +3,7 @@ kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
 revision: 14
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -20,10 +20,9 @@ Revision 14 retains the deferred model-policy requirements below; revision 13 re
 [16](../design/organization-data/16-recovery-and-office-continuity.md) and
 [17](../design/organization-data/17-budgets-and-controls.md).
 The selected target is explicit execution; automatic run modes/schedules, native
-delegates and semantic memory remain earlier UX proposals. No runtime engine,
-public wire command or migration is implemented by this spec. Existing v1
-run_mode/schedule fields retain compatibility behavior and must be staged on
-import without inventing a selected scheduling schema. See the
+delegates and semantic memory remain earlier UX proposals. No runtime engine
+or public wire command is implemented by this spec. The run_mode/schedule
+fields in the code today are not a selected scheduling schema. See the
 [authority map](../design/documentation-authority.md).
 
 ## The request (the user, 2026-11-08)
@@ -35,7 +34,7 @@ Earlier revision history is available in
 The operative cost rules are [COST](costs-and-insights-ux.md) and document 17,
 which integrate compatible earlier requirements without adopting superseded rules.
 One-off labels below are display proposals, without R- prefixes or a
-new selected record counter. T- task references are scoped to project or team.
+new selected record counter. T- task references are minted by the creating office and unique in the organization.
 
 ## 0. Decisions
 
@@ -97,7 +96,7 @@ The mode icons, automatic wake history and upcoming schedule surfaces below are
 
 - **Org chart card and lists:** the status word gets the mode's detail: "Asleep · on call", "Asleep · next run 14:30", "Working · woken by ada's message". A small mode icon (`zap` Always on, `bell` On call, `clock` Scheduled) sits beside the status, always with the word in the tooltip and for screen readers ("HR lead, agent, on call, asleep").
 - **Quick view and profile header:** **How it runs:** On call · "Last run 12:04 (4 min) · next: when called". Actions: **Run now** (primary for asleep agents, with an optional note: "What should HR lead do?"), **Message**, ⋯ › Change how it runs…. **Stop** (⋯) pauses the agent: it's the same as Pause (`our-org-in-the-app.md` DEAL-3), so there's one way to stop an agent, not two.
-- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task P-8/T-17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
+- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task T-A17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
 - **Home › Working now** includes agents woken right now, with their trigger. **Upcoming** (collapsed) lists scheduled runs in the next 2 hours.
 - **Activity:** a wake and a sleep are one row per run (not two), updated live ("running 2 min…" becomes "ran 4 min").
 
@@ -116,7 +115,7 @@ selected and implemented.
 
 The proposed editor would appear at Hire Review and profile › Settings › **How it
 runs** (a slide-over). Keep unavailable controls out of the current hiring flow;
-there is no selected automatic On-call default for imported employees:
+there is no selected automatic On-call default:
 
 ```
  How HR lead runs
@@ -202,8 +201,7 @@ Fast/Balanced/Frontier tiers, exact pinning, neutral efforts and presets need a 
 
 Named helpers, escalation recording, per-slot price hints, activity-based estimates and Main/Helpers/Reviews cost breakdowns need selected runtime/helper/accounting evidence. Until then, show them unavailable rather than a functional four-slot editor or estimate. Any future implementation must retain the one-open-turn/main-process exclusion, shared permits, actual consumer attribution, aggregate/component deduplication and cost visibility. Revisioned changes apply to the next admitted turn, never mutate its frozen input. Target checks must prove unavailable models launch nothing and no role/model setting installs helper tools or exposes credentials.
 
-These retained earlier answers document the deferred proposal and legacy v1
-compatibility. A25/A26 do not authorize a target scheduler, automatic fresh-start
+These retained earlier answers document the deferred proposal. A25/A26 do not authorize a target scheduler, automatic fresh-start
 recovery or embedding execution in employee identity. A28 cleanup applies only to
 safe throwaway inputs; task workspaces survive handoff/run end. A108 is a deferred
 one-off display/counter proposal, not a selected T-/R- numbering change.

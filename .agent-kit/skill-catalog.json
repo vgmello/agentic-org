@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; old tool, queue and legacy structures dropped. No new tool, role or stack. Code unchanged.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -18,7 +18,7 @@
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "29b7e909566da850e33b49d55eb567373ffdb65480144abee8459ccb5d032c29"
+      "sha256": "59e141eb8bf375f65217409398c7bba45b67f9f69fef2d2200b18ece81c973e1"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "008313093f494ad03206c53764bbe74732764fc5c0dbefcbae5e5ffe17e76bbe"
+      "sha256": "3009b99ef0b5e6c29d1ce723e5496b69e70e103fe0a9d6a4064b17a7f3b22601"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
+      "sha256": "b571de1490dca3db938b16ef697ce2bdcf0ad0583e8684dcdd9bcc8f2a1e8dbb"
     },
     {
       "path": "Cargo.lock",
@@ -118,31 +118,31 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "a77502af12f59a2d65778414261eefa078c4b39ba62db467a23e1b801288283a"
+      "sha256": "d63ae24c88dd8e9c4476376211cbedc17b26795c8b5b63b58da647ad86dfad46"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "d073d3427e489b48ccbb98f6f148fea2ec8f53a8e54e39f85fdfb222905c9ca8"
+      "sha256": "437abd9be1721ca4e6f71aa54c675420ef162d9cd2e4da036335cd56f360ae2b"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "6751f22ec7f2e74e964fef67557933a5ca16174bafd7b416e6d83f671853fe3f"
+      "sha256": "cec497fab9ea05352144376909601376b5366f0a5f0a14853584f5d96afef94f"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "b30a5ef6e0d924d73a8b96f34565564269dd336e5c0296205037e4512aeafa7f"
+      "sha256": "f588cbddac60d2eec410a217a1b005288fd53483b95214c265fcc8636ba88f23"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
-      "sha256": "a6b1a72eab2a70f05012bf52c9302b3097f4368095d7191d711f71f4a22e441d"
+      "sha256": "aa43a5f046cc8992ec0ead5b66af8c094632dc21a63929e080124ce0409f0f51"
     },
     {
       "path": "docs/adr/0010-legacy-task-adoption.md",
-      "sha256": "010d28fff2d1b01a515aa662bd438ec275e2f0b357be0c07d1cd1a4528185f03"
+      "sha256": "36bf64dc9542702aa6ea6621122c3fa40186693f9b72159b52369e01055307fc"
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "72d87a6af79d0624ac723900f06925bb2dfce0964b94e07a16a44e2a33959457"
+      "sha256": "07aea48691616c61dac62c0e28f83e993e896e74adf00ea36eef4f9c5f5a52e5"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "667e5bd5d11b4fc5d871c15f963681442148a399a915f5ec5bab3240b9f272b6"
+      "sha256": "ffa565387332c099a0375448e92931d94d28516daf8e08839f9e6fc0d3c7ac5c"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "64a93cde7d9d5458db28d9c91da12afb44ae5bda5423260b6c9f43108565e095"
+      "sha256": "2a6b19abd4e5e16bd744de911082e5a3f1294aa4f5fb5c83fe69dc08646d7871"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "10ecf7afc3c1d1a7b2f18c04214d9d5d038e5d78d5aaab7713fb01078c9197ae"
+      "sha256": "3714c3cbaf882ab138e14622434b3e104fd09c06d10b7d8f4c18f0567939b15b"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,15 +182,15 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "b1135ada988ae98b50c8138ba9748967c10ba0b9f87b09922f596bdc1ff7f6ac"
+      "sha256": "3a1b4f759245b360f9440186b2050f3064efa47e0023f18be0b65acffb4331b9"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "662a8a4d032f79aca78cc9f154674741334b7cee908ea2414bf50a71a4acacf5"
+      "sha256": "bd079b2bf0bf81fd7186c8a1ab55c4b64eb59d4e0d82237529b8a193e967f13a"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "a58018059fdc8a3d43500f1dd24cd3b89090e92bf3e7cf23260c28644c165aeb"
+      "sha256": "093f01ee6979ae90d5cc818a21cf9fc59caf97f18f9a82bceab017b0b7aea833"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",

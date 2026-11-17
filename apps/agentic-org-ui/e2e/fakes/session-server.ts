@@ -12,7 +12,7 @@ export const sessionView = {
 };
 /** Instance-specific cookie name, spelled as the gateway does (apps/agentic-org-web/src/sessions.rs `BrowserSessions::new`). */
 export const sessionCookieName = `org_session_${createHash('sha256').update(sessionView.instance_id).digest('hex').slice(0, 16)}`;
-/** One browser pair: two independent 256-bit random draws, as gateway-api-v1 §4 requires. */
+/** One browser pair: two independent 256-bit random draws, as web-api-v1 §4 requires. */
 export interface SessionPair {
 	readonly cookie: string;
 	readonly proof: string;

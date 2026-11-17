@@ -13,7 +13,7 @@
   },
   "evidence": {
     "familiar_pattern": ["reservoir b77cbd68 apps/agentic-org-web/src/sessions*.rs and crates/org-host/src/gateway.rs are working analogues"],
-    "precise_scope": ["docs/design/gateway-api-v1.md §2 rows 1-5 and §4; contract v1-f4-gateway-sessions-contract.md"],
+    "precise_scope": ["docs/design/web-api-v1.md §2 rows 1-5 and §4; contract v1-f4-gateway-sessions-contract.md"],
     "localized_change": ["spans org-host-control, org-host, agentic-org-web and agentic-org-ui with a shared host-web handoff wire (closure-inventory-1.md)"],
     "deterministic_checks": ["cargo test workspace; native fixtures pattern from F3c root-native-producer-proof drivers"],
     "low_risk": ["authentication, cookies/CSRF, credential handling and process supervision are security-critical"],

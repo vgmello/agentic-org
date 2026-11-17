@@ -3,7 +3,7 @@
 Status: **selected office/data target reconciled 2026-11-15; networking and
 recovery implementation remain gated**. The [authority map](documentation-authority.md)
 and organization-data documents own relationships/canonical sources. The 2026-11-08
-transport/launch design supplies compatibility and failure requirements, not proof
+transport/launch design supplies transport and failure requirements, not proof
 that remote enrollment, restore or promotion is implemented. Current executables
 are `agentic-org`, `agentic-org-office`, `agentic-org-web` and `agent-os`; host
 lifecycle is `crates/org-host`. See [availability](executable-migration.md).
@@ -43,7 +43,7 @@ neither access to private data nor authority to run another process.
   to its project's owner when project-scoped. Projectless tasks belong to a team.
   Nullable `assigned_team_id` and `assignee_id` are independent from that owner
   and changed atomically at an expected revision. Reporter is the immutable
-  creator. All task types use T-; use `P-8/T-42` or `TEAM-12/T-42` across scopes.
+  creator. All task types use T-; a reference such as `T-A42` is complete on its own.
 - **Runtime placement.** One office worker supervises logical agent controllers,
   turns/attempts and owned processes. A runnable agent needs separate execution
   config, model profile, fresh local connection evidence and a shared permit.
@@ -68,34 +68,33 @@ They must be preserved through any target adapter. Filenames do not rename
 The selected target separates data by durability:
 
 ```text
-<organization-data-root>/<organization-id>/
-├── durable/
-│   ├── state/                       # ordinary tracked organization files
-│   ├── journal/                     # acknowledged unpublished persistence
-│   ├── authority/                   # numbering and recovery evidence
-│   ├── accounting/                  # durable usage archive/checkpoints
-│   ├── local/offices/               # private bindings; never Git
-│   └── checkpoints/                 # local/unpushed code recovery
-└── runtime/<office-id>/
-    ├── office.db                    # projections and explicitly transient data
+<data-root>/<organization-id>/
+├── durable/                  # sources: back up all of it; never removed by cleanup
+│   ├── state/                # ordinary organization Git files
+│   ├── journal/              # acknowledged unpublished changes
+│   ├── authority/            # numbering, placement generations, permits (06, 11)
+│   ├── accounting/           # durable usage streams/checkpoints (10)
+│   ├── messaging/            # protected envelopes and attachments (15)
+│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── budgets/              # policies, periods, events, extensions/holds (17)
+│   ├── private/              # HQ only: author-private task notes (05)
+│   ├── local/offices/        # private local bindings, never Git
+│   └── checkpoints/          # local/unpushed code recovery
+└── runtime/<office-id>/      # caches: rebuildable
+    ├── office.db             # projections and explicitly transient state
     ├── repositories/<repository-id>.git/
     └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
-<organization-operational-root>/
-├── messaging/                       # protected envelopes and attachments (15)
-├── recovery/                        # receipts/streams/snapshots/cleanup (16)
-└── budgets/                         # policies, periods, events, holds (17)
 ```
 
-Provision and protect the operational root independently of disposable caches.
+The [organization-data index](organization-data/README.md#shared-storage-contract) owns this layout. Provision and protect `durable/` independently of the disposable `runtime/<office-id>/` caches.
 Private task notes use a separate durable author-private DB; host credentials/CA
 pins and execution journals retain their protected custody. The current runtime
 still uses encrypted `org.db`/`office.db`, `office-state/` markers and legacy
-workspaces. Those databases currently contain non-disposable sources and must
-not be deleted on the strength of the target diagram. A reviewed migration must
-extract/verify all acknowledged sources and re-derive sandbox denies before
-switching paths. Handoff preserves task worktrees until closure; local-only and
+workspaces. In the code today those databases are the only copy of what they
+hold, so they are not caches until the store writes the selected durable sources.
+Re-derive sandbox denies before switching paths. Handoff preserves task worktrees until closure; local-only and
 unpushed edits require protected checkpoint recovery before cleanup.
 
 Host death stops workers and owned processes; restart requires lock exclusion,
@@ -110,12 +109,13 @@ separate contract/implementation gates.
 
 Office-first means a permitted local write can be durable before network
 publication. It does not mean offices own accountable teams/projects or allocate
-independent counters. Persist stable IDs, revisions, domain source and required
+HQ's counters; the one sequence an office keeps is for the tasks it creates
+([document 06](organization-data/06-identity-and-numbering.md)). Persist stable IDs, revisions, domain source and required
 journal/receipt evidence before acknowledging. Hourly Git publication cannot be
-the only copy of an accepted change. Features/tasks may have `number: null` while
+the only copy of an accepted change. Features may have `number: null` while
 the shared authority registers their scope and allocates the final reference.
 Preserve every acknowledged allocation across restore; never increment a replica
-counter or renumber imported B-/REQ- records.
+counter.
 
 The existing work protocol's **owning office** is a serialization/transport role,
 separate from task `team_id`, assigned team and individual. Current routing to an
@@ -150,12 +150,10 @@ Retain these current transport safety requirements when adapting that model:
 Messages have immutable content plus separately revisioned recipient/card state;
 conversation participation is independent of team/office placement. Persist
 protected JSON envelopes and verified attachments under document 15 before
-acknowledgement. Retain delivery identities and source codecs. Imported
-`directed_thread` A→B then B→C does not grant A the B→C message: filter message
-bodies, counts, reply previews and search by per-message visibility. An owner
+acknowledgement. Retain delivery identities. Filter message
+bodies, counts, reply previews and search by message visibility. An owner
 requires the existing authenticated chat policy; private task notes have no
-owner exception. Active Phase A asks/replies and read/triage state remain intact
-until the separately verified conditional cutover.
+owner exception.
 
 Cross-office messages travel office → HQ → destination on existing outbound
 connections. Local messages may work without HQ; cross-office delivery waits in
@@ -172,8 +170,9 @@ automatic scheduling engine is selected.
    above, rather than becoming a second HQ writer.
 2. Validate required target fields/references and expected revision. The remote
    organization repository, state branch, home teams and accountable owner teams
-   must round-trip at canonical stable-ID paths. New stable entities use UUIDv7;
-   current ULID command/change admission remains a separate versioned contract.
+   must round-trip at canonical stable-ID paths. Every ID is a UUIDv7, command and
+   operation IDs included (identity contract); the code admits ULID command/change
+   IDs today.
 3. The admitting writer commits domain changes, required source journal evidence
    and the bound receipt/outcome at one recoverable boundary. One operation ID
    with another actor or fingerprint conflicts. Unknown side effects are
@@ -189,7 +188,9 @@ automatic scheduling engine is selected.
    hash-check staged snapshot bytes before install. Partial/stale snapshots confer
    no authority. The existing encrypted `org.db` snapshot/swap isolates `office.db`
    and keeps one-time transport keys private; the target importer must preserve
-   those guarantees and protected pending/native/base payloads losslessly.
+   those guarantees (except that under ADR-0016 the snapshot file is no longer
+   encrypted with a transport key: it travels only over the office TLS connection
+   and is verified by its content digest) and protected pending/native/base payloads losslessly.
 6. Rebuild SQLite only from complete authorized Git plus protected sources.
    Credentials are rebound, acknowledged receipt/stream/allocation high-waters
    retained, and marked-process cleanup/fencing verified before execution. Lost
@@ -199,7 +200,7 @@ automatic scheduling engine is selected.
 Current command admission retains ULID age/skew windows (29-day admission,
 30-day result retention; future skew at most five minutes) and lookup-before-age
 behavior with monotonic clock high-water. Those are existing wire semantics,
-not UUIDv7 stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
+not the stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
 do not silently purge receipts during cache rebuild. Hidden/unauthorized outcomes
 remain scoped, and rejection never authorizes an automatic fresh-ID retry.
 
@@ -253,7 +254,8 @@ records last seen. Satellites open no public app listener.
      allowed, because v1's local satellites (B2-10) join their own instance's HQ.
    - **Pending lifecycle.** The worker generates the TLS identity key and the
      request, persists them with the invitation key in its `office.db` (encrypted
-     with the office database key), then writes `office.json` with `state: pending`,
+     with the office database key; under ADR-0016 they become records wrapped by
+     the host-held office secrets key), then writes `office.json` with `state: pending`,
      all **before** it sends anything to HQ. From then on the folder is a created
      office under the usual adopt rule (it's keyed on `office.json`): the host never
      runs `--discard` on it automatically (only `office.remove_pending` does, below), and later starts use `--office <id>` and resume the same
@@ -331,7 +333,7 @@ new address from its administrator without accepting a different HQ identity.
   - Organization changes wait in the satellite's **outbox**, in order. A queued edit to something already edited in the outbox expects the version that earlier edit will produce, so two queued edits of one thing don't conflict with each other. When HQ is back, they're sent **one at a time, in order**.
   - If HQ rejects one, the commands queued after it are held, not sent. The app shows them as **blocked** for the owner to retry or discard, because they may depend on the rejected one.
   - Until they're committed, queued changes show in the app as **pending**. They aren't in the copy.
-- **Messages between agents** (ADR-0003, proposed):
+- **Messages between agents** (ADR-0003; routing and ownership in §2.2 and §§3.1–3.4 accepted 2026-11-17):
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
 - **The browser when HQ is unavailable:** HQ's application cannot be reached.
@@ -384,10 +386,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **`org-office-launch`** (new contract crate): the pipe protocol between the host and an office server it starts, and the `office.json` file the server writes and the host reads. The host and the office server use it, and `agent-os` reads `office.json` through it (ADR-0003 §2.1). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`agentic-org-office` and `agentic-org`** stay thin; `crates/org-host` owns reusable host lifecycle. `agentic-org-web` parses browser HTTP without key custody.
-- **Owners (AGENTS.md):**
-  - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki` (this design's crates); AGENTS.md is the full ownership list.
-  - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-server`.
-  - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version.
+- **Owners:** the lead owns all of these crates under the current solo workflow (`AGENTS.md`). `org-sync-proto` and `org-office-launch` are contracts and change with the same care as `org-proto`.
 
 ## Implementation scope after the standalone-v1 pivot
 
@@ -414,16 +413,17 @@ use the model/process sections above and the current launch contract.
 
 - **ADR-0001:**
   - An office belongs to an organization.
-  - `org-server` runs one office, and `org-office-host` is the login service.
+  - `agentic-org-office` runs one office, and `org-office-host` is the login service.
   - Offices keep running when the app quits (ADR-0001), but they run under the host: a host crash or restart stops every office on this Mac (and agents' messaging) until the host restarts them, and rotates all app tokens. This is the phase-1 trade-off.
   - The web application talks to HQ; the CLI manages named instances and enrollment (ADR-0005).
 - **ADR-0002:**
+  - *(Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md), 2026-11-17: database encryption is to be removed. The per-office key stays only to wrap an office's private keys, and a missing key no longer prevents the databases from opening. The bullets below describe the current implementation.)*
   - **Each office has its own two databases:** `org.db`, the organization data or its copy, and `office.db`, its own data. They share one key, kept under the office id. (amended 2026-11-08: key custody) The host creates and holds it, in the Data Protection keychain on this Mac only, and sends it on the launch pipe; the server never stores one.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
-- **ADR-0003 (proposed):**
-  - `org-agent` talks to **its own office**, so binding needs only the agent.
+- **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is earlier design evidence):**
+  - `agent-os` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):
   - The host gains `hello`, `organization.create`, `organization.list`, `office.list` and `office.app_token` (ADR-0003 §2.1).

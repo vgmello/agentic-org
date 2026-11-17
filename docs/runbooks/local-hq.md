@@ -11,7 +11,7 @@ from the selected organization-data target.
 
 The superseded 2026-11-08 Tauri/bundle walkthrough is available in
 [Git history](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/runbooks/local-hq.md).
-Its `org-office-host`, `org-server`, `tauri dev`, sessionless create and app-token
+Its `org-office-host`, `agentic-org-office`, `tauri dev`, sessionless create and app-token
 instructions cannot be run against the current checkout. Do not recreate them by
 bypassing the protected bootstrap gate.
 
@@ -35,7 +35,7 @@ workaround. Do not edit registry/DB/marker files by hand to make them available.
 ## 1. One folder for everything dev, apart from a real install
 
 Use an empty, short, owner-private disposable root, never a user's office home,
-Keychain items, installed CLI or live Phase A spool. In a development terminal:
+or Keychain items. In a development terminal:
 
 ```sh
 export HQ_REPO="$(pwd -P)"  # run at the repository root
@@ -131,7 +131,7 @@ remote-sync or execution acceptance pass. The eventual HQ run must establish:
 - Separate server and agent readiness, ordered model-profile routes, fresh local
   credential/entitlement evidence, shared permits and durable placement fencing.
 - Authenticated browser snapshot/event continuity, one logical result after a
-  lost reply, and no privileged key exposure through gateway/CLI.
+  lost reply, and no privileged key exposure through web/CLI.
 - Durable sources and acknowledged recovery evidence surviving cache loss without
   broadening message/private-note/cost access or duplicating execution.
 
@@ -178,5 +178,4 @@ runtime-path sandbox migration remain implementation gates. Satellite networking
 and selected profile/permit/session-runner integration need their own evidence.
 Manual HQ-loss recovery remains REC-1; an escrow round-trip is not promotion.
 Automatic promotion, scheduling/memory, Areas, Undo and process execution are not
-selected by this runbook. Keep active Phase A communication intact until its
-separately verified conditional transport cutover.
+selected by this runbook.

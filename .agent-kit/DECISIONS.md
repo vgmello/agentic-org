@@ -5,7 +5,7 @@ The current solo Codex workflow in AGENTS.md governs implementation and integrat
 - Composition: docs/architecture-rules.md and docs/design/project-structure.md; binaries compose libraries, policies own required contracts, no source cycles. Domain moves remain incremental.
 - Authority: docs/design/documentation-authority.md and organization-data/README.md own selected target relationships. Draft SQL/acceptance criteria are not shipped migrations or services.
 - Storage/key boundaries: ADR-0002 and ADR-0005 retain one office writer and host key custody. Gateway/agent identities do not receive raw office keys. Read primary authorization/acknowledgement/recovery contracts for affected work.
-- Coordination: preserve installed org-agent, spool state and pending asks/replies/triage under ADR-0003. Do not use live messaging for routine development or contact offline developers.
+- Coordination: nothing from the earlier coordination tool or its message queue is preserved, imported or cut over (owner, 2026-11-17). The goal is to onboard the people and agents building the product onto the product itself as early as it can carry them. Do not contact offline developers.
 - Solo ownership (owner instruction, 2026-11-15): Codex owns all repository areas and uses local kit subagents as needed. Named-owner boundaries, external reviewer waits and Ada agreement/merge approval are superseded. Keep local independent reviews, original-author validation, final review and current checks.
 - Owner's integration override (2026-11-15): review completed features locally and then merge into `v1-integration`, the shared integration branch for all v1 features. Do not wait for a PR. The later solo instruction supersedes former area ownership; no release-v1 merge is authorized.
 - Owner's blocked-work direction: move to another feature when blocked. Preserve the blocked branch/checkpoint, then start independent work from the integration branch; do not stop all delivery on one unresolved prerequisite.
@@ -24,7 +24,7 @@ assignment-pair domain boundary and its separate service-acceptance obligations.
 [ADR-0006 / TAI-01](../docs/adr/0006-selected-task-acceptance.md) revision 5 is
 **active for implementation architecture**, after fresh independent review and a focused READY recheck. It covers selected
 assignment’s authenticated vertical path and focused private web transport edges, codec 2, snapshot preservation,
-recoverable acceptance, adoption and UI; it does not claim implemented support.
+recoverable acceptance and UI (adoption is withdrawn); it does not claim implemented support.
 
 [ADR-0007 / REC-ESC-1](../docs/adr/0007-hq-creation-escrow.md) revision 1 is **active for implementation architecture**, following independent READY review and a bounded primitive probe. It fills the missing HQ-creation escrow format prerequisite for ADR-0006 P6/P9: fixed Argon2id/AEAD envelope, high-entropy code, worker-local CA key, protected delivery and idempotent provisioning. It preserves ADR-0006 and REC-1; production setup/recovery acceptance remains unverified.
 
@@ -32,7 +32,7 @@ recoverable acceptance, adoption and UI; it does not claim implemented support.
 
 [ADR-0009 / RLS-1](../docs/adr/0009-complete-release-verification.md) revision2 is **active for implementation architecture**, after fresh independent READY and exact-version signature/archive plus generated macOS loaded-image probes. It selects build-pinned exact-byte signed complete directory/tar.gz bundles, publisher-bound runtime images/authenticated static assets, host-owned durable staging/pins and a narrow shared org-release verifier. Revision2 preserves the gateway64MiB/4096-entry UI budget including inferred directories and source-backed kernel-loaded image binding; one focused architecture finding was corrected and independently rechecked READY. Production key provisioning and full setup/adoption/browser/code acceptance remain unverified.
 
-- [ADR-0010 / LEGACY-ADOPT-1 r1](../docs/adr/0010-legacy-task-adoption.md): independently READY conservative legacy version1 adoption, explicit baseline1/import facts with complete original Created evidence, strict mapping/public classification and intact staged unsupported histories. No full migration/code acceptance.
+- [ADR-0010](../docs/adr/0010-legacy-task-adoption.md): **withdrawn by the owner 2026-11-17.** Nothing has shipped, so there is no legacy work to adopt; no adoption, staging or import is built.
 
 - [ADR-0011 / REC-DEL-1 r1](../docs/adr/0011-protected-recovery-delivery.md): independently READY protected native OS-presence delivery, same-run ACK, durable audit/deletion/reopen and bounded committed public escrow transfer/export. Exact cc1.11.1 SDK bridge, no crypto/key boundary change. Actual physical-auth/production implementation and full feature acceptance remain unverified.
 

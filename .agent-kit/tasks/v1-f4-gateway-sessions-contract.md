@@ -14,7 +14,7 @@ prerequisite of U1 (first usable onboarding/sign-in/create/reopen).
 Internal foundation until U1. A real `agentic-org-web` gateway process is launched and supervised by the
 host composed in `agentic-org serve`. It is admitted through the accepted native host boundary
 (`v1-native-host-boundary.md`, CH-LIFE-1r2 channel budget/ACK). It serves, per
-`docs/design/gateway-api-v1.md` §2 rows 1-5 and §4:
+`docs/design/web-api-v1.md` §2 rows 1-5 and §4:
 - `GET /api/v1/version`
 - `POST /api/v1/session/sign-in`, `GET /api/v1/session`, `POST /api/v1/session/refresh`, `POST /api/v1/session/sign-out`
 
@@ -55,7 +55,7 @@ cookie/proof → host session-handle mapping on its admitted control connection.
 13. `docs/FEATURES.md` rows are updated with evidence. F4 alone does not complete any user-facing row.
 
 ## Sources
-- Spec: `docs/design/gateway-api-v1.md` §2, §4. Plan rows F4/U1 in `v1-incremental-delivery.md`.
+- Spec: `docs/design/web-api-v1.md` §2, §4. Plan rows F4/U1 in `v1-incremental-delivery.md`.
 - Preserved reservoir `b77cbd68` (read-only provenance, not a grant).
 - Lead inventory: `.agent-kit/logs/v1-f4-sessions/closure-inventory-1.md` in the delivery checkout.
 

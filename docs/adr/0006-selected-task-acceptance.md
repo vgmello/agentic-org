@@ -1,14 +1,28 @@
 # ADR-0006 / TAI-01 — Selected task assignment integration
 
-Revision 5, 2026-11-15. **ACTIVE architecture; implementation acceptance remains pending.** Original author: `01a1dfb4-1d26-7100-9ea4-72b53756ef23`, observed Sol Xhigh; overall ownership remains with the Codex lead. Investigated branch `codex/v1-assignment-integration` at `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. Canonical decision location: `docs/adr/0006-selected-task-acceptance.md`. Revision 4 added the same original author’s focused journal-ordinal correction after independent review of revision 3. Revision 5 adds the independently reviewed focused gateway transport dependency amendment; its authentication/custody and full acceptance requirements remain unchanged. Independent focused recheck returned READY on revision 4; see review history. Valid codec, snapshot, authentication, durability and migration premises are retained. Original proposals and feasibility evidence are retained under `.agent-kit/logs/v1-assignment-integration/author/` and `codec-probe/`.
+Revision 5, 2026-11-15. **ACTIVE architecture; implementation acceptance remains pending.** Original author: `01a1dfb4-1d26-7100-9ea4-72b53756ef23`, observed Sol Xhigh; overall ownership remains with the Codex lead. Investigated branch `codex/v1-assignment-integration` at `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. Canonical decision location: `docs/adr/0006-selected-task-acceptance.md`. Revision 4 added the same original author’s focused journal-ordinal correction after independent review of revision 3. Revision 5 adds the independently reviewed focused web transport dependency amendment; its authentication/custody and full acceptance requirements remain unchanged. Independent focused recheck returned READY on revision 4; see review history. Valid codec, snapshot, authentication, durability and migration premises are retained. Original proposals and feasibility evidence are retained under `.agent-kit/logs/v1-assignment-integration/author/` and `codec-probe/`.
+
+> **Amended 2026-11-17 (owner): legacy adoption is withdrawn.** Nothing was deployed,
+> so no legacy task, event, number or reference is imported, mapped, staged or adopted
+> ([rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+> Where the text below says "legacy" it means the task commands in the code today,
+> which the selected path replaces.
+
+> **Amended by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md)
+> (2026-11-17).** Assignment, status and ownership changes keep this ADR's
+> rule: no acknowledgement before durable evidence. `work.comment`, `work.watch` and
+> `checklist.check` may be acknowledged once their one atomic operation is committed,
+> with the flush following within a bounded interval. Their journal envelope may be
+> published without a flush; a durable publication first flushes every earlier
+> unflushed envelope, and recovery stops at the first missing or incomplete ordinal.
 
 ## Decision and delivery boundary
 
-Deliver selected assignment to real, validated selected tasks through the accepting office, authenticated native transport, Rust browser gateway and static Svelte UI. Include task reads, authorized target choices, ownership/assignment queues, durable operation lookup and task history sufficient to use and verify assignment. Support every task type and projectless tasks.
+Deliver selected assignment to real, validated selected tasks through the accepting office, authenticated native transport, Rust web process and static Svelte UI. Include task reads, authorized target choices, ownership/assignment queues, durable operation lookup and task history sufficient to use and verify assignment. Support every task type and projectless tasks.
 
-The smallest faithful boundary operates on existing canonical tasks or tasks admitted by an explicit legacy migration. It does not require implementing all task creation, numbering, scheduling, private notes or historical workflow commands. Those remain v1 obligations. For adopted tasks, other mutations must either use the same selected acceptance foundation or return an explicit unsupported result; they cannot bypass history through legacy storage.
+The smallest faithful boundary operates on existing canonical tasks. It does not require implementing all task creation, numbering, scheduling, private notes or historical workflow commands. Those remain v1 obligations. Other mutations of a selected task must either use the same selected acceptance foundation or return an explicit unsupported result; they cannot bypass history through legacy storage.
 
-This delivery includes missing foundations: trusted selected directory facts, writer admission/fencing, a complete event codec/validator, recoverable task/event/receipt commits, explicit adoption, and production authentication/transport composition. Completing another pure helper, extending only the SQL draft, or connecting the UI to legacy `task.assign` would not satisfy it.
+This delivery includes missing foundations: trusted selected directory facts, writer admission/fencing, a complete event codec/validator, recoverable task/event/receipt commits, and production authentication/transport composition. Completing another pure helper, extending only the SQL draft, or connecting the UI to legacy `task.assign` would not satisfy it.
 
 Initially use the verified HQ as accepting writer for already shared selected tasks. Other offices forward to that writer or report pending/unavailable; they do not accept competing revisions. Offline creation and broader handover remain separate requirements, without being weakened by this boundary. A usable existing-instance admission path is required. Fresh-install acceptance additionally requires the protected HQ setup/service-registration work currently unavailable in the executable; test-only database seeding cannot stand in for onboarding.
 
@@ -22,13 +36,13 @@ The documentation authority map and organization-data documents 01–06, 08, 12 
 | TAI-P2: legacy assignment is incompatible with selected assignment | **VERIFIED observation.** `org-work/src/tasks.rs::assign` is individual-only; absent assignee clears it; `check_expected` uses assignment-aspect conflict handling. Legacy recipients and optional task team do not establish selected employee/owner semantics. TA-P4 remains valid. | Changes to legacy command, conflict or recipient behavior. |
 | TAI-P3: reviewed helpers are reusable but establish no acceptance | **VERIFIED observation.** `selected_assignment.rs::plan_assignment` is pure; inspected references are its definition/tests. `history_coverage.rs` consumes already-verified checksums. TA-P5/P6 and TH-P5 explicitly leave persistence/authentication outside their scopes. | Connecting a caller, changing ports, or claiming validated events/accepted writes. |
 | TAI-P4: current native storage supplies useful transaction machinery, not selected durability | **VERIFIED observation.** `org-office/src/store.rs::attempt_batch` commits SQL before replies and can rerun attempts. `store/work.rs` stores legacy snapshots/events with immutable-event triggers and ULID checks. It has no selected canonical-file/event/receipt commit path. | Store scheduling, retry, durability or identifier validation changes. |
-| TAI-P5: typed assignment decoding after a JSON map is insufficient | **VERIFIED observation.** Native `org-proto/src/wire.rs::Request.params` is a `Value`; gateway `CommandEnvelope` deserializes `params` through `Value`/`from_value`. Duplicate keys can disappear before TA's strict visitor runs. | Raw-envelope decoding or command schema changes. |
+| TAI-P5: typed assignment decoding after a JSON map is insufficient | **VERIFIED observation.** Native `org-proto/src/wire.rs::Request.params` is a `Value`; web `CommandEnvelope` deserializes `params` through `Value`/`from_value`. Duplicate keys can disappear before TA's strict visitor runs. | Raw-envelope decoding or command schema changes. |
 | TAI-P6: authentication primitives exist but the production vertical path is incomplete | **VERIFIED observation.** Office host-channel authorization checks grants, channel/session/office/org and live owner state. The host control service dispatches hello/status; production web startup refuses to open a listener. A working production session/grant/browser composition is **UNVERIFIED**. | Implemented host operations, authenticated handoff and real production-path evidence. |
 | TAI-P7: selected target facts need an authoritative consistent source | **VERIFIED gap in inspected path.** Legacy `OrgView` provides a per-attempt organization snapshot, but not the selected team/employee/status/home-team model and mappings required here. Proposed selected directory admission and generation barrier are **UNVERIFIED mechanisms**. | Directory importer, organization mutation ordering or fact-provider implementation. |
 | TAI-P8: new codec 2 can preserve numeric tokens without rounding | **VERIFIED only for a bounded disposable corpus:** 12 valid cross-language outputs and 11 rejected malformed/duplicate inputs. Full bounded production validation remains **UNVERIFIED**. TH-P4 remains disproved for the previous numeric convention; schema-1 compatibility is not repaired. | Full codec/header/hash/budget vectors or retained-source checks contradict the mechanism. |
 | TAI-P9: writer fields do not prove selected fencing | **VERIFIED limitation.** Legacy owner-office/generation fields and work-origin metadata exist; the inspected assignment/load path does not establish the proposed selected writer admission and handover protocol. That mechanism is **UNVERIFIED**. | Writer startup, restore, epoch or handover implementation. |
 | TAI-P10: production UI is deliberately unavailable today | **VERIFIED observation.** `lib/work/index.ts` exports unavailable operations; capability gating prevents mock fallback. `TaskSheet.svelte` implements the legacy single-assignee interaction. Existing task browser journeys use the e2e mode. | Production feature adapter, capability negotiation or test-server composition changes. |
-| TAI-P11: migration must supply genuinely missing facts rather than infer them | **VERIFIED requirement; concrete mappings UNVERIFIED.** Documents 06/08/12 require opaque IDs, provenance and preserved history. Legacy task/team/member/number fields do not establish every selected relationship. | A concrete import manifest, mapping rule or source dataset is introduced. |
+| TAI-P11: migration must supply genuinely missing facts rather than infer them | **Withdrawn 2026-11-17:** nothing is deployed, so no legacy data is migrated. | None. |
 | TAI-P12: journal commit ordinals and event-origin positions are distinct | **SOURCE-VERIFIED distinction:** legacy append allocates one position per reference and rejected/no-op receipts allocate none. **SELECTED mechanism; UNVERIFIED production correctness:** one immutable envelope per durable transaction, independent commit ordinal, frozen exact mapping to unchanged work origins. Amend document 16 as below; retain complete recovery and platform full-flush obligations. | Crash/reopen, full-flush, replay or publication checks contradict the mechanism. |
 | TAI-P13: source-preserving snapshot edits retain unrelated bytes | **SOURCE-VERIFIED parser markers; UNVERIFIED production editor.** Pinned saphyr-parser 0.3.3 uses character offsets and half-open spans; quoted scalar spans include trailing trivia, requiring the bounded closing-quote lexer specified below. | Unicode/CRLF/comments/extension/body preservation or parser guard checks contradict the editing mechanism. |
 
@@ -38,16 +52,16 @@ TA-01 remains active for pure assignment semantics. TH-01 r2 remains active for 
 
 Keep selected application policy in `org-work`, with a narrow selected command/read API and persistence/fact ports owned by that capability. The office adapter supplies trusted state and implements acceptance. Retain `plan_assignment` as the assignment decision inside that application path. Do not stretch legacy `StoredItem` into a selected task by adding one optional field: it lacks the required selected owner, organization identity, assignment pair and attribution model, and its storage assumes ULIDs.
 
-Propose an additive typed operation named `task.set_assignment`, with a separately negotiated selected-assignment capability. Preserve `task.assign` and its existing wire semantics. The selected operation has target organization/task identity outside its command object; the command contains exactly `expected_revision`, `assigned_team_id` and `assignee_id`. Both nullable fields are mandatory. Operation identity and authenticated principal are envelope metadata, never task-controlled actor fields.
+The typed operation is `task.set_assignment`. It replaces `task.assign`; nothing has shipped, so the older call is removed, not kept beside it. The selected operation has target organization/task identity outside its command object; the command contains exactly `expected_revision`, `assigned_team_id` and `assignee_id`. Both nullable fields are mandatory. Operation identity and authenticated principal are envelope metadata, never task-controlled actor fields.
 
-The HTTP surface gets an explicit assignment endpoint, task/history reads, authorized target choices and receipt lookup documented in the gateway contract. It is not a generic native-command tunnel. Add a gateway contract revision/capability before enabling it; current API/version types are not evidence that the endpoint ships. Use the same operation ID through browser, gateway, native command and receipt, including any documented mapping to the legacy envelope name `change_id`.
+The HTTP surface gets an explicit assignment endpoint, task/history reads, authorized target choices and receipt lookup documented in the web process contract. It is not a generic native-command tunnel. Add a web process contract revision/capability before enabling it; current API/version types are not evidence that the endpoint ships. Use the same operation ID through browser, web, native command and receipt, including any documented mapping to the legacy envelope name `change_id`.
 
 Two transport adaptations are necessary:
 
-- Decode the new command from preserved raw JSON at both native and HTTP boundaries. Reject duplicate, missing and unknown keys before conversion to `Value`, including duplicate wrapper fields. Keep legacy decoding behavior compatible. Passing a map into TA's visitor cannot meet strictness.
+- Decode the new command from preserved raw JSON at both native and HTTP boundaries. Reject duplicate, missing and unknown keys before conversion to `Value`, including duplicate wrapper fields. Passing a map into TA's visitor cannot meet strictness.
 - The domain supports positive signed-64-bit revisions; browser numbers cannot represent that entire range. Use canonical decimal strings for revisions in the new browser DTO and convert losslessly to native `i64`. Native TA commands and canonical events retain their selected integer types. Document and test the adapter, including the signed maximum and overflow. A lossless browser JSON-number implementation is an alternative requiring equivalent evidence; narrowing the domain to JavaScript-safe integers is not acceptable.
 
-Preserve opaque task/team/employee IDs exactly. Existing gateway identifier restrictions and native ULID storage checks cannot become selected ID policy. Version the new route validators to admit selected IDs safely, including UUIDv7 IDs. Resolve IDs through trusted registries; never concatenate unchecked user strings into filesystem paths. Existing IDs incompatible with the documented literal filename layout need a reviewed reversible path-encoding contract or explicit staging, without renaming their identities.
+Preserve opaque task/team/employee IDs exactly. Existing web identifier restrictions and native ULID storage checks cannot become selected ID policy. Version the new route validators to admit selected IDs safely. Resolve IDs through trusted registries; never concatenate unchecked user strings into filesystem paths.
 
 Read DTOs expose accountable owner separately from both assignment fields, immutable reporter, exact revision and explicit history coverage. Queue filters distinguish owned backlog, assigned-team work and individual work. Return the committed event identity/revision and origin-office information needed for outcome reconciliation. Conflicts return an authorized current revision/snapshot without mutating either assignment field.
 
@@ -78,7 +92,7 @@ At this architectural level the acceptance sequence is:
 5. Publish that full transaction through the durable journal boundary. Then materialize canonical snapshot/event and protected receipt/result files and project SQL idempotently. After the journal commit, SQL or file failure cannot turn the operation into a definite rejection or rerun domain effects. Hold further affected work until recovery; a lost response is reconciled by the original operation ID.
 6. Return completion only when durable source evidence is verified and the accepted revision is coherently available through the read path. Hourly Git publication remains asynchronous.
 
-The receipt fingerprint includes versioned command kind, organization/task scope, expected revision and exact desired pair. Actor binding is separate and immutable. Stable owner-account identity permits authorized recovery after session renewal; session identity is not the business idempotency key. Keep completed/rejected outcomes stable and protected. Align admission/retention with the existing gateway's documented retry window, and persist expiry/tombstone evidence deliberately. Cache deletion must not roll sequence, receipt or admission high-water state backward.
+The receipt fingerprint includes versioned command kind, organization/task scope, expected revision and exact desired pair. Actor binding is separate and immutable. Stable owner-account identity permits authorized recovery after session renewal; session identity is not the business idempotency key. Keep completed/rejected outcomes stable and protected. Align admission/retention with the existing web's documented retry window, and persist expiry/tombstone evidence deliberately. Cache deletion must not roll sequence, receipt or admission high-water state backward.
 
 ### Immutable acceptance source and sequencing
 
@@ -121,7 +135,7 @@ The existing office writer prepares both counters and all mutations together. Pu
 
 ### Initialization, restore and replay
 
-Before installation, quiesce/fence writers and capture consistent retained counters, origin logs, snapshots, receipts and import evidence. Persist a journal incarnation and durable anchor referencing that evidence, active work incarnation and existing high-water. Start the journal ordinal at 1 without restarting the event allocator or retroactively inventing transaction identities. Missing historical evidence remains explicitly unavailable; the anchor cannot certify fabricated coverage. Adoption gates activate only after their required validation and durable installation.
+Before installation, quiesce/fence writers and capture consistent retained counters, origin logs, snapshots and receipts. Persist a journal incarnation and durable anchor referencing that evidence, active work incarnation and existing high-water. Start the journal ordinal at 1 without restarting the event allocator or retroactively inventing transaction identities. Missing historical evidence remains explicitly unavailable; the anchor cannot certify fabricated coverage.
 
 Ordinary restart or projection rebuild continues the same journal incarnation and verified prefix. Recover the journal cursor and origin high-water from retained authoritative sources, not disposable SQL defaults.
 
@@ -162,7 +176,7 @@ Assignment changes neither location nor number. The selected directory retains h
 
 Each accepted revision has a full event with fixed `task_kind: task`, organization/task/revision identity, schema, trusted actor/time, optional operation ID and document 05's complete old/new pair. Expand required null/default fields and compute the selected SHA-256 payload hash. Preserve current task body, fields and unmodified extensions without lossy parsing. `org-docs` offers strict bounded front-matter parsing, but its `serde_json::Value` representation does not establish arbitrary numeric or extension round-trip fidelity. Reuse its public parser only where suitable; any needed lossless extension belongs behind a reviewed compatible API, with original source retained.
 
-Validate event schemas, actual hashes, filename/identity agreement, duplicates, contiguous coverage and final snapshot/tombstone revision before accepting an imported/rebuilt projection. Apply TH's coverage helper only after independent payload verification. Retain unknown future change tags and their content; show them as unknown changes. A migration baseline always leaves the earlier period unavailable, including a baseline at revision 1. Missing middle events require recovery, not an inferred baseline.
+Validate event schemas, actual hashes, filename/identity agreement, duplicates, contiguous coverage and final snapshot/tombstone revision before accepting a rebuilt projection. Apply TH's coverage helper only after independent payload verification. Retain unknown future change tags and their content; show them as unknown changes. Missing events require recovery; no baseline is inferred.
 
 Keep events through closure/tombstoning and retain reporter, final revision and last assignment pair in tombstone metadata. Public history contains no private-note body, ID or author association, agent memory or credentials. Legacy shared `CommentKind::Note` remains shared; migration cannot retroactively make it private.
 
@@ -197,11 +211,9 @@ Thus equivalent string escapes yield the same command fingerprint; invalid revis
 
 ## Source, projection and compatibility amendments
 
-Amend document 05, document 12’s import references, draft SQL/schema coverage and validators together. Version-aware projection must retain canonical change/source-metadata text and extensions losslessly. Generic `Value`, SQLite numeric extraction/reserialization and browser number parsing cannot regenerate authoritative payloads.
+Amend document 05, draft SQL/schema coverage and validators together. Version-aware projection must retain canonical change/source-metadata text and extensions losslessly. Generic `Value`, SQLite numeric extraction/reserialization and browser number parsing cannot regenerate authoritative payloads.
 
-Retain schema-1 bytes, hashes and identities unchanged. Admission dispatches through explicitly supported schema/codec validators. Unsupported prior selected codecs remain retained/staged with explicit **unverified/unavailable** coverage; they cannot establish verified history or authorize adoption. Do not overwrite them, reinterpret them as codec 2, or fabricate a baseline concealing known missing history.
-
-Legacy WorkEvents newly wrapped as selected schema-2 events preserve the entire original object and numeric tokens in `source_metadata.legacy_event`, including original change, attribution, `auto`, `cause` and `org_position`. Capture source tokens before lossy decoding. This wrapping never replaces an already accepted selected event at its identity.
+Admission dispatches through explicitly supported schema/codec validators. The schema-1 task-event codec is not kept (owner decision 2026-11-17).
 
 ## Versioned resource profile
 
@@ -218,7 +230,7 @@ Use **`selected-task-resources/1`**, with MiB meaning 1,048,576 bytes:
 | Snapshot front matter | Existing 64 KiB, depth 16, 10,000 parser-event limits |
 | Snapshot body | 8 MiB |
 
-Add **64 MiB aggregate referenced blob bytes and 1,024 blob references per manifest**. Otherwise a bounded manifest could reference arbitrarily expensive payloads. Count repeated references toward the aggregate; verify actual lengths and hashes. Larger imports remain intact in staging.
+Add **64 MiB aggregate referenced blob bytes and 1,024 blob references per manifest**. Otherwise a bounded manifest could reference arbitrarily expensive payloads. Count repeated references toward the aggregate; verify actual lengths and hashes.
 
 Enforce budgets during scanning/emission, before excessive allocation or commit, using checked counters. Return structured resource errors without payload disclosure, truncation or partial admission. These limits constrain bytes/work, not numeric magnitude.
 
@@ -250,28 +262,19 @@ Schema-2 created/baseline events retain typed known facts plus an explicitly spe
 
 This avoids lossy YAML-extension conversion. A body at 8 MiB plus front matter already exceeds the single-string limit; JSON escaping can also exceed the event-output limit. Blob selection must account for both.
 
-Public snapshot blobs belong to the document-05 history contract and publish with their referencing events. Journal payload blobs remain protected operational sources. Required blobs become durable before manifest publication. Admit only verified public snapshot content; private or unclassified source remains protected staging. Preserve original legacy sources independently.
+Public snapshot blobs belong to the document-05 history contract and publish with their referencing events. Journal payload blobs remain protected operational sources. Required blobs become durable before manifest publication. Admit only verified public snapshot content; private or unclassified content is never published.
 
 
 ## Migration and legacy preservation
 
-Adoption is explicit, staged and recoverable. Inventory original task snapshots, events, IDs, number namespaces, project/team relationships and unmapped features; preserve them before installing selected state. A reviewed manifest supplies missing accountable owner, project ownership, employee identity/home team and scope mappings from actual evidence. Do not reinterpret the legacy optional task team automatically as either selected owner or assigned team, choose the first membership, or convert an owner pseudo-recipient into an invented employee.
-
-Keep original task IDs, event revisions/order, timestamps and actors. Map bug/request records to selected task types with `task_kind: task`. For imported events retain the entire original `WorkEvent`, including `auto`, `cause` and `org_position`, in `source_metadata.legacy_event`, with its original change. Historical individual assignments do not imply a historical team. Set current assigned team to null only where the source lacks an explicit assigned-team fact, as document 12 requires.
-
-Preserve genuine unknown provenance. A snapshot-only source receives an explicit baseline at its existing revision and import time. Partial surviving history is retained and reported incomplete; do not conceal gaps. Unmapped assignments, workflows, fields or relationships remain staged and visible as migration work, without resetting or discarding them.
-
-Readable-number mapping must follow document 06. Do not strip B/REQ prefixes, merge conflicting counters, renumber records or allocate a new number during assignment. Ambiguous mappings/collisions block adoption of the affected record while independent records can proceed.
-
-Install a durable adoption registry and format/version gate atomically with imported state. Fence every legacy write path capable of touching adopted IDs, including cascades, Undo and replication imports. Non-adopted legacy commands keep their contract. An adopted task accessed through an incompatible legacy mutator gets an explicit migration/version result, not silently changed semantics. Stop/fence or upgrade other known writers before adoption; a local registry cannot control an old remote binary. Retain original legacy data for recovery and inspection. Messaging cutover remains separate: no installed CLI replacement or live spool reset is part of this feature.
+**Withdrawn 2026-11-17 by the owner.** Nothing was deployed, so there are no legacy tasks, events, numbers or references to inventory, map, stage or adopt, and no adoption registry or gate is built ([rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)). The separate bug and request records in the code today are replaced by typed tasks outright.
 
 ## Startup and actual adoption path
 
 Implement startup prerequisites within the delivery boundary:
 
 - Fresh installation uses actual protected HQ bootstrap: establish the owner account in host-private storage, create/register HQ identity and protected key custody, register/start the service, and complete authenticated worker/browser handoff. Bootstrap credentials and outcomes never enter the work journal. Expose assignment capability only after recovery and authorization readiness.
-- Existing instances use a host-owned, owner-authenticated admission/adoption operation exposed through the human interface. Verify registered instance/HQ identity, account authority, keys, writer fencing and retained source high-water; stage a mapping manifest and preserved sources; validate directory/task/history; then atomically install adoption gates and recoverable imported state. Missing authority enters protected recovery/bootstrap, never inferred authorization from imported profile flags.
-- Reject incompatible legacy writes to adopted IDs. Preserve unmapped records and unsupported history in staging. Do not reset source state, fabricate capabilities or require unrelated task creation.
+- There is no adoption path for an existing instance (withdrawn 2026-11-17): nothing is deployed. Do not fabricate capabilities or require unrelated task creation.
 
 Retain r1’s initial owner mutation policy and distinct agent identities; assignment itself grants no capability. No absent owner or external approval is a prerequisite.
 
@@ -317,8 +320,8 @@ Architectural dependency order, without work dispatch:
 
 1. Amend owning contracts to the selected codec 2, resource profile, exact snapshots/public blobs, raw-preserving command envelopes, browser revisions/ID handling, initial authorization and immutable protected journal layout, following independent architecture READY on this revision.
 2. Establish usable host authentication/handoff and selected directory/writer admission. Include protected HQ bootstrap/service registration if the intended delivery must support a fresh installation.
-3. Implement complete codecs, explicit import/adoption, one durable work-source allocator, frozen journal acceptance, receipts, replay and canonical/SQL projection. Preserve participating legacy semantics and source evidence.
-4. Connect selected assignment and authorized reads/lookup through typed native and gateway interfaces.
+3. Implement complete codecs, one durable work-source allocator, frozen journal acceptance, receipts, replay and canonical/SQL projection.
+4. Connect selected assignment and authorized reads/lookup through typed native and web interfaces.
 5. Connect the production UI and prove the complete flow and failure boundaries. Intermediate foundations are checkpoints, not selected-assignment acceptance.
 
 Rejected alternatives are wiring legacy assignment as selected v1; trusting UI target facts; treating draft SQL or coverage headers as durable validation; appending a journal inside a retryable closure; accepting with SQL followed by independent file writes; relying on Git publication for ACK; running parallel source allocators; and enabling production mocks. Each violates an identified premise. A separate selected service/database would add writer, identity and migration coordination without removing the same durable-commit obligation; the existing office writer is the smaller boundary.
@@ -332,12 +335,11 @@ Concrete feasibility and falsification checks for implementation:
 - Retry after later task changes, target deactivation, response loss and restart. Obtain the original authorized outcome without an extra revision/event. Another account, scope or fingerprint cannot replay or inspect it. Test revoked/expired/wrong-channel grants and denied agent capabilities.
 - Inject failures around envelope write/flush/publication/directory flush, SQL commit, task/event/receipt materialization, read publication and response. Reopen/rebuild disposable projections from published organization data plus unpublished journals and protected receipts; recover the same accepted outcome. In-process fault tests alone do not prove power-loss durability; verify the platform flush contract separately.
 - Challenge concurrent writers, copied roots, old epochs, missing checkpoints and interrupted restore. No duplicate accepted task/revision or reused source identity is allowed. Legacy and selected work must share the reviewed allocation boundary without disturbing message watermarks.
-- Use migration fixtures containing number collisions, owner pseudo-recipients, missing ownership/home-team facts, unknown attribution, full legacy events, partial history, baselines, tombstones and unselected workflow data. Adoption either preserves verified mappings or stages the record; old writers cannot mutate adopted IDs.
-- Run the built static UI against the real Rust gateway/host/office path in temporary roots with test credentials. Verify all four assignment states, queues, history, conflicts, unresolved lookup/reload, authorization, keyboard/accessibility and UI evidence. Vite e2e mocks or a generic gateway harness alone do not qualify.
+- Run the built static UI against the real Rust web/host/office path in temporary roots with test credentials. Verify all four assignment states, queues, history, conflicts, unresolved lookup/reload, authorization, keyboard/accessibility and UI evidence. Vite e2e mocks or a generic web harness alone do not qualify.
 
 After architecture review and implementation, run required Rust formatting/clippy/workspace tests, app type/tests/build and relevant browser checks, plus `.agent-kit/runtime/kit_hooks.py check`. Preserve original-author intent validation, fresh local review/fixes and separate final review of the exact commit. None of those execution checks was run during this design-only investigation.
 
-Rollback before adoption can disable the capability. After accepted selected writes, pause mutation and retain compatible reads, canonical files, journals, receipts, adoption gates and watermarks. Do not restart an old writer against adopted data or restore an earlier checkpoint over acknowledged changes. Use compatible replay/forward repair, or a separately reviewed reverse migration preserving later events and outcomes. Executable-only rollback is insufficient after the durable format changes.
+Rollback before the first accepted selected write can disable the capability. After accepted selected writes, pause mutation and retain compatible reads, canonical files, journals, receipts and watermarks. Do not restart an old writer against that data or restore an earlier checkpoint over acknowledged changes. Use compatible replay/forward repair, or a separately reviewed reverse migration preserving later events and outcomes. Executable-only rollback is insufficient after the durable format changes.
 
 ## Architecture review history
 
