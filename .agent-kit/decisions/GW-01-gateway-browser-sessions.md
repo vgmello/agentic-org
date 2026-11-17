@@ -5,8 +5,15 @@
   replaces premise P-1 (in-memory pair to host-session mapping) and the session lifetime rules: browser sessions become stored host
   records that survive web and host restarts, with a total and per-account cap instead of the per-connection cap (FC-159, Track A).
   Still in force: host supervision and admission of the web process, the sandbox-verified handoff, the release/bundle guards and the
-  browser cookie/proof contract (ADR-0013 decision 2). Integrated with open items: final review 13 B1/B2 (start-eligibility tests
-  for an Active HQ without authentication and for a non-Active HQ) and web fix `85f9adf8` without an independent review.
+  browser cookie/proof contract (ADR-0013 decision 2).
+- Merged scope (2026-11-17, slice F4-CONFORM): only the architecture-stable part. The host supervises the web process
+  (debug/test start only), and the web process serves only `GET /api/v1/version`; every other `/api/v1` path, including
+  the four `/api/v1/session` routes, is a JSON 404. No browser sign-in until FC-159 stored sessions (ADR-0013). The
+  connection-bound session layer (web `sessions`, `ops::GATEWAY_SESSIONS`, the web-connection session cap) was removed
+  before integration and is preserved on the local branch `f4-full-reference`, so web fix `85f9adf8` is not merged.
+  F4-added "gateway" names were renamed to "web" (wire method `web.serving`); pre-existing gateway names are held pending
+  owner questions in `.agent-kit/logs/v1-architecture-conformance/owner-questions.md` (main checkout). Still open from
+  final review 13: B1/B2 start-eligibility tests (an Active HQ without authentication; a non-Active HQ).
 - Scope: F4 in `.agent-kit/tasks/v1-incremental-delivery.md`; contract `.agent-kit/tasks/v1-f4-gateway-sessions-contract.md`.
   Request: continue toward the complete v1 delivery (user, 2026-11-17).
 - Architecture owner: Claude lead (hybrid profile, Opus).

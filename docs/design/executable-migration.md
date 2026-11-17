@@ -12,7 +12,7 @@ The delivery units merged since the F0 baseline are internal foundations. None o
 | F1b | Socket admission and confinement primitives; host and web release adapters | No |
 | F2a, F2b | Work-file codec and the durable acceptance journal in the office | No |
 | F3a, F3b, F3c | Recovery-code escrow (`org-pki`), the worker's HQ creation and admission provider, protected host creation and recovery delivery | No: nothing starts HQ creation |
-| F4 | Host-supervised `agentic-org-web` handoff (sandbox and release-image checks) and browser session routes with connection-bound sessions | No: started only by debug/test instance composition |
+| F4 | Host-supervised `agentic-org-web` handoff (sandbox and release-image checks); the web process serves only `/api/v1/version` and accepts no browser sign-in until stored sessions (FC-159) | No: started only by debug/test instance composition |
 
 | Executable | Status now |
 | --- | --- |
@@ -21,7 +21,7 @@ The delivery units merged since the F0 baseline are internal foundations. None o
 | `agentic-org-web` | Help and version. [`--serve` runs only after a verified host handoff](../../apps/agentic-org-web/src/main.rs) and otherwise refuses without opening a listener; the host starts it only through debug/test instance composition (F4). Signed release acceptance is pending. |
 | `agent-os` | Works against a running office: messaging, directory and work calls. |
 
-Still to come before a person can use the product (Track A of the [v1 kickoff](../processes/v1-kickoff-prompt.md)): stored browser sessions replacing F4's connection-bound ones ([ADR-0013](../adr/0013-stored-browser-sessions.md), FC-159), the production `agentic-org serve` launch, setup and the web work reads.
+Still to come before a person can use the product (Track A of the [v1 kickoff](../processes/v1-kickoff-prompt.md)): stored browser sessions and browser sign-in ([ADR-0013](../adr/0013-stored-browser-sessions.md), FC-159), the production `agentic-org serve` launch, setup and the web work reads.
 
 ## F0 integration baseline
 
