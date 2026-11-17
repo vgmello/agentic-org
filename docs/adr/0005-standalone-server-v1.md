@@ -15,9 +15,12 @@ browser; there is no desktop application.
 1. **V1 ships the server and the browser application.** HQ serves static SvelteKit
    assets, authenticated HTTP operations and live events. Opening a browser does
    not create an office.
-2. **One bootstrap command downloads `agentic-org` and invokes setup.** Initial
-   setup creates HQ only, installs verified components, and registers and starts
-   the service. Satellite onboarding is a separate HQ-initiated UI or command flow.
+2. **One bootstrap command downloads `agentic-org` and invokes setup.** Setup
+   creates the instance only: it installs verified components, registers and starts
+   the service, and prints a one-time registration link for the instance's
+   administrator. It creates no account, organization or office; the administrator
+   creates organizations in the browser, and each new organization's HQ office is
+   created with it. Satellite onboarding is a separate HQ-initiated UI or command flow.
    Online downloads and offline bundles use the same release verifier. Each office
    keeps its own child process and credential boundary; one downloaded artifact
    does not mean one process.
@@ -31,10 +34,10 @@ browser; there is no desktop application.
    browser entry point. Satellites execute locally, connect outward, enroll once
    and resume authenticated synchronization on later starts.
 5. **The server owns filesystem layout and source lifetimes.** Setup selects the
-   data root, registers the required remote organization repository and state
-   branch, and prepares durable local state. Offline setup validates local
-   configuration only and leaves remote access and publication readiness
-   unverified; it performs no external fetch or credential probe. An agent has a
+   data root and prepares durable local state. Creating an organization registers
+   its required remote organization repository and state branch; on an offline
+   instance it validates local configuration only and leaves remote access and
+   publication readiness unverified, with no external fetch or credential probe. An agent has a
    required home team; a runnable agent also needs execution configuration and
    validated local connection bindings. Runtime caches and worktrees use the
    office/team/employee/task layout of organization-data document 04. Protected
@@ -56,10 +59,10 @@ browser; there is no desktop application.
    line. No extra host, updater or agent-supervisor daemon exists; the OS service
    manager restarts the host. The browser application lives in
    `apps/agentic-org-ui`. The web process and the agent CLI never hold office keys.
-8. **`agentic-org setup` is the single initial HQ setup command,** including the
-   first administrator and organization, and service registration and start. There
-   is no satellite choice or join flag at setup. Satellites are added later from
-   HQ's UI or an HQ-issued command. Offline HQ setup uses
+8. **`agentic-org setup` is the single initial setup command,** including the
+   administrator's registration link and service registration and start, and no
+   organization. There is no satellite choice or join flag at setup. Satellites are added later from
+   HQ's UI or an HQ-issued command. Offline setup uses
    `setup --bundle <path> --offline`. A repeated setup resumes or reuses existing
    state; it does not convert office roles or upgrade implicitly. The
    [standalone design](../design/standalone-server.md) and the

@@ -14,7 +14,7 @@ Argon2id, delivered once through a protected path, with idempotent retries
 [offices design](../design/offices-hq-and-satellites.md)).
 
 - The pending code belongs to the host's credential provider; only an opaque handle
-  enters the setup journal. No usable CA key or code appears in replicated
+  enters the creation journal. No usable CA key or code appears in replicated
   organization data, the web process, the browser, status or logs.
 - Acknowledging delivery erases the pending code. There is no later redisplay and no
   implicit rotation. A pending or shown code does not prevent HQ from being ready.
@@ -109,17 +109,18 @@ certificate or epoch authority.
 4. Existing committed provisioning state is verified against the frozen organization
    and request identity and the protected code, and returns its original public
    result. A missing half of the record, an unsupported version, a mismatched public
-   identity or a decryption failure stops setup for forward repair. Data is never
+   identity or a decryption failure stops creation for forward repair. Data is never
    deleted, missing custody is never replaced, an escrow-free organization is never
    accepted as complete, and an existing CA is never reset to make a retry pass.
-5. A setup failure before the escrow commit is a resumable "organization preparation
+5. A creation failure before the escrow commit is a resumable "organization preparation
    incomplete"; HQ-ready and organization-created are not reported. A failure after
    the commit resumes the same record and code.
 6. The worker drops its copy of the code after provisioning. The pending delivery
    stays at the host under its handle until acknowledged. An acknowledged
    organization restarts without any code, using its local CA record; the absence of
    a pending code is not a reason to rotate or refuse a healthy HQ.
-7. Protected recovery release offers collect, defer and an explicit export of the
+7. Organization creation, in the browser, shows no code: the code starts Waiting.
+   Protected recovery release on the HQ machine offers collect, defer and an explicit export of the
    encrypted package to a new file the caller chooses (create-new, bounded size; no
    code in the file). It verifies package identity from the worker's committed
    public record. The terminal tells the owner to copy both package and code off HQ
@@ -159,5 +160,5 @@ absence of a pending code as permission to re-provision.
   refuses redisplay; waiting or shown states do not block an otherwise ready HQ.
 - Before any committed creation, rollback disables provisioning. After a committed
   CA and package, the key, envelope, version and code handle are preserved,
-  incompatible setup pauses, and repair moves forward; no executable may rotate or
+  incompatible creation pauses, and repair moves forward; no executable may rotate or
   discard them.
