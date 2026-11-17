@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; earlier coordination tool and queue dropped. No new tool, role or stack. Code unchanged.",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; old tool, queue and legacy structures dropped. No new tool, role or stack. Code unchanged.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "0bd901dcfeb1e3d5350aeca3b5ba3fa18d4f36975fdcd400b21eababaaf82289"
+      "sha256": "b571de1490dca3db938b16ef697ce2bdcf0ad0583e8684dcdd9bcc8f2a1e8dbb"
     },
     {
       "path": "Cargo.lock",
@@ -122,7 +122,7 @@
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "8384f1bdb1d99e0ab60281a8178a6e4f9b03f033ca818a758f5a9dcf003f28bf"
+      "sha256": "437abd9be1721ca4e6f71aa54c675420ef162d9cd2e4da036335cd56f360ae2b"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -138,7 +138,7 @@
     },
     {
       "path": "docs/adr/0010-legacy-task-adoption.md",
-      "sha256": "2d80ff0285e5126ad8097b89c2b141a980b4d3663944c911a9223e73de751295"
+      "sha256": "36bf64dc9542702aa6ea6621122c3fa40186693f9b72159b52369e01055307fc"
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "d0e452743cb5f9aba88241773f5a889700b9440860e395b289841818f0f3828b"
+      "sha256": "ffa565387332c099a0375448e92931d94d28516daf8e08839f9e6fc0d3c7ac5c"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "fab2b1d93bceed71c334223569b6171931aeb771d1f0525e65e51b19c060c150"
+      "sha256": "e0a48f39d40414926c8a75c2ef859efd8d7c724f5b890bd68d07edbcfc789656"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "98c500a1d466560660b775e65a9083941f4cf88949184629e1161bc7f4379064"
+      "sha256": "e53891a673dd8674b778debf2ae77f37ab67565eb370d5d774fcd15691d155fb"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,11 +182,11 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "5607cf944846d2686554918fbbc6e9bd651aa1b17b0530ff2e6015d3664f083b"
+      "sha256": "3a1b4f759245b360f9440186b2050f3064efa47e0023f18be0b65acffb4331b9"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "2b9bdb274c4d2ba4298937f10fa2dd30f4a1cea8419e59c97b199d70c06cd741"
+      "sha256": "637831250ea96e2b89c7fd3fd8e33d76d9951d87918a1ff78efefc715ae996f1"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
