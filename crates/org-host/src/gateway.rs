@@ -92,6 +92,37 @@ pub(crate) struct Configuration {
     pub critical_paths: Vec<PathBuf>,
     pub release: Option<org_host_control::gateway::GatewayRelease>,
 }
+/// The selected release's gateway image hash (`Err`: the release has none) and the
+/// release identity bound into the gateway's first line.
+pub(crate) type SelectedRelease<E> = (
+    Result<[u8; 20], E>,
+    org_host_control::gateway::GatewayRelease,
+);
+
+/// The gateway admission policy of a build (`debug`: `cfg!(debug_assertions)`) with app
+/// team id `team_id` and the selected `release`, if any: the check every start uses and
+/// the release binding of its first line. A malformed team id or a release without a
+/// gateway image hash refuses every start; a selected release pins its exact image.
+pub(crate) fn admission<E>(
+    debug: bool,
+    team_id: Option<&str>,
+    release: Option<SelectedRelease<E>>,
+) -> (
+    ServerCheck,
+    Option<org_host_control::gateway::GatewayRelease>,
+) {
+    let check = ServerCheck::gateway_for_build(debug, team_id)
+        .unwrap_or(ServerCheck::GatewayRefused("malformed app team id"));
+    match release {
+        None => (check, None),
+        Some((Ok(hash), binding)) => (check.pinned(hash), Some(binding)),
+        Some((Err(_), binding)) => (
+            ServerCheck::GatewayRefused("the selected release has no agentic-org-web image hash"),
+            Some(binding),
+        ),
+    }
+}
+
 pub(crate) struct Supervisor {
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<GatewayState>>,

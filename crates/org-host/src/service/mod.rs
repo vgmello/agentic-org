@@ -828,6 +828,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn gateway_serving_with_params_that_do_not_fit_is_a_protocol_error() {
+        use org_host_control::ops::TlsFetch;
+        let home = tempfile::tempdir().unwrap();
+        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        // In order, but its params don't fit `gateway.serving`.
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "id": 3,
+            "method": "gateway.serving",
+            "params": {"ready": true},
+        }))
+        .unwrap();
+        org_proto::frame::write_message(peer.get_mut(), &request).unwrap();
+        let response = org_proto::frame::read_message(&mut peer).ok().flatten();
+        assert!(refused(response, ErrorCode::InvalidRequest));
+        wait_closed(&gateway);
+        assert!(!gateway.reported_serving());
+        assert!(gateway.serving_refused());
+        drop(gateway);
+        offices.shutdown();
+    }
+
+    #[test]
     fn gateway_serving_before_tls_fetch_is_a_protocol_error() {
         use org_host_control::ops::GatewayServing;
         let home = tempfile::tempdir().unwrap();

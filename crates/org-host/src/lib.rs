@@ -538,27 +538,20 @@ fn startup_gateway(
     let Some(listen) = instance.browser().map_err(instance_error)? else {
         return Ok(None);
     };
-    let check =
-        ServerCheck::gateway_for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
-            .unwrap_or(ServerCheck::GatewayRefused("malformed app team id"));
-    let check = match &config.runtime_release {
-        Some(release) => release
-            .cdhash("agentic-org-web")
-            .map(|hash| check.pinned(hash))
-            .unwrap_or(ServerCheck::GatewayRefused(
-                "the selected release has no agentic-org-web image hash",
-            )),
-        None => check,
-    };
+    let (check, release) = gateway::admission(
+        cfg!(debug_assertions),
+        config.app_team_id.as_deref(),
+        config
+            .runtime_release
+            .as_ref()
+            .map(|release| (release.cdhash("agentic-org-web"), release.gateway_binding())),
+    );
     let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
     if let Some(dir) = dev_key_dir {
         critical_paths.push(dir.to_owned());
     }
     Ok(Some(gateway::Configuration {
-        release: config
-            .runtime_release
-            .as_ref()
-            .map(release::RuntimeRelease::gateway_binding),
+        release,
         program: config.server_program.with_file_name("agentic-org-web"),
         instance: instance.id().into(),
         runtime: layout.run.clone(),

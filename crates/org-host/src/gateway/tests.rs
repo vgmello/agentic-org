@@ -1017,12 +1017,16 @@ fn a_rendezvous_peer_other_than_the_admitted_child_is_refused() {
 #[cfg(target_os = "macos")]
 #[test]
 fn an_unconfined_child_fails_the_sandbox_verification() {
-    // Admitted with its real token; every check passes until the sandbox check.
-    let error = start_scripted(&connecting_script(READY), |_, _, pid| {
+    // Admitted with its real token; every check passes until the sandbox check. A
+    // non-empty critical path, so the refusal is the child's missing confinement,
+    // not the empty path list.
+    let (dir, mut config) = scripted_config(&connecting_script(READY), |_, _, pid| {
         crate::spawn::audit_token_of_child(pid)
             .map(Some)
             .map_err(|e| e.to_string())
     });
+    config.critical_paths = vec![fs::canonicalize(dir.path()).unwrap()];
+    let error = start_error(&config);
     let message = error.to_string();
     assert!(
         message.contains("gateway start failed: verify the gateway sandbox"),
@@ -1150,4 +1154,133 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     assert_eq!(closed.ended(), "its control connection reached EOF");
     drop((refused, exited, closed));
     offices.shutdown();
+}
+
+fn binding() -> org_host_control::gateway::GatewayRelease {
+    org_host_control::gateway::GatewayRelease {
+        release_id: "release".into(),
+        manifest_sha256: "ab".repeat(32),
+        sequence: 7,
+    }
+}
+
+#[test]
+fn a_release_build_gateway_admission_pins_the_selected_image_and_binds_its_release() {
+    const TEAM: &str = "AB12CD34EF";
+    let hash = [7u8; 20];
+    let gateway = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
+    assert!(matches!(gateway, ServerCheck::Gateway(_)));
+    // A selected release pins its exact gateway image and binds its identity.
+    let (check, release) = admission::<()>(false, Some(TEAM), Some((Ok(hash), binding())));
+    assert_eq!(check, gateway.clone().pinned(hash));
+    assert_eq!(release, Some(binding()));
+    // No release: the Developer ID gateway check alone, no binding.
+    let (check, release) = admission::<()>(false, Some(TEAM), None);
+    assert_eq!(check, gateway);
+    assert_eq!(release, None);
+    assert!(check.may_spawn().is_ok());
+}
+
+#[test]
+fn a_release_build_gateway_admission_refuses_a_missing_image_hash_a_malformed_or_missing_team() {
+    const TEAM: &str = "AB12CD34EF";
+    // A selected release without a gateway image hash refuses every start.
+    let (check, release) = admission(false, Some(TEAM), Some((Err(()), binding())));
+    assert_eq!(
+        check,
+        ServerCheck::GatewayRefused("the selected release has no agentic-org-web image hash")
+    );
+    assert_eq!(release, Some(binding()));
+    assert!(check.may_spawn().is_err());
+    // Even in a debug build: the missing hash is never a skipped check.
+    let (check, _) = admission(true, None, Some((Err(()), binding())));
+    assert!(check.may_spawn().is_err(), "{check:?}");
+    // A malformed team id refuses, with or without a release, never a weaker check.
+    for release in [None, Some((Ok([7u8; 20]), binding()))] {
+        let (check, _) = admission::<()>(false, Some("bad"), release);
+        assert!(check.may_spawn().is_err(), "{check:?}");
+        assert!(
+            check.describe().contains("malformed app team id"),
+            "{}",
+            check.describe()
+        );
+    }
+    // No team id in a release build refuses.
+    let (check, release) = admission::<()>(false, None, None);
+    assert!(matches!(check, ServerCheck::GatewayRefused(_)), "{check:?}");
+    assert!(check.may_spawn().is_err());
+    assert_eq!(release, None);
+}
+
+#[test]
+fn a_debug_build_gateway_admission_skips_the_signature_check_but_still_pins_a_release() {
+    let (check, release) = admission::<()>(true, None, None);
+    assert_eq!(check, ServerCheck::Skip);
+    assert_eq!(release, None);
+    let (check, release) = admission::<()>(true, Some("bad"), Some((Ok([7u8; 20]), binding())));
+    assert_eq!(check, ServerCheck::Skip.pinned([7u8; 20]));
+    assert_eq!(release, Some(binding()));
+    // A pinned debug check never admits an unchecked (token-less) child.
+    assert!(check.admit(std::process::id()).is_err());
+}
+
+/// A child confined by `sandbox-exec` with a profile that denies reading and writing
+/// one critical folder, so it passes the real `verify_gateway`; after its ready line
+/// it runs `after_ready` on the control connection (`$REPLY`).
+#[cfg(target_os = "macos")]
+fn confined_start(after_ready: &str) -> io::Error {
+    let (dir, mut config) = scripted_config("", |_, _, _| Ok(None));
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let critical = root.join("critical");
+    fs::create_dir(&critical).unwrap();
+    let profile = root.join("profile.sb");
+    fs::write(
+        &profile,
+        format!(
+            "(version 1)\n(allow default)\n(deny file-read-data file-write-data (subpath \"{}\"))\n",
+            critical.display()
+        ),
+    )
+    .unwrap();
+    let inner = root.join("inner.zsh");
+    let script = connecting_script(READY).replace("read -r -t 20 -u $REPLY _\n", after_ready);
+    fs::write(&inner, script).unwrap();
+    fs::write(
+        &config.program,
+        format!(
+            "#!/bin/zsh -f\nexec /usr/bin/sandbox-exec -f '{}' /bin/zsh -f '{}'\n",
+            profile.display(),
+            inner.display()
+        ),
+    )
+    .unwrap();
+    config.critical_paths = vec![critical];
+    start_error(&config)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_confined_child_with_a_wrong_handoff_ack_is_refused() {
+    let message = confined_start(
+        "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"hello\"}'\n\
+         read -r -t 20 -u $REPLY _\n",
+    )
+    .to_string();
+    assert_eq!(
+        message, "gateway start failed: the handoff ACK does not acknowledge the handoff",
+        "the child passed the sandbox verification and reached the ACK check"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_confined_child_that_closes_control_before_its_handoff_ack_is_refused() {
+    // Wait for the handoff to arrive, then close the control connection and stay alive.
+    let message =
+        confined_start("read -r -t 20 -k 1 -u $REPLY _\nsleep 0.5\nexec {REPLY}>&-\nsleep 20\n")
+            .to_string();
+    assert_eq!(
+        message,
+        "gateway start failed: control EOF before the handoff ACK"
+    );
 }
