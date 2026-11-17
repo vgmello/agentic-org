@@ -20,17 +20,18 @@ compile_error!(
      would keep the unpinned development startup path. Build it without debug assertions."
 );
 
+pub mod api;
 pub mod assets;
 pub mod blocking;
 pub mod body;
 mod csp;
+pub mod host;
 mod ingress;
 mod origin;
 pub mod path;
 pub mod process;
 mod release;
 pub mod service;
-pub mod sessions;
 mod static_ui;
 pub mod tls;
 pub mod transport;

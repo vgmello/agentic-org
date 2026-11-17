@@ -39,20 +39,6 @@ pub trait ApiBackend: Send + Sync + 'static {
     type Call: Send + 'static;
 
     fn route(&self, request: &Parts, path: &RequestPath) -> Result<Self::Route, ApiReply>;
-    fn credentials(&self, _route: &Self::Route) -> bool {
-        false
-    }
-    fn prepare_credentials(
-        &self,
-        _route: Self::Route,
-        _body: crate::sessions::SecretBody,
-    ) -> Result<PreparedCall<Self::Call>, ApiReply> {
-        Err(ApiReply::error(
-            StatusCode::BAD_REQUEST,
-            GatewayErrorCode::InvalidRequest,
-            "Invalid credential route.",
-        ))
-    }
     fn prepare(
         &self,
         route: Self::Route,
@@ -60,90 +46,19 @@ pub trait ApiBackend: Send + Sync + 'static {
     ) -> Result<PreparedCall<Self::Call>, ApiReply>;
     /// Runs on a dedicated worker and must use finite native deadlines.
     fn execute(&self, call: Self::Call) -> ApiReply;
-    /// As [`Self::execute`]; `watch` reports when the HTTP waiter has given up,
-    /// so work that issues authority can end it instead of committing it.
-    fn execute_watched(&self, call: Self::Call, watch: &crate::blocking::Watch<'_>) -> ApiReply {
-        let _ = watch;
-        self.execute(call)
-    }
-    /// Adjusts every reply on an `/api/v1` request that [`Self::route`] accepted:
-    /// body reading, preparation, pool admission, execution and backend
-    /// timeouts. A routing refusal is returned unchanged.
-    fn finish(&self, request: &Parts, path: &RequestPath, reply: ApiReply) -> ApiReply {
-        let _ = (request, path);
-        reply
-    }
 }
 
 pub struct ApiReply {
     status: StatusCode,
     body: Bytes,
-    cookie: Option<Box<hyper::header::HeaderValue>>,
 }
 
 impl ApiReply {
-    pub(crate) fn status(&self) -> StatusCode {
-        self.status
-    }
-    #[cfg(test)]
-    pub(crate) fn inspected(&self) -> (StatusCode, &[u8]) {
-        (self.status, &self.body)
-    }
     pub fn json(status: StatusCode, value: Value) -> Self {
         Self {
             status,
             body: Bytes::from(serde_json::to_vec(&value).expect("JSON value serializes")),
-            cookie: None,
         }
-    }
-
-    pub(crate) fn secret_json(
-        status: StatusCode,
-        value: &impl serde::Serialize,
-    ) -> Result<Self, ApiReply> {
-        // Measured and zeroed application allocation. The HTTP-owned copy is
-        // necessarily sent to the browser; no Value tree contains the proof.
-        struct Count(usize);
-        impl std::io::Write for Count {
-            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-                self.0 = self
-                    .0
-                    .checked_add(b.len())
-                    .filter(|n| *n <= org_proto::MAX_FRAME_BYTES)
-                    .ok_or_else(|| std::io::Error::other("session response too large"))?;
-                Ok(b.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let invalid = || {
-            Self::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Unavailable,
-                "Session service unavailable.",
-            )
-        };
-        let mut count = Count(0);
-        serde_json::to_writer(&mut count, value).map_err(|_| invalid())?;
-        let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(count.0));
-        serde_json::to_writer(&mut *bytes, value).map_err(|_| invalid())?;
-        Ok(Self {
-            status,
-            body: Bytes::copy_from_slice(&bytes),
-            cookie: None,
-        })
-    }
-    pub(crate) fn cookie(mut self, cookie: &str) -> Result<Self, ApiReply> {
-        let header = hyper::header::HeaderValue::from_str(cookie).map_err(|_| {
-            Self::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Unavailable,
-                "Session service unavailable.",
-            )
-        })?;
-        self.cookie = Some(Box::new(header));
-        Ok(self)
     }
 
     pub fn error(status: StatusCode, code: GatewayErrorCode, message: &'static str) -> Self {
@@ -155,19 +70,13 @@ impl ApiReply {
     }
 
     fn into_http(self, head: bool) -> Response<Full<Bytes>> {
-        let mut reply = response(
+        response(
             self.status,
             self.body,
             head,
             "application/json; charset=utf-8",
             "no-store",
-        );
-        if let Some(cookie) = self.cookie {
-            reply
-                .headers_mut()
-                .insert(hyper::header::SET_COOKIE, *cookie);
-        }
-        reply
+        )
     }
 }
 
@@ -361,11 +270,7 @@ impl<B: ApiBackend> Gateway<B> {
                     .into_http(head)
                 }
                 Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                    match self.api_response(&parts, &path, body).await {
-                        Ok(reply) => self.backend.finish(&parts, &path, reply),
-                        Err(refused) => refused,
-                    }
-                    .into_http(head)
+                    self.api_response(&parts, path, body).await.into_http(head)
                 }
                 Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
             }
@@ -381,84 +286,63 @@ impl<B: ApiBackend> Gateway<B> {
         response
     }
 
-    /// `Err` is a routing refusal; `Ok` is every reply after routing.
-    async fn api_response<T>(
-        &self,
-        parts: &Parts,
-        path: &RequestPath,
-        body: T,
-    ) -> Result<ApiReply, ApiReply>
+    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> ApiReply
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        let route = self.backend.route(parts, path)?;
-        let prepared = if self.backend.credentials(&route) {
-            match crate::sessions::read_secret_body(body).await {
-                Ok(body) => {
-                    let bytes = body.as_bytes().len();
-                    self.backend
-                        .prepare_credentials(route, body)
-                        .map(|prepared| (prepared, bytes))
+        let route = match self.backend.route(parts, &path) {
+            Ok(route) => route,
+            Err(reply) => return reply,
+        };
+        let body = match read_business_body(body, self.limits.body_bytes, self.limits.body_timeout)
+            .await
+        {
+            Ok(body) => body,
+            Err(error) => {
+                return match error {
+                    BodyError::TooLarge => ApiReply::error(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        GatewayErrorCode::TooLarge,
+                        "Request body is too large.",
+                    ),
+                    BodyError::TimedOut => ApiReply::error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        GatewayErrorCode::Timeout,
+                        "Request body timed out.",
+                    ),
+                    BodyError::Malformed => ApiReply::error(
+                        StatusCode::BAD_REQUEST,
+                        GatewayErrorCode::InvalidRequest,
+                        "Invalid request body.",
+                    ),
+                    BodyError::InvalidLimits => ApiReply::error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        GatewayErrorCode::Unavailable,
+                        "Service unavailable.",
+                    ),
                 }
-                Err(error) => Err(body_error(error)),
-            }
-        } else {
-            match read_business_body(body, self.limits.body_bytes, self.limits.body_timeout).await {
-                Ok(body) => {
-                    let bytes = body.as_bytes().len();
-                    self.backend
-                        .prepare(route, body)
-                        .map(|prepared| (prepared, bytes))
-                }
-                Err(error) => Err(body_error(error)),
             }
         };
-        let (prepared, bytes) = match prepared {
+        let bytes = body.as_bytes().len();
+        let prepared = match self.backend.prepare(route, body) {
             Ok(prepared) => prepared,
-            Err(reply) => return Ok(reply),
+            Err(reply) => return reply,
         };
         let backend = Arc::clone(&self.backend);
         let call = prepared.call;
         let ticket = match self
             .workers
-            .submit_watched(bytes.max(prepared.input_bytes), move |watch| {
-                backend.execute_watched(call, watch)
+            .submit(bytes.max(prepared.input_bytes), move || {
+                backend.execute(call)
             }) {
             Ok(ticket) => ticket,
-            Err(_) => return Ok(prepared.kind.unavailable()),
+            Err(_) => return prepared.kind.unavailable(),
         };
-        Ok(
-            match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
-                Ok(Ok(reply)) => reply,
-                _ => prepared.kind.unknown(),
-            },
-        )
-    }
-}
-
-fn body_error(error: BodyError) -> ApiReply {
-    match error {
-        BodyError::TooLarge => ApiReply::error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            GatewayErrorCode::TooLarge,
-            "Request body is too large.",
-        ),
-        BodyError::TimedOut => ApiReply::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            GatewayErrorCode::Timeout,
-            "Request body timed out.",
-        ),
-        BodyError::Malformed => ApiReply::error(
-            StatusCode::BAD_REQUEST,
-            GatewayErrorCode::InvalidRequest,
-            "Invalid request body.",
-        ),
-        BodyError::InvalidLimits => ApiReply::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            GatewayErrorCode::Unavailable,
-            "Service unavailable.",
-        ),
+        match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
+            Ok(Ok(reply)) => reply,
+            _ => prepared.kind.unknown(),
+        }
     }
 }
 

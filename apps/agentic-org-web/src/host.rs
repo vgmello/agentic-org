@@ -1,8 +1,9 @@
 //! One bounded actor owns the already-admitted private host connection. The
 //! gateway transfer descriptor from the reviewed handoff is held for the
-//! connection's lifetime; F4 opens no office channel on it and sends no office
-//! channel request. No host.sock/path fallback, office key or registry access.
-use org_host_control::{ops, Password, SessionHandle};
+//! connection's lifetime; the web process opens no office channel on it and
+//! sends no office channel request. No host.sock/path fallback, office key or
+//! registry access. Browser sessions are not served here until FC-159.
+use org_host_control::ops;
 use org_proto::Call;
 use org_socket::rights::{ReceiveError, StreamReceiver};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -80,7 +81,7 @@ pub struct HostControl {
     socket: UnixStream,
     jobs: SyncSender<Job>,
     next: std::sync::atomic::AtomicU64,
-    // Kept open so the host's gateway transfer end stays valid; never read in F4.
+    // Kept open so the host's transfer end stays valid; never read by this process.
     _transfer: UnixDatagram,
 }
 #[derive(Deserialize)]
@@ -213,25 +214,6 @@ impl HostControl {
     fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
         self.borrowed::<C, C::Params>(params)
     }
-    pub fn verify(
-        &self,
-        login: &str,
-        password: &Password,
-    ) -> Result<ops::AccountVerifyResult, Failure> {
-        #[derive(Serialize)]
-        struct Params<'a> {
-            login: &'a str,
-            password: &'a Password,
-        }
-        // Borrow the password for typed direct encoding, without a raw Value.
-        struct Verify;
-        impl Call for Verify {
-            const METHOD: &'static str = "account.verify";
-            type Params = ();
-            type Result = ops::AccountVerifyResult;
-        }
-        self.borrowed::<Verify, _>(&Params { login, password })
-    }
     /// Every call gets the full per-call deadline. After the actor took the
     /// request, the caller waits for the actor's own answer (bounded by the
     /// actor's deadline and write timeout); callers must never shorten this budget. Expiry while still queued, or
@@ -309,29 +291,6 @@ impl HostControl {
             }
         }
     }
-    pub fn renew(&self, handle: &SessionHandle) -> Result<(), Failure> {
-        #[derive(Serialize)]
-        struct Params<'a> {
-            session: &'a SessionHandle,
-        }
-        self.borrowed::<ops::SessionRenew, _>(&Params { session: handle })
-            .map(|_| ())
-    }
-    pub fn inspect(&self, handle: &SessionHandle) -> Result<ops::SessionInspectResult, Failure> {
-        #[derive(Serialize)]
-        struct Params<'a> {
-            session: &'a SessionHandle,
-        }
-        self.borrowed::<ops::SessionInspect, _>(&Params { session: handle })
-    }
-    pub fn end(&self, handle: &SessionHandle) -> Result<(), Failure> {
-        #[derive(Serialize)]
-        struct Params<'a> {
-            session: &'a SessionHandle,
-        }
-        self.borrowed::<ops::SessionEnd, _>(&Params { session: handle })
-            .map(|_| ())
-    }
 }
 impl Drop for HostControl {
     fn drop(&mut self) {
@@ -351,7 +310,7 @@ fn actor(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Readable while idle means EOF or an unsolicited frame: either
-                // ends this connection, and with it every host session on it.
+                // ends this connection.
                 if receiver.fd().is_none_or(|fd| {
                     org_socket::poll_readable(fd.as_raw_fd(), Duration::ZERO).unwrap_or(true)
                 }) {

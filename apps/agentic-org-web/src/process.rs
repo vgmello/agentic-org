@@ -1,7 +1,8 @@
 //! Actual single-thread host-managed entry. No public socket/path fallback.
 use crate::{
+    api::VersionApi,
+    host::HostControl,
     service::{self, ApiLimits, GatewayConfig},
-    sessions::{BrowserSessions, HostControl, SessionApi},
     tls::TlsCertificates,
     transport::{HttpLimits, ListenMode},
     Hsts,
@@ -139,16 +140,10 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let stream = UnixStream::connect(&line.rendezvous)?;
     let (control, transfer, listener) = handoff(stream)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
-    let host = HostControl::from_handoff(
-        control,
-        transfer,
-        line.instance_id.clone(),
-        Arc::new(|| fatal()),
-    )?;
-    let (mode, origin, hsts, secure) = match host.fetch_listener().map_err(|_| failure())? {
-        TlsFetchResult::HttpLoopback { origin, hsts } => {
-            (ListenMode::HttpLoopback, origin, hsts, false)
-        }
+    let host =
+        HostControl::from_handoff(control, transfer, line.instance_id, Arc::new(|| fatal()))?;
+    let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
+        TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::Https {
             cert,
             key,
@@ -161,7 +156,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
             let key =
                 PrivateKeyDer::from_pem_slice(key.expose().as_bytes()).map_err(|_| failure())?;
             let tls = TlsCertificates::new(chain, key).map_err(|_| failure())?;
-            (ListenMode::Https(Arc::new(tls)), origin, hsts, true)
+            (ListenMode::Https(Arc::new(tls)), origin, hsts)
         }
         _ => return Err(failure()),
     };
@@ -186,9 +181,8 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let sessions = BrowserSessions::new(Arc::clone(&host), line.instance_id, secure)
-                .map_err(|_| failure())?;
-            let backend = SessionApi::new(sessions);
+            // Browser sign-in waits for stored sessions (FC-159, ADR-0013).
+            let backend = VersionApi;
             let shutdown = async move {
                 while host.live() {
                     tokio::time::sleep(Duration::from_millis(100)).await;

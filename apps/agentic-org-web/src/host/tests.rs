@@ -4,6 +4,28 @@ use std::{io::BufReader, os::unix::net::UnixDatagram, thread::JoinHandle};
 
 const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
+/// A test-only host call: the actor's framing, deadlines and pairing do not
+/// depend on the method, so one neutral method exercises all of them.
+struct Probe;
+impl Call for Probe {
+    const METHOD: &'static str = "test.probe";
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+}
+/// A second neutral method, distinguishable in the host's method log.
+struct Other;
+impl Call for Other {
+    const METHOD: &'static str = "test.other";
+    type Params = serde_json::Value;
+    type Result = serde_json::Value;
+}
+fn probe(control: &HostControl) -> Result<serde_json::Value, Failure> {
+    control.call::<Probe>(&serde_json::json!({}))
+}
+fn other(control: &HostControl) -> Result<serde_json::Value, Failure> {
+    control.call::<Other>(&serde_json::json!({}))
+}
+
 fn host(instance: &'static str, peer: UnixStream) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = BufReader::new(peer);
@@ -60,85 +82,22 @@ fn control_eof_marks_the_connection_dead_and_refuses_calls() {
 }
 
 #[test]
-fn large_account_replies_keep_the_control_connection_in_step() {
-    let orgs: Vec<_> = (0..700)
-        .map(|i| ops::LinkedOrg {
-            org_id: format!("{i:026}"),
-            member_id: INSTANCE.into(),
-            office_ids: vec![format!("{i:026}")],
-        })
-        .collect();
-    let expected = orgs.clone();
-    let (gateway, peer) = UnixStream::pair().unwrap();
-    let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
-    let host = thread::spawn(move || {
-        let mut reader = BufReader::new(peer);
-        let mut methods = Vec::new();
-        while let Some(request) =
-            org_proto::frame::read_message::<serde_json::Value>(&mut reader).unwrap()
-        {
-            let method = request["method"].as_str().unwrap();
-            let result = match method {
-                "hello" => serde_json::to_value(
-                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
-                )
-                .unwrap(),
-                "account.verify" => serde_json::to_value(ops::AccountVerifyResult {
-                    session: SessionHandle::new("synthetic native handle".into()).unwrap(),
-                    account: INSTANCE.into(),
-                    admin: false,
-                    orgs: orgs.clone(),
-                })
-                .unwrap(),
-                "session.inspect" => serde_json::to_value(ops::SessionInspectResult {
-                    account: INSTANCE.into(),
-                    login: "Owner".into(),
-                    admin: false,
-                    orgs: orgs.clone(),
-                    server_time_ms: 1,
-                    absolute_expires_at_ms: 2,
-                    idle_expires_at_ms: 2,
-                })
-                .unwrap(),
-                "session.renew" => serde_json::json!({}),
-                _ => panic!("unexpected method {method}"),
-            };
-            let reply = serde_json::json!({"id":request["id"],"result":result});
-            if matches!(method, "account.verify" | "session.inspect") {
-                let bytes = serde_json::to_vec(&reply).unwrap();
-                assert!(bytes.len() > 64 * 1024);
-                assert!(bytes.len() < org_proto::MAX_FRAME_BYTES);
-            }
-            methods.push(method.to_owned());
-            if org_proto::frame::write_message(reader.get_mut(), &reply).is_err() {
-                break;
-            }
-        }
-        methods
+fn large_replies_keep_the_control_connection_in_step() {
+    let large: Vec<String> = (0..700).map(|i| format!("{i:0128}")).collect();
+    let expected = serde_json::json!({ "items": large });
+    let sent = expected.clone();
+    let (control, host) = scripted(move |request| {
+        let reply = serde_json::json!({"id":request["id"],"result":sent});
+        let bytes = serde_json::to_vec(&reply).unwrap();
+        assert!(bytes.len() > 64 * 1024);
+        assert!(bytes.len() < org_proto::MAX_FRAME_BYTES);
+        Some(reply)
     });
-    let control = HostControl::from_handoff(
-        gateway.into(),
-        transfer.into(),
-        INSTANCE.into(),
-        Arc::new(|| panic!("unexpected ancillary failure")),
-    )
-    .unwrap();
-    let password = Password::new("generated unit credential".into()).unwrap();
-    let verified = control.verify("Owner", &password).unwrap();
-    assert_eq!(verified.orgs, expected);
-    assert_eq!(control.inspect(&verified.session).unwrap().orgs, expected);
-    assert_eq!(control.renew(&verified.session), Ok(()));
+    assert_eq!(probe(&control).unwrap(), expected);
+    assert_eq!(other(&control).unwrap(), expected);
     assert!(control.live());
     drop(control);
-    assert_eq!(
-        host.join().unwrap(),
-        [
-            "hello",
-            "account.verify",
-            "session.inspect",
-            "session.renew"
-        ]
-    );
+    assert_eq!(host.join().unwrap(), ["hello", "test.probe", "test.other"]);
 }
 
 #[test]
@@ -181,7 +140,7 @@ fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
         let request: serde_json::Value = org_proto::frame::read_message(&mut reader)
             .unwrap()
             .unwrap();
-        assert_eq!(request["method"], "session.inspect");
+        assert_eq!(request["method"], "test.probe");
         stalled.recv().unwrap();
     });
     let control = HostControl::from_handoff(
@@ -191,9 +150,8 @@ fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
         Arc::new(|| panic!("unexpected ancillary failure")),
     )
     .unwrap();
-    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
     let started = Instant::now();
-    let error = control.inspect(&handle).err();
+    let error = probe(&control).err();
     let elapsed = started.elapsed();
     release.send(()).unwrap();
     host.join().unwrap();
@@ -224,7 +182,7 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
         )
         .unwrap();
         assert_eq!(
-            decode::<ops::SessionInspectResult>(&bytes, 1, &|| {}).err(),
+            decode::<serde_json::Value>(&bytes, 1, &|| {}).err(),
             Some(expected)
         );
     }
@@ -234,7 +192,7 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
         br#"[1]"#,
     ] {
         assert_eq!(
-            decode::<ops::SessionInspectResult>(bytes, 1, &|| {}).err(),
+            decode::<serde_json::Value>(bytes, 1, &|| {}).err(),
             Some(Failure::Unavailable)
         );
     }
@@ -253,16 +211,13 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
             org_proto::frame::read_message::<serde_json::Value>(&mut reader)
         {
             let method = request["method"].as_str().unwrap().to_owned();
-            if method == "session.inspect" {
+            if method == "test.probe" && !methods.iter().any(|m| m == "test.probe") {
                 // Stall the earlier call within its deadline.
                 started.send(()).unwrap();
                 stalled.recv().unwrap();
             }
-            let result = if method == "session.renew" {
+            let result = if method != "hello" {
                 serde_json::json!({})
-            } else if method == "session.inspect" {
-                serde_json::json!({"account":"a","login":"l","admin":false,"orgs":[],
-                    "server_time_ms":1,"absolute_expires_at_ms":2,"idle_expires_at_ms":2})
             } else {
                 serde_json::to_value(
                     org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
@@ -284,18 +239,14 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
         Arc::new(|| panic!("unexpected ancillary failure")),
     )
     .unwrap();
-    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
     let earlier = {
         let control = Arc::clone(&control);
-        thread::spawn(move || {
-            let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
-            control.inspect(&handle).map(|_| ())
-        })
+        thread::spawn(move || probe(&control).map(|_| ()))
     };
     observed.recv_timeout(Duration::from_secs(2)).unwrap();
     // Queued behind the stalled call, this one expires before it is written.
-    let queued = control.borrowed_until::<ops::SessionEnd, _>(
-        &serde_json::json!({"session": &handle}),
+    let queued = control.borrowed_until::<Other, _>(
+        &serde_json::json!({}),
         Instant::now() + Duration::from_millis(200),
     );
     assert_eq!(queued.err(), Some(Failure::Unavailable));
@@ -309,7 +260,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
         .jobs
         .try_send(Job {
             line: encode(&serde_json::json!({
-                "id":99,"method":"session.end","params":{"session": &handle}
+                "id":99,"method":"test.other","params":{}
             }))
             .unwrap(),
             until: Instant::now(),
@@ -333,14 +284,11 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
     }
     assert!(control.live(), "an unwritten expiry closed the connection");
     // Later calls still work on the same in-step connection.
-    assert_eq!(control.renew(&handle), Ok(()));
+    assert_eq!(probe(&control), Ok(serde_json::json!({})));
     assert!(control.live());
     drop(control);
-    // Neither expired session.end was sent to the host.
-    assert_eq!(
-        host.join().unwrap(),
-        ["hello", "session.inspect", "session.renew"]
-    );
+    // Neither expired test.other call was sent to the host.
+    assert_eq!(host.join().unwrap(), ["hello", "test.probe", "test.probe"]);
 }
 
 /// A host on a real socket pair that answers `hello`, records every method and
@@ -388,21 +336,20 @@ fn scripted(
 
 #[test]
 fn a_job_dequeued_below_the_write_floor_is_refused_unwritten_and_keeps_the_connection() {
-    // A written `session.end` would never be answered within its budget.
+    // A written `test.other` would never be answered within its budget.
     let (control, host) = scripted(|request| {
-        (request["method"] == "session.renew")
+        (request["method"] == "test.probe")
             .then(|| serde_json::json!({"id":request["id"],"result":{}}))
     });
-    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
-    let near = control.borrowed_until::<ops::SessionEnd, _>(
-        &serde_json::json!({"session": &handle}),
+    let near = control.borrowed_until::<Other, _>(
+        &serde_json::json!({}),
         Instant::now() + Duration::from_millis(100),
     );
     assert_eq!(near.err(), Some(Failure::Unavailable));
     assert!(control.live());
-    assert_eq!(control.renew(&handle), Ok(()));
+    assert_eq!(probe(&control), Ok(serde_json::json!({})));
     drop(control);
-    assert_eq!(host.join().unwrap(), ["hello", "session.renew"]);
+    assert_eq!(host.join().unwrap(), ["hello", "test.probe"]);
 }
 
 #[test]
@@ -452,10 +399,9 @@ fn a_reply_with_another_id_desynchronizes_and_closes_the_connection() {
         let id = request["id"].as_u64().unwrap() + 1;
         Some(serde_json::json!({"id":id,"result":{}}))
     });
-    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
-    assert_eq!(control.renew(&handle), Err(Failure::Unavailable));
+    assert_eq!(probe(&control), Err(Failure::Unavailable));
     assert!(!control.live());
-    assert_eq!(control.renew(&handle), Err(Failure::Unavailable));
+    assert_eq!(probe(&control), Err(Failure::Unavailable));
     drop(control);
-    assert_eq!(host.join().unwrap(), ["hello", "session.renew"]);
+    assert_eq!(host.join().unwrap(), ["hello", "test.probe"]);
 }

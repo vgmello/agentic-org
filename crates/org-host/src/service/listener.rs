@@ -168,10 +168,6 @@ impl GatewayConnection {
             .as_ref()
             .is_some_and(|g| g.serving.load(Ordering::SeqCst))
     }
-    #[cfg(test)]
-    pub(crate) fn connection_for_test(&self) -> &Arc<Connection> {
-        &self.connection
-    }
 }
 impl Drop for GatewayConnection {
     fn drop(&mut self) {

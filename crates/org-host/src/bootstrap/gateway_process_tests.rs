@@ -1,6 +1,8 @@
 //! F4 production-path proof (GW-01 falsification): the real host, composed through
 //! the protected reverse bootstrap that creates the administrator and HQ, spawns
-//! the real built `agentic-org-web` and serves browser sessions over loopback HTTP.
+//! the real built `agentic-org-web`, which serves `/api/v1/version` over loopback
+//! HTTP. Browser sign-in waits for stored sessions (FC-159): the session routes
+//! are JSON 404 and sign in nobody.
 //! Only disposable `/private/tmp` roots and debug development custody are used;
 //! debug `ServerCheck::Skip` establishes no release-signing evidence.
 use crate::bootstrap::BootstrapHost;
@@ -29,25 +31,6 @@ struct Reply {
     headers: String,
     body: serde_json::Value,
 }
-impl Reply {
-    fn set_cookie(&self) -> Option<&str> {
-        self.headers.lines().find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("set-cookie")
-                .then(|| value.trim())
-        })
-    }
-    /// The cookie name=value pair plus the proof, as request headers.
-    fn pair(&self) -> String {
-        let cookie = self.set_cookie().expect("session cookie");
-        let proof = self.body["result"]["proof"].as_str().expect("proof");
-        format!(
-            "Cookie: {}\r\nX-Org-Session-Proof: {proof}\r\n",
-            cookie.split(';').next().unwrap()
-        )
-    }
-}
-
 fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str) -> Reply {
     let mut stream = TcpStream::connect(address).expect("gateway listener");
     stream.set_read_timeout(Some(WAIT)).unwrap();
@@ -72,20 +55,27 @@ fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str
     }
 }
 
-fn sign_in(address: SocketAddr, login: &str, password: &str) -> Reply {
-    let body = serde_json::json!({ "login": login, "password": password }).to_string();
-    http(address, "POST", "/api/v1/session/sign-in", "", &body)
+/// A missing API route (web-api-v1 §2): JSON 404, no cookie.
+fn assert_missing(reply: &Reply, what: &str) {
+    assert_eq!(reply.status, 404, "{what}: {}", reply.headers);
+    assert_eq!(reply.body["error"]["code"], "not_found", "{what}");
+    assert!(
+        !reply.headers.to_ascii_lowercase().contains("set-cookie"),
+        "{what}: no cookie"
+    );
 }
 
-/// The single protected-auth refusal (web-api-v1 §4), with no cookie issued.
-fn assert_refused(reply: &Reply, what: &str) {
-    assert_eq!(reply.status, 401, "{what}: {}", reply.headers);
-    assert_eq!(reply.body["error"]["code"], "not_authorized", "{what}");
-    assert_eq!(
-        reply.body["error"]["session_reason"], "session_ended",
-        "{what}"
-    );
-    assert!(reply.set_cookie().is_none(), "{what}: no cookie on refusal");
+/// Every browser session route is absent until FC-159.
+fn assert_no_sign_in(address: SocketAddr) {
+    let credentials = serde_json::json!({ "login": "Owner", "password": PASSWORD }).to_string();
+    for (method, path, body) in [
+        ("POST", "/api/v1/session/sign-in", credentials.as_str()),
+        ("GET", "/api/v1/session", ""),
+        ("POST", "/api/v1/session/refresh", "{}"),
+        ("POST", "/api/v1/session/sign-out", "{}"),
+    ] {
+        assert_missing(&http(address, method, path, "", body), path);
+    }
 }
 
 fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
@@ -156,7 +146,7 @@ fn gateway_pid(program: &Path) -> String {
 
 #[test]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual gateway/worker listeners require permitted local bind"]
-fn actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout() {
+fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
@@ -278,63 +268,16 @@ fn actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout
         version.body["result"]["contract_revision"],
         org_proto::gateway::CONTRACT_REVISION
     );
-    assert_refused(&http(address, "GET", "/api/v1/session", "", ""), "no pair");
-
-    // 2. Sign-in with the bootstrap administrator through host account.verify.
-    let signed = sign_in(address, "Owner", PASSWORD);
-    assert_eq!(signed.status, 200, "{}", signed.headers);
-    assert!(signed
+    assert!(version
         .headers
         .to_ascii_lowercase()
         .contains("cache-control: no-store"));
-    let cookie = signed.set_cookie().unwrap();
-    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
-    assert!(!cookie.contains("Secure"), "loopback HTTP cookie");
-    assert_eq!(signed.body["result"]["account"]["login"], "Owner");
-    let pair = signed.pair();
+    // 2. No browser sign-in yet: even the bootstrap administrator's correct
+    //    credentials reach no host account.verify.
+    assert_no_sign_in(address);
 
-    // 3. GET session needs the cookie+proof pair; neither half alone works.
-    let view = http(address, "GET", "/api/v1/session", &pair, "");
-    assert_eq!(view.status, 200, "{}", view.headers);
-    assert_eq!(view.body["result"]["admin"], true);
-    assert!(view.body["result"].get("proof").is_none());
-    let cookie_only = pair.lines().next().unwrap().to_owned() + "\r\n";
-    assert_refused(
-        &http(address, "GET", "/api/v1/session", &cookie_only, ""),
-        "cookie without proof",
-    );
-
-    // 4. Refresh rotates both halves: the old pair is refused, the new one works.
-    let refreshed = http(address, "POST", "/api/v1/session/refresh", &pair, "{}");
-    assert_eq!(refreshed.status, 200, "{}", refreshed.headers);
-    let next = refreshed.pair();
-    assert_ne!(next, pair);
-    assert_refused(
-        &http(address, "GET", "/api/v1/session", &pair, ""),
-        "pre-refresh pair",
-    );
-    assert_eq!(
-        http(address, "GET", "/api/v1/session", &next, "").status,
-        200
-    );
-
-    // 5. Sign-out ends the session.
-    let out = http(address, "POST", "/api/v1/session/sign-out", &next, "{}");
-    assert_eq!(out.status, 200, "{}", out.headers);
-    assert_refused(
-        &http(address, "GET", "/api/v1/session", &next, ""),
-        "signed-out pair",
-    );
-
-    // 6. Control EOF: kill the admitted gateway. Readiness turns false and its
-    //    sessions end; the supervisor's bounded restart serves a new process.
-    let live = sign_in(address, "Owner", PASSWORD);
-    assert_eq!(live.status, 200);
-    let live = live.pair();
-    assert_eq!(
-        http(address, "GET", "/api/v1/session", &live, "").status,
-        200
-    );
+    // 3. Control EOF: kill the admitted gateway. Readiness turns false; the
+    //    supervisor's bounded restart serves a new process.
     let killed = gateway_pid(&program);
     let status = Command::new("/bin/kill")
         .args(["-KILL", &killed])
@@ -345,35 +288,8 @@ fn actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout
     wait_until("restarted gateway_ready", || gateway_ready(&host));
     wait_until("restarted HTTP readiness", || http_ready(address));
     assert_ne!(gateway_pid(&program), killed, "a new admitted process");
-    assert_refused(
-        &http(address, "GET", "/api/v1/session", &live, ""),
-        "session from the ended control connection",
-    );
-
-    // 7. One sign-in lockout through the gateway (HEAD per-socket login_lockout,
-    //    Socket::Control). Wrong password, unknown login and a locked correct
-    //    password are indistinguishable (C-r3-2).
-    let unknown = sign_in(address, "nobody-here", "wrong synthetic password");
-    assert_refused(&unknown, "unknown login");
-    for attempt in 0..6 {
-        let wrong = sign_in(address, "Owner", "wrong synthetic password");
-        assert_refused(&wrong, &format!("wrong password {attempt}"));
-        assert_eq!(wrong.body, unknown.body, "no account existence revealed");
-    }
-    let locked = sign_in(address, "Owner", PASSWORD);
-    assert_refused(&locked, "correct password while locked");
-    assert_eq!(locked.body, unknown.body, "lockout is not distinguishable");
-    // The refusal was the timed lockout: once it lapses the same credential works.
-    let until = Instant::now() + WAIT;
-    loop {
-        thread::sleep(Duration::from_millis(1_100));
-        let retry = sign_in(address, "Owner", PASSWORD);
-        if retry.status == 200 {
-            break;
-        }
-        assert_refused(&retry, "locked retry");
-        assert!(Instant::now() < until, "lockout never lapsed");
-    }
+    assert_eq!(http(address, "GET", "/api/v1/version", "", "").status, 200);
+    assert_no_sign_in(address);
 
     answer::<Exit>(&mut wire, id, &Empty {}).unwrap();
     host.shutdown();

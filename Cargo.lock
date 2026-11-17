@@ -69,7 +69,6 @@ name = "agentic-org-web"
 version = "0.0.0"
 dependencies = [
  "base64",
- "hmac",
  "http-body-util",
  "hyper",
  "hyper-util",

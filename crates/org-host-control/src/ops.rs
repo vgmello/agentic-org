@@ -43,12 +43,6 @@ pub struct AccountVerifyResult {
     pub orgs: Vec<LinkedOrg>,
 }
 
-/// The most live sessions `account.verify` issues on the admitted gateway control connection.
-/// The host's global session cap is this plus a local reserve equal to one local connection's
-/// cap, so browser sign-ins can never lock local sign-in out. The gateway's in-memory browser
-/// map is bounded by this same value.
-pub const GATEWAY_SESSIONS: usize = 992;
-
 /// An organization the account is linked to: the member it acts as there and its offices.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedOrg {
