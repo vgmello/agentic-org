@@ -51,11 +51,116 @@ fn refused_gateway_start_never_becomes_ready() {
     assert!(!crate::service::gateway_serving(true, true, observed));
 }
 
-struct Fake(Arc<AtomicBool>);
+/// A started gateway: `live` is the child/control state, `reported` its `gateway.serving`.
+struct Fake {
+    live: Arc<AtomicBool>,
+    reported: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+}
+impl Fake {
+    fn reporting(live: &Arc<AtomicBool>) -> Self {
+        Self {
+            live: Arc::clone(live),
+            reported: Arc::new(AtomicBool::new(true)),
+            dropped: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
 impl Serving for Fake {
     fn serving(&mut self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.live.load(Ordering::SeqCst)
     }
+    fn reported(&mut self) -> bool {
+        self.reported.load(Ordering::SeqCst)
+    }
+}
+impl Drop for Fake {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn running_is_published_only_after_the_gateway_reports_serving() {
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let live = Arc::new(AtomicBool::new(true));
+    let reported = Arc::new(AtomicBool::new(false));
+    let supervisor = {
+        let (stopping, state, live, reported) = (
+            Arc::clone(&stopping),
+            Arc::clone(&state),
+            Arc::clone(&live),
+            Arc::clone(&reported),
+        );
+        thread::spawn(move || {
+            supervise(&stopping, &state, &|| true, SERVING_DEADLINE, || {
+                Ok(Fake {
+                    live: Arc::clone(&live),
+                    reported: Arc::clone(&reported),
+                    dropped: Arc::new(AtomicBool::new(false)),
+                })
+            })
+        })
+    };
+    wait_for("starting", || *lock(&state) == GatewayState::Starting);
+    thread::sleep(Duration::from_millis(200));
+    // Started and admitted, but HTTP initialization is not reported yet.
+    assert_eq!(*lock(&state), GatewayState::Starting);
+    assert!(!crate::service::gateway_serving(true, true, *lock(&state)));
+    reported.store(true, Ordering::SeqCst);
+    wait_for("running", || *lock(&state) == GatewayState::Running);
+    assert!(crate::service::gateway_serving(true, true, *lock(&state)));
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+}
+
+#[test]
+fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped() {
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let live = Arc::new(AtomicBool::new(true));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let supervisor = {
+        let (stopping, state, live, dropped) = (
+            Arc::clone(&stopping),
+            Arc::clone(&state),
+            Arc::clone(&live),
+            Arc::clone(&dropped),
+        );
+        thread::spawn(move || {
+            supervise(
+                &stopping,
+                &state,
+                &|| true,
+                Duration::from_millis(300),
+                || {
+                    Ok(Fake {
+                        live: Arc::clone(&live),
+                        reported: Arc::new(AtomicBool::new(false)),
+                        dropped: Arc::clone(&dropped),
+                    })
+                },
+            )
+        })
+    };
+    let started = Instant::now();
+    wait_for("failed", || {
+        let now = *lock(&state);
+        lock(&observed).push(now);
+        now == GatewayState::Failed
+    });
+    assert!(started.elapsed() >= Duration::from_millis(250));
+    assert!(!lock(&observed).contains(&GatewayState::Running));
+    assert!(!crate::service::gateway_serving(true, true, *lock(&state)));
+    // The unreported child is dropped: control closed, then killed and reaped.
+    wait_for("child stopped", || dropped.load(Ordering::SeqCst));
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+    assert_eq!(*lock(&state), GatewayState::Failed);
 }
 
 #[test]
@@ -72,9 +177,9 @@ fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
             Arc::clone(&starts),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, || {
+            supervise(&stopping, &state, &|| true, SERVING_DEADLINE, || {
                 starts.fetch_add(1, Ordering::SeqCst);
-                Ok(Fake(Arc::clone(&live)))
+                Ok(Fake::reporting(&live))
             })
         })
     };
@@ -97,9 +202,13 @@ fn an_ineligible_host_never_starts_the_gateway() {
     let supervisor = {
         let (stopping, state) = (Arc::clone(&stopping), Arc::clone(&state));
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| false, || -> io::Result<Fake> {
-                panic!("started without HQ/authentication")
-            })
+            supervise(
+                &stopping,
+                &state,
+                &|| false,
+                SERVING_DEADLINE,
+                || -> io::Result<Fake> { panic!("started without HQ/authentication") },
+            )
         })
     };
     wait_for("starting", || *lock(&state) == GatewayState::Starting);

@@ -97,6 +97,21 @@ pub(crate) struct Listener {
 struct Gateway {
     transfer: Arc<std::os::unix::net::UnixDatagram>,
     listen: org_host_control::listen::ListenConfig,
+    /// A successful `tls.fetch` answered on this connection.
+    fetched: AtomicBool,
+    /// The gateway's one `gateway.serving` was accepted.
+    serving: AtomicBool,
+}
+
+/// How the host takes a `gateway.serving` notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServingReport {
+    /// Not the admitted gateway connection.
+    NotGateway,
+    /// Accepted: the first one, after hello and a successful `tls.fetch`.
+    Accepted,
+    /// Repeated, or before hello/`tls.fetch`: a protocol error.
+    OutOfOrder,
 }
 
 /// Lifetime of the sole authenticated gateway control connection. Constructed only by
@@ -121,6 +136,8 @@ impl GatewayConnection {
             .gateway = Some(Gateway {
             transfer: Arc::new(transfer),
             listen,
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
         });
         let serving = Arc::clone(&connection);
         let thread = thread::Builder::new()
@@ -133,6 +150,13 @@ impl GatewayConnection {
     }
     pub(crate) fn live(&self) -> bool {
         !self.connection.closed.load(Ordering::SeqCst)
+    }
+    /// The gateway reported, in order, that its HTTP server is serving.
+    pub(crate) fn reported_serving(&self) -> bool {
+        self.connection
+            .gateway
+            .as_ref()
+            .is_some_and(|g| g.serving.load(Ordering::SeqCst))
     }
     #[cfg(test)]
     pub(crate) fn connection_for_test(&self) -> &Arc<Connection> {
@@ -634,6 +658,29 @@ impl Connection {
     pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
         self.gateway.as_ref().map(|g| &g.listen)
     }
+    /// Records a successful `tls.fetch` answer on the gateway connection.
+    pub(crate) fn note_listener_fetched(&self) {
+        if let Some(gateway) = &self.gateway {
+            gateway.fetched.store(true, Ordering::SeqCst);
+        }
+    }
+    /// Takes the gateway's `gateway.serving`: accepted once, after hello and `tls.fetch`.
+    pub(crate) fn report_serving(&self) -> ServingReport {
+        let Some(gateway) = &self.gateway else {
+            return ServingReport::NotGateway;
+        };
+        if self.hello_completed()
+            && gateway.fetched.load(Ordering::SeqCst)
+            && gateway
+                .serving
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            ServingReport::Accepted
+        } else {
+            ServingReport::OutOfOrder
+        }
+    }
 
     pub(crate) fn complete_hello(&self) {
         self.hello_completed.store(true, Ordering::SeqCst);
@@ -916,6 +963,8 @@ mod tests {
         Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
             transfer: Arc::new(transfer),
             listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
         });
         assert_eq!(
             connection.channel_kind(),
@@ -1907,6 +1956,8 @@ mod channel_lifecycle_tests {
                 Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
                 transfer: Arc::new(transfer),
                 listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+                fetched: AtomicBool::new(false),
+                serving: AtomicBool::new(false),
             });
                 Some(org_socket::rights::DatagramReceiver::new(peer))
             } else {

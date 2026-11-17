@@ -473,6 +473,23 @@ where
     B: ApiBackend,
     S: Future<Output = ()>,
 {
+    run_gateway_reporting(listener, config, files, initialize, || Ok(()))
+}
+
+/// [`run_gateway`], calling `serving` once after the runtime, listener
+/// registration, backend and gateway service are initialized and before the
+/// first accept. Its error stops the gateway before it serves any request.
+pub fn run_gateway_reporting<B, S>(
+    listener: TcpListener,
+    config: GatewayConfig,
+    files: BuildFiles,
+    initialize: impl FnOnce() -> io::Result<(B, S)>,
+    serving: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()>
+where
+    B: ApiBackend,
+    S: Future<Output = ()>,
+{
     config.api.validate()?;
     try_run_http(
         listener,
@@ -484,6 +501,7 @@ where
             let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
             let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
+            serving()?;
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);
                 async move { Ok::<_, Infallible>(service.respond(request).await) }

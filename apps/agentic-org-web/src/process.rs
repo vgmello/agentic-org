@@ -177,17 +177,27 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         http: HttpLimits::default(),
         api: ApiLimits::default(),
     };
-    service::run_gateway(listener, config, files, move || {
-        let sessions = BrowserSessions::new(Arc::clone(&host), line.instance_id, secure)
-            .map_err(|_| failure())?;
-        let backend = SessionApi::new(sessions);
-        let shutdown = async move {
-            while host.live() {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        };
-        Ok((backend, shutdown))
-    })
+    let reporting = Arc::clone(&host);
+    // Sent exactly once, after HTTP initialization and before the first accept,
+    // on the runtime's driving thread while no request is served yet.
+    let serving = move || reporting.report_serving().map_err(|_| failure());
+    service::run_gateway_reporting(
+        listener,
+        config,
+        files,
+        move || {
+            let sessions = BrowserSessions::new(Arc::clone(&host), line.instance_id, secure)
+                .map_err(|_| failure())?;
+            let backend = SessionApi::new(sessions);
+            let shutdown = async move {
+                while host.live() {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+            Ok((backend, shutdown))
+        },
+        serving,
+    )
 }
 
 #[cfg(test)]

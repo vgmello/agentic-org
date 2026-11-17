@@ -295,6 +295,40 @@ fn deliver_channel(
     }
 }
 
+/// `gateway.serving` (GW-01 r4): only the admitted gateway connection may report, once, after
+/// hello and a successful `tls.fetch`. Anything else from it is a protocol error that closes
+/// the control connection, so supervision fails the start rather than publishing `running`.
+fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
+    use crate::service::listener::ServingReport;
+    use org_host_control::ops::GatewayServing;
+    let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
+    if connection.gateway_listen().is_none() {
+        connection.send_response(refused(
+            ErrorCode::NotAuthorized,
+            "private gateway connection required",
+        ));
+        return;
+    }
+    if request.params::<GatewayServing>().is_err() {
+        connection.refuse_and_finish(refused(
+            ErrorCode::InvalidRequest,
+            "the params don't fit this method",
+        ));
+        return;
+    }
+    match connection.report_serving() {
+        ServingReport::Accepted => {
+            connection.send_response(ok::<GatewayServing>(request.id, &Default::default()));
+        }
+        ServingReport::OutOfOrder | ServingReport::NotGateway => {
+            connection.refuse_and_finish(refused(
+                ErrorCode::InvalidRequest,
+                "gateway.serving is sent once, after hello and tls.fetch",
+            ));
+        }
+    }
+}
+
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
         AccountVerify, OfficeOpenChannel, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
@@ -346,6 +380,10 @@ impl Handler for Service {
             ));
             return;
         };
+        if request.is::<org_host_control::ops::GatewayServing>() {
+            gateway_reports_serving(&request, connection);
+            return;
+        }
         if !connection.hello_completed() && !request.is::<Hello>() {
             connection.send_response(Response::error(
                 request.id,
@@ -367,6 +405,7 @@ impl Handler for Service {
                         "verified TLS pair unavailable",
                     ));
                 }
+                connection.note_listener_fetched();
                 Ok(org_host_control::ops::TlsFetchResult::HttpLoopback {
                     origin: snapshot.origin().clone(),
                     hsts: snapshot.hsts(),
@@ -653,6 +692,128 @@ mod tests {
             &Timings::default(),
         );
         Service::new(offices, broadcast, None)
+    }
+
+    /// The real handler on an admitted gateway control connection, plus its peer end.
+    fn gateway_peer(
+        home: &Path,
+    ) -> (
+        listener::GatewayConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
+        let mut service = service(home);
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let listen = serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap();
+        let gateway =
+            listener::GatewayConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
+        (gateway, std::io::BufReader::new(peer), offices)
+    }
+
+    fn exchange<C: Call>(
+        peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+        id: u64,
+        params: &C::Params,
+    ) -> Option<org_proto::Response> {
+        org_proto::frame::write_message(peer.get_mut(), &Request::new::<C>(id, params).unwrap())
+            .unwrap();
+        org_proto::frame::read_message(peer).ok().flatten()
+    }
+
+    fn refused(response: Option<org_proto::Response>, code: ErrorCode) -> bool {
+        matches!(response.map(|r| r.outcome),
+            Some(org_proto::Outcome::Error(error)) if error.code == code)
+    }
+
+    fn wait_closed(gateway: &listener::GatewayConnection) {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while gateway.live() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            !gateway.live(),
+            "protocol error closes the control connection"
+        );
+    }
+
+    #[test]
+    fn gateway_serving_is_accepted_once_after_hello_and_tls_fetch() {
+        use org_host_control::ops::{GatewayServing, TlsFetch};
+        let home = tempfile::tempdir().unwrap();
+        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        assert!(!gateway.reported_serving());
+        exchange::<GatewayServing>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<GatewayServing>()
+            .unwrap();
+        assert!(gateway.reported_serving());
+        assert!(gateway.live());
+        // A duplicate is refused and closes the control connection.
+        assert!(refused(
+            exchange::<GatewayServing>(&mut peer, 4, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&gateway);
+        drop(gateway);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn gateway_serving_before_tls_fetch_is_a_protocol_error() {
+        use org_host_control::ops::GatewayServing;
+        let home = tempfile::tempdir().unwrap();
+        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<GatewayServing>(&mut peer, 2, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&gateway);
+        assert!(!gateway.reported_serving());
+        drop(gateway);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn gateway_serving_from_a_local_connection_is_not_authorized() {
+        use org_host_control::ops::GatewayServing;
+        let home = tempfile::tempdir().unwrap();
+        let mut service = service(home.path());
+        service.instance_id = Some(crate::ids::generate().unwrap());
+        let offices = service.offices.clone();
+        let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        // A setup connection and a host.sock connection are both `Local`.
+        let local = listener::SetupConnection::start(host, Arc::new(service)).unwrap();
+        peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut peer = std::io::BufReader::new(peer);
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<GatewayServing>(&mut peer, 2, &Default::default()),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(local.live());
+        drop(local);
+        offices.shutdown();
     }
 
     /// Hello and pre-hello requests run inline (see the listener's

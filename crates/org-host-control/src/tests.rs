@@ -37,6 +37,7 @@ fn op_methods() {
         (OfficeOpenChannel::METHOD, "office.open_channel"),
         (OperationGet::METHOD, "operation.get"),
         (TlsFetch::METHOD, "tls.fetch"),
+        (GatewayServing::METHOD, "gateway.serving"),
         (TlsSet::METHOD, "tls.set"),
         (AccountSetPassword::METHOD, "account.set_password"),
         (AccountResetPassword::METHOD, "account.reset_password"),
@@ -861,4 +862,11 @@ fn landlock_enforcement_round_trips_every_spelling() {
         );
     }
     assert!(serde_json::from_value::<LandlockEnforcement>(json!("FullyEnforced")).is_err());
+}
+
+#[test]
+fn gateway_serving_params_are_closed_and_empty() {
+    let params: GatewayServingParams = serde_json::from_str("{}").unwrap();
+    assert_eq!(serde_json::to_value(params).unwrap(), serde_json::json!({}));
+    assert!(serde_json::from_str::<GatewayServingParams>(r#"{"ready":true}"#).is_err());
 }

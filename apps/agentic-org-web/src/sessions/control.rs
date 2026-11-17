@@ -162,6 +162,12 @@ impl HostControl {
     pub fn fetch_listener(&self) -> Result<ops::TlsFetchResult, Failure> {
         self.call::<ops::TlsFetch>(&Default::default())
     }
+    /// The one `gateway.serving` notification (GW-01 r4): HTTP serving is
+    /// established. The host keeps the gateway `starting` until it arrives.
+    pub fn report_serving(&self) -> Result<(), Failure> {
+        self.call::<ops::GatewayServing>(&Default::default())
+            .map(|_| ())
+    }
     pub fn live(&self) -> bool {
         self.live.load(Ordering::SeqCst)
     }

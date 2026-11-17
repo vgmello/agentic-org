@@ -39,6 +39,8 @@ use std::{
 const WAIT: Duration = Duration::from_secs(5);
 const MAX_STARTS: usize = 5;
 const POLL: Duration = Duration::from_millis(50);
+/// How long a started gateway may take to report `gateway.serving` (GW-01 r4).
+const SERVING_DEADLINE: Duration = Duration::from_secs(10);
 fn unavailable() -> io::Error {
     io::Error::other("authenticated browser service unavailable")
 }
@@ -78,7 +80,7 @@ impl Supervisor {
         let thread = thread::Builder::new()
             .name("org-browser-supervisor".into())
             .spawn(move || {
-                supervise(&stopping, &observing, &*eligible, || {
+                supervise(&stopping, &observing, &*eligible, SERVING_DEADLINE, || {
                     Running::start(&config, Arc::clone(&handler))
                 })
             })?;
@@ -104,15 +106,19 @@ impl Drop for Supervisor {
 trait Serving {
     /// Whether the control connection is open and the child has not exited.
     fn serving(&mut self) -> bool;
+    /// Whether the admitted gateway reported, in order, that its HTTP server serves.
+    fn reported(&mut self) -> bool;
 }
 
-/// Starts the gateway once `eligible`, publishes `Running` only while an admitted
-/// gateway serves, and publishes `Failed` as soon as it exits or its control
-/// connection reaches EOF, before any bounded restart.
+/// Starts the gateway once `eligible`. It stays `Starting` until the admitted
+/// gateway reports `gateway.serving` within `deadline`, then publishes `Running`
+/// only while that gateway serves. A missing report, an exit or control EOF
+/// publishes `Failed` and stops/reaps the child, before any bounded restart.
 fn supervise<S: Serving>(
     stopping: &AtomicBool,
     state: &Mutex<GatewayState>,
     eligible: &dyn Fn() -> bool,
+    deadline: Duration,
     mut start: impl FnMut() -> io::Result<S>,
 ) {
     for attempt in 0..MAX_STARTS {
@@ -129,9 +135,22 @@ fn supervise<S: Serving>(
         *lock(state) = GatewayState::Starting;
         match start() {
             Ok(mut child) => {
-                *lock(state) = GatewayState::Running;
-                while !stopping.load(Ordering::SeqCst) && child.serving() {
+                // HTTP initialization is still pending until the child reports it.
+                let until = Instant::now() + deadline;
+                while !stopping.load(Ordering::SeqCst)
+                    && child.serving()
+                    && !child.reported()
+                    && Instant::now() < until
+                {
                     thread::park_timeout(POLL);
+                }
+                if !stopping.load(Ordering::SeqCst) && child.serving() && child.reported() {
+                    *lock(state) = GatewayState::Running;
+                    while !stopping.load(Ordering::SeqCst) && child.serving() {
+                        thread::park_timeout(POLL);
+                    }
+                } else if !stopping.load(Ordering::SeqCst) {
+                    crate::host_log::log("authenticated browser did not report serving");
                 }
                 *lock(state) = GatewayState::Failed;
                 drop(child); // end sessions/control, then kill/reap before restart
@@ -209,6 +228,9 @@ struct Running {
 impl Serving for Running {
     fn serving(&mut self) -> bool {
         self.control.live() && matches!(self.process.try_wait(), Ok(false))
+    }
+    fn reported(&mut self) -> bool {
+        self.control.reported_serving()
     }
 }
 impl Running {
