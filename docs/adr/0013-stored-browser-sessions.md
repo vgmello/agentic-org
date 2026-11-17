@@ -34,19 +34,27 @@ web.
    the origin binding (scheme, host and port), and SHA-256 digests of the cookie value
    and of the proof value. The raw cookie and proof values are never stored and never
    reach the host.
-2. **The browser contract does not change.** The instance-named HttpOnly cookie and
-   the `X-Org-Session-Proof` header keep their current form, binding and rules.
+2. **The cookie and proof contract does not change.** The instance-named HttpOnly cookie and
+   the `X-Org-Session-Proof` header keep their current form, binding and rules. The
+   session view has no absolute expiry field, because sessions have no absolute lifetime.
 3. **The web process keeps a cache in memory.** It creates the cookie and proof
    values at sign-in, as it does today, and sends the host only their digests with the
    origin binding. For a request whose cookie it has not seen, including the first
    request after a restart, it sends the same digests and binding to the host once
    over the control connection. On success it caches the result, and every later
    request is answered from memory. It does not call the host per request.
-   **Expiry.** The idle and absolute limits keep their current values (30 minutes and
-   12 hours) unless changed separately. The web process tracks activity in memory and
+   **Expiry (owner decision 2026-11-17).** No forced periodic sign-in. A session ends
+   after 30 days without use (sliding idle expiry); there is no absolute lifetime, so a
+   session in use is never ended by age. The web process tracks activity in memory and
    reports it to the host at a bounded interval while a session is active (at most
    every 5 minutes), so the stored last-activity time is never staler than that. After
    a restart, idleness is judged from the stored value.
+   **Refresh.** While the app is in use the UI refreshes the session in the background.
+   A refresh rotates the cookie and proof, keeps the session ID, and replaces both
+   stored digests together at the host.
+   **Step-up.** The password is asked again only for sensitive actions, never
+   periodically; the [installation and access UX](../specs/server-installation-and-access-ux.md)
+   names them (changing the password, handing over the administrator role).
 4. **Restarts do not end sessions.** A restart of the web process, a restart of the
    host, an update, or a lost control connection leaves stored sessions valid. A cache
    entry is trusted only while the control connection that validated it is alive;
@@ -54,7 +62,9 @@ web.
 5. **Ending a session is still immediate.** On sign-out, expiry, password change,
    unlink or revoke, the host deletes the record first and then tells the web process
    to drop its cache entry and close that session's stream. A deleted record can never
-   be validated again.
+   be validated again. When a session's organization links or administrator role
+   change, the host pushes a session-changed message on the same channel, so the
+   cached session view is never stale.
 6. **The host owns sessions, and the web process still stores nothing and signs
    nothing.** Accounts,
    password verification, lockout and revocation are the host's, per instance. The
@@ -67,7 +77,8 @@ web.
    from the host. If adopted, the host signs with a private key it keeps, the web
    process verifies with the public key, tokens are short-lived, and a per-account
    marker in the host database makes password change and sign-out-everywhere immediate.
-8. **Limits stay bounded.** Keep a total session cap and add a per-account cap. The
+8. **Limits stay bounded internally.** There is no per-account cap (owner decision
+   2026-11-17); the host keeps only an internal host-wide safety bound. The
    per-connection cap no longer limits browser sessions, because they outlive
    connections.
 9. **Native sessions stay connection-bound.** A session of the local CLI on
@@ -92,12 +103,12 @@ web.
 | --- | --- |
 | SES-1 | After the web process is restarted, a signed-in browser's next request succeeds without signing in again. |
 | SES-2 | After the host is restarted, the same holds once the service is ready. |
-| SES-3 | Sign-out, expiry, password change and unlink each make the next request fail with `not_authorized`, including when the web process has the session cached. |
+| SES-3 | Sign-out, expiry, password change, unlink and revoke each make the next request fail with `not_authorized`, including when the web process has the session cached. |
 | SES-4 | The host database contains no raw cookie or proof value; a copy of it cannot be used to act as a signed-in person. |
 | SES-5 | The web process opens no database, persists nothing and holds no session-signing key; it validates an unknown cookie with exactly one host call and then serves from memory. |
-| SES-7 | Idle and absolute expiry still end a session, including across a restart, with stored last-activity never more than the reporting interval behind. |
+| SES-7 | A session ends after 30 days without use, including across a restart, with stored last-activity never more than the reporting interval behind; a session in use is never ended by age, and a refresh keeps its ID. |
 | SES-8 | A native CLI session on `host.sock` still ends when its connection closes. |
-| SES-6 | Session and per-account caps are enforced and reported without revealing whether an account exists. |
+| SES-6 | The host-wide safety bound is enforced and reported without revealing whether an account exists; there is no per-account cap. |
 
 ## Consequences
 
