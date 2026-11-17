@@ -24,8 +24,11 @@ satellite completed an operation.
    line are in `profile.md`; model profile, model, tools and prompt are in
    `execution.md`. Placement and its generation, local credentials and workspaces are
    separate authorities. People have no execution. A lead is a direct member of the
-   home team and manages its subtree. The owner's authority comes from the host
-   account, never from an employee field.
+   home team and manages its subtree. The owner is a person; the host records
+   ownership on that person's account, never in an employee field. An agent exists
+   only through an approved hire, provisioned by product code; the built-in HR lead,
+   created with the organization, is the one exception. No agent is started by
+   hand, brought in from outside or bound to a run the office did not start.
 3. **One open turn and one main process per agent.** A runnable agent selects one
    model profile (an ordered pool) and one model. Connections use private
    office-local bindings and HQ-issued permits. A verified idle process is reused only
@@ -37,6 +40,16 @@ satellite completed an operation.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
    admitted identity, role and policy. An execution file, a note or a process document
    cannot grant a permission.
+6. **People above an agent direct it.** An agent always replies to a person who
+   messages it. It follows instructions from a person above it in the organization's
+   hierarchy: the leads of its home team and of each ancestor team, up to the owner.
+   A message from a person who is not above it is a request: the agent answers it and
+   may act on it, but where it conflicts with what its own chain asked, its chain
+   wins, and between two people in its chain, the one higher up wins. The office
+   gives the agent, with each delivered message, whether the sender is above it,
+   computed from the current team tree; the agent does not work it out from names.
+   This rule decides whose word the agent follows; it grants no permission
+   (decision 5).
 
 ## 1. Control loop and durable records
 
@@ -148,4 +161,4 @@ real organization.
 `crates/org-runtime` defines the runtime contract. The office uses `org-supervise`
 only to recover owned processes at startup (`apps/agentic-org-office/src/owned_recovery.rs`);
 nothing launches an agent, and there is no permit or placement code
-(implementation plan C2).
+(implementation plan C3).

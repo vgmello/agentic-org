@@ -55,9 +55,8 @@ does not promise available capacity.
 2. **Every office-managed agent has supervision outside the model,** inside
    `agentic-org-office`; there is no employee daemon. People have employee profiles
    without an execution controller. Agent control state persists through idle and
-   paused periods, and monitoring needs no model turn. An agent started by a person
-   outside the office shows **Started by a person · supervision unavailable**; the app
-   never pretends to control it.
+   paused periods, and monitoring needs no model turn. Every agent is started by its
+   office; there is no agent outside the product.
 3. **Mechanism in code, working habits in processes.** Code delivers instructions,
    monitors lifecycle, meters usage and enforces permissions and resource ceilings.
    Markdown processes guide working habits. No scheduler chooses work based on its
@@ -71,6 +70,11 @@ does not promise available capacity.
 6. **A message never interrupts a busy turn.** A busy agent receives new input at its
    next turn boundary ([ADR-0004](../adr/0004-headless-agent-sessions.md)). Taking
    over an agent is a local command-line operation, never a browser action.
+7. **An agent follows the people above it.** It always replies to a person. It
+   follows instructions from a person above it in the organization's hierarchy (its
+   team lead chain, up to the owner); a message from anyone else is a request, and
+   its own chain wins. The rule is defined once, in the
+   [supervision design](../design/employee-supervision.md) (decision 6).
 
 ## 1. Flow · Inspect an employee
 
