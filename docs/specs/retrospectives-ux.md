@@ -3,7 +3,7 @@ kind: spec
 title: "Retrospectives: learn from each delivery, and apply it to every agent (UX)"
 status: for-review
 revision: 7
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner

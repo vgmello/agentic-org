@@ -3,7 +3,7 @@ kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
 revision: 12
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -216,7 +216,7 @@ Run after 3a, with Dogfood QA 2 (kept from 3a) and the 3.4 employee. Watch the
 second browser from 3a, without reloading, after turning its Activity Status
 filter back off (Activity's default). Select an authorized owner-linked employee contact with a valid home team for the
 message step; its handle is not inferred from the account's login. Owner browser
-read authority follows existing chat policy, not the employee's is_owner flag.
+read authority follows existing chat policy, not any field on the employee record.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |

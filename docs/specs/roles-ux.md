@@ -3,7 +3,7 @@ kind: spec
 title: "Roles: what each agent is for, inherited and overridden per agent (UX)"
 status: for-review
 revision: 5
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-09"
 updated: "2026-11-15"
 requested_by: owner
@@ -32,7 +32,7 @@ Selected role data follows [organization structure](../design/organization-data/
 3. **Execution and authority are separate.** Agent `execution.md` selects `model_profile_id`, target `model_id`, enabled state, tools and system prompt. An ordered model profile names provider connections; local credentials stay outside organization Git. Runtime driver comes from a connection. A role does not grant tools, change budgets, choose credentials, set approval flags or create management authority. Agent placement, process readiness and manual/security/budget holds remain independent facts. People have no execution config.
 4. **No selected local-role override record exists yet.** The prior override, drift, approval and process-precedence experience below remains a detailed proposal. Do not create an authored `agents/<member-id>/role.md`, a new shared field or a new CLI command from this spec. A later design must choose canonical storage, references, approvals and structural validation before these features can be implemented.
 5. **Processes and standards have selected structural data only.** Their records can be organization-, team- or project-scoped and are overridable by default unless prohibited (`overridable: false`). The hierarchy/resolution/composition engine remains unselected. Its proposed precedence must not be presented as an already enforced policy.
-6. **Shared visibility is the UX intent.** Role content describes work for teammates; editing remains authorized and revision-checked. No prose or `is_owner` flag grants authenticated account rights. Private task notes are unrelated author-only durable records; the role proposal does not grant an owner exception to them.
+6. **Shared visibility is the UX intent.** Role content describes work for teammates; editing remains authorized and revision-checked. No prose and no employee field grants authenticated account rights. Private task notes are unrelated author-only durable records; the role proposal does not grant an owner exception to them.
 7. **Changing a role** updates employee `role_id` with its expected revision and preserves history. A future selected override feature must explicitly archive the old override on a role change; today no override artifact is assumed to exist.
 
 Example (common attribution omitted for readability; accepted writes supply the bound actor and timestamps):

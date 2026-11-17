@@ -10,7 +10,7 @@
 | `thread_id`, participant union and per-message `from_member_id`/`to_member_id` | Import one `directed_thread` with the original thread/root IDs; preserve each message's sender/recipient visibility. A participant union never authorizes another message. Filter subject, last-message, counts, previews and search by visible messages. |
 | v1 `content_hash` (§3.4, version byte + seven length-prefixed fields) | Preserve as `source_content_sha256`, `source_hash_codec: v1_lenprefixed_sha256` and immutable `source_envelope`; verify the original codec separately from normalized RFC 8785 `content_sha256`. Do not rename or recompute the old wire hash with the new algorithm. |
 | v1 origin/incarnation/sequence and recipient triage generation | Retain original delivery identities and independent state origin. Content/state share the old allocator/high-water; import must not split it into overlapping sequences. Local cursors remain derived. |
-| Phase A installed `agent-os` and spool cutover | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
+| Cutover of the development team's installed Phase A command-line tool and its message queue (see `AGENTS.md`) | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
 
 The target office/session integration also follows [Chat's noninterrupting
 message-delivery policy](../specs/chat-ux.md#42-system-notices-and-delivery).
@@ -1002,7 +1002,7 @@ Fresh disposable organizations have no Phase A state and skip it.
    run by the **live HQ worker**, which already holds the office lock and key: `agentic-org`
    signs the owner in on `host.sock` (`account.verify`; the host checks the account), opens
    a host-made local channel to that office and calls the import there with the owner's grant, naming the immutable instance and office IDs and the source
-   path (2026-11-10: replaces the stand-alone `agentic-org-office import-v1-old-spool` spelling,
+   path (2026-11-10: replaces an earlier stand-alone `import-v1-old-spool` command,
    which would have needed key custody and competed for the office lock; see X-02 §4.5, a draft not yet in this repo: office-host-boundary.md §3, "Pending: launch v3").
 2. Preserve message/reply ULIDs, ask correlations and original deadlines, unresolved
    asks, read/unread, snooze/defer and done state. Expired asks remain expired and

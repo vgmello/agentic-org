@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.6. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Status: **selected** data contract, revision 2.7. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -135,7 +135,7 @@ Milestones and releases store no status of their own (owner decision 2026-11-17)
 - A release that has milestones is done when every one of its milestones is done.
 - A release that has no milestones is done when its content manifest lists at least one task and every listed task is `done`.
 
-An empty milestone or release is not done. The views `milestone_progress` and `release_progress` compute this, with counts for showing progress. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
+An empty milestone or release is not done, and a release with a milestone that has no tasks is not done either; that reading of "all done" is ours and is open to the owner's correction. A task that was deleted but is still listed in a release's manifest is ignored. A task closed without being completed (cancelled, duplicate, will not fix) has status `done` with a `resolution` that says so, and counts as done. The views `milestone_progress` and `release_progress` compute this and return task counts and done counts for showing progress. For a release with milestones the counts are of its manifest tasks, while completion follows its milestones. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
 
 ## Durable project files
 
@@ -386,12 +386,19 @@ GROUP BY m.organization_id, m.id;
 CREATE VIEW release_progress AS
 SELECT r.organization_id, r.id AS release_id,
   (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
-  (SELECT COUNT(*) FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id) AS task_count,
+  (SELECT COUNT(*) FROM release_tasks rt
+     JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+   WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id) AS task_count,
+  (SELECT COUNT(*) FROM release_tasks rt
+     JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+   WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status = 'done') AS done_task_count,
   CASE
     WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
       THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
                        WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
-    ELSE EXISTS (SELECT 1 FROM release_tasks rt WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
+    ELSE EXISTS (SELECT 1 FROM release_tasks rt
+                 JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+                 WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
       AND NOT EXISTS (SELECT 1 FROM release_tasks rt
                       JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
                       WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status <> 'done')

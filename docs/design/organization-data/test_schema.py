@@ -734,7 +734,9 @@ class GapPreservationTests(unittest.TestCase):
 
     def test_hq_created_records_always_have_a_number(self):
         for table, extra in (("teams", dict(name="No number")),
-                             ("projects", dict(slug="no-number", name="No number", owner_team_id="payments"))):
+                             ("projects", dict(slug="no-number", name="No number", owner_team_id="payments")),
+                             ("releases", dict(project_id="project", title="No number")),
+                             ("milestones", dict(project_id="project", release_id="release", title="No number"))):
             with self.subTest(table=table), self.assertRaises(sqlite3.IntegrityError):
                 self.db.execute(
                     f"INSERT INTO {table} (organization_id,id,schema_version,revision,number,{','.join(extra)}) "
@@ -771,6 +773,19 @@ class GapPreservationTests(unittest.TestCase):
         self.assertEqual(done("release_progress", "release_id", "with-milestone"), 1)
         self.assertEqual(done("release_progress", "release_id", "plain"), 1)
         self.assertEqual(done("release_progress", "release_id", "empty"), 0)
+        counts = self.db.execute("SELECT task_count, done_task_count FROM release_progress WHERE release_id='plain'").fetchone()
+        self.assertEqual(tuple(counts), (1, 1))
+        # a second milestone with no tasks keeps its release open
+        insert(self.db, "milestones", **common, id="m2", project_id="project", release_id="with-milestone", title="Empty")
+        self.db.commit()
+        self.assertEqual(done("milestone_progress", "milestone_id", "m2"), 0)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 0)
+        # a manifest entry whose task no longer exists is ignored, so it cannot make a release done
+        insert(self.db, "record_refs", organization_id="org", kind="task", id="gone", is_deleted=1)
+        insert(self.db, "release_tasks", organization_id="org", release_id="empty", project_id="project", task_id="gone")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, is_done FROM release_progress WHERE release_id='empty'").fetchone()
+        self.assertEqual(tuple(row), (0, 0))
 
     def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
         insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",

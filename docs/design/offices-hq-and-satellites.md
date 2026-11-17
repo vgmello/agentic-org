@@ -201,7 +201,7 @@ automatic scheduling engine is selected.
 Current command admission retains ULID age/skew windows (29-day admission,
 30-day result retention; future skew at most five minutes) and lookup-before-age
 behavior with monotonic clock high-water. Those are existing wire semantics,
-not ULID stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
+not the stable-ID rules. Retention/expiry needs equivalent durable retry evidence;
 do not silently purge receipts during cache rebuild. Hidden/unauthorized outcomes
 remain scoped, and rejection never authorizes an automatic fresh-ID retry.
 
@@ -390,7 +390,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **Owners (AGENTS.md):**
   - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki` (this design's crates); AGENTS.md is the full ownership list.
   - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `agentic-org-office`.
-  - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version.
+  - `org-sync-proto` and `org-office-launch` are contracts, so the lead owns them, like `org-proto`. River writes `org-office-launch`'s first version.
 
 ## Implementation scope after the standalone-v1 pivot
 

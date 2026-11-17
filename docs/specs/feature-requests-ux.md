@@ -3,7 +3,7 @@ kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
 revision: 7
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner

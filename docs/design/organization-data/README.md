@@ -29,7 +29,7 @@ Each numbered document owns its relationships, field sources, examples and table
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are ULIDs (owner decision 2026-11-17, matching the code). Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are ULIDs (owner decision 2026-11-17). Most of the code already mints ULIDs. The newer HQ-creation path in the host mints and validates UUIDv7 for organization and office IDs (`crates/org-host/src/ids.rs`, the `selected_v1` profile of the launch contract); that path changes to ULIDs under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -70,7 +70,8 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   ├── recovery/                    # Receipts, origin streams, acceptance journals, checkpoints (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
 │   ├── private/task-notes.db        # HQ only: author-private task notes (05)
-│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
+│   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
     ├── office.db                    # Projection + explicitly transient state
@@ -103,6 +104,7 @@ Nothing has been deployed. Until the owner declares v1 shipped (owner decision 2
 - Where a document says to preserve, import, adopt, stage or map "v1", "legacy" or "existing" data, identifiers, references such as `B-` and `REQ-`, hashes or events, that requirement is withdrawn and the selected shape is built directly. This covers the legacy adoption profile of document 05 and ADR-0010, the imported `directed_thread` conversation kind, the `v1_lenprefixed_sha256` and schema-1 task-event codecs, and import staging. The draft schema still carries some of these structures; removing them is tracked in the [conflict resolution plan](../conflict-resolution-plan.md).
 - The better design wins. When rebuilding is the cleaner architecture, rebuild; the result must be fast, memory-efficient and reliable.
 - This rule is about the product's documents and code. It does not authorize deleting files on a real machine, such as the installed tool and spool that `AGENTS.md` says to leave alone.
+- **One open point.** `AGENTS.md` and the cutover section of ADR-0003 require the development team's own Phase A message queue to be carried over (FC-082), and that cutover uses the `directed_thread` kind, the `v1_lenprefixed_sha256` codec and import staging that this rule withdraws. Until the owner says whether that queue is carried over or dropped, those three structures stay in the draft schema for that purpose only, and nothing else may depend on them.
 
 ## Outside this set: what the host owns
 
@@ -161,7 +163,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 | Date | Set revision | Change |
 | --- | --- | --- |
 | 2026-11-17 | 2.9 | Owner architecture review. One storage tree (`durable/`, `runtime/`). HQ named as organization authority. Hash codec registry. Messaging runtime rules merged from ADR-0003. Budget hold checked at the turn permit. Agent re-placement separated from office relocation. IDs are ULIDs. No compatibility obligations before v1 ships. Task status is a closed list; milestone and release completion is derived. Employee state is one status field; the owner marker is removed. HQ-created records always carry a number. Host-owned records are listed. Document 14 no longer repeats SQL. Schema coverage gains implementation status. No application-level data encryption (ADR-0016); acknowledgement classes (ADR-0014). |
-| 2026-11-17 | 2.10 | Second review round. Messaging: one writing office per file, with each employee's state in that employee's own files; a send relays after it answers and an ask always has a deadline. Process and standard resolution selected for v1. Numbering and permit rules stated without naming a database statement (ADR-0018). Office-minted task references proposed in ADR-0019, not yet applied. |
+| 2026-11-17 | 2.10 | Second review round. Messaging: one writing office per file, with each employee's state in that employee's own files; a send relays after it answers and an ask always has a deadline. Process and standard resolution selected for v1. Numbering and permit rules stated without naming a database statement (ADR-0018). Office-minted task references accepted in part in ADR-0019 (letter code, tasks only); document 06 carries a note and is rewritten when the counting question is settled. Completion view ignores deleted manifest tasks and returns done counts. |
 | 2026-11-15 | 2.8 | Reconciled set, before the review. |
 
 The SQL is a structural draft for the selected scope. Document 11 owns model/execution behavior within this integrated document set; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.

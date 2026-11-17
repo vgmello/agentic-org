@@ -1,10 +1,12 @@
 # ADR-0008: macOS web sandbox (GW-SBX-MAC-1), revision 1
 
+> Amended 2026-11-17 by [ADR-0017](0017-linux-and-container-hosting.md): this ADR stays the macOS implementation of the confinement contract. Linux is no longer deferred; its adapter (Landlock and seccomp) is v1 work.
+
 2026-11-15. **ACTIVE for macOS adapter implementation after fresh independent architecture READY.** Canonical decision: docs/adr/0008-gateway-macos-sandbox.md. Lead owns this focused prerequisite; original architecture/fullstack author remains implementation owner. Parent ADR0006r5 and complete assignment contract remain unchanged.
 
 ## Requirement and boundary
 
-GatewayFirstLine/ReadyForSecrets in crates/org-host-control/src/web.rs require the host to verify the suspended image, then the web process to restrict itself before rendezvous ready_for_secrets, before any secret handoff or untrusted browser input. No current org-socket adapter implements it. This is a missing prerequisite, not a disproved assignment/journal premise. Scope this decision to macOS; do not select a Linux minimum ABI, pretend Linux enforcement exists, or waive its existing Landlock+single-seccomp-filter contract. Unsupported platforms fail closed until their own concrete adapter is implemented and validated. Architectural READY here is only permission to implement the macOS path, not full platform/product readiness or acceptance.
+GatewayFirstLine/ReadyForSecrets in crates/org-host-control/src/gateway.rs require the host to verify the suspended image, then the web process to restrict itself before rendezvous ready_for_secrets, before any secret handoff or untrusted browser input. No current org-socket adapter implements it. This is a missing prerequisite, not a disproved assignment/journal premise. Scope this decision to macOS; do not select a Linux minimum ABI, pretend Linux enforcement exists, or waive its existing Landlock+single-seccomp-filter contract. Unsupported platforms fail closed until their own concrete adapter is implemented and validated. Architectural READY here is only permission to implement the macOS path, not full platform/product readiness or acceptance.
 
 ## Selected mechanism
 
@@ -25,7 +27,7 @@ No file/path/root-directory allowlist, Mach service allowlist, keychain access, 
 
 ## Evidence and limits
 
-E1 VERIFIED source contract: web.rs handshake order and single-thread Linux report; org-socket Cargo/lib current libc-only leaf; web forbidunsafe existing library/source. Review exact current files and ADR0006r5, not a broad implementation diff.
+E1 VERIFIED source contract: gateway.rs handshake order and single-thread Linux report; org-socket Cargo/lib current libc-only leaf; web forbidunsafe existing library/source. Review exact current files and ADR0006r5, not a broad implementation diff.
 E2 ACTUAL disposable macOS child probes: macos-parameter-probe.json applies the parameterized policy with normal and quote/backslash/newline/Unicode paths; approved exact Unix connection and inherited TCP accept succeed, while unrelated Unix/TCP connections, file read/write, new TCP bind/listen and process spawn return EPERM. A broad inbound profile without deny-bind incorrectly permitted new listeners; selected profile explicitly fixes this observed difference. Prior syntax/long-path failures are retained, not hidden.
 E3 ACTUAL SDK C child: macos-thread-and-host-probe.json verifies initial main/thread count/never-threaded preconditions; creates a thread after sandbox application, and that thread cannot read an unrelated temporary file. Parent observes child sandbox-state1 and denied read/write1; unsandboxed parent reports0. Source/build diagnostics and cleanup are retained. No real secrets, services or organization roots used.
 E4 LIMIT: Seatbelt custom-profile APIs are deprecated and the SDK explicitly says no longer supported. Current OS exposes and actually enforces them; this is observed feasibility, not an Apple support guarantee. Treat OS/SDK changes as recheck triggers; any missing symbol/profile/enforcement failure refuses startup without fallback. Keep the volatile adapter narrow. Product Rust/HTTP/TLS/assets/FD lifecycle remains unverified until actual executable tests. No universal macOS-version support claim or physical compromise isolation claim.

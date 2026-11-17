@@ -1,6 +1,6 @@
 # Web HTTP API v1
 
-Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. web in existing module names, fixtures and wire fields remains a contract namespace, not another executable. This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
+Owner naming amendment (2026-11-15): the target browser executable is agentic-org-web (previously org-gateway), supervised by agentic-org serve. `gateway` in existing module names (`org_proto::gateway`), fixtures and wire fields is the code's current spelling of that contract namespace, not another executable; renaming it to web is decided and still to do (conflict plan entry D-07). This naming change does not version or rename published HTTP DTOs/routes. Initial agentic-org setup creates HQ only; satellite onboarding is a separate HQ-initiated operation. See [standalone installation](standalone-server.md#4-setup-and-service-lifecycle).
 
 **Current implementation names:** application directories/packages/executables are agentic-org, agentic-org-office, agentic-org-web and agent-os. Host lifecycle is the library crates/org-host. Older names in historical design observations and pinned source links below refer to the inspected baseline; use [executable-migration.md](executable-migration.md) for current build and entry-point status.
 
@@ -171,13 +171,14 @@ carries. `POST /api/v1/organizations` accepts the fields the
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | yes | Display name |
-| `slug` | yes | Lowercase route segment, unique in the instance |
-| `organization_repository` | yes | The remote Git repository that holds the organization's files: URL and the reference to an office-held credential. Never a secret value. |
-| `state_branch` | no | Branch for organization files; default `agentic-org/state` |
-| `bootstrap_team` | yes | Name and key of the first team, of which the creating person becomes lead |
+| `slug` | yes | Lowercase kebab-case, unique in the instance's organization catalog; never recalculated after a rename |
+| `organization_repository` | yes | Registration of the remote Git repository that holds the organization's files: `kind: remote`, a `remote_url`, and a reference to an office-held credential. Never a secret value. Setup validates syntax only and makes no network request. |
+| `state_branch` | yes | The branch organization files are published to. There is no default. |
+| `initial_team` | when the plan includes bootstrap employees | The root team to create at HQ for them, by name; HQ allocates its number. A resumed plan may name an existing team instead. No lead, team name or reporting line is inferred. |
 
-The result adds `slug` and the bootstrap team's ID and reference to the organization
-view. The name-only request in the tables below is what the code accepts today and is
+The result adds `slug` and, when a team was created, its ID and reference to the
+organization view. These fields are the ones the [create flow](create-organization.md#create-flow)
+and [organization structure](organization-data/01-organization-structure.md) already require; this section adds none. The name-only request in the tables below is what the code accepts today and is
 not a second supported shape. The code change is tracked by FC-018.
 
 The wire tables and examples in §§2–9 describe HTTP v1 revision 2 as the code
@@ -197,7 +198,7 @@ never reinterpret an existing command as a different mutation behind the same DT
 | `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Current multi-membership rules remain current wire semantics. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. Preserve unmapped memberships in controlled import staging. |
 | `project.add_team`, `project.remove_team` | Target project requires `owner_team_id` plus optional contributors. Publish a mutation distinguishing transfer of accountability from contributor editing; an old linked-team list does not select an owner or require an Area. Areas remain unselected. |
 | Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. Current command versions/legacy B-/REQ- references cannot be renamed or stripped into selected numbering. |
-| Current ULID operation IDs / plain-ID lookup checks | Preserve current admission and retained IDs. New stable entity IDs use ULID, independently of operation IDs. ID validators, filenames and scoped reference resolvers require explicit versioned adaptation before accepting new IDs through legacy restrictions. |
+| Current ULID operation IDs / plain-ID lookup checks | Preserve current admission and retained IDs. Stable entity IDs and operation IDs are both ULIDs (conflict plan entry B-04). ID validators, filenames and scoped reference resolvers require explicit versioned adaptation before accepting new IDs through legacy restrictions. |
 | Protected domain views and lookup outcomes | Read only authorized projections of protected chat, usage, budget and recovery sources. Private task notes stay author-only in a separate durable DB, with no owner/admin exception or shared receipt disclosing their existence. Never expose raw paths, source envelopes, amounts or private result blobs through a generic SQL or lookup endpoint. |
 
 Readiness and runtime operations must map to document 11's selected profile/model,

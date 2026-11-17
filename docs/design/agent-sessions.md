@@ -419,11 +419,14 @@ the selected entity-numbering model by these illustrative labels.
 
 > **Owner decision 2026-11-17 ([ADR-0004](../adr/0004-headless-agent-sessions.md)).** There is
 > no terminal in the browser. A person interacts with an agent through chat, and the
-> browser shows the session read-only. Steps 1 and 2 below stay as the local
-> command-line takeover. Step 3, the lease that carries terminal frames to the app, and
+> browser shows the session read-only. Step 1 below stays. Step 2 changes: the local
+> `agentic-org` command, not the office, starts the interactive process, in the
+> person's own terminal, and hands back when it exits (ADR-0004 decision 4). Step 3, the lease that carries terminal frames to the app, and
 > the `session.input`, `session.resize` and `session.output` calls are **not v1** and are
-> kept only as a record of the earlier proposal. The owner will send two documents
-> describing the intended session view; they replace this section's app behaviour.
+> kept only as a record of the earlier proposal. The session view is specified by
+> [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md) and questions to
+> people by [REQ-04](../specs/req-04-channel-messaging-and-question-components.md);
+> they replace this section's app behaviour.
 
 - **Every runtime takes over the same way: stop, then resume interactively.** The office spawns the interactive process itself, through `org-supervise`, with the full replayed spec and the same environment allowlist (a fresh session token included):
   1. The office interrupts and stops the headless process, keeping the agent's lock. Its run ends `taken_over`. For Codex it unloads the thread (`thread/unsubscribe`) first, then stops the app-server.

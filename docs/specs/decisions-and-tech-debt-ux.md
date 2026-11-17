@@ -3,7 +3,7 @@ kind: spec
 title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
 revision: 12
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -222,7 +222,7 @@ links: []
 
 ### 3.1 The agent's side: `agent-os doc` (C16)
 
-**Deferred legacy CLI proposal.** These are historical `agent-os` command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
+**Deferred legacy CLI proposal.** These are earlier command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
 
 The retained command words below describe the earlier specialized CLI, including its unsupported `adr` kind/accepted status and same-task-branch convenience; they are historical syntax examples only. Target adaptation must use the selected kind/lifecycle envelope, stable ID/derived organization-Git path, optional display key, admitted attribution and explicit publication result. No next-number allocation or editable stable-ID filename carries forward. `--here`/debt convenience needs an explicit cross-repository staging contract, not a canonical file in a code worktree:
 

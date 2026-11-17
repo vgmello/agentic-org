@@ -6,7 +6,8 @@ owns the records below; [ADR-0005](../adr/0005-standalone-server-v1.md) and
 [installation UX](../specs/server-installation-and-access-ux.md) own installation.
 The current `agentic-org setup` refuses before provisioning: protected bootstrap,
 service registration and production browser handoff remain unavailable. The
-published name-only create contract is existing evidence, not this complete target.
+name-only create request is what the code accepts today. The contract is the
+[selected payload](web-api-v1.md#selected-create-organization-payload) (owner decision 2026-11-17).
 
 ## Setup and ownership
 
@@ -94,11 +95,11 @@ separate readiness state; do not infer them from offline validation or discard a
 already-created HQ because a later publication fails. Preserve entered safe
 fields and show the failing step; never log credentials or recovery material.
 
-The currently published [HTTP v1 contract](web-api-v1.md) accepts `{name}` and
-returns its existing view. It must stay exact until a reviewed versioned adapter
-covers the additional target fields and validates all required references. Do not
-silently insert them into revision 2 DTOs or advertise target readiness through
-that old result. Local service repair must remain available when HTTP is down.
+The code's create request accepts `{name}` and returns its existing view. Nothing
+has shipped, so the version 1 request is changed in place to the
+[selected payload](web-api-v1.md#selected-create-organization-payload), which carries
+the fields of this flow (owner decision 2026-11-17, conflict plan entries A-09 and
+A-12). No second request shape and no adapter are kept. Local service repair must remain available when HTTP is down.
 
 ## Verification
 

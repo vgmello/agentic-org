@@ -33,7 +33,7 @@ selected-task or release implementation. At this baseline:
 | agentic-org | Human CLI composes org-host; [setup refuses without changing state](../../apps/agentic-org/src/lib.rs) because protected bootstrap and service registration are not wired. |
 | agentic-org-office | Existing daemon and legacy protocols remain. The selected writer/bootstrap/adoption/task-acceptance and escrow additions below have not been imported. |
 | agentic-org-web | Help/version are available; [service startup refuses without opening a listener](../../apps/agentic-org-web/src/main.rs). Authenticated handoff and the browser backend are not wired. |
-| agent-os | Existing employee CLI, with its binding and environment variables. |
+| agent-os | Existing employee CLI, with its binding, environment variables and offline queue behaviour. |
 
 ## Preserved reservoir evidence
 

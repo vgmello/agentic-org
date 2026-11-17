@@ -3,7 +3,7 @@ kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
 revision: 14
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner

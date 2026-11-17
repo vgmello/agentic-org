@@ -70,22 +70,29 @@ section 8.
 8. **No silent downgrade.** An agent configured for `dedicated-user` is not runnable
    when the launcher or account is unavailable. It is never started as `same-user`
    instead.
-9. **Workspaces and sign-in.** In `dedicated-user`, agent workspaces are owned by or
-   shared with the agent account, and each vendor sign-in is stored under it. This
-   fits the selected rule that credentials are bound per office.
+9. **Workspaces.** In `dedicated-user`, agent workspaces and each agent's private home
+   (decision 10) are owned by or shared with the agent account. Where the sign-in lives
+   is decision 11.
 10. **Every agent has a private home, in both modes (owner decision 2026-11-17,
-    conflict plan entry A-08).** The office creates one home directory per agent under
-    its runtime tree and starts the agent with `HOME` and each vendor's configuration
+    conflict plan entry A-08).** The office creates one home directory per agent at
+    `durable/local/offices/<office-id>/agents/<employee-id>/home/` and starts the agent with `HOME` and each vendor's configuration
     location pointing into it. The agent sees a vendor folder (a "virtual Claude
     folder") that contains only what the office put there: the office's settings, the
     agent's own transcripts, and one sign-in. The user's own `~/.claude`, Codex home and
     `~/.gemini` are never read or written by an office-run agent. This replaces the
     earlier choice in the session design to reuse the user's real folders.
+    The home is durable office-local data, not a cache: it holds the transcripts a
+    session is resumed from and that the session view reads. In `dedicated-user` it is
+    the one subtree under `durable/` that the agent account owns; its parent
+    directories can be traversed and not listed.
 11. **The sign-in comes from the subscription pool.** For each launch the pool
     ([document 14](../design/organization-data/14-model-providers-and-connection-pools.md))
-    selects a connection. The office makes that connection's private sign-in state,
-    `auth/<connection-id>/` in the office's binding, available inside the agent's
-    private home for that run. Switching an agent to another connection is a
+    selects a connection. The source of truth for a sign-in stays in the office's
+    binding, `auth/<connection-id>/`, which the agent account cannot read. At launch the
+    office places a copy of that sign-in in the agent's private home for the run, and
+    takes back any refreshed token when the run ends. An agent can therefore read the
+    sign-in it is running with, in either mode; that cannot be avoided, because the
+    vendor tool runs as the agent and needs it. It cannot read any other. Switching an agent to another connection is a
     controlled relaunch with the other sign-in. Two agents on one subscription use
     the same connection state through the office, never through each other's homes.
     How each vendor runtime is pointed at a relocated sign-in (an environment variable

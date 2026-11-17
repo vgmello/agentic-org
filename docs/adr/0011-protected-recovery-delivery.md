@@ -1,5 +1,7 @@
 # Candidate ADR-0011: Protected recovery delivery (REC-DEL-1), revision 1
 
+> Amended 2026-11-17 by [ADR-0017](0017-linux-and-container-hosting.md): Linux is v1. Where this ADR says a Linux release remains unavailable until its own platform policy exists, that policy is now required work, not a deferral.
+
 Status: ACTIVE for implementation architecture following independent READY review; not implementation or production acceptance. Owner: local Codex lead. Canonical path: docs/adr/0011-protected-recovery-delivery.md.
 
 ## Scope and retained rationale

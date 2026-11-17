@@ -18,11 +18,24 @@ it merged; this ADR records the decision that replaced it, which until now lived
    view of what the agent did. It never attaches to an agent's process, never forwards
    keystrokes, and never carries terminal frames.
 4. **Taking over an agent is a local command-line operation.** A person at the machine
-   stops the agent's run and resumes its session in their own terminal. This is not
-   offered through the browser in v1.
-5. **The owner will supply two documents** describing the intended session view and
-   interaction. Until they arrive, the read-only view is specified only to the extent
-   above, and the app-attach section of the session design is not v1.
+   runs an `agentic-org` command. The office stops the agent's headless run, keeps the
+   agent's lock, and gives the authorized local caller that session's launch
+   description. The command then starts the vendor tool's interactive resume itself,
+   in the person's own terminal, with the agent's private home and environment; in
+   `dedicated-user` mode it goes through the same launcher. When the person exits,
+   the command hands the agent back and the office resumes it headless. The office
+   owns no terminal and carries no terminal data. This is not offered through the
+   browser in v1.
+5. **The session view and the question components are specified by two owner
+   requirements,** received 2026-11-17:
+   [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), a console that
+   is decoupled from the agent's process and is built by parsing the agent tool's
+   conversation files (Claude and Codex formats), with toggles for tool calls and for
+   file-based visualizations; and
+   [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), structured
+   questions from an agent to a person in the person's channel, rendered as choice,
+   yes/no or free-text components. They replace the app-attached terminal section of
+   the session design.
 
 ## Consequences
 

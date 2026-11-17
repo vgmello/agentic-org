@@ -15,7 +15,7 @@ it does not replace their authority, custody, revocation or production gates.
   the ordinary local/total budget. Authority: active assignment contract and
   current worker transfer/channels.rs register. Verified source at c3ada005.
 - P2 DISPROVED implementation assumption: host MAX_CHANNELS64 matches worker
-  admission. Actual host Endpoint::open allows 63 web channels, worker rejects eighth;
+  admission. Actual host Endpoint::open allows 63 web channels, worker rejects eighth (observed at the commit reviewed; since fixed: the host registry enforces seven);
   transfer::run treats register error as fatal _exit(1). This is a defect in the
   implementation, not permission to enlarge worker budgets.
 - P3 DISPROVED implementation assumption: Session ChannelSlot lifetime represents

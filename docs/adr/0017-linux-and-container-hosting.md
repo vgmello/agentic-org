@@ -36,7 +36,7 @@ we need properly." Implementation pending. Amends the platform statements of
 3. **No platform fails open.** Where an adapter is missing or a kernel feature is
    unavailable, the affected function refuses to start and says why. A container
    without the kernel features confinement needs is reported, not silently accepted.
-4. **A container is a normal instance.** `agentic-org serve` runs in the foreground and
+4. **A container is a normal instance.** The container holds the whole instance: the host, the web process and the office. A satellite office in a container is the same image enrolled as a satellite. `agentic-org serve` runs in the foreground and
    stops cleanly on the runtime's stop signal. The organization data root is a mounted
    volume. Setup can run without a terminal from a file or environment configuration,
    offline, as the standalone design already requires. Nothing the instance needs to
@@ -49,7 +49,7 @@ we need properly." Implementation pending. Amends the platform statements of
 | ID | Passing evidence |
 | --- | --- |
 | LNX-1 | On Linux, the host starts an office worker, the worker serves the local socket, and `agent-os` completes a send and a read. |
-| LNX-2 | The same in a container started from the published image with only mounted volumes for data and secrets, and again after the container is replaced. |
+| LNX-2 | The same in a container built from the repository's container file, with only mounted volumes for data and secrets, and again after the container is replaced. |
 | LNX-3 | With the Linux confinement adapter removed or its kernel feature unavailable, the web process refuses to start and reports the reason. |
 | LNX-4 | Host secrets on Linux are readable only by the service account; none is in the data volume. |
 | LNX-5 | No source file outside the five adapters contains a platform conditional for these concerns. |

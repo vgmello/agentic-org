@@ -22,14 +22,15 @@ says "launch v3" or "pending" it describes the contract. The requirements are:
 
 | Entry | Requirement | Code today |
 | --- | --- | --- |
-| B-06 | **There is one launch contract.** It is the verified-rendezvous design described here as launch v3: the host passes a rendezvous, the worker connects to it and is admitted by its process identity, and secrets and office facts travel over that connection. The older first-line contract is removed, not kept as a fallback, and the version number restarts at 1. | `org-host` writes the first-line form; the worker implements the rendezvous form (`crates/org-office-launch/src/v3.rs`). |
+| B-06 | **There is one launch contract.** It is the verified-rendezvous design described here as launch v3: the host passes a rendezvous, the worker connects to it and is admitted by its process identity, and secrets and office facts travel over that connection. The older first-line contract is removed, not kept as a fallback, and the version number restarts at 1. | The host implements both. It uses the rendezvous form only for a registered, protected instance and falls back to the first-line form otherwise (`crates/org-host/src/supervisor/child.rs`). The worker implements both. Remaining work: remove the first-line form and the gate. |
 | B-07 | **People are authorized by grants.** Every request made for a person carries that person's principal and a host-issued grant, which the worker verifies ([ADR-0006](../adr/0006-selected-task-acceptance.md), [ADR-0012](../adr/0012-office-channel-lifecycle.md)). `app_token` and the `office.app_token` call are removed. | The launch line still carries `app_token`; the worker stores the grant key unused. |
-| B-08 | **Seven web channels per office.** The host refuses the eighth, matching the worker and ADR-0012. | The host allows 63. |
+| B-08 | **Seven web channels per office.** The host refuses the eighth, matching the worker and ADR-0012. | Already seven: the host's channel registry enforces `MAX_GATEWAY_CHANNELS` and a test asserts the eighth is refused. The figure of 63 in ADR-0012 was observed at an earlier commit. Nothing to change. |
 | B-10 | **The host serves the work reads the web needs** through the office channel, so the browser reads tasks, projects and people through the same path as commands. | `host.sock` dispatches only `hello` and `instance.status`. |
 | F-03 | **No database key.** `db_key` leaves the launch contract with [ADR-0016](../adr/0016-no-application-level-data-encryption.md); the host passes the office secrets key instead. | The launch line carries `db_key`. |
+| B-09 | **macOS and Linux, including a container** ([ADR-0017](../adr/0017-linux-and-container-hosting.md)). Process admission, the credential provider, confinement and service lifecycle are platform contracts with a macOS and a Linux implementation. The macOS-only statements below describe the code today. | Workers start only on macOS. |
 
-These are requirements for implementation. They are tracked by FC-012, FC-013 and
-FC-017 in the [feature checklist](../FEATURES.md).
+These are requirements for implementation, tracked in the [feature checklist](../FEATURES.md):
+B-06 and B-07 under FC-017, B-10 under FC-013, F-03 under FC-162 and B-09 under FC-164.
 
 ## Selected provisioning and storage responsibilities
 
@@ -133,19 +134,26 @@ connection available.
 
 ### Selected identity carrier
 
-New selected organization and office entities use canonical lowercase ULID
+> **To change (owner decision 2026-11-17, conflict plan entry B-04).** The contract is
+> ULIDs for every record. This section describes what the code does today: a separate
+> `selected_v1` profile with UUIDv7 organization and office IDs and `office.json`
+> version 2. With one ID format there is no second profile to tell apart, so the
+> profile, the version-2 marker and the union path validator are removed with the
+> change (FC-142).
+
+New selected organization and office entities use canonical lowercase UUIDv7
 text, including hyphens. Existing IDs retain their exact spelling. Launch-v3
 adds the explicit optional `id_profile: "selected_v1"` to its office context;
 absence retains its original alphanumeric-ID validator and bytes. The selected
-profile requires ULID office/organization IDs and explicit HQ creation context
+profile requires UUIDv7 office/organization IDs and explicit HQ creation context
 on create. Instance IDs, security-member IDs and operation IDs keep their own
 existing contracts. This does not confer writer or owner authority.
 
 The plaintext runtime marker uses `office.json` version 2 for this profile,
-requiring ULID office and organization IDs. Version 1 stays unchanged; readers
+requiring UUIDv7 office and organization IDs. Version 1 stays unchanged; readers
 retain the stored version and never rewrite an existing version-1 identity into
 version 2. The safe storage-path validator accepts the union of existing plain
-IDs and canonical ULID solely as a single path component. Legacy command and
+IDs and canonical UUIDv7 solely as a single path component. Legacy command and
 wire validators retain their narrower rules. Host custody/catalog and worker
 open/discard paths use the shared safe storage validator; no arbitrary opaque ID
 is interpolated into a path. Other incompatible imported IDs remain staged.
@@ -165,7 +173,7 @@ The admitted initial profile creates one explicit root home team, an HR agent
 identity in it (execution remains unavailable without its separate configuration),
 and no owner employee. The protected owner security member remains distinct.
 
-The host freezes selected ULID entity IDs and key fingerprint in its protected
+The host freezes selected UUIDv7 entity IDs and key fingerprint in its protected
 SQLCipher reservation. The code first enters credential custody under the
 operation's opaque handle; the reservation contains no code/key. Retry verifies
 that binding and the original office key, never generates replacements for missing
@@ -183,8 +191,8 @@ This describes the intended adapter, not completed setup or adoption evidence.
 ## Target launch and recovery gate
 
 Launch-v2 examples in §§1–6 below preserve the exact baseline protocol and security
-review. Their `agentic-org-office`/`org-office-host` names identify historical executables;
-current filenames are `agentic-org-office`/`agentic-org` and reusable host code is
+review. The executables had other names at that review; today they are
+`agentic-org-office` and `agentic-org`, and reusable host code is
 `org-host`. `office.json` v1 and launch v2 are independent of organization-data
 `schema_version`/`revision`. No extra slug/repository/home-team fields are added to
 the v2 first line by this documentation change. A reviewed versioned provisioner
@@ -642,7 +650,7 @@ integration tests to `apps/agentic-org`, and the worker to
   `agentic-org-office`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
-1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).
+1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. The lead owns it as a contract. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).
 2. **The name rule is `org_proto::OrganizationName`** (ada, branch `ada/proto-org-name`): `parse(&str) -> Result<_, NameError>`, `.as_str()` (trimmed), `.key()` (Unicode lowercase of the trimmed name, no normalization). `NameError` is `Empty | TooLong | ControlChar` with `.message()`, mapping to `invalid_name`.
 3. **The minimal listener** lives in one module (`service/listener.rs`), uses only `org_proto::frame` and the typed `Call`/`EventKind`, and grows no router. It's swapped for server-dev's shared crate once that's extracted.
 4. The design's "`--create --role hq`" (line 35) is wrong. Only `--create` goes on the command line. ada fixes the wording.

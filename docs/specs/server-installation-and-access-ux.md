@@ -3,7 +3,7 @@ kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
 revision: 9
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-09"
 updated: "2026-11-15"
 requested_by: owner

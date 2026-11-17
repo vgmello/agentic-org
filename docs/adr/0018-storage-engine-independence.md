@@ -12,11 +12,16 @@ pending. No PostgreSQL adapter is built now. Builds on
   (`org-work`, `org-mailbox`, `org-sync`) contain none; they define the storage
   operations they need, and the office store implements them.
 - In `org-office`, 23 of 26 files that use SQLite are under the private `store` folder,
-  about 14,700 lines split by area. Three files outside it use SQL directly:
-  `messaging.rs`, `organization/bootstrap.rs` and `organization/admission.rs`.
+  about 14,700 lines split by area. Two files outside it use SQL directly:
+  `organization/bootstrap.rs` and `organization/admission.rs`. A third, `messaging.rs`,
+  uses SQL only in its tests.
 - The office uses one concrete store type. Nothing selects an engine at start-up.
-- Contracts name SQLite mechanisms: `BEGIN IMMEDIATE` in documents 06 and 11, and a
-  draft schema written in SQLite's dialect with generated columns and triggers.
+- Contracts named SQLite mechanisms: `BEGIN IMMEDIATE` in documents 06 and 11 until this
+  review reworded them, and a draft schema written in SQLite's dialect with generated
+  columns and triggers.
+- Two storage contracts already have a suite that does not depend on the engine:
+  replication, and messaging (`crates/org-mailbox/src/testkit/conformance.rs`, which
+  runs against an in-memory store and against SQLite).
 - The single writer does two jobs. It fits SQLite's one-writer engine, and it keeps
   sequence allocation, deduplication and outbox writes atomic.
 
@@ -24,7 +29,7 @@ pending. No PostgreSQL adapter is built now. Builds on
 
 1. **Only store adapters know an engine.** No SQL, driver type, pragma or engine name
    appears in a domain crate, a wire contract or an application's composition beyond
-   choosing the adapter. The three files outside the store folder move behind it.
+   choosing the adapter. The two files outside the store folder move behind it.
 2. **Invariants are stated without an engine.** The rule is "one accepting writer per
    stream, with sequence allocation, deduplication and outbox writes committed
    together", not "one database connection". An adapter may use one connection or
@@ -36,8 +41,8 @@ pending. No PostgreSQL adapter is built now. Builds on
    their store through one seam, so a second implementation can be selected by
    configuration without changing callers.
 5. **Every storage contract has an engine-independent test suite.** The replication
-   suite already works this way. The work, messaging, organization and host stores get
-   the same, and a new engine is accepted only when it passes them all.
+   and messaging suites already work this way. The work, organization and host stores
+   get the same, and a new engine is accepted only when it passes them all.
 6. **The draft schema is the reference shape, not the only dialect.** The combined
    schema stays the executable SQLite reference. Constraints it enforces with
    SQLite-specific features are also listed in words in schema coverage, so that
@@ -64,6 +69,6 @@ pending. No PostgreSQL adapter is built now. Builds on
 
 - A later PostgreSQL adapter is an implementation of existing contracts, checked by
   existing suites, with domain rules, wire contract and UI untouched.
-- There is a cost now: three files to move, one seam to add and four suites to write,
+- There is a cost now: two files to move, one seam to add and three suites to write,
   for an engine that is not being built yet. Doing it alongside the storage move
   (conflict plan entry B-01) touches the same code once.

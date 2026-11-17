@@ -3,7 +3,7 @@ kind: spec
 title: "Typed tasks, bugs and project docs (UX)"
 status: for-review
 revision: 13
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: ac-staff-engineer-ada

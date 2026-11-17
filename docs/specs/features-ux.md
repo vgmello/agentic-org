@@ -3,7 +3,7 @@ kind: spec
 title: "Features: a project's capabilities, defined in organization Git (UX)"
 status: for-review
 revision: 4
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner

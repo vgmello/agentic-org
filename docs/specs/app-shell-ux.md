@@ -3,7 +3,7 @@ kind: spec
 title: "App shell: navigation and shared interaction standards (UX)"
 status: for-review
 revision: 2
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-10"
 updated: "2026-11-15"
 requested_by: ac-product-designer-eden

@@ -61,6 +61,8 @@ for implemented entry points.
 
 ## 2. Release, install and runtime boundaries
 
+**Platform amendment (owner decision 2026-11-17, [ADR-0017](../adr/0017-linux-and-container-hosting.md)).** macOS and Linux are both v1, and an instance may run as the main process of a container. Statements below that defer Linux, or that assume launchd, the keychain or a code signature, describe the macOS implementation of a platform contract.
+
 **Implementation status (2026-11-17):** designed, not reachable. Release verification exists as a library (`org-release`, linked into `org-host`) and is not called by any command. There is no bootstrap, download, installer or updater. The four executables build from source and are started by hand.
 
 Use one user-facing executable, `agentic-org`, for setup and local

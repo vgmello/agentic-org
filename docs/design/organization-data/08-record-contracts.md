@@ -1,6 +1,6 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Status: **selected** data contract, revision 2.6. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Status: **selected** data contract, revision 2.7. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 

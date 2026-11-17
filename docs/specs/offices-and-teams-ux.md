@@ -3,7 +3,7 @@ kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
 revision: 19
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: ac-staff-engineer-ada
@@ -884,7 +884,7 @@ Every employee has one required home team and appears once in that tree. Display
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Its `is_owner` marker neither grants authentication nor waives required membership.
+- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Nothing on the employee record marks it as the owner, grants authentication or waives required membership.
 - A linked owner employee can be shown on its home-team card and in eligible member/lead pickers subject to ordinary direct-membership rules. Account-removal protections are separate from employee editing. Changing an employee name, handle, home team or reporting line cannot transfer ownership of the account.
 - **Message/Ask** can retain the current owner security-principal recipient route. Task assignment stores an employee ID: list a linked active owner employee if present; do not manufacture one from a sign-in account. Current wire `owner` addressing stays unchanged until explicitly migrated.
 - The built-in HR shortcut may sit beside the bar. Its employee also has a valid home team and appears in the team and reporting views; the shortcut does not hide it from employee counts. Earlier built-in lifecycle/manager restrictions remain a separate UX policy to implement; home membership itself never appoints HR as a lead or manager.
@@ -1114,7 +1114,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 
 **The owner (OWNER)**
 - OWNER-1 · *(rev 18)* The owner account bar presents organization access above each chart. A linked owner employee has a required home team and is counted/displayed there; a security account without a profile is not an employee.
-- OWNER-2 · *(rev 18)* Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from is_owner. No blanket teamless-owner exception appears.
+- OWNER-2 · *(rev 18)* Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from any employee field. No blanket teamless-owner exception appears.
 - OWNER-3 · *(rev 18)* Messaging retains the authenticated owner routing contract. Task assignees and employee managers use eligible employee IDs, including a linked owner employee where valid; a sign-in account alone supplies neither reference.
 
 **Retired:** GUILD-1, GUILD-2 (rev 2); MENU-1 through MENU-6 from v1 (rev 12). IDs are not reused.

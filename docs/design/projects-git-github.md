@@ -295,7 +295,7 @@ These are gaps or tensions between this design and the selected contracts. They 
 8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks.** Under the selected contract a task created offline has no T- reference until HQ allocates its number, so `task/<ref>-<slug>` has no `<ref>` yet. The proposed [ADR-0019](../adr/0019-office-coded-task-numbers.md) removes this case: the creating office mints the reference at once.
+11. **Branch names for unnumbered tasks.** Under the selected contract a task created offline has no T- reference until HQ allocates its number, so `task/<ref>-<slug>` has no `<ref>` yet. [ADR-0019](../adr/0019-office-coded-task-numbers.md), accepted in part on 2026-11-17, removes this case: the creating office mints the reference at once.
 
 ## What changed from the earlier design
 
