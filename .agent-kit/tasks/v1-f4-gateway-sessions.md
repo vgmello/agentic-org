@@ -79,3 +79,4 @@
 - Final review 2 (split, run 290bc190) CHANGES_REQUIRED (P3 only) → f0f59acf C2, 6cee0eb9 B1 (consecutive failures; stable 60 s), 57ada669 A1 (claimed jobs: queued expiry never closes), a49e1cc2 A2 (abandoned sign-in binds nothing; CAPACITY_RECHECK 2 s). Residual: microsecond insert/reply race leaves a binding until idle expiry.
 - Final review 3 (split, run cd4a1635) CHANGES_REQUIRED (10 P3) → 5851ecae A1-A5, 9f9d5782 B1-B2, df13568a C1, 1209c581 C2; C3 via the gates-10 SHA-bound dep-tree + browser steps.
 - Final review 4 (split, run bcbd328c) CHANGES_REQUIRED (A1 P2 sign-out on transient host failure; A2/A3/B1 P3) → 98415839 B1, dd79966d A2, 16760bb9 A1, 1e6ab65d A3.
+- Final review 5 (split, run e1c9161b) CHANGES_REQUIRED (A1 P2 undelivered refresh; A2/B1/B2/C1 P3) → 3d599a51 A1, 4e6055b3 A2, 325a25ec B1, f965ff54 B2, c8998f8b C1 (the writer stopped at its turn cap after committing; verification by gates-13).
