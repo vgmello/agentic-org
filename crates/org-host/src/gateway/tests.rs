@@ -478,6 +478,38 @@ fn start_scripted(
         + Sync
         + 'static,
 ) -> io::Error {
+    let (_dir, config) = scripted_config(script, answer);
+    start_error(&config)
+}
+
+#[cfg(target_os = "macos")]
+/// Starts `config`, which must be refused, and returns the refusal.
+fn start_error(config: &Configuration) -> io::Error {
+    match Running::start(config, Arc::new(NoOps)) {
+        Err(error) => error,
+        Ok(_) => panic!("this start must be refused"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// A loopback listen configuration on `port`.
+fn loopback_on(port: u16) -> ListenConfig {
+    serde_json::from_str(&format!(
+        r#"{{"address":"127.0.0.1","port":{port},"scheme":"http_loopback","origin":"http://127.0.0.1:{port}","hsts":"off"}}"#
+    ))
+    .unwrap()
+}
+
+/// The configuration [`start_scripted`] starts, on a free loopback port, with its
+/// temporary directory (program and runtime) kept alive by the caller.
+#[cfg(target_os = "macos")]
+fn scripted_config(
+    script: &str,
+    answer: impl Fn(crate::server_check::Step, usize, u32) -> Result<Option<crate::peer::AuditToken>, String>
+        + Send
+        + Sync
+        + 'static,
+) -> (tempfile::TempDir, Configuration) {
     use crate::server_check::{Scripted, Step};
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicUsize;
@@ -490,10 +522,7 @@ fn start_scripted(
         .local_addr()
         .unwrap()
         .port();
-    let listen = serde_json::from_str(&format!(
-        r#"{{"address":"127.0.0.1","port":{port},"scheme":"http_loopback","origin":"http://127.0.0.1:{port}","hsts":"off"}}"#
-    ))
-    .unwrap();
+    let listen = loopback_on(port);
     let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
     let check = ServerCheck::Scripted(Scripted(Arc::new(move |step: Step, pid: u32| {
         let n = calls[usize::from(step == Step::Still)].fetch_add(1, Ordering::SeqCst) + 1;
@@ -508,10 +537,7 @@ fn start_scripted(
         critical_paths: vec![],
         release: None,
     };
-    match Running::start(&config, Arc::new(NoOps)) {
-        Err(error) => error,
-        Ok(_) => panic!("the scripted check refuses this start"),
-    }
+    (dir, config)
 }
 
 /// Starts a scripted gateway whose admission answers the child's real token when
@@ -796,4 +822,226 @@ fn a_running_gateway_names_why_it_ended() {
         "its control connection reached EOF"
     );
     assert_eq!(ended_cause(false, None, true), "it stopped serving");
+}
+
+#[cfg(target_os = "macos")]
+/// A free loopback port nothing listens on.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let https = serde_json::from_str(
+        r#"{"address":"127.0.0.1","port":48124,"scheme":"https","origin":"https://127.0.0.1:48124","hsts":"off"}"#,
+    )
+    .unwrap();
+    // A check that would admit anything: only the listener gate can refuse.
+    let started = Supervisor::start(
+        Configuration {
+            program: dir.path().join("agentic-org-web"),
+            instance: "instance".into(),
+            runtime: dir.path().to_owned(),
+            listen: https,
+            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            critical_paths: vec![],
+            release: None,
+        },
+        Arc::new(NoOps),
+        Arc::clone(&state),
+        Arc::new(|| true),
+    );
+    let Err(error) = started else {
+        panic!("an HTTPS listener never starts the browser gateway")
+    };
+    assert_eq!(
+        error.to_string(),
+        "the browser gateway requires a verified HTTP loopback listener"
+    );
+    assert_eq!(*lock(&state), GatewayState::NotConfigured);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn the_supervisor_refuses_an_os_without_process_confinement() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let started = Supervisor::start(
+        Configuration {
+            program: dir.path().join("agentic-org-web"),
+            instance: "instance".into(),
+            runtime: dir.path().to_owned(),
+            listen: loopback(),
+            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            critical_paths: vec![],
+            release: None,
+        },
+        Arc::new(NoOps),
+        Arc::clone(&state),
+        Arc::new(|| true),
+    );
+    let Err(error) = started else {
+        panic!("no browser gateway without macOS confinement")
+    };
+    assert!(error.to_string().contains("requires macOS"), "{error}");
+}
+
+/// A receiver over one end of a fresh stream pair, and the other (sending) end.
+fn control_pair() -> (org_socket::rights::StreamReceiver, UnixStream) {
+    let (ours, theirs) = UnixStream::pair().unwrap();
+    (org_socket::rights::StreamReceiver::new(ours), theirs)
+}
+
+#[test]
+fn a_control_line_is_read_through_its_newline_up_to_1023_bytes() {
+    let (mut receiver, mut peer) = control_pair();
+    let full = vec![b'a'; 1023];
+    peer.write_all(&full).unwrap();
+    peer.write_all(b"\nnext").unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    assert_eq!(line(&mut receiver, until, "ready line").unwrap(), full);
+}
+
+#[test]
+fn a_control_line_longer_than_1023_bytes_is_refused() {
+    let (mut receiver, mut peer) = control_pair();
+    peer.write_all(&[b'a'; 1024]).unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gateway start failed: the ready line exceeds 1023 bytes"
+    );
+}
+
+#[test]
+fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
+    let (mut receiver, mut peer) = control_pair();
+    peer.write_all(b"partial").unwrap();
+    let started = Instant::now();
+    let until = started + Duration::from_millis(100);
+    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gateway start failed: the handoff ACK did not arrive before the deadline"
+    );
+    assert!(started.elapsed() < Duration::from_secs(4));
+    drop(peer);
+}
+
+#[test]
+fn control_eof_before_a_line_is_refused() {
+    let (mut receiver, mut peer) = control_pair();
+    peer.write_all(b"partial").unwrap();
+    drop(peer);
+    let until = Instant::now() + Duration::from_secs(5);
+    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gateway start failed: control EOF before the ready line"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let rendezvous = Rendezvous::bind(dir.path()).unwrap();
+    let mut spawned =
+        spawn::spawn_suspended(Path::new("/bin/sleep"), &[OsStr::new("30")], &[]).unwrap();
+    // The deadline has passed: no connection is accepted, and the child still runs.
+    let error = rendezvous
+        .accept(&mut spawned.process, Instant::now())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gateway start failed: the child did not connect before the deadline"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_rendezvous_peer_other_than_the_admitted_child_is_refused() {
+    // A forked subshell, not the spawned child, connects and sends the ready line.
+    let script = connecting_script(READY)
+        .replacen("zsocket", "( zsocket", 1)
+        .replace(
+            "read -r -t 20 -u $REPLY _\n",
+            // A trailing command keeps zsh from exec-ing the subshell in place.
+            "read -r -t 20 -u $REPLY _ )\nexit 0\n",
+        );
+    assert!(
+        script.contains("( zsocket") && script.contains("_ )"),
+        "{script}"
+    );
+    let error = start_scripted(&script, |_, _, _| Ok(None));
+    let message = error.to_string();
+    assert!(
+        message.contains("gateway start failed: the rendezvous peer is not the admitted child"),
+        "{message}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unconfined_child_fails_the_sandbox_verification() {
+    // Admitted with its real token; every check passes until the sandbox check.
+    let error = start_scripted(&connecting_script(READY), |_, _, pid| {
+        crate::spawn::audit_token_of_child(pid)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    });
+    let message = error.to_string();
+    assert!(
+        message.contains("gateway start failed: verify the gateway sandbox"),
+        "{message}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn each_failed_start_step_before_the_child_connects_names_its_cause() {
+    let script = connecting_script(READY);
+    // The browser port is taken.
+    let (_dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    config.listen = loopback_on(taken.local_addr().unwrap().port());
+    let message = start_error(&config).to_string();
+    assert!(
+        message.starts_with("gateway start failed: bind the browser listener ("),
+        "{message}"
+    );
+    // The runtime directory is a file, so no rendezvous can be bound.
+    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    config.listen = loopback_on(free_port());
+    let file = dir.path().join("not-a-directory");
+    fs::write(&file, b"").unwrap();
+    config.runtime = file;
+    let message = start_error(&config).to_string();
+    assert!(
+        message.starts_with("gateway start failed: bind the rendezvous ("),
+        "{message}"
+    );
+    // The program is missing.
+    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    config.program = dir.path().join("missing");
+    let message = start_error(&config).to_string();
+    assert!(
+        message.starts_with("gateway start failed: spawn the gateway suspended ("),
+        "{message}"
+    );
+    // The first line would not fit in 1023 bytes.
+    let (_dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    config.instance = "i".repeat(1024);
+    assert_eq!(
+        start_error(&config).to_string(),
+        "gateway start failed: the first line exceeds 1023 bytes"
+    );
 }
