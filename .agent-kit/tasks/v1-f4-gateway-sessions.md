@@ -75,3 +75,4 @@
 - Review run cfde0832: R1 P1 contract/scope mismatch ("composed by agentic-org serve" vs U1-owned launcher) → contract Amendment 3 (scope
   correction, no code). The acceptance contract changed (Amendments 1-3) → journal f3e39563 closed ABANDONED (reasons + observation); new journal
   .agent-kit/logs/task-metrics/cd0f7eb53d644d06837bb16165fd0382.json (registered late). Next: gates-5 → review run 4.
+- Final review 1 (split A/B/C, run 025e8b36) CHANGES_REQUIRED → fixes 163bbcef A1, 0d7f7e7d A2, 2001c033 A3, db63a2be B1 (gateway budget 992 = GATEWAY_SESSIONS; LOCAL_SESSION_RESERVE 32; supersedes the 1024 in contract AC/Amendment text — recorded here to keep the contract SHA stable). Deferred P3: per-call deadline counts queue time (pre-existing actor behavior).
