@@ -10,7 +10,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [flag] if matches!(flag.as_str(), "--help" | "-h") => {
-            println!("agentic-org-web: host-managed browser service\nRequires a verified host --serve handoff.\nGateway startup is currently available through debug/test instance composition; the agentic-org serve launcher is pending.");
+            println!("agentic-org-web: the host-managed web process\nUsage: agentic-org-web --serve | --version | --help\n--serve: loads the verified release's ui/ build, confines itself, then accepts its listener and control connection only through the verified handoff of the host that spawned it. Without that handoff it opens no listener.");
             ExitCode::SUCCESS
         }
         [flag] if flag == "--serve" => {

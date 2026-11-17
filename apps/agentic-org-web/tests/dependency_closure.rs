@@ -13,7 +13,15 @@ const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Crates that own host supervision, office storage/keys, work execution or the
 /// privileged client. None may be linked into the web process.
-const FORBIDDEN: &[&str] = &["org-host", "org-office", "org-work", "org-client"];
+/// The web process opens no database (non-negotiable 7), so no SQLite crate either.
+const FORBIDDEN: &[&str] = &[
+    "org-host",
+    "org-office",
+    "org-work",
+    "org-client",
+    "rusqlite",
+    "libsqlite3-sys",
+];
 
 /// The package names reachable from `agentic-org-web` through normal dependency
 /// edges (any target platform), from the locked workspace resolve.
