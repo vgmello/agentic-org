@@ -47,7 +47,7 @@ crates/
   ...                  Domain and protocol libraries
 ```
 
-agentic-org serve runs the existing host lifecycle. **HQ setup/service registration and production web handoff remain unavailable:** their protected bootstrap/authentication integration has not landed in v1. setup returns an error without creating state; agentic-org-web refuses to open a listener without its unfinished production composition. Help/version commands are available. The existing test-only CSP harness remains a test example, not a production bypass. See [executable migration](docs/design/executable-migration.md) for migration scope and checks. This code change does not install services, update running agents or reset data.
+agentic-org serve runs the existing host lifecycle and does not start the browser gateway. **HQ setup/service registration and the production web launcher are unavailable:** F3c (accepted and integrated at `67860707`) implements protected bootstrap/authentication in the host library, and F4 implements the web handoff and session backend for debug/test instance composition only. The production `agentic-org serve` launcher is U1-owned and not built, and signed release acceptance is pending. setup returns an error without creating state; agentic-org-web refuses to open a listener without a verified host handoff. Help/version commands are available. The existing test-only CSP harness remains a test example, not a production bypass. See [executable migration](docs/design/executable-migration.md) for migration scope and checks. This code change does not install services, update running agents or reset data.
 
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature

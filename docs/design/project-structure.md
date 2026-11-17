@@ -13,7 +13,7 @@ Read the language-agnostic [architecture rules](../architecture-rules.md) first.
 [removal inventory](standalone-server-removal-inventory.md) retain authority over
 product scope, process/security boundaries, and deletion acceptance.
 
-**Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve; pending bootstrap/HTTP authentication remains explicit.
+**Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve. F3c protected bootstrap/authentication is integrated at `67860707`; F4 implements the web handoff and session backend for debug/test instance composition. The production serve launcher (U1) and signed release remain pending.
 
 ## Selected data and source ownership
 
@@ -32,7 +32,7 @@ Repository registrations/caches are organization-wide; project/repository associ
 | crates/org-host / org-host | Library only | Host lifecycle and key custody |
 | apps/agentic-org-ui / agentic-org-ui | Static assets | Browser application |
 
-Application source directories, package names and production executable names are aligned. Reusable org-* libraries retain domain/contract names. Existing signing identifiers, persisted data and wire fields remain stable; filenames do not define trust. HQ bootstrap/service registration and production web handoff are still unavailable as documented in executable-migration.md. The obsolete desktop/Tauri executable is removed; it must not overwrite the current agentic-org artifact.
+Application source directories, package names and production executable names are aligned. Reusable org-* libraries retain domain/contract names. Existing signing identifiers, persisted data and wire fields remain stable; filenames do not define trust. HQ service registration/CLI setup and the production web launcher (U1) are unavailable as documented in executable-migration.md; F4's web handoff runs only through debug/test instance composition. The obsolete desktop/Tauri executable is removed; it must not overwrite the current agentic-org artifact.
 
 ## 2. Architecture to follow
 
@@ -138,7 +138,7 @@ crates/
 
 apps/
   agentic-org-office/                        # Per-office worker: domain/IPC/runtime composition
-  agentic-org-web/                       # HTTP library/executable; production handoff pending
+  agentic-org-web/                       # HTTP library/executable; debug/test handoff (F4); production launcher pending (U1)
   agentic-org/                         # CLI/serve; protected setup remains unavailable
   # Host lifecycle is a library at crates/org-host, not a separate app.
   agent-os/                         # Small employee CLI

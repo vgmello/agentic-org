@@ -8,12 +8,22 @@ F0 imports documentation only over integration base
 `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. It adds no setup, authentication,
 selected-task or release implementation. At this baseline:
 
-| Executable | Implementation status in F0 |
+| Executable | Implementation status at the F0 baseline (historical; see current status below) |
 | --- | --- |
 | agentic-org | Human CLI composes org-host; [setup refuses without changing state](../../apps/agentic-org/src/lib.rs) because protected bootstrap and service registration are not wired. |
 | agentic-org-office | Existing daemon and legacy protocols remain. The selected writer/bootstrap/adoption/task-acceptance and escrow additions below have not been imported. |
 | agentic-org-web | Help/version are available; [service startup refuses without opening a listener](../../apps/agentic-org-web/src/main.rs). Authenticated handoff and the browser backend are not wired. |
 | agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+
+## Current status after F3c and F4
+
+F3c is accepted and integrated at `67860707`. F4 is the current unit on its branch.
+This table re-verifies only the two rows whose status changed since F0.
+
+| Executable | Current implementation status |
+| --- | --- |
+| agentic-org | serve runs the host lifecycle and does not start the browser gateway; the production `agentic-org serve` instance launcher is U1-owned and unavailable. [setup still refuses without changing state](../../apps/agentic-org/src/lib.rs): F3c implements protected bootstrap in the host library, but service registration and the CLI setup path are not wired. |
+| agentic-org-web | [`--serve` runs only after a verified host handoff](../../apps/agentic-org-web/src/main.rs) and otherwise refuses without opening a listener. F4 implements the host-supervised handoff and the browser session backend, started only through debug/test instance composition. Signed release acceptance is pending. |
 
 ## Preserved reservoir evidence
 
