@@ -11,7 +11,6 @@ pub(crate) mod lockout;
 pub(crate) mod provisioning;
 pub(crate) mod recovery;
 mod schema;
-mod sqlcipher;
 #[cfg(test)]
 mod tests;
 
@@ -37,9 +36,6 @@ pub(crate) enum Error {
     Unsafe,
     Exists,
     Empty,
-    KeyMissing,
-    KeyLength,
-    NoCipher,
     Version,
     Io(io::ErrorKind),
     Sql(rusqlite::ErrorCode),
@@ -243,10 +239,8 @@ impl HostDb {
             )?;
         }
         checkpoint(2)?;
-        let generated = crate::secrets::generate_db_key()?;
-        let key = Value::new(generated.expose_bytes().to_vec())?;
-        drop(generated);
-        secrets.put(&Name::parse("registry")?, &key)?;
+        // The registry is plain SQLite protected by the account and file permissions
+        // (ADR-0016); no database key is generated or stored.
         checkpoint(3)?;
         let path = home.join(TMP);
         let file = OpenOptions::new()
@@ -257,7 +251,7 @@ impl HostDb {
             .open(&path)?;
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         drop(file); // A later close on this inode would cancel SQLite's POSIX locks.
-        let mut db = connect(&path, &key)?;
+        let mut db = connect(&path)?;
         db.pragma_update(None, "journal_mode", "DELETE")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(schema::DDL)?;
@@ -313,7 +307,10 @@ impl HostDb {
         checkpoint(6)?;
         Ok(opened)
     }
-    pub(crate) fn open(home: &Path, secrets: &dyn HostSecrets) -> Result<Self, Error> {
+    /// Opens the plain-SQLite registry. `_custody` is not consulted: the registry
+    /// has no database key (ADR-0016). The parameter remains only until the
+    /// service caller drops it with the launch-contract cleanup.
+    pub(crate) fn open(home: &Path, _custody: &dyn HostSecrets) -> Result<Self, Error> {
         let home = checked_home(home)?;
         absent(&home.join("host-registry.db-journal"), Error::Unsafe)?;
         let path = home.join(DB);
@@ -328,10 +325,7 @@ impl HostDb {
             }
         }
         checkpoint(8)?; // Test the SQLite no-follow fence after validation.
-        let key = secrets
-            .load(&Name::parse("registry")?)?
-            .ok_or(Error::KeyMissing)?;
-        let mut db = connect(&path, &key)?;
+        let mut db = connect(&path)?;
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version == 1 || version == 2 {
             require_legacy_schema(&db)?;
@@ -438,43 +432,29 @@ fn checked_file(path: &Path, empty_ok: bool) -> Result<Option<File>, Error> {
     }
     Ok(Some(file))
 }
-fn connect(path: &Path, key: &Value) -> Result<Connection, Error> {
-    if key.expose().len() != 32 {
-        return Err(Error::KeyLength);
-    }
-    sqlcipher::ready()?;
+fn connect(path: &Path) -> Result<Connection, Error> {
+    sqlite_ready()?;
     #[allow(clippy::disallowed_methods)] // The sole durable opener crosses the fence.
     let db = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
     db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
-    let mut pragma = Vec::with_capacity(83);
-    pragma.extend_from_slice(b"PRAGMA key = \"x'");
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for b in key.expose() {
-        pragma.extend_from_slice(&[HEX[(b >> 4) as usize], HEX[(b & 15) as usize]]);
-    }
-    pragma.extend_from_slice(b"'\";");
-    // Wipe this owned copy on every exit; SQLite's own statement allocation is outside
-    // this best-effort guarantee (as in org-office's raw-key connection).
-    let pragma = Value::new(pragma)?;
-    db.execute_batch(std::str::from_utf8(pragma.expose()).expect("ASCII key pragma"))?;
-    drop(pragma);
     db.pragma_update(None, "busy_timeout", 5000)?;
-    let cipher: String = db
-        .query_row("PRAGMA cipher_version", [], |r| r.get(0))
-        .unwrap_or_default();
-    require_cipher(&cipher)?;
     db.query_row("SELECT count(*) FROM sqlite_schema", [], |r| {
         r.get::<_, i64>(0)
     })?;
     db.execute_batch("PRAGMA synchronous=FULL; PRAGMA fullfsync=ON; PRAGMA checkpoint_fullfsync=ON; PRAGMA foreign_keys=ON;")?;
     Ok(db)
 }
-fn require_cipher(version: &str) -> Result<(), Error> {
-    if version.is_empty() {
-        return Err(Error::NoCipher);
+/// Completes SQLite library initialization once before any opener (BUG-100 fence,
+/// kept while the workspace's SQLite build still needs it; removed in A1.7).
+fn sqlite_ready() -> Result<(), Error> {
+    static READY: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    // SAFETY: sqlite3_initialize is thread-safe and idempotent.
+    let code = *READY.get_or_init(|| unsafe { rusqlite::ffi::sqlite3_initialize() });
+    if code != rusqlite::ffi::SQLITE_OK {
+        return Err(Error::Sql(rusqlite::ffi::Error::new(code).code));
     }
     Ok(())
 }
