@@ -32,6 +32,7 @@ use zeroize::Zeroizing;
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
 const IDLE: Duration = Duration::from_secs(30 * 60);
 const MAX_SESSIONS: usize = 1024;
+const CAPACITY_RECHECK: Duration = Duration::from_secs(5);
 /// Host ends queued behind one cleanup thread. A full queue drops the end: the
 /// host's own idle/absolute expiry still reclaims that session.
 const CLEANUP_QUEUE: usize = 64;
@@ -210,15 +211,50 @@ impl BrowserSessions {
     }
     fn establish(&self, session: Session) -> Result<Established, ApiReply> {
         let (key, session, result) = self.prepare_established(session)?;
-        self.reap()?;
-        let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
-        if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
-            drop(sessions);
+        let session = Arc::new(session);
+        let admission = (|| {
+            self.reap()?;
+            self.reclaim_capacity()?;
+            let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
+            if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
+                return Err(unavailable());
+            }
+            sessions.insert(key, Arc::clone(&session));
+            Ok(())
+        })();
+        if let Err(error) = admission {
             let _ = self.host.end(&session.handle);
-            return Err(unavailable());
+            return Err(error);
         }
-        sessions.insert(key, Arc::new(session));
         Ok(result)
+    }
+    fn reclaim_capacity(&self) -> Result<(), ApiReply> {
+        let candidates: Vec<_> = {
+            let sessions = self.sessions.lock().map_err(|_| unavailable())?;
+            if sessions.len() < MAX_SESSIONS {
+                return Ok(());
+            }
+            sessions.values().cloned().collect()
+        };
+        // Only sign-in's blocking worker probes the host, never authenticate/reap.
+        // A shared deadline bounds the whole scan, rather than each of 1024 calls.
+        let until = Instant::now() + CAPACITY_RECHECK;
+        for session in candidates {
+            if Instant::now() >= until {
+                break;
+            }
+            match self.host.inspect_until(&session.handle, until) {
+                Err(control::Failure::Denied) => {
+                    self.session_failure(&session, control::Failure::Denied);
+                }
+                Err(_) => return Err(unavailable()),
+                Ok(_) => {}
+            }
+            if self.sessions.lock().map_err(|_| unavailable())?.len() < MAX_SESSIONS {
+                break;
+            }
+        }
+        Ok(())
     }
     fn reap(&self) -> Result<(), ApiReply> {
         // The host owns expiry and revocation (its own reap stays authoritative),

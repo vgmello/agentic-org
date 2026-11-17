@@ -198,13 +198,21 @@ impl HostControl {
         self.borrowed::<Verify, _>(&Params { login, password })
     }
     fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
+        self.borrowed_until::<C, T>(params, Instant::now() + DEADLINE)
+    }
+    fn borrowed_until<C: Call, T: Serialize>(
+        &self,
+        params: &T,
+        until: Instant,
+    ) -> Result<C::Result, Failure> {
         #[derive(Serialize)]
         struct Request<'a, T> {
             id: u64,
             method: &'static str,
             params: &'a T,
         }
-        if !self.live() {
+        let until = until.min(Instant::now() + DEADLINE);
+        if !self.live() || Instant::now() >= until {
             return Err(Failure::Unavailable);
         }
         let id = self
@@ -214,7 +222,6 @@ impl HostControl {
             })
             .map_err(|_| Failure::Unavailable)?;
         let (answer, receiver) = mpsc::sync_channel(1);
-        let until = Instant::now() + DEADLINE;
         self.jobs
             .try_send(Job {
                 line: encode(&Request {
@@ -226,7 +233,7 @@ impl HostControl {
                 answer,
             })
             .map_err(|_| Failure::Unavailable)?;
-        match receiver.recv_timeout(DEADLINE) {
+        match receiver.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(reply) => decode(&reply?.bytes, id),
             Err(_) => {
                 self.close();
@@ -243,11 +250,18 @@ impl HostControl {
             .map(|_| ())
     }
     pub fn inspect(&self, handle: &SessionHandle) -> Result<ops::SessionInspectResult, Failure> {
+        self.inspect_until(handle, Instant::now() + DEADLINE)
+    }
+    pub(super) fn inspect_until(
+        &self,
+        handle: &SessionHandle,
+        until: Instant,
+    ) -> Result<ops::SessionInspectResult, Failure> {
         #[derive(Serialize)]
         struct Params<'a> {
             session: &'a SessionHandle,
         }
-        self.borrowed::<ops::SessionInspect, _>(&Params { session: handle })
+        self.borrowed_until::<ops::SessionInspect, _>(&Params { session: handle }, until)
     }
     pub fn end(&self, handle: &SessionHandle) -> Result<(), Failure> {
         #[derive(Serialize)]

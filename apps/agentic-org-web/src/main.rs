@@ -10,7 +10,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [flag] if matches!(flag.as_str(), "--help" | "-h") => {
-            println!("agentic-org-web: host-managed browser service\nStarted with --serve by agentic-org serve using an authenticated listener handoff.");
+            println!("agentic-org-web: host-managed browser service\nRequires a verified host --serve handoff.\nGateway startup is currently available through debug/test instance composition; the agentic-org serve launcher is pending.");
             ExitCode::SUCCESS
         }
         [flag] if flag == "--serve" => {

@@ -60,6 +60,64 @@ fn control_eof_marks_the_connection_dead_and_refuses_calls() {
 }
 
 #[test]
+fn expired_inspection_budget_does_not_close_a_live_connection() {
+    let (control, stop, thread) = connect(INSTANCE);
+    let control = control.unwrap();
+    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+    assert_eq!(
+        control.inspect_until(&handle, Instant::now()).err(),
+        Some(Failure::Unavailable)
+    );
+    assert!(control.live());
+    stop.shutdown(Shutdown::Both).unwrap();
+    thread.join().unwrap();
+}
+
+#[test]
+fn inspection_uses_the_remaining_shared_budget_when_the_host_stalls() {
+    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
+    let (release, stalled) = mpsc::sync_channel(1);
+    let host = thread::spawn(move || {
+        let mut reader = BufReader::new(peer);
+        let hello: serde_json::Value = org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap();
+        let result = serde_json::to_value(
+            org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
+        )
+        .unwrap();
+        org_proto::frame::write_message(
+            reader.get_mut(),
+            &serde_json::json!({"id":hello["id"],"result":result}),
+        )
+        .unwrap();
+        let request: serde_json::Value = org_proto::frame::read_message(&mut reader)
+            .unwrap()
+            .unwrap();
+        assert_eq!(request["method"], "session.inspect");
+        stalled.recv().unwrap();
+    });
+    let control = HostControl::from_handoff(
+        gateway.into(),
+        transfer.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+    )
+    .unwrap();
+    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+    let started = Instant::now();
+    let error = control
+        .inspect_until(&handle, started + Duration::from_millis(100))
+        .err();
+    let elapsed = started.elapsed();
+    release.send(()).unwrap();
+    host.join().unwrap();
+    assert_eq!(error, Some(Failure::Unavailable));
+    assert!(elapsed < Duration::from_secs(1), "waited {elapsed:?}");
+}
+
+#[test]
 fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
     for (code, expected) in [
         ("not_found", Failure::NotFound),

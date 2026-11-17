@@ -39,6 +39,7 @@ struct Fixture {
     thread: Option<std::thread::JoinHandle<()>>,
     calls: Arc<Mutex<Vec<String>>>,
     errors: Arc<Mutex<BTreeMap<&'static str, &'static str>>>,
+    ended: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
 fn reply(
     request: &serde_json::Value,
@@ -87,6 +88,8 @@ impl Fixture {
         let seen = Arc::clone(&calls);
         let errors = Arc::new(Mutex::new(BTreeMap::new()));
         let scripted_errors = Arc::clone(&errors);
+        let ended = Arc::new(Mutex::new(std::collections::BTreeSet::<String>::new()));
+        let ended_sessions = Arc::clone(&ended);
         let thread = std::thread::spawn(move || {
             let mut host = BufReader::new(host);
             let mut issued = 0;
@@ -99,7 +102,13 @@ impl Fixture {
                 let error = scripted_errors
                     .lock()
                     .unwrap()
-                    .remove(request["method"].as_str().unwrap());
+                    .remove(request["method"].as_str().unwrap())
+                    .or_else(|| {
+                        request["params"]["session"]
+                            .as_str()
+                            .filter(|handle| ended_sessions.lock().unwrap().contains(*handle))
+                            .map(|_| "not_authorized")
+                    });
                 let answer = match error {
                     Some(code) => {
                         serde_json::json!({"id":request["id"],"error":{"code":code,"message":"scripted host refusal"}})
@@ -127,6 +136,7 @@ impl Fixture {
             thread: Some(thread),
             calls,
             errors,
+            ended,
         }
     }
     fn sign_in(&self) -> Established {
@@ -308,6 +318,51 @@ fn sign_out_ends_the_host_session_and_clears_the_pair() {
     assert!(clear.starts_with(&format!("{}=;", f.sessions.cookie_name)));
     assert!(clear.contains("Max-Age=0"));
     assert!(f.sessions.get(ticket(&f.sessions, &other)).is_ok());
+}
+
+#[test]
+fn sign_in_reclaims_unpresented_host_revocations_at_capacity() {
+    for keep_live in [false, true] {
+        let f = Fixture::new();
+        let live = f.sign_in();
+        for _ in 1..MAX_SESSIONS {
+            f.sign_in();
+        }
+        let live_key = ticket(&f.sessions, &live).key;
+        {
+            let bindings = f.sessions.sessions.lock().unwrap();
+            let mut ended = f.ended.lock().unwrap();
+            for (key, session) in bindings.iter() {
+                if !keep_live || *key != live_key {
+                    ended.insert(session.handle.expose().to_owned());
+                }
+            }
+        }
+        // No request presents any revoked pair before correct reauthentication.
+        let replacement = f.sign_in();
+        assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+        assert!(f.sessions.sessions.lock().unwrap().len() <= MAX_SESSIONS);
+        if keep_live {
+            assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+        }
+    }
+}
+
+#[test]
+fn capacity_recheck_preserves_bindings_on_transient_host_errors() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    for _ in 1..MAX_SESSIONS {
+        f.sign_in();
+    }
+    for code in ["not_found", "unavailable", "storage_error"] {
+        f.errors.lock().unwrap().insert("session.inspect", code);
+        let error = f.sessions.reclaim_capacity().unwrap_err();
+        assert_eq!(error.inspected().0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+        assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+        assert!(f.sessions.host.live());
+    }
 }
 
 #[test]
