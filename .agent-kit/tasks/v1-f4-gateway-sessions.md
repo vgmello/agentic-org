@@ -9,7 +9,7 @@
   Sol High review (xhigh optional); final Opus High. Reason: security-critical auth/cookies, cross-crate wire,
   prior failed compile ace8b29d, open ambiguity.
 - Writer: one fullstack-engineer (Opus High) owns host+web+UI adapter end to end (GW-01 D5). The author
-  session ID is recorded at dispatch.
+  session: Claude subagent a189aeeb119e1741e, dispatched 2026-11-17 at d8b36a0e for steps 1-4 (return at CHECKPOINT C).
 - Worktree: /Users/vgmello/projects/agentic-org-claude-worktrees/slot-1, branch worktree-f4-sessions,
   base e5152b4e (F3c candidate). Rebase onto the accepted F3c merge in v1-integration before the F4 review.
 - Concurrent writers: F3c Sol fixer in /Users/vgmello/projects/agentic-org-delivery-worker (separate task/checkout)
@@ -28,3 +28,10 @@
 - Repair attempts before escalation: 1 automatic hook repair.
 - Escalation owner: the lead. Stop on premise failure (pause and return evidence), or on any need for task-service
   types or new dependencies.
+
+## Progress log
+- Writer 1 (subagent a189aeeb119e1741e, Opus High): preflight DECLARED_READY, then committed CHECKPOINT A d0478826
+  (org-host-control GatewayRelease; `cargo test -p org-host-control` 46 passed incl. release_tests; clippy clean). It stopped
+  at the 40-turn agent limit before returning a receipt. Its session cannot be resumed from this harness, so the
+  original-author intent check for F4 will use the recorded intent of each continuation writer, not a fabricated continuity.
+- Writer 2 (continuation): CHECKPOINT B only (host composition), to fit the turn budget.
