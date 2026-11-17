@@ -295,6 +295,13 @@ unresolved: it cannot prove which of those histories occurred.
 
 ## 4. Browser sessions and failures
 
+> **Amended by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17).**
+> Sessions are stored at the host and cached in memory by the web process. A restart
+> of either process, an update or a lost control connection no longer ends a session,
+> and control EOF no longer ends host sessions. Sign-out, expiry, password change and
+> unlink still end a session immediately. The cookie and proof contract below is
+> unchanged. Where this section says a restart loses sessions, ADR-0013 governs.
+
 Gateway keeps only the in-memory mapping between the random browser cookie/proof
 pair and host-issued session handle on its admitted control connection. Host owns
 accounts, password verification, expiry, grants and revocation. Worker owns domain

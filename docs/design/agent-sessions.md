@@ -543,6 +543,12 @@ children receive no provider/API secret or host/database key.
 - **stderr** is filtered line by line (control characters dropped, each line length-capped) and goes through the same **redaction** as events, before it goes to `<office dir>/logs/agents/<agent>.log` (0600, capped and rotated, never bodies).
 ## Security
 
+> **Amended by [ADR-0015](../adr/0015-agent-isolation-modes.md) (2026-11-17).** The
+> statements below describe the `same-user` isolation mode. A second mode,
+> `dedicated-user`, runs agents as an OS account that cannot read the organization
+> data root; in that mode start, stop and cleanup go through a privileged launcher.
+> The mode is part of the launch contract and of the launch digest.
+
 The restrictions in this section remain required. Exact `<office home>`,
 `work.git`, `mirror.git`, macOS and native-CLI rows below are **legacy layout
 security evidence**, not the selected runtime layout. Preserve them for existing

@@ -178,6 +178,15 @@ cannot create competing identities.
 
 ## 2. Wizard and automation
 
+> **Amended 2026-11-17.** Setup gains two steps. Under
+> [ADR-0015](../adr/0015-agent-isolation-modes.md) it offers the agent isolation mode
+> and, for `dedicated-user`, performs one administrator step that creates the agent
+> account and installs its launcher; without administrator rights it continues in
+> `same-user` and says so. Under
+> [ADR-0016](../adr/0016-no-application-level-data-encryption.md) it reports whether
+> operating-system disk encryption is on and which file permissions it set, because
+> organization data is no longer encrypted by the application.
+
 For a new instance the wizard establishes, in order:
 
 1. Instance name and data location, using platform defaults unless explicitly set.
@@ -794,6 +803,10 @@ When HQ is stopped, the browser can't load this page at all and shows its own
 error. The table covers a page that loaded and then can't reach HQ.
 
 ### 4a.4 Session end, signing in again, and sign out
+
+> **Amended by [ADR-0013](../adr/0013-stored-browser-sessions.md) (2026-11-17).** A
+> restart or update of the service no longer signs people out. The "session ended"
+> states below still apply to sign-out, expiry, password change and removed access.
 
 **When a session ends.** It expires (A83), the account's password is changed or
 reset *(rev 5: X-02 §4.1, §6.2; A85 resolved)*, the account is unlinked from

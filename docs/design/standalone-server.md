@@ -300,6 +300,13 @@ agent-readable just because everything is under one root. OS-user sharing is not
 a security isolation boundary between instances; stronger isolation needs separate
 users/containers. The runtime sandbox/permission model must still enforce its denies.
 
+**Amended 2026-11-17.** [ADR-0015](../adr/0015-agent-isolation-modes.md) makes agent
+isolation a selectable mode: `same-user` (the behaviour described here) and
+`dedicated-user`, an OS account that setup provisions and that cannot read the
+organization data root. [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
+removes application-level encryption of organization data, so file permissions, disk
+encryption and the isolation mode are what protect it.
+
 ## 4. Setup and service lifecycle
 
 **Implementation status at merged v1 700d5a37:** serve and help/version are implemented; setup returns unavailable without provisioning. The service start/stop/status commands, protected HQ bootstrap, downloads/offline installation, updater activation and authenticated production web startup below remain requirements. Existing agent-os messaging/directory operations remain available. The UI directory/package is agentic-org-ui in this PR and remains a static asset build.

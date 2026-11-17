@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs-only reassessment 2026-11-17 (conflict register A-01..A-06): ADR0002 gains a layout-precedence note; organization-data README selects one durable/runtime tree and defines HQ as organization authority; document16 separates agent re-placement from office relocation. No stack, tool, boundary, role or skill change; existing guidance still covers them. The authority map links the new conflict-resolution plan. Refresh only these4 evidence hashes.",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo: conflict fixes A-01..A-06 (one storage tree, HQ authority, relocation, codecs, messaging merge) and owner decisions ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes, ADR0016 no application-level data encryption. security-boundaries and hq-creation-provider skills gain the matching guardrails; no new tool, role or stack. Code unchanged; SQLCipher/key custody remain until FC-162.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "008313093f494ad03206c53764bbe74732764fc5c0dbefcbae5e5ffe17e76bbe"
+      "sha256": "eee8a83c9d048dcccb3d5574ecef2107fb4590cdd0756c984b7d4ee88f2acdb2"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "3b279f3450913450340977b5309f6f4819babcc742ffff325554536d8660f953"
+      "sha256": "9c6dffada686eaa934baa32c777ae7cf6d4f77200c70155a1fdc9ced2f1cd166"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
@@ -126,7 +126,7 @@
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "6751f22ec7f2e74e964fef67557933a5ca16174bafd7b416e6d83f671853fe3f"
+      "sha256": "c5fcc222d87a355b6d8794abdc6e735cfcfd97b518bf604c2d369c826393b6de"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
@@ -150,11 +150,11 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "abf2d17bb603ff93e799ab32214f5259ef8d815aaf2d3d807c0a6079f6a37015"
+      "sha256": "9946955e29cd0b5ae6a967724871bbbf791cf713e9533fd7b7dd60cdbdd33870"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "46514dbacaffc55541acd188c46b924be01c19f07fbe5682ba475e33d7c10091"
+      "sha256": "6d7cdfa5c9703bab77172d4b50b2b3be8d0b5275905d6c7fbffc53700db7207e"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -190,7 +190,7 @@
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "a58018059fdc8a3d43500f1dd24cd3b89090e92bf3e7cf23260c28644c165aeb"
+      "sha256": "a3a5460f5c2a2e555a3f8e96db309e08464d0e6b5fb1048871ef2a52c95a5d5c"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
