@@ -60,6 +60,106 @@ fn control_eof_marks_the_connection_dead_and_refuses_calls() {
 }
 
 #[test]
+fn large_account_replies_keep_the_control_connection_in_step() {
+    let orgs: Vec<_> = (0..700)
+        .map(|i| ops::LinkedOrg {
+            org_id: format!("{i:026}"),
+            member_id: INSTANCE.into(),
+            office_ids: vec![format!("{i:026}")],
+        })
+        .collect();
+    let expected = orgs.clone();
+    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
+    let host = thread::spawn(move || {
+        let mut reader = BufReader::new(peer);
+        let mut methods = Vec::new();
+        while let Some(request) =
+            org_proto::frame::read_message::<serde_json::Value>(&mut reader).unwrap()
+        {
+            let method = request["method"].as_str().unwrap();
+            let result = match method {
+                "hello" => serde_json::to_value(
+                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
+                )
+                .unwrap(),
+                "account.verify" => serde_json::to_value(ops::AccountVerifyResult {
+                    session: SessionHandle::new("synthetic native handle".into()).unwrap(),
+                    account: INSTANCE.into(),
+                    admin: false,
+                    orgs: orgs.clone(),
+                })
+                .unwrap(),
+                "session.inspect" => serde_json::to_value(ops::SessionInspectResult {
+                    account: INSTANCE.into(),
+                    login: "Owner".into(),
+                    admin: false,
+                    orgs: orgs.clone(),
+                    server_time_ms: 1,
+                    absolute_expires_at_ms: 2,
+                    idle_expires_at_ms: 2,
+                })
+                .unwrap(),
+                "session.renew" => serde_json::json!({}),
+                _ => panic!("unexpected method {method}"),
+            };
+            let reply = serde_json::json!({"id":request["id"],"result":result});
+            if matches!(method, "account.verify" | "session.inspect") {
+                let bytes = serde_json::to_vec(&reply).unwrap();
+                assert!(bytes.len() > 64 * 1024);
+                assert!(bytes.len() < org_proto::MAX_FRAME_BYTES);
+            }
+            methods.push(method.to_owned());
+            if org_proto::frame::write_message(reader.get_mut(), &reply).is_err() {
+                break;
+            }
+        }
+        methods
+    });
+    let control = HostControl::from_handoff(
+        gateway.into(),
+        transfer.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+    )
+    .unwrap();
+    let password = Password::new("generated unit credential".into()).unwrap();
+    let verified = control.verify("Owner", &password).unwrap();
+    assert_eq!(verified.orgs, expected);
+    assert_eq!(control.inspect(&verified.session).unwrap().orgs, expected);
+    assert_eq!(control.renew(&verified.session), Ok(()));
+    assert!(control.live());
+    drop(control);
+    assert_eq!(
+        host.join().unwrap(),
+        [
+            "hello",
+            "account.verify",
+            "session.inspect",
+            "session.renew"
+        ]
+    );
+}
+
+#[test]
+fn control_replies_accept_the_native_frame_limit_and_refuse_larger_frames() {
+    let mut reply = Reply::new();
+    let header = br#"{"id":1,"result":{}}"#;
+    for &byte in header {
+        reply.push(byte).unwrap();
+    }
+    // JSON trailing whitespace counts toward the native frame limit;
+    // the delimiting newline is handled separately by the actor.
+    for _ in header.len()..org_proto::MAX_FRAME_BYTES {
+        reply.push(b' ').unwrap();
+    }
+    assert_eq!(reply.bytes.len(), org_proto::MAX_FRAME_BYTES);
+    decode::<org_proto::Empty>(&reply.bytes, 1).unwrap();
+    assert_eq!(reply.push(b' '), Err(Failure::Unavailable));
+    assert_eq!(reply.bytes.len(), org_proto::MAX_FRAME_BYTES);
+}
+
+#[test]
 fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
     let (gateway, peer) = UnixStream::pair().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();

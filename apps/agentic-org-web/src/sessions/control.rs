@@ -24,7 +24,7 @@ use std::{
 use zeroize::Zeroizing;
 
 const DEADLINE: Duration = Duration::from_secs(5);
-const MAX_CONTROL_BYTES: usize = 64 * 1024;
+const MAX_CONTROL_BYTES: usize = org_proto::MAX_FRAME_BYTES;
 static SPAWN_FENCE: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 mod tests;
@@ -36,6 +36,28 @@ pub enum Failure {
 }
 struct Reply {
     bytes: Zeroizing<Vec<u8>>,
+}
+impl Reply {
+    fn new() -> Self {
+        Self {
+            bytes: Zeroizing::new(Vec::with_capacity(MAX_CONTROL_BYTES.min(64 * 1024))),
+        }
+    }
+    fn push(&mut self, byte: u8) -> Result<(), Failure> {
+        if self.bytes.len() == MAX_CONTROL_BYTES {
+            return Err(Failure::Unavailable);
+        }
+        if self.bytes.len() == self.bytes.capacity() {
+            let capacity = (self.bytes.capacity() * 2).min(MAX_CONTROL_BYTES);
+            let mut bytes = Zeroizing::new(Vec::with_capacity(capacity));
+            bytes.extend_from_slice(&self.bytes);
+            // Replacing the wrapper zeroes the old allocation before releasing
+            // it; Vec's ordinary growth could leave a secret copy behind.
+            self.bytes = bytes;
+        }
+        self.bytes.push(byte);
+        Ok(())
+    }
 }
 struct Job {
     line: Zeroizing<Vec<u8>>,
@@ -314,7 +336,7 @@ fn actor(
             writer
                 .write_all(&job.line)
                 .map_err(|_| Failure::Unavailable)?;
-            let mut bytes = Zeroizing::new(Vec::with_capacity(MAX_CONTROL_BYTES));
+            let mut reply = Reply::new();
             loop {
                 readable(receiver.fd().ok_or(Failure::Unavailable)?, job.until)?;
                 let (b, _) = receiver
@@ -323,12 +345,9 @@ fn actor(
                 if b == b'\n' {
                     break;
                 }
-                if bytes.len() == MAX_CONTROL_BYTES {
-                    return Err(Failure::Unavailable);
-                }
-                bytes.push(b);
+                reply.push(b)?;
             }
-            Ok(Reply { bytes })
+            Ok(reply)
         })();
         let failed = result.is_err();
         let _ = job.answer.send(result);
