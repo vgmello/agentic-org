@@ -721,13 +721,13 @@ How the tracks avoid each other:
   and `supervisor/mod.rs` (A1 removes the older launch form there), `keys/` (A1
   renames the database key), `org-host/src/lib.rs` and `bootstrap.rs` (A2, A3),
   `hostdb` (A2, A3) and `offices.rs` (A4) are edited by both tracks. The Track X lead
-  asks the other lead which lands first; the second rebases. X1's change in those files
+  asks the other lead which lands first; the second rebases. X1c's change in those files
   is limited to call sites: `spawn_suspended`, `ServerCheck::admit`, `still` and
   `reader_is_child` become `Admission::spawn` and `verify_reader`; flush, rename and
   location helpers become `org_platform` calls.
-- **After X1, the rule is mechanical.** A Track A or B change that needs something
+- **After X1d, the rule is mechanical.** A Track A or B change that needs something
   new from the system adds it to `org-platform`: the macOS adapter, the refusing
   adapter, and a note for Track X, which writes the Linux adapter.
-- **After X1, Linux work stays inside `org-platform`** and the composition in
+- **After X1d, Linux work stays inside `org-platform`** and the composition in
   `org-host`, so X2 to X4 do not touch the files A1 to A5 edit, except the shared tests
   of X2 and the setup properties of X3 and X5.

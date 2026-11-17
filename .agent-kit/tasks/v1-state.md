@@ -22,7 +22,7 @@ follows "For every increment" in that plan and the workflow in
   4. Messages: chat and asks that wait for an answer (B6, B7, C6).
   5. Tasks: in the browser and with `agent-os`; an agent works in a repository (B4, B5,
      C7).
-- **Milestone two: Linux,** including a container, runs now in parallel as Track X (X1 to
+- **Milestone two: Linux,** including a container, runs now in parallel as Track X (X1a to
   X6; [design](../../docs/design/linux-host.md)).
 - **Milestone three: a second office** on another machine (S1).
 - **Later, still v1:** the increments listed under "Later, in no fixed order".
