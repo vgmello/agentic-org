@@ -1,8 +1,10 @@
 //! REC-ESC-1 creation escrow. Maintained primitives, fixed versioned budgets.
 //! No certificate encoding, enrollment, trust promotion or host key access.
+//! [`wrap`] protects an office's private keys under its office secrets key (ADR-0016).
 #![forbid(unsafe_code)]
 mod code;
 mod envelope;
+pub mod wrap;
 pub use code::Code;
 pub use envelope::{Envelope, MAX_PACKAGE_BYTES};
 use ring::{
@@ -72,8 +74,8 @@ impl SigningKey {
             .try_into()
             .expect("P-256 uncompressed key")
     }
-    /// For the worker's local-only SQLCipher binding; never copy into public
-    /// events, snapshots, status, logs or a host-control response.
+    /// For wrapping into the worker's local store ([`wrap`]); never copy into
+    /// public events, snapshots, status, logs or a host-control response.
     pub fn local_der(&self) -> &[u8] {
         &self.der
     }
