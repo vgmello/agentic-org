@@ -86,6 +86,9 @@ fn normal_closure() -> BTreeSet<String> {
         .iter()
         .map(|node| (node["id"].as_str().expect("node id"), node))
         .collect();
+    // Traverse by package id, so a second version of a crate is still walked;
+    // collect names separately for the forbidden-crate check.
+    let mut visited = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut pending = vec![root];
     while let Some(id) = pending.pop() {
@@ -96,7 +99,8 @@ fn normal_closure() -> BTreeSet<String> {
                 .iter()
                 .any(|kind| kind["kind"].is_null());
             let dep_id = dep["pkg"].as_str().expect("dep pkg");
-            if normal && seen.insert(names[dep_id].to_owned()) {
+            if normal && visited.insert(dep_id) {
+                seen.insert(names[dep_id].to_owned());
                 pending.push(dep_id);
             }
         }
