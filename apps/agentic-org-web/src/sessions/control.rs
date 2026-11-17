@@ -304,7 +304,9 @@ fn actor(
                 continue;
             }
         };
-        if job.claimed.swap(true, Ordering::SeqCst) || Instant::now() >= job.until {
+        // Expired jobs stay unclaimed: a caller resuming its timeout handler
+        // must not mistake an unwritten request for possible in-flight I/O.
+        if Instant::now() >= job.until || job.claimed.swap(true, Ordering::SeqCst) {
             let _ = job.answer.send(Err(Failure::Unavailable));
             continue;
         }

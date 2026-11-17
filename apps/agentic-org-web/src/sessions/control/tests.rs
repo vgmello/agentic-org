@@ -145,6 +145,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
     let (gateway, peer) = UnixStream::pair().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
     let (release, stalled) = mpsc::sync_channel::<()>(1);
+    let (started, observed) = mpsc::sync_channel(1);
     let host = thread::spawn(move || {
         let mut reader = BufReader::new(peer);
         let mut methods = Vec::new();
@@ -154,6 +155,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
             let method = request["method"].as_str().unwrap().to_owned();
             if method == "session.inspect" {
                 // Stall the earlier call within its deadline.
+                started.send(()).unwrap();
                 stalled.recv().unwrap();
             }
             let result = if method == "session.renew" {
@@ -190,21 +192,51 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
             control.inspect(&handle).map(|_| ())
         })
     };
-    thread::sleep(Duration::from_millis(100)); // the actor now waits on inspect
-                                               // Queued behind the stalled call, this one expires before it is written.
+    observed.recv_timeout(Duration::from_secs(2)).unwrap();
+    // Queued behind the stalled call, this one expires before it is written.
     let queued = control.borrowed_until::<ops::SessionEnd, _>(
         &serde_json::json!({"session": &handle}),
         Instant::now() + Duration::from_millis(200),
     );
     assert_eq!(queued.err(), Some(Failure::Unavailable));
     assert!(control.live(), "an unwritten expiry closed the connection");
+
+    // Also cover the caller being paused after recv_timeout returns but before
+    // its timeout handler claims the job: the actor sees this expiry first.
+    let (answer, waiting) = mpsc::sync_channel(1);
+    let claimed = Arc::new(AtomicBool::new(false));
+    control
+        .jobs
+        .try_send(Job {
+            line: encode(&serde_json::json!({
+                "id":99,"method":"session.end","params":{"session": &handle}
+            }))
+            .unwrap(),
+            until: Instant::now(),
+            answer,
+            claimed: Arc::clone(&claimed),
+        })
+        .unwrap();
+    assert!(matches!(
+        waiting.recv_timeout(Duration::ZERO),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
     release.send(()).unwrap();
     assert_eq!(earlier.join().unwrap(), Ok(()));
+    assert_eq!(
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap().err(),
+        Some(Failure::Unavailable)
+    );
+    // Resume the caller's timeout handler after the actor skipped its job.
+    if claimed.swap(true, Ordering::SeqCst) {
+        control.close();
+    }
+    assert!(control.live(), "an unwritten expiry closed the connection");
     // Later calls still work on the same in-step connection.
     assert_eq!(control.renew(&handle), Ok(()));
     assert!(control.live());
     drop(control);
-    // The expired session.end was never sent to the host.
+    // Neither expired session.end was sent to the host.
     assert_eq!(
         host.join().unwrap(),
         ["hello", "session.inspect", "session.renew"]
