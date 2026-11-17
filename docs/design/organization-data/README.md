@@ -94,6 +94,10 @@ Structural import validation rejects duplicate IDs, invalid references, team cyc
 
 Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
+## Organization authority
+
+In v1 the **organization authority is the HQ office worker**. It is a role of that process, not a separate service or daemon: the single writer at HQ owns `durable/authority/`, allocates readable numbers, registers feature slugs and flag keys, accepts usage corrections, issues turn permits and cooldowns, and holds placement generations and budget-control state. Wherever a document in this set says "shared organization authority", "shared logical organization authority" or "HQ's organization service", it means this role. Other offices submit requests to it and never act as it, including while disconnected. Moving the role to another office is promotion; it is manual, fenced by epoch, and deferred under [document 16](16-recovery-and-office-continuity.md).
+
 ## Selected and pending v1 decisions
 
 | Topic | Current decision |
@@ -107,6 +111,7 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Single home team, nested teams, lead authority | Include the agreed structure |
 | Offices | Durable organization records; support multiple offices |
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
+| Organization authority | The HQ office worker in v1: one role for numbering, slug/key registration, permits, placement generations, budget-control state and corrections; promotion deferred |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
 | Accountability and lifecycle | Feature/document owners; active/archived teams, active/inactive employees, draft/current/deprecated documents |
