@@ -145,6 +145,150 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
     offices.shutdown();
 }
 
+fn confirm_pending_checkpoint(writers: &Arc<Writers>, office: &str) {
+    use org_office_launch::writer::{self as wire, Request, Response};
+    use org_proto::work::JournalPosition;
+    use std::{io::BufReader, os::unix::net::UnixStream, sync::atomic::AtomicBool};
+    let (host, worker) = UnixStream::pair().unwrap();
+    writers
+        .serve(office, host, Arc::new(AtomicBool::new(true)))
+        .unwrap();
+    let mut worker = BufReader::new(worker);
+    let admission: wire::Admission = wire::read(&mut worker).unwrap().unwrap();
+    let checkpoint = JournalPosition {
+        ordinal: 0,
+        sha256: "a".repeat(64),
+        previous_sha256: None,
+        origin_incarnation: "retained-origin".into(),
+        origin_high_water: 73,
+    };
+    wire::write(
+        worker.get_mut(),
+        &Request::Confirm {
+            identity: admission.identity.clone(),
+            before: None,
+            after: checkpoint,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        wire::read::<Response>(&mut worker).unwrap(),
+        Some(Response::Confirmed)
+    ));
+}
+
+fn custody_snapshot(custody: &dyn HostSecrets) -> Vec<(Name, Vec<u8>)> {
+    custody
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|name| {
+            let bytes = custody.load(&name).unwrap().unwrap().expose().to_vec();
+            (name, bytes)
+        })
+        .collect()
+}
+
+#[test]
+fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_device() {
+    use sha2::{Digest, Sha256};
+    for keep_marker in [false, true] {
+        let instance = crate::ids::generate().unwrap();
+        let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+        let root = dir.path().canonicalize().unwrap();
+        let (db, custody) = auth.provisioning_storage();
+        let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
+        let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+        let home = root.join("office-state");
+        private(&home).unwrap();
+        let offices = offices(
+            &home,
+            keys.clone(),
+            writers.clone(),
+            &instance,
+            ServerCheck::Refuse,
+            root.join("absent"),
+        );
+        let controller = Provisioning::new(
+            db.clone(),
+            custody.clone(),
+            keys.clone(),
+            writers.clone(),
+            &instance,
+            &root,
+            &home,
+        );
+        let p = params();
+        let actor = account(&db);
+        assert!(controller.run(&actor, &p, &offices).is_err());
+        let fp = journal::fingerprint(&p).unwrap();
+        let wall = org_proto::ulid_time_ms(&p.operation_id).unwrap() as i64;
+        let reservation = db
+            .provisioning(&actor, &p.operation_id, &fp, wall)
+            .unwrap()
+            .unwrap();
+        assert!(!reservation.linked);
+        let office = &reservation.prepared.office_id;
+        let hash = org_office_launch::recovery::hex(&Sha256::digest(office.as_bytes()));
+        let credential = Name::parse(&format!("writer.{hash}")).unwrap();
+        confirm_pending_checkpoint(&writers, office);
+        let original = custody.load(&credential).unwrap().unwrap();
+        let marker = home
+            .join("offices")
+            .join(office)
+            .join("selected-writer.required");
+        if !keep_marker {
+            std::fs::remove_file(&marker).unwrap();
+        }
+        let material = [
+            root.join("durable/authority")
+                .join(office)
+                .join("checkpoint-evidence"),
+            root.join("durable/state")
+                .join(&reservation.prepared.organization_id)
+                .join("public-package"),
+            home.join("offices")
+                .join(office)
+                .join("private-office-state"),
+        ];
+        for path in &material {
+            std::fs::write(path, b"retained exact material").unwrap();
+        }
+        custody.delete(&credential).unwrap();
+        if !keep_marker {
+            custody
+                .delete(&Name::parse("writer-device").unwrap())
+                .unwrap();
+        }
+        let before = custody_snapshot(&*custody);
+        let key_before = fingerprint(&keys.load(office).unwrap().unwrap());
+        assert!(controller.run(&actor, &p, &offices).is_err());
+        assert!(
+            custody.load(&credential).unwrap().is_none(),
+            "lost writer was recreated"
+        );
+        let after = custody_snapshot(&*custody);
+        assert_eq!(before, after);
+        assert_eq!(
+            fingerprint(&keys.load(office).unwrap().unwrap()),
+            key_before
+        );
+        assert_eq!(marker.exists(), keep_marker);
+        for path in &material {
+            assert_eq!(std::fs::read(path).unwrap(), b"retained exact material");
+        }
+        let retained: serde_json::Value = serde_json::from_slice(original.expose()).unwrap();
+        assert_eq!(retained["position"]["origin_high_water"], 73);
+        assert!(
+            !db.provisioning(&actor, &p.operation_id, &fp, wall)
+                .unwrap()
+                .unwrap()
+                .linked
+        );
+        offices.shutdown();
+    }
+}
+
 #[test]
 fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     let instance = crate::ids::generate().unwrap();

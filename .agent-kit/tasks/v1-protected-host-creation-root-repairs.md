@@ -30,3 +30,6 @@ fence). All completed successfully. Full current workspace/kit/app checks, fresh
 whole-diff review, exact original-author validation and separate fresh final review
 remain mandatory before merging this unit into v1-integration. Existing failures and
 checkpoint 1ce54471 are retained; signing setup/authentic release verification is last.
+
+
+Fresh initial review087e4e8a subsequently confirmed missing-writer-custody replay (P1) and partial marker publication (P2). The runner rejected absolute finding paths; its BLOCKED report is retained. Exact reviewer01a1e747-bc1a-7e33-ac24-63f2230bfb65 performed the same-session bounded repair as sole writer in writer.rs, writer/tests.rs and provisioning/tests.rs; original native author01a1dfb4 remains preserved for intent validation. Root verified the terminal handoff, all three hashes and1492 unchanged nonowned inputs. Original-code RED and current12PASS focused, two Clippy configurations and formatting evidence live in reviewer-writer-repair-1. Missing committed custody now refuses before allocating identity/device, and complete flushed markers publish exclusively without clobbering unsafe entries. Real write-failure/process-kill tests preserve original admission/checkpoint. No authority/schema/wire change; current full gates and fresh reviews remain.

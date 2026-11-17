@@ -9,7 +9,6 @@ use org_office_launch::writer::{self as wire, Admission, Request, Response};
 use org_proto::work::JournalPosition;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(target_os = "macos")]
 use std::os::fd::AsRawFd;
 use std::{
     collections::BTreeSet,
@@ -103,6 +102,84 @@ fn name(office: &str) -> io::Result<Name> {
         .collect();
     Name::parse(&format!("writer.{hash}")).map_err(private)
 }
+
+const MARKER_BYTES: &[u8] = b"selected-writer/1\n";
+
+fn flush_marker(file: &fs::File) -> io::Result<()> {
+    file.sync_all()?;
+    #[cfg(target_os = "macos")]
+    // SAFETY: live regular-file descriptor; F_FULLFSYNC takes no pointer argument.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn existing_marker(path: &Path) -> io::Result<Option<fs::File>> {
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let meta = file.metadata()?;
+    if !meta.is_file()
+        || meta.uid() != crate::home::euid()
+        || meta.mode() & 0o7777 != 0o600
+        || meta.nlink() != 1
+        || meta.len() != MARKER_BYTES.len() as u64
+    {
+        return Err(refused());
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::take(&file, 32).read_to_end(&mut bytes)?;
+    if bytes != MARKER_BYTES {
+        return Err(refused());
+    }
+    Ok(Some(file))
+}
+
+fn publish_marker(parent: &fs::File, temporary: &str) -> io::Result<()> {
+    let from = std::ffi::CString::new(temporary).map_err(private)?;
+    let to = c"selected-writer.required";
+    let fd = parent.as_raw_fd();
+    // SAFETY: fixed/generated single-component names under the retained parent;
+    // exclusive rename never overwrites an existing final entry.
+    #[cfg(target_os = "macos")]
+    let result =
+        unsafe { libc::renameatx_np(fd, from.as_ptr(), fd, to.as_ptr(), libc::RENAME_EXCL) };
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            fd,
+            from.as_ptr(),
+            fd,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn empty_reservation_root(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Ok(meta) if meta.is_dir() => {}
+        _ => return Err(refused()),
+    }
+    if fs::read_dir(path)?.next().is_some() {
+        return Err(refused());
+    }
+    Ok(())
+}
+
 impl Writers {
     pub(crate) fn open(
         custody: Arc<dyn HostSecrets>,
@@ -186,52 +263,54 @@ impl Writers {
     }
     fn install_marker(&self, office: &str) -> io::Result<()> {
         let path = self.marker(office)?;
-        let opened = fs::OpenOptions::new()
+        let parent_path = path.parent().ok_or_else(refused)?;
+        let parent = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(parent_path)?;
+        if existing_marker(&path)?.is_none() {
+            self.stage_marker(&path, &parent)?;
+        }
+        let file = existing_marker(&path)?.ok_or_else(refused)?;
+        flush_marker(&file)?;
+        parent.sync_all()?;
+        flush_marker(&file)
+    }
+    fn stage_marker(&self, path: &Path, parent: &fs::File) -> io::Result<()> {
+        let temporary = format!(".selected-writer-{}.tmp", crate::ids::generate()?);
+        let temporary_path = path.parent().ok_or_else(refused)?.join(&temporary);
+        let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&path);
-        let mut file = match opened {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let file = fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(&path)?;
-                let meta = file.metadata()?;
-                if !meta.is_file()
-                    || meta.uid() != crate::home::euid()
-                    || meta.mode() & 0o7777 != 0o600
-                    || meta.len() != b"selected-writer/1\n".len() as u64
-                {
-                    return Err(refused());
-                }
-                let mut bytes = Vec::new();
-                std::io::Read::take(&file, 32).read_to_end(&mut bytes)?;
-                if bytes != b"selected-writer/1\n" {
-                    return Err(refused());
-                }
-                file
+            .open(&temporary_path)?;
+        let result = (|| {
+            file.write_all(MARKER_BYTES)?;
+            flush_marker(&file)?;
+            self.root.verify()?;
+            let held = file.metadata()?;
+            let staged = fs::symlink_metadata(&temporary_path)?;
+            if !staged.is_file() || staged.dev() != held.dev() || staged.ino() != held.ino() {
+                return Err(refused());
             }
-            Err(error) => return Err(error),
-        };
-        if file.metadata()?.len() == 0 {
-            file.write_all(b"selected-writer/1\n")?;
+            match publish_marker(parent, &temporary) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    existing_marker(path)?.ok_or_else(refused)?;
+                    Ok(())
+                }
+                result => result,
+            }
+        })();
+        // Only this attempt's private staging name is removed. SIGKILL leftovers
+        // never become authority and do not block replay with intact custody.
+        match fs::remove_file(&temporary_path) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound && result.is_ok() => {
+                return Err(error)
+            }
+            _ => {}
         }
-        file.sync_all()?;
-        #[cfg(target_os = "macos")]
-        // SAFETY: valid writable fd; F_FULLFSYNC takes no pointer argument.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        fs::File::open(path.parent().ok_or_else(refused)?)?.sync_all()?;
-        #[cfg(target_os = "macos")]
-        // SAFETY: live file on the same filesystem; flush parent publication too.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        result
     }
     /// Called only by protected provisioning/adoption after owner binding. Missing
     /// custody on a normal start never takes this path. Existing records cannot
@@ -265,6 +344,7 @@ impl Writers {
             self.install_marker(&admission.identity.office_id)?;
             return Ok(record.admission);
         }
+        self.require_uncommitted(&admission)?;
         self.db
             .verify_selected_owner(
                 &admission.identity.organization_id,
@@ -274,6 +354,15 @@ impl Writers {
             .map_err(private)?;
         let device_name = Name::parse("writer-device").map_err(private)?;
         if self.custody.load(&device_name).map_err(private)?.is_none() {
+            if self
+                .custody
+                .list()
+                .map_err(private)?
+                .iter()
+                .any(|name| name.as_str().starts_with("writer."))
+            {
+                return Err(refused());
+            }
             let random = crate::secrets::generate_db_key()?;
             let value: String = random
                 .expose_bytes()
@@ -308,6 +397,21 @@ impl Writers {
         self.save(&admission.identity.office_id, &record)?;
         self.install_marker(&admission.identity.office_id)?;
         Ok(admission)
+    }
+    fn require_uncommitted(&self, admission: &Admission) -> io::Result<()> {
+        self.validate_reserved_roots(admission)?;
+        // These directories are prepared empty before the first binding. Any
+        // retained marker, office state, public projection or journal requires
+        // the original custody record; a pending SQL operation cannot replace it.
+        let marker = self.marker(&admission.identity.office_id)?;
+        for path in [
+            marker.parent().ok_or_else(refused)?,
+            Path::new(&admission.protected_root),
+            Path::new(&admission.public_root),
+        ] {
+            empty_reservation_root(path)?;
+        }
+        Ok(())
     }
     fn validate_reserved_roots(&self, admission: &Admission) -> io::Result<()> {
         let protected = Path::new(&admission.protected_root);

@@ -8,7 +8,7 @@
     "localized_change": false,
     "deterministic_checks": true,
     "low_risk": false,
-    "no_prior_failure": null,
+    "no_prior_failure": false,
     "ambiguity_resolved": true
   },
   "evidence": {
@@ -28,7 +28,9 @@
     "low_risk": [
       "Protected ownership, custody, durable recovery deletion and same-connection authority are critical."
     ],
-    "no_prior_failure": [],
+    "no_prior_failure": [
+      "Recorded compiler/integration failures and fresh review087e4e8a writer-custody/marker findings; all attempts remain in the same journal."
+    ],
     "ambiguity_resolved": [
       "v1-native-host-boundary.md rev1 independently READY/activated with all5conditions; actual early compile/exercise falsifies source-closure premise. Protected owner before Writers::reserve is already correctly ordered; no new atomic redesign."
     ]
