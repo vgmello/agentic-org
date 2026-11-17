@@ -649,7 +649,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
 
 #### 4.1 `org-proto` Additions (`crates/org-proto`, owned by `ada`)
 
-The historical additive baseline used `API_VERSION = 1`; first standalone uses version 2 under ADR-0001. Additions remain additive within each version; breaking removals are not licensed under version 1. Because each `agentic-org-office` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
+The local protocol is API version 1 and changes in place until v1 ships (ADR-0001). Because each `agentic-org-office` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
 
 - **Directory & Presence Calls (handled by `org-office` runtime):**
   - `who { member?: String, team?: String, kind?: MemberKind } → { members: Vec<DirectoryCard> }`

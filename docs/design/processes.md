@@ -303,7 +303,7 @@ Each step: its own branch, an independent review, the reviewer's READY, a merge 
 - A68 / A71 · Contributor-chain conflict resolution remains open. One owner team is required; no sibling/project edit can defeat an explicit applicable ancestor prohibition.
 - A69 · Private process storage/access is unselected; do not infer owner read access to author-only private task notes.
 - A70 · Existing parser helpers are changed to the selected envelope.
-- A72 · Import/direct Git publication validation and approval provenance remain design work; invalid authored content must be visible without granting powers.
+- A72 · Direct Git publication validation and approval provenance remain design work; invalid authored content must be visible without granting powers.
 - U25–U28 · Earlier UX preferences remain proposal context. They do not select process/branch/autonomy engines or override selected structure.
 
 ## Appendix A. No migration
