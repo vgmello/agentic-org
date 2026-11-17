@@ -1,0 +1,54 @@
+{
+	"id": "dss-factory",
+	"version": 1,
+	"title": "Desired State Specification factory",
+	"agents": {
+		"setup-agent": { "label": "Setup agent", "persona": "Project bootstrapper" },
+		"product-owner": { "label": "Product owner", "persona": "Talks with the user, owns the Product DSS" },
+		"architect": { "label": "System architect", "persona": "Owns the Technical DSS and standards" },
+		"staff-engineer": { "label": "Staff engineer", "persona": "Co-owns the Technical DSS, plans the work" },
+		"executor": { "label": "Execution agent", "persona": "Implements tasks" },
+		"reviewer": { "label": "Reviewer", "persona": "Independent review of the change" },
+		"reconciler": { "label": "Reconciler", "persona": "Converges code to the published DSS" }
+	},
+	"triggers": [
+		{ "command": "project-setup", "start": "project-setup" },
+		{ "command": "dss", "start": "product-dss-dialogue" }
+	],
+	"blocks": [
+		{ "id": "project-setup", "title": "Brand-new project checks", "file": "blocks/project-setup.md", "agent": "setup-agent", "stage": "setup" },
+		{ "id": "product-dss-dialogue", "title": "Product DSS dialogue", "file": "blocks/product-dss-dialogue.md", "agent": "product-owner", "stage": "product", "interactive": true },
+		{ "id": "publish-product-dss", "title": "Publish Product DSS", "file": "blocks/publish-product-dss.md", "agent": "product-owner", "stage": "product", "produces": ["product-dss"] },
+		{ "id": "tech-dss-autonomous", "title": "Technical DSS (autonomous)", "file": "blocks/tech-dss-autonomous.md", "agent": "architect", "stage": "factory", "produces": ["technical-dss"] },
+		{ "id": "tech-dss-interactive", "title": "Technical DSS (interactive)", "file": "blocks/tech-dss-interactive.md", "agent": "architect", "stage": "factory", "interactive": true, "produces": ["technical-dss"] },
+		{ "id": "architecture-standards", "title": "Version architecture standards", "file": "blocks/architecture-standards.md", "agent": "architect", "stage": "factory", "produces": ["architecture-standards"] },
+		{ "id": "implementation-planning", "title": "Implementation planning", "file": "blocks/implementation-planning.md", "agent": "staff-engineer", "stage": "delivery", "produces": ["tasks"] },
+		{ "id": "execute-tasks", "title": "Execute tasks", "file": "blocks/execute-tasks.md", "agent": "executor", "stage": "delivery" },
+		{ "id": "architect-consult", "title": "Architecture consultation", "file": "blocks/architect-consult.md", "agent": "architect", "stage": "delivery" },
+		{ "id": "code-review", "title": "Review (In Review)", "file": "blocks/code-review.md", "agent": "reviewer", "stage": "delivery" },
+		{ "id": "reconcile", "title": "Reconcile to desired state", "file": "blocks/reconcile.md", "agent": "reconciler", "stage": "reconcile", "produces": ["trace-links"] },
+		{ "id": "converged", "title": "Converged", "file": "blocks/converged.md", "agent": "reconciler", "stage": "reconcile" }
+	],
+	"transitions": [
+		{ "from": "project-setup", "on": "completed", "to": "product-dss-dialogue" },
+		{ "from": "product-dss-dialogue", "on": "context.sufficient", "to": "publish-product-dss" },
+		{ "from": "publish-product-dss", "on": "product-dss.published", "when": "standards.defined", "to": "tech-dss-autonomous" },
+		{ "from": "publish-product-dss", "on": "product-dss.published", "when": "!standards.defined", "to": "tech-dss-interactive" },
+		{ "from": "tech-dss-autonomous", "on": "decision.open", "to": "tech-dss-interactive" },
+		{ "from": "tech-dss-autonomous", "on": "tech-dss.recorded", "when": "standards.changed", "to": "architecture-standards" },
+		{ "from": "tech-dss-autonomous", "on": "tech-dss.recorded", "when": "!standards.changed", "to": "implementation-planning" },
+		{ "from": "tech-dss-interactive", "on": "tech-dss.recorded", "when": "standards.changed", "to": "architecture-standards" },
+		{ "from": "tech-dss-interactive", "on": "tech-dss.recorded", "when": "!standards.changed", "to": "implementation-planning" },
+		{ "from": "architecture-standards", "on": "standards.versioned", "to": "implementation-planning" },
+		{ "from": "implementation-planning", "on": "tasks.created", "to": "execute-tasks" },
+		{ "from": "execute-tasks", "on": "question.architecture", "to": "architect-consult" },
+		{ "from": "architect-consult", "on": "answered", "to": "execute-tasks" },
+		{ "from": "execute-tasks", "on": "status:in_review", "to": "code-review" },
+		{ "from": "code-review", "on": "status:changes_requested", "to": "execute-tasks" },
+		{ "from": "code-review", "on": "status:approved", "when": "tasks.remaining", "to": "execute-tasks" },
+		{ "from": "code-review", "on": "status:approved", "when": "!tasks.remaining", "to": "reconcile" },
+		{ "from": "reconcile", "on": "drift.detected", "to": "implementation-planning" },
+		{ "from": "reconcile", "on": "converged", "to": "converged" },
+		{ "from": "converged", "on": "product-dss.new-version", "to": "product-dss-dialogue" }
+	]
+}
