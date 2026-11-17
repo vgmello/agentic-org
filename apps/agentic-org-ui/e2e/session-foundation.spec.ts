@@ -208,6 +208,25 @@ test.describe('P6a auth foundation @webkit', () => {
 			login: 'Blair'
 		});
 	});
+	test('SIGN-7: unrelated nameless and padded cookies never deny the session pair', async ({
+		page,
+		context
+	}) => {
+		const api = await backend(context);
+		await mount(page);
+		await page.evaluate(() =>
+			window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
+		);
+		const [pair] = await api.issued();
+		expect((await getSession(page, pair.proof)).status).toBe(200);
+		// Another loopback app's cookies: one without a name (no `=`) and one named.
+		await page.evaluate(() => {
+			document.cookie = 'orphan-value; path=/';
+			document.cookie = 'other_app=1; path=/';
+		});
+		expect(await page.evaluate(() => document.cookie)).toContain('orphan-value');
+		expect((await getSession(page, pair.proof)).status).toBe(200);
+	});
 	test('SIGN-7: the real server refuses cookie-only, wrong-proof and proof-only recovery', async ({
 		page,
 		context

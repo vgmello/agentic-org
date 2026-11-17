@@ -43,15 +43,19 @@ async function body(req: IncomingMessage) {
 	}
 	return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
-/** Mirrors the gateway's `authenticate`: exactly one canonical proof header and exactly one canonical session cookie. */
+/**
+ * Mirrors the gateway's `authenticate`: exactly one canonical proof header and exactly one canonical
+ * session cookie. Like the gateway, each Cookie item is trimmed, and items that cannot be ours (no `=`
+ * or another name) are skipped rather than refused.
+ */
 function presentedPair(req: IncomingMessage): SessionPair | undefined {
 	const proof = req.headers['x-org-session-proof'];
 	if (typeof proof !== 'string' || !lowerHex64.test(proof)) return undefined;
 	let cookie: string | undefined;
-	for (const item of (req.headers.cookie ?? '').split(';')) {
+	for (const raw of (req.headers.cookie ?? '').split(';')) {
+		const item = raw.trim();
 		const separator = item.indexOf('=');
-		if (separator < 0) return undefined;
-		if (item.slice(0, separator).trim() !== sessionCookieName) continue;
+		if (separator < 0 || item.slice(0, separator) !== sessionCookieName) continue;
 		if (cookie !== undefined) return undefined;
 		cookie = item.slice(separator + 1);
 	}
