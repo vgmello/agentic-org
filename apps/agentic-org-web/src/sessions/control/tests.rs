@@ -139,3 +139,74 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
         );
     }
 }
+
+#[test]
+fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() {
+    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
+    let (release, stalled) = mpsc::sync_channel::<()>(1);
+    let host = thread::spawn(move || {
+        let mut reader = BufReader::new(peer);
+        let mut methods = Vec::new();
+        while let Ok(Some(request)) =
+            org_proto::frame::read_message::<serde_json::Value>(&mut reader)
+        {
+            let method = request["method"].as_str().unwrap().to_owned();
+            if method == "session.inspect" {
+                // Stall the earlier call within its deadline.
+                stalled.recv().unwrap();
+            }
+            let result = if method == "session.renew" {
+                serde_json::json!({})
+            } else if method == "session.inspect" {
+                serde_json::json!({"account":"a","login":"l","admin":false,"orgs":[],
+                    "server_time_ms":1,"absolute_expires_at_ms":2,"idle_expires_at_ms":2})
+            } else {
+                serde_json::to_value(
+                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
+                )
+                .unwrap()
+            };
+            methods.push(method);
+            let reply = serde_json::json!({"id":request["id"],"result":result});
+            if org_proto::frame::write_message(reader.get_mut(), &reply).is_err() {
+                break;
+            }
+        }
+        methods
+    });
+    let control = HostControl::from_handoff(
+        gateway.into(),
+        transfer.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+    )
+    .unwrap();
+    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+    let earlier = {
+        let control = Arc::clone(&control);
+        thread::spawn(move || {
+            let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+            control.inspect(&handle).map(|_| ())
+        })
+    };
+    thread::sleep(Duration::from_millis(100)); // the actor now waits on inspect
+                                               // Queued behind the stalled call, this one expires before it is written.
+    let queued = control.borrowed_until::<ops::SessionEnd, _>(
+        &serde_json::json!({"session": &handle}),
+        Instant::now() + Duration::from_millis(200),
+    );
+    assert_eq!(queued.err(), Some(Failure::Unavailable));
+    assert!(control.live(), "an unwritten expiry closed the connection");
+    release.send(()).unwrap();
+    assert_eq!(earlier.join().unwrap(), Ok(()));
+    // Later calls still work on the same in-step connection.
+    assert_eq!(control.renew(&handle), Ok(()));
+    assert!(control.live());
+    drop(control);
+    // The expired session.end was never sent to the host.
+    assert_eq!(
+        host.join().unwrap(),
+        ["hello", "session.inspect", "session.renew"]
+    );
+}

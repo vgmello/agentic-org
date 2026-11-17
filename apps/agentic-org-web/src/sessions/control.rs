@@ -41,6 +41,9 @@ struct Job {
     line: Zeroizing<Vec<u8>>,
     until: Instant,
     answer: SyncSender<Result<Reply, Failure>>,
+    /// Claimed once, by the actor taking the job or by the caller abandoning
+    /// it. An abandoned job is never written, so the stream stays in step.
+    claimed: Arc<AtomicBool>,
 }
 pub struct HostControl {
     instance: String,
@@ -197,17 +200,24 @@ impl HostControl {
         }
         self.borrowed::<Verify, _>(&Params { login, password })
     }
-    /// Every call gets the full per-call deadline. Expiry after a request may
-    /// have been written leaves the stream out of step, so it closes the
-    /// connection; callers must never shorten this budget.
+    /// Every call gets the full per-call deadline. Expiry after the actor took
+    /// the request (it may have been written) leaves the stream out of step, so
+    /// it closes the connection; callers must never shorten this budget. Expiry
+    /// while still queued abandons the unwritten request and keeps the connection.
     fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
+        self.borrowed_until::<C, T>(params, Instant::now() + DEADLINE)
+    }
+    fn borrowed_until<C: Call, T: Serialize>(
+        &self,
+        params: &T,
+        until: Instant,
+    ) -> Result<C::Result, Failure> {
         #[derive(Serialize)]
         struct Request<'a, T> {
             id: u64,
             method: &'static str,
             params: &'a T,
         }
-        let until = Instant::now() + DEADLINE;
         if !self.live() {
             return Err(Failure::Unavailable);
         }
@@ -218,6 +228,7 @@ impl HostControl {
             })
             .map_err(|_| Failure::Unavailable)?;
         let (answer, receiver) = mpsc::sync_channel(1);
+        let claimed = Arc::new(AtomicBool::new(false));
         self.jobs
             .try_send(Job {
                 line: encode(&Request {
@@ -227,12 +238,17 @@ impl HostControl {
                 })?,
                 until,
                 answer,
+                claimed: Arc::clone(&claimed),
             })
             .map_err(|_| Failure::Unavailable)?;
         match receiver.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(reply) => decode(&reply?.bytes, id),
             Err(_) => {
-                self.close();
+                // Unclaimed: the actor will skip it unwritten. Claimed: it may
+                // have been written, and a late reply would desynchronize.
+                if claimed.swap(true, Ordering::SeqCst) {
+                    self.close();
+                }
                 Err(Failure::Unavailable)
             }
         }
@@ -288,7 +304,7 @@ fn actor(
                 continue;
             }
         };
-        if Instant::now() >= job.until {
+        if job.claimed.swap(true, Ordering::SeqCst) || Instant::now() >= job.until {
             let _ = job.answer.send(Err(Failure::Unavailable));
             continue;
         }
