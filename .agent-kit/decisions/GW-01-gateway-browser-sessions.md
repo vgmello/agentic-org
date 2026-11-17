@@ -1,6 +1,6 @@
 # GW-01: browser gateway sessions on the native host boundary
 
-- Status: ACTIVE (revision 2, architecture READY 2026-11-17)
+- Status: ACTIVE (revision 3, architecture READY 2026-11-17 after focused recheck; r2 D1 clause superseded)
 - Scope: F4 in `.agent-kit/tasks/v1-incremental-delivery.md`; contract `.agent-kit/tasks/v1-f4-gateway-sessions-contract.md`.
   Request: continue toward the complete v1 delivery (user, 2026-11-17).
 - Architecture owner: Claude lead (hybrid profile, Opus).
@@ -33,8 +33,12 @@ production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these be
   admit kept, server_check.rs:261,277). It admits the gateway with `GatewayFirstLine` carrying `GatewayRelease` from
   `RuntimeRelease::gateway_binding`, and supervises it with `GatewayConnection`. `gateway_ready` requires HQ Active,
   authentication present AND an admitted, serving gateway, not persisted configuration (native-boundary condition 5).
-  F4 does not create the gateway transfer datagram; that waits for the U1 office-channel consumer. The CH-LIFE budget
-  is untouched. (P-3, P-4)
+  r3: F4 DOES create the transfer datagram pair, because the reviewed handoff wire requires exactly
+  [Transfer, Listener] (org-host-control/src/gateway.rs:8-12,205-222) and HEAD `Gateway{transfer,listen}` (listener.rs:97-100) is
+  what makes a connection a gateway connection. The web side receives and holds the transfer descriptor but sends no
+  OfficeOpenChannel and opens no office channel in F4. Any OfficeOpenChannel an admitted gateway could send already goes
+  through HEAD authorization (service/mod.rs:218-262: session authorize plus office linkage) and the unchanged CH-LIFE-1r2
+  budget/receipt structures. (P-3, P-4)
 - D2 Sessions: web `sessions` keeps an in-memory pair→handle map (idle 30 min / absolute 12 h, MAX_SESSIONS 1024)
   and calls host ops on its admitted control connection. The cookie and the proof are two separate 256-bit
   secure-random draws. HMAC-SHA256, keyed by a per-process random key, stores only a digest of the proof, which is
@@ -91,3 +95,24 @@ production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these be
   - Host `SessionRenew` only authorizes/touches the handle and returns Empty (service/mod.rs:166-170). Browser-pair rotation
     is therefore a gateway-local in-memory swap after a successful renew; the host handle is unchanged. Atomicity is the
     gateway map's responsibility and is tested in web.
+
+## Challenges and replacements
+- 2026-11-17, base f8a370ed, writer 2 (F4 continuation, Opus High): D1 "F4 creates no transfer datagram" contradicts the
+  reviewed wire and HEAD structures (evidence above; lead verified gateway.rs:6-12, listener.rs:96-100). Classification: an
+  architecture-text error in r2, not an implementation defect. No source was written.
+  - Retained: P-1..P-8, D2-D5 and all falsification checks.
+  - Disproved: only the r2 D1 no-datagram clause.
+  - Rejected option B (listener-only wire + optional transfer): it changes a public reviewed wire and HEAD listener
+    structures, which U1 would then restore. That is a larger blast radius for no security gain.
+  - Option A adds no new authorization path. It is the first production reach of the existing gateway-kind path
+    (gateway-kind channel delivery listener.rs:671; Socket::Control sign-in lockout bucket authentication.rs:335-339), still
+    bounded by HEAD authorization and CH-LIFE (16 pending/512 total, listener.rs:653-665).
+  - Added checks: web decodes exactly the two descriptors; the F4 web code sends no OfficeOpenChannel (grep/test); the
+    reservoir `gateway_ready` (stored state only) and its `authenticate` not_authorized→Unavailable hunk are NOT taken.
+  - r3 focused recheck (fresh Opus High, claude-opus-5-5): READY. Conditions adopted:
+    - C-r3-1: tests that only the ServerCheck-admitted GatewayConnection sets `gateway` (host.sock and setup connections stay
+      Local, listener.rs:102-103), that the host shuts down the write side of the gateway's transfer end before handoff
+      (gateway.rs:209), and that the handoff sends exactly GATEWAY_HANDOFF_FDS in order.
+    - C-r3-2: D2a is amended. HEAD already throttles with per-socket `login_lockout` (authentication.rs:340-351) under Socket::Control,
+      so this is recorded as existing rather than a B1-06 deferral, with one lockout test through the gateway.
+  - CHECKPOINT B resumes against r3.

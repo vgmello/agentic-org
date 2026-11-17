@@ -35,3 +35,7 @@
   at the 40-turn agent limit before returning a receipt. Its session cannot be resumed from this harness, so the
   original-author intent check for F4 will use the recorded intent of each continuation writer, not a fabricated continuity.
 - Writer 2 (continuation): CHECKPOINT B only (host composition), to fit the turn budget.
+- Writer 2 (subagent a59965e2e3cb7ff6b, Opus High): preflight DECLARED_READY (preflight-writer2.json). It stopped correctly on a premise failure:
+  GW-01 r2 D1 "no transfer datagram" contradicts the reviewed [Transfer, Listener] wire and HEAD Gateway{transfer,listen}. No edits.
+  Receipt: .agent-kit/logs/v1-f4-sessions/writer2-receipt.md. Lead chose option A → GW-01 r3; focused review pending.
+- GW-01 r3 READY (focused recheck); Amendment 2 recorded. Writer 3 dispatched for CHECKPOINT B.

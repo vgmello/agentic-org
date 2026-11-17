@@ -70,3 +70,10 @@ cookie/proof → host session-handle mapping on its admitted control connection.
   MAX_SESSIONS 1024. If host `account.verify` has no attempt throttling, FEATURES records an explicit deferral to B1-06.
 - Production builds keep the Keychain-entitlement refusal: the `ServerCheck::Gateway` admit arm and `gateway_without_keychain`
   are ungated for production on macOS, and non-macOS refuses (GW-01 r2 C3).
+
+## Amendment 2 (2026-11-17, GW-01 r3 challenge; before host implementation)
+- F4 creates the gateway transfer datagram pair required by the reviewed [Transfer, Listener] handoff. Web holds it and sends
+  no OfficeOpenChannel in F4.
+- Added tests: only the admitted GatewayConnection is gateway-kind; the write side of the transfer end is shut down before
+  handoff; handoff descriptors are exact and in order; web decodes exactly two descriptors; one sign-in lockout through the
+  gateway (HEAD per-socket login_lockout). This replaces the conditional B1-06 throttle deferral.
