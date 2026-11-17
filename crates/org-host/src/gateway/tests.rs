@@ -737,8 +737,8 @@ fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
 #[test]
 fn every_admission_refusal_inside_start_keeps_its_cause() {
     use crate::server_check::Step;
-    // The post-ready `still` re-check is mapped the same way; reaching it
-    // needs a token-matching peer, which the real-process test provides.
+    // With real tokens the zsh child itself is the rendezvous peer, so the
+    // second `still` call is the post-ready re-check after the peer check.
     for (step, nth, tokens, cause) in [
         (Step::Admit, 1, true, "admission refused by the test"),
         (
@@ -746,6 +746,12 @@ fn every_admission_refusal_inside_start_keeps_its_cause() {
             1,
             true,
             "pre-resume re-check refused by the test",
+        ),
+        (
+            Step::Still,
+            2,
+            true,
+            "post-ready re-check refused by the test",
         ),
         (
             Step::Admit,
@@ -760,5 +766,34 @@ fn every_admission_refusal_inside_start_keeps_its_cause() {
             "{step:?} {nth}: {message}"
         );
         assert!(message.contains(cause), "{step:?} {nth}: {message}");
+        if (step, nth) == (Step::Still, 2) {
+            assert!(
+                message.contains("the post-ready re-check"),
+                "{step:?} {nth}: {message}"
+            );
+        }
     }
+}
+
+#[test]
+fn a_running_gateway_names_why_it_ended() {
+    let exit = || Some("exit status: 3".to_owned());
+    assert_eq!(
+        ended_cause(true, None, false),
+        "the host refused its gateway.serving as a protocol error"
+    );
+    // The refusal closes the connection; its EOF and exit must not hide it.
+    assert_eq!(
+        ended_cause(true, exit(), false),
+        "the host refused its gateway.serving as a protocol error"
+    );
+    assert_eq!(
+        ended_cause(false, exit(), false),
+        "the child exited (exit status: 3)"
+    );
+    assert_eq!(
+        ended_cause(false, None, false),
+        "its control connection reached EOF"
+    );
+    assert_eq!(ended_cause(false, None, true), "it stopped serving");
 }

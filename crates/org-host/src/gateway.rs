@@ -335,15 +335,22 @@ impl Serving for Running {
         self.control.reported_serving()
     }
     fn ended(&mut self) -> String {
-        if self.control.serving_refused() {
-            "the host refused its gateway.serving as a protocol error".to_owned()
-        } else if matches!(self.process.try_wait(), Ok(true)) {
-            format!("the child exited ({})", exited(&self.process))
-        } else if !self.control.live() {
-            "its control connection reached EOF".to_owned()
-        } else {
-            "it stopped serving".to_owned()
-        }
+        let refused = self.control.serving_refused();
+        let exit = matches!(self.process.try_wait(), Ok(true)).then(|| exited(&self.process));
+        ended_cause(refused, exit, self.control.live())
+    }
+}
+/// Why a running gateway ended, pure: a refused `gateway.serving` wins over the EOF it
+/// causes, then a reaped child's exit status (`exit`), then the control EOF.
+fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> String {
+    if serving_refused {
+        "the host refused its gateway.serving as a protocol error".to_owned()
+    } else if let Some(status) = exit {
+        format!("the child exited ({status})")
+    } else if !live {
+        "its control connection reached EOF".to_owned()
+    } else {
+        "it stopped serving".to_owned()
     }
 }
 impl Running {
