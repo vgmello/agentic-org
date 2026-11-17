@@ -4,7 +4,7 @@ Status: **accepted by the owner 2026-11-17** (conflict plan entry B-09): "we nee
 I need to be able to host the office inside a Docker container; we need to abstract what
 we need properly." Linux is built now, as its own track alongside milestone one
 (owner decision 2026-11-17); the design is [Linux host](../design/linux-host.md) and the
-increments are X1 to X6 of the implementation plan. Implementation pending. Amends the platform statements of
+increments are X1a to X6 of the implementation plan. Implementation pending. Amends the platform statements of
 [standalone-server.md](../design/standalone-server.md),
 [office-host-boundary.md](../design/office-host-boundary.md),
 [ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only, and
@@ -62,7 +62,7 @@ increments are X1 to X6 of the implementation plan. Implementation pending. Amen
 | LNX-2 | The same in a container built from the repository's container file, with only mounted volumes for data and secrets, and again after the container is replaced. |
 | LNX-3 | With the Linux kernel feature unavailable, the web process refuses to start and reports the reason. |
 | LNX-4 | Host secrets on Linux are readable only by the service account; none is in the data volume. |
-| LNX-5 | No `.rs` file outside `crates/org-platform` contains `target_os`, `target_vendor` or `target_family`; a CI check enforces it. |
+| LNX-5 | No `.rs` file outside `crates/org-platform` has a `cfg`, `cfg_attr` or `cfg!` predicate on `target_os`, `target_vendor`, `target_env` or `target_family`; a CI check that parses the source enforces it. |
 | LNX-6 | The CI matrix runs the workspace checks on macOS and Linux. |
 
 ## Decisions on Linux (2026-11-17)
@@ -72,35 +72,57 @@ These settle what the decisions above left open. The detail is in the
 
 6. **One crate holds every platform difference.** `crates/org-platform` owns the five
    contracts and the five further capabilities, with macOS, Linux and refusing adapters
-   and one non-conditional constructor each. Consumers keep their policy (which image,
-   which secret names) and pass it as data. It depends on no workspace crate.
+   and one non-conditional constructor each. It depends on no workspace crate.
+   Consumers keep their policy (which image, which secret names) and pass it as data.
+   This is a deliberate exception to the rule that a consumer owns its contract
+   ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)):
+   these capabilities are consumed by four executables and six libraries, so no one
+   consumer can own them.
 7. **Linux process admission executes verified bytes.** The host copies the pinned
-   executable into a sealed, execute-only memory file, compares its SHA-256 with the
-   signed release manifest (in a development build, with the bytes read at host start),
-   and starts the child from that file with `execveat`, holding a pidfd. The rendezvous
-   peer must match by `SO_PEERCRED`. There is no start-suspended step: the bytes are
-   fixed before `exec`, and the execute-only image starts the child non-dumpable. A
-   release build without a runtime release pin refuses.
+   executable into a sealed, execute-only memory file (with `MFD_EXEC` from Linux 6.3,
+   without it before), compares its SHA-256 with the signed release manifest (in a
+   development build, with the bytes read at host start), and starts the child from
+   that file with `execveat`, holding a pidfd. Loader variables (`LD_*`, `DYLD_*`,
+   `GLIBC_TUNABLES`) are refused in every child's environment. The rendezvous peer
+   must match by `SO_PEERCRED`. There is no start-suspended step: the bytes are fixed
+   before `exec`, and the execute-only image starts a non-root child non-dumpable. The
+   executable is hashed; the loader and shared libraries are trusted because root owns
+   them. A release build without a runtime release pin refuses. The macOS signing
+   identifiers are the macOS adapter's data; Linux has no equivalent identifier.
 8. **The Linux credential store is an owner-only directory outside the data root.**
-   `${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials/<instance-id>/`, or a
-   mounted secrets volume in a container, recorded at setup. Mode `0700`, items `0600`,
-   owned by the service user, not on a memory filesystem, disjoint from the data root;
-   anything else refuses. The same engine is every development build's store.
+   `${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials/<instance-id>/`, which
+   setup creates, or a mounted secrets volume in a container, recorded at setup. Mode
+   `0700`, items `0600`, owned by the service user; ancestors not writable by others
+   or by any group but the user's private group; on ext4, XFS, Btrfs or F2FS only;
+   disjoint from the data root by device and inode; a mount point in a container; and
+   an empty store for an instance whose records say keys exist refuses. Anything else
+   refuses. The same engine is every development build's store.
 9. **The web process confines itself with Landlock and seccomp.** It connects to the
    rendezvous, sets no-new-privileges, applies Landlock (ABI 3 or higher, every
    filesystem right handled, no rule) and a seccomp allowlist that kills on any other
    call, then reports ready. The host checks seccomp and no-new-privileges in
-   `/proc/<pid>/status`. Linux hosts need kernel 6.2 or later with Landlock enabled.
+   `/proc/<pid>/status`. Linux hosts need kernel 6.2 or later with Landlock enabled,
+   and glibc 2.34 or later; other C libraries get the refusing adapters.
 10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
     serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
     `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
-    directory; nothing detects a container. The host refuses to run as root.
-11. **Recovery and reset on Linux.** The recovery code's confirmation is the
-    administrator's browser approval of the run (ADR-0011); the local context is a
-    controlling terminal in the foreground. `admin reset` is authorized by root through
-    `sudo` (SIGN-33).
+    directory; nothing detects a container. `serve` refuses to run as root. The
+    container runs as UID 61000 with the repository's seccomp and AppArmor profiles,
+    listens with HTTPS on its network interface with an operator-supplied certificate,
+    and its first registration link comes only from
+    `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
+11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
+    admitted by its kernel UID; Linux has no code identity for it, so the "verified
+    signed `agentic-org` client" of ADR-0011 means, on Linux, a peer with the service
+    user's UID, and authority comes only from the browser-approved session. The
+    recovery code's confirmation is the administrator's browser approval of the run
+    (ADR-0011); the local context is a controlling terminal in the foreground. Against
+    a same-user process these are a gate against mistakes, not a security control,
+    because that process can read the pending code from the store. `admin reset` is
+    authorized by root (SIGN-33), the one method `host.sock` admits root for.
 12. **Same-user agents.** Nothing new on Linux. An agent whose vendor sandbox is
-    unavailable, as in a container that refuses user namespaces, is not started.
+    unavailable, as in a container that refuses user namespaces or on a host that
+    restricts them through AppArmor, is not started.
 
 ## Consequences
 

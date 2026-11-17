@@ -450,7 +450,10 @@ When a variation is already planned, even if only one implementation ships now, 
 first implementation. Planned variation includes another operating system (ADR-0017), another vendor or provider,
 another storage engine (ADR-0018) or another deployment form.
 
-- Define the contract the consumer needs, owned by the consumer.
+- Define the contract the consumer needs, owned by the consumer. The exception is an
+  operating-system capability shared by several executables: its contract and
+  adapters live together in `org-platform` ([ADR-0017](adr/0017-linux-and-container-hosting.md)
+  decision 6), and each consumer keeps its policy.
 - Put the current implementation (for example the macOS adapter) behind it.
 - Every operating system other than the implemented ones gets an adapter that exists and fails closed with a clear,
   reported reason, including build targets nobody planned. An unimplemented adapter never falls back to another

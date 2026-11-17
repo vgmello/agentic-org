@@ -7,8 +7,10 @@ implementation (Landlock and seccomp) is a separate v1 adapter. "Web" means the
 
 ## Requirement and boundary
 
-The host verifies the suspended web image. The web process then confines itself
-before it reports ready for secrets on the launch rendezvous, so before any secret
+The host verifies the suspended web image. The web process then confines itself,
+and only then connects to the launch rendezvous and reports ready for secrets (the
+Linux adapter connects first and confines before reading or reporting; see the
+[Linux host design](../design/linux-host.md#33-confinement-of-the-web-process)), so before any secret
 handoff and before any untrusted browser input. A platform without a working
 adapter refuses to start the web process; it never runs unconfined.
 

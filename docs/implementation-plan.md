@@ -34,7 +34,7 @@ single office on macOS. Its steps, in order:
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
 **Milestone two: Linux, in parallel (Track X).** The same server runs on Linux, including inside a
-container. A third engineer builds it now, beside milestone one (X1 to X6); its first
+container. A third engineer builds it now, beside milestone one (X1a to X6); its first
 increment puts every platform difference behind one crate, after which no other
 change may add a platform branch.
 
@@ -67,8 +67,8 @@ Three things to know about the order:
   meanwhile. A1 also removes the encryption of the host database, which A2 and A3
   write to: the two leads agree the order of those commits.
 - **macOS and Linux in parallel.** The Track A and B engineers work on macOS. Track X
-  brings Linux, including a container, at the same time (X1 to X6). X1 lands first and
-  in small commits, so that later Track A and B changes write against the platform
+  brings Linux, including a container, at the same time (X1a to X6). X1a lands on the first day and
+  X1b to X1d follow in small merges, so that later Track A and B changes write against the platform
   crate instead of adding platform branches.
 
 ---
@@ -643,47 +643,93 @@ is FC-164. The Track X engineer works on Linux; the increments touch the macOS
 increments' files only where [the design](design/linux-host.md#7-working-in-parallel-with-the-macos-track)
 says, and agree those commits with the Track A lead.
 
-### X1 · The platform seams
+Which increment finishes each criterion: LNX-1 in X2, LNX-2 in X5, LNX-3 in X4,
+LNX-4 in X3, LNX-5 and LNX-6 in X6 (X1a starts the LNX-5 check; X2 makes the Linux
+half of LNX-6 run).
 
-- **Outcome:** none a person can see. Every operating-system difference sits in one
-  crate, so the rest of Track X changes only that crate and the composition, and no
-  Track A or B change can add a platform branch elsewhere.
+### X1a · The platform crate and the check
+
+- **Outcome:** none a person can see. From the first day no change can add a
+  platform branch outside one crate, and A2 has a contract to write service
+  registration behind.
 - **Build:**
-  - The crate `crates/org-platform`, with the contracts `admission`, `credentials`,
-    `confinement`, `service`, `isolation` and the capabilities `fs`, `dirs`, `process`,
-    `socket`, `presence`, each with one non-conditional constructor.
-  - Today's macOS code moved behind it unchanged: the suspended spawn, audit tokens and
-    code-signature checks, the Keychain stores, Seatbelt, the recovery presence bridge,
-    full flushes and exclusive renames, the macOS directories, and the platform parts
-    of `org-socket` and `org-supervise`. The Linux code that exists today (filesystem
-    probes, `renameat2`, pidfd, `SO_PEERCRED`) moves too.
-  - A refusing adapter for every other system, Linux included where no Linux adapter
-    exists yet, with the reason it reports.
-  - The CI check that fails on `target_os`, `target_vendor` or `target_family` outside
-    `crates/org-platform/`, with a shrinking allowlist of tests gated only because
-    Linux cannot start a worker yet.
-  - Landed as small commits in the order the design gives, each merged the same day.
-- **Read:** [Linux host design](design/linux-host.md) sections 1, 2 and 7,
+  - The crate `crates/org-platform`, with its module layout and the `Refused` type,
+    and the `service` contract with a refusing adapter, agreed with the A2 lead.
+  - The CI check: a script that parses every `.rs` file outside
+    `crates/org-platform/` with `syn` and fails on a `cfg`, `cfg_attr` or `cfg!`
+    predicate naming `target_os`, `target_vendor`, `target_env` or `target_family`,
+    with an allowlist of today's files that may only shrink.
+- **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
-- **Code today:** 44 source files and 35 test files outside any adapter contain a
-  platform conditional. The source files are in `org-host` (among them `spawn.rs`,
+- **Code today:** 44 source files and 35 test files outside any adapter name a
+  platform target. The source files are 29 in `org-host` (among them `spawn.rs`,
   `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs`,
-  `human.rs`, `offices.rs`, `writer.rs`, `hostdb.rs`, `keys/mod.rs`, `host_secrets.rs`,
-  `supervisor/mod.rs`, `supervisor/child.rs`, `supervisor/channels.rs`,
-  `instance/directory.rs`, `instance/mod.rs`, `recovery/presence.rs`,
-  `release/platform.rs`), `org-socket` (`confinement.rs`, `image.rs`, `peer.rs`,
-  `rights.rs`), `org-supervise` (`platform.rs`, `spawn.rs`, `child.rs`), `org-office`'s
-  `store/acceptance/durable.rs`, `org-client`'s `agent.rs` and `org-spool`'s
-  `safe_read.rs`; the [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform)
-  maps each to its contract. Milestone-one work in those files adds no new
-  conditional; a new platform need goes into `org-platform` once X1 has created it. CI lints `org-host` and `agentic-org` on Linux with
-  `dead_code` and `unused_imports` allowed and runs none of their tests there.
-- **Done when:** no file outside `org-platform` and the allowlist contains a platform
-  conditional; the full macOS checks pass unchanged; on Linux `cargo clippy --workspace
-  --all-targets -- -D warnings` passes with no allowed lint and no excluded crate.
-  LNX-5 holds except for the allowlisted tests.
-- **Needs:** nothing. The steps that touch `supervisor/child.rs`, `supervisor/channels.rs`
-  and `keys/` are ordered with A1.
+  `human.rs`, `offices.rs`, `recovery.rs`, `release.rs`, `writer.rs`, `hostdb.rs`,
+  `lib.rs`, `keys/mod.rs`, `host_secrets.rs`, `supervisor/mod.rs`,
+  `supervisor/child.rs`, `supervisor/channels.rs`, `instance/directory.rs`,
+  `instance/mod.rs`, `instance/registry.rs`, `recovery/presence.rs`,
+  `release/platform.rs`), 6 in `org-socket`, 6 in `org-supervise` (among them the
+  `compile_error!` in `lib.rs`), `org-office`'s `store/acceptance/durable.rs`,
+  `org-client`'s `agent.rs` and `org-spool`'s `safe_read.rs`.
+  `org-proto/src/location.rs` hard-codes macOS values with no conditional. The
+  [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform) maps
+  each to its contract. Milestone-one work in those files adds no new conditional.
+  CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
+  `unused_imports` allowed and runs none of their tests there.
+- **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
+  fails on a new predicate; the A2 lead has accepted the `service` contract. Merged on
+  the first day of Track X.
+- **Needs:** nothing.
+
+### X1b · Files, locations, processes and sockets behind the crate
+
+- **Outcome:** none a person can see. Durable flushes, exclusive renames, filesystem
+  checks, the default locations, process supervision and socket peer checks of all
+  four executables come from `org-platform`.
+- **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
+  and today's Linux code moved in unchanged and refusing adapters elsewhere;
+  `org-proto/src/location.rs` keeps only path composition; `org-supervise`'s
+  `compile_error!` goes; the allowlist shrinks by every moved file.
+- **Read:** [Linux host design](design/linux-host.md) section 4.
+- **Code today:** see X1a.
+- **Done when:** none of the moved files has a platform predicate; the macOS and Linux
+  CI runs pass unchanged; the macOS CI run is the macOS verification.
+- **Needs:** X1a. Ordered with A2 for `instance/`, `home.rs` and `hostdb`.
+
+### X1c · Admission, confinement and presence behind the crate
+
+- **Outcome:** none a person can see. Starting and admitting a worker or the web
+  process, confining the web process and the recovery presence check go through
+  `org-platform` on macOS, with refusing adapters elsewhere.
+- **Build:** the `admission`, `confinement` and `presence` modules with today's macOS
+  code (suspended spawn, audit tokens, Developer ID checks, Seatbelt, the presence
+  bridge and its build script); `ServerCheck` becomes the policy that builds
+  `ExpectedImage`; `ChildEnv` refuses loader variables; the supervisor's call sites
+  use `Admission::spawn` and `verify_reader`.
+- **Read:** [Linux host design](design/linux-host.md) sections 3.1, 3.3 and 4.
+- **Code today:** see X1a; `reader_is_child` in `supervisor/channels.rs` refuses on
+  every system but macOS.
+- **Done when:** none of the moved files has a platform predicate; on Linux
+  `cargo clippy --workspace --all-targets -- -D warnings` passes with no allowed lint
+  and no excluded crate; the Track A engineer has run the signed-build admission,
+  Seatbelt and presence-dialog checks on a Mac and recorded the result in the merge.
+- **Needs:** X1b. Ordered with A1 (`supervisor/`); merged before A3 starts the web
+  process.
+
+### X1d · Credentials behind the crate
+
+- **Outcome:** none a person can see. Both host stores sit on one `Credentials`
+  contract.
+- **Build:** the `credentials` module with the Keychain adapter and one directory
+  engine that replaces the two development stores; `KeyStore` and `HostSecrets` become
+  typed views.
+- **Read:** [Linux host design](design/linux-host.md) section 3.2.
+- **Code today:** `org-host/src/keys/` and `host_secrets` each have a Keychain store
+  and a separate development store.
+- **Done when:** no file in `keys/` or `host_secrets` has a platform predicate; the
+  Track A engineer has run the signed Keychain checks on a Mac and recorded the
+  result in the merge.
+- **Needs:** X1c, and A1's change of the database key to the office secrets key.
 
 ### X2 · The first office worker on Linux
 
@@ -691,87 +737,106 @@ says, and agree those commits with the Track A lead.
   socket, and `agent-os` sends a message and reads it back.
 - **Build:**
   - The Linux admission adapter: the verified image copied into a sealed, execute-only
-    memory file and executed from it, the child held by a pidfd, the rendezvous peer
-    checked with `SO_PEERCRED`; the release digest from the signed manifest, and the
-    development build's own output.
+    memory file (retrying without `MFD_EXEC` before Linux 6.3) and executed from it,
+    the child held by a pidfd, the rendezvous peer checked with `SO_PEERCRED`; the
+    release digest from the signed manifest, and the development build's own output.
   - The Linux `fs`, `dirs`, `process` and `socket` adapters the start path needs.
-  - The host's integration tests and `org-host`'s tests run on Linux; the allowlist is
-    emptied.
+  - `org_platform::testing`: the path-admission test adapter, onto which the
+    shell-script worker tests (`script()` in `org-host/src/supervisor/mod.rs`,
+    `wrapper()` in `apps/agentic-org/tests/support/mod.rs`) move, and the expected
+    operating-system values that replace `cfg` in tests.
+  - The root refusal at the `serve` composition; the non-dumpable test drops its child
+    to an unprivileged user when run as root.
+  - The host's integration tests and `org-host`'s tests run on Linux.
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
 - **Code today:** `crates/org-host/src/spawn.rs` returns "office servers run only on
-  macOS"; `reader_is_child` in `supervisor/channels.rs` refuses on every other system,
-  and six tests in `supervisor/channels/tests.rs` fail on Linux because of it.
+  macOS"; six tests in `supervisor/channels/tests.rs` fail on Linux.
 - **Done when:** LNX-1 passes in a test that starts the real host composition on Linux
   and uses `agent-os` through the same authenticated route the macOS tests use when X2
-  lands; a worker image that differs from the expected digest by one byte receives no
-  secret; the Linux CI job runs `cargo test --workspace` with no excluded crate (the
-  Linux half of LNX-6).
-- **Needs:** X1.
+  lands; a worker image one byte different from the expected digest, and a child
+  environment with `LD_PRELOAD`, each receive no secret; the Linux CI job runs
+  `cargo test --workspace` with no excluded crate; no test file stays allowlisted
+  because Linux could not start a worker.
+- **Needs:** X1c.
 
 ### X3 · Host secrets on Linux
 
 - **Outcome:** a Linux host keeps its office secrets keys and its own secrets in an
-  owner-only store outside the data root, and refuses a store set up wrongly.
-- **Build:** the directory credential adapter of the design, with its ownership, mode,
-  filesystem, location and lock checks; the same engine replaces the two development
-  stores on both systems; the host's typed key and secret views sit on it.
+  owner-only store outside the data root, and refuses a store set up wrongly or found
+  empty.
+- **Build:** the Linux directory credential adapter of the design, with its owner,
+  mode, private-group, filesystem, `(device, inode)` disjointness, mount-point,
+  empty-store and lock checks; the `credentials` property of non-interactive setup.
 - **Read:** [Linux host design](design/linux-host.md) section 3.2,
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) decision 3. LNX-4.
-- **Code today:** `org-host/src/keys/` and `host_secrets` use the Keychain in release
-  builds and two separate plain-file stores in debug builds; a Linux release build has
-  no store and refuses.
-- **Done when:** LNX-4 passes: a scan of a provisioned Linux instance finds every
-  secret only in the store, readable only by the service account; a wrong owner, mode,
-  filesystem or a store inside the data root each refuse the start.
-- **Needs:** X1, and A1 (the office secrets key).
+- **Code today:** a Linux release build has no store and refuses.
+- **Done when:** each wrong owner, mode, group, filesystem, store inside the data
+  root, and an empty store for an instance with keys refuses the start (temporary
+  roots); LNX-4 passes: a scan of an instance provisioned by setup finds every secret
+  only in the store, readable only by the service account.
+- **Needs:** X1d, X2, and A2 (setup provisions the instance).
 
 ### X4 · The web process confined on Linux
 
 - **Outcome:** on Linux the web process confines itself with Landlock and seccomp
   before it handles input, and refuses to start where it cannot.
-- **Build:** the Linux confinement adapter (Landlock ABI 3 or higher handling every
-  filesystem right, a seccomp allowlist that kills on anything else) and the host's
-  check of the child's seccomp and no-new-privileges state. Tested first with the
-  confinement example process, then in the web process once A3 starts it.
+- **Build:**
+  - First, on the first day of Track X: a one-hour probe of Docker Desktop's kernel on
+    a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`). If it has no
+    Landlock, the web process cannot run in a container on a Mac, and the Track X lead
+    brings that to the owner with a recommendation before this adapter is built.
+  - The Linux confinement adapter (Landlock ABI 3 or higher handling every filesystem
+    right, a seccomp allowlist that kills on anything else, `prctl` and `ioctl`
+    filtered by argument) and the host's check of the child's seccomp and
+    no-new-privileges state.
 - **Read:** [Linux host design](design/linux-host.md) section 3.3,
   [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
-- **Code today:** `org-socket/src/confinement.rs` refuses on every system but macOS;
-  the host does not start the web process yet (A3).
+- **Code today:** `org-socket/src/confinement.rs` has a refusing adapter on every
+  system but macOS; the host does not start the web process yet (A3).
 - **Done when:** LNX-3 passes: with Landlock unavailable, below ABI 3 or blocked by a
-  seccomp profile, the web process refuses and reports which; confined, it cannot open
-  a file, create a socket or start a program, and its HTTP and TLS path works.
-- **Needs:** X1. The end-to-end check needs A3.
+  seccomp profile, the web process refuses and reports which (proved first with the
+  confinement example process); confined, it cannot open a file, create a socket or
+  start a program, and its whole HTTP and TLS path works under the filter on the
+  development system and in the container image.
+- **Needs:** X1c; the HTTP and TLS proof needs A3.
 
 ### X5 · Service and container
 
-- **Outcome:** an instance runs as a systemd user service on a Linux machine, and as
-  the main process of a container built from the repository's container file, with its
-  data and its secrets on two mounted volumes, on Linux and in Docker on an engineer's
-  Mac.
+- **Outcome:** an instance runs as a systemd user service on a Linux machine, and the
+  whole instance (host, web process and office) runs as the main process of a
+  container built from the repository's container file, with its data and its secrets
+  on two named volumes, on Linux and in Docker on an engineer's Mac, reachable from
+  that Mac's browser.
 - **Build:** the systemd user-unit adapter; the foreground mode and `serve --setup`;
-  the two setup configuration properties (`service`, `credentials`); stopping within
-  8 seconds on `SIGTERM`; the container file (an unprivileged service user, `tini` as
-  the entry point, `/data` and `/secrets` volumes); a first check of Docker Desktop's
-  kernel for Landlock.
-- **Read:** [Linux host design](design/linux-host.md) section 3.4,
+  the `service` setup property; stopping within 8 seconds on `SIGTERM`; the container
+  file (Debian base, UID 61000, `tini`, root-owned release, `/data` and `/secrets`),
+  its seccomp and AppArmor profiles, and the AppArmor profile for vendor sandboxes on
+  Ubuntu hosts; the container's HTTPS listener with an operator-supplied certificate
+  pair and the host's verifier for it, unless A3 has built it; the documented run
+  command and the `docker exec -u 0 … admin reset --user` step.
+- **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
   [standalone server design](design/standalone-server.md) (service, non-interactive
   setup). LNX-2.
 - **Code today:** nothing registers a service on any system; `org-host/src/signals.rs`
-  stops on `SIGTERM` and `SIGINT`.
+  stops on `SIGTERM` and `SIGINT`; a supplied TLS pair is refused until the host
+  certificate verifier exists.
 - **Done when:** LNX-2 passes, including after the container is replaced with the same
-  volumes; a systemd user service survives a restart of the machine when lingering is
-  on, and setup reports when it is off.
-- **Needs:** X2, X3, X4, and A2 (setup).
+  volumes; in the container on a Mac, the administrator registers from the link
+  `admin reset` prints and signs in at `https://localhost:8443`; replacing the
+  container with a new, empty secrets volume is refused, not silently re-keyed; a
+  systemd user service survives a restart of the machine when lingering is on, and
+  setup reports when it is off.
+- **Needs:** X2, X3, X4, A2 (setup) and A3 (the web process and sign-in).
 
 ### X6 · Both systems in CI
 
 - **Outcome:** none a person can see. Every change is checked on both systems and in
   the container.
 - **Build:** the CI matrix runs the full workspace checks on macOS and Linux with no
-  exclusion; the platform-conditional check runs with an empty allowlist; a job builds
-  the container image and runs the LNX-2 send and read in it.
+  exclusion; the platform check runs with an empty allowlist; a job builds the
+  container image and runs the LNX-2 send and read in it.
 - **Read:** ADR-0017. LNX-5, LNX-6.
 - **Code today:** `.github/workflows/ci.yml` excludes `org-host` and `agentic-org` from
   the Linux clippy and test runs.
