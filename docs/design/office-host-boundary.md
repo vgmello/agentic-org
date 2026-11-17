@@ -1,10 +1,11 @@
 # Host library ↔ agentic-org-office: the boundary (phase 1, HQ only)
 
 > **Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
-> (2026-11-17).** Organization data is no longer encrypted by the application. The
-> database key, its custody, its passing in the launch protocol and the `key_missing`
-> failure described in this document are to be removed. Writer custody and the
-> private launch itself stay. Until the code changes, this document describes the
+> (2026-11-17).** Organization data is no longer encrypted by the application. Database
+> encryption is to be removed. The per-office key, its custody and its delivery at
+> launch stay, renamed the office secrets key and used only to wrap an office's
+> private keys; a missing key no longer prevents an office from opening its data.
+> Writer custody and the private launch itself stay. Until the code changes, this document describes the
 > current implementation.
 
 Status: **current launch-v2 evidence plus selected target adaptation**, reconciled

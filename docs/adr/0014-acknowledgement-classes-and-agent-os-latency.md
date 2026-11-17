@@ -1,13 +1,13 @@
 # ADR-0014 · Acknowledgement classes and the agent-os latency target
 
-Status: **accepted in direction by the owner 2026-11-17** during the architecture
-review (conflict plan entry F-02): an operation may be acknowledged once the office
-database has committed it, and `agent-os` must respond in one to two milliseconds. The
-list of operations in decision 3 is the lead's proposal and **needs the owner's
-confirmation**. Implementation pending. Amends
+Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
+plan entry F-02), including the operations of decision 3 and the engine-independent
+contract of decision 8. Implementation pending. Amends
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 4,
-[ADR-0003](0003-agent-messaging-office-first.md) section 5 and the acknowledgement
-sentence in [messaging data](../design/organization-data/15-messaging-and-chat.md).
+[ADR-0003](0003-agent-messaging-office-first.md) section 5,
+[ADR-0006](0006-selected-task-acceptance.md) for the task changes named in decision 3,
+and the acknowledgement sentence in
+[messaging data](../design/organization-data/15-messaging-and-chat.md).
 
 ## Context
 
@@ -41,25 +41,18 @@ sentence in [messaging data](../design/organization-data/15-messaging-and-chat.m
      browser API outcome `accepted` (HTTP 202), which reports a durable record.
    - **Durable.** The office answers only after the full flush. This is the existing
      rule of ADR-0002 decision 4.
-3. **Which operations use which class (to confirm).**
-   - Committed: message send and reply, recipient-state changes (read, done, defer)
-     and status text. Reads involve no write, and presence is not persisted.
-   - Durable: everything on the work-acceptance journal of ADR-0006, organization
-     commands, numbering, turn permits and placement, budget actions, HQ creation, and
-     account and session changes.
-   **The question for the owner.** Which operations may be answered as soon as the
-   database commits, knowing that one answered in the instant before a power cut can
-   be lost? Four possible scopes:
-
-   | Scope | Committed-class operations | What a power cut can silently lose |
-   | --- | --- | --- |
-   | a. Messaging only (proposed above) | Send, reply, mark read, done or deferred, status text | A just-sent message or a read mark |
-   | b. Messaging and task activity | Scope a, plus comments, checklist ticks and watching on a task | Scope a, plus a just-added comment or tick. This needs the work-acceptance journal of ADR-0006 to allow the faster class for those changes |
-   | c. Everything `agent-os` does | Scope b, plus task creation, status changes and assignment through `agent-os` | Scope b, plus a just-made assignment or status change, so two parties may briefly disagree on who owns a task |
-   | d. Every write in the office | All writes, with one flush interval and no durable class | Any acknowledged change from the last interval, including numbering, permits and budget actions |
-
-   Scope a is the proposal. Scopes c and d conflict with the acknowledgement rule of
-   ADR-0006 and would need it amended.
+3. **Which operations use which class (owner decision 2026-11-17).**
+   - Committed: messaging (send, reply, mark read, done or deferred, status text) and
+     non-critical task activity (comments, checklist ticks, watching and unwatching).
+     Reads involve no write, and presence is not persisted.
+   - Durable: everything else. That includes task creation, status and resolution
+     changes, assignment, ownership and scope changes, links that change dependencies,
+     organization commands, numbering, turn permits and placement, budget actions, HQ
+     creation, and account and session changes.
+   A committed-class task change is still one atomic, recoverable operation: its
+   snapshot, event and idempotency result commit together. Only the wait for the drive
+   is dropped. Under a power cut such a change can be lost whole; it is never half
+   applied.
 4. **A caller may always ask for durable.** An explicit option upgrades a
    committed-class call to durable for a sender that needs certainty.
 5. **`agent-os` gains a session mode.** One long-running `agent-os` process per agent
@@ -77,6 +70,22 @@ sentence in [messaging data](../design/organization-data/15-messaging-and-chat.m
    section 5 with the results. Check the binary size target on that build too; the
    Linux build measured 1.56 MB against a 1 MB target.
 
+8. **The class belongs to the storage contract, not to the database engine.** The
+   owner asked that this survive a later change of engine, for example to PostgreSQL.
+   - Each domain operation declares its class once, in the domain crate that owns it
+     (`org-mailbox`, `org-work`), as a value of one small two-valued durability type.
+     The classes of all operations are listed in one place per crate.
+   - The storage ports carry that value with the write. Domain code never names a
+     flush, a write-ahead log, a pragma or any engine setting.
+   - The store adapter decides how to honour it. For SQLite: commit, answer, then
+     flush within the bounded interval. For another engine: its own equivalent, such
+     as turning off synchronous commit for that transaction in PostgreSQL.
+   - What every adapter must guarantee is stated in engine-neutral terms: a committed
+     write survives a crash of the office process and is flushed within the bounded
+     interval; a durable write is not acknowledged before it would survive a power
+     cut. These guarantees are tested by a suite that does not depend on the engine.
+   This is one of the steps of conflict plan entry B-13.
+
 ## Acceptance criteria
 
 | ID | Passing evidence |
@@ -84,7 +93,9 @@ sentence in [messaging data](../design/organization-data/15-messaging-and-chat.m
 | ACK-1 | In session mode on the reference Mac, send and inbox meet the target of decision 1 over at least 10,000 calls, with the method and hardware recorded. |
 | ACK-2 | A committed-class write is present after the office process is killed immediately after the acknowledgement. |
 | ACK-3 | A durable-class operation is never acknowledged before its full flush; a fault injected between commit and flush yields no acknowledgement. |
-| ACK-4 | The class of every operation is fixed in code in one place and matches decision 3; no operation's class depends on load. |
+| ACK-4 | The class of every operation is declared in one place in its domain crate and matches decision 3; no operation's class depends on load. |
+| ACK-6 | No domain crate refers to an engine-specific durability mechanism; the store adapter alone maps the two classes, and the engine-independent suite passes against it. |
+| ACK-7 | A committed-class task change killed mid-write is either fully present or fully absent after restart, with its event and idempotency result consistent. |
 | ACK-5 | The bounded flush interval is enforced under continuous committed-class load. |
 
 ## Consequences

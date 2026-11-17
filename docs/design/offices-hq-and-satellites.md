@@ -253,8 +253,8 @@ records last seen. Satellites open no public app listener.
      allowed, because v1's local satellites (B2-10) join their own instance's HQ.
    - **Pending lifecycle.** The worker generates the TLS identity key and the
      request, persists them with the invitation key in its `office.db` (encrypted
-     with the office database key; under ADR-0016 these keys need a new protected
-     location before that encryption is removed), then writes `office.json` with `state: pending`,
+     with the office database key; under ADR-0016 they become records wrapped by
+     the host-held office secrets key), then writes `office.json` with `state: pending`,
      all **before** it sends anything to HQ. From then on the folder is a created
      office under the usual adopt rule (it's keyed on `office.json`): the host never
      runs `--discard` on it automatically (only `office.remove_pending` does, below), and later starts use `--office <id>` and resume the same
@@ -419,7 +419,7 @@ use the model/process sections above and the current launch contract.
   - Offices keep running when the app quits (ADR-0001), but they run under the host: a host crash or restart stops every office on this Mac (and agents' messaging) until the host restarts them, and rotates all app tokens. This is the phase-1 trade-off.
   - The web application talks to HQ; the CLI manages named instances and enrollment (ADR-0005).
 - **ADR-0002:**
-  - *(Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md), 2026-11-17: the shared database key, its custody and `key_missing` are to be removed. The bullets below describe the current implementation.)*
+  - *(Amended by [ADR-0016](../adr/0016-no-application-level-data-encryption.md), 2026-11-17: database encryption is to be removed. The per-office key stays only to wrap an office's private keys, and a missing key no longer prevents the databases from opening. The bullets below describe the current implementation.)*
   - **Each office has its own two databases:** `org.db`, the organization data or its copy, and `office.db`, its own data. They share one key, kept under the office id. (amended 2026-11-08: key custody) The host creates and holds it, in the Data Protection keychain on this Mac only, and sends it on the launch pipe; the server never stores one.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
   - Layout `<home>/offices/<office-id>/`.

@@ -17,7 +17,8 @@ the current implementation and stay authoritative until an approved migration.
 **Amended 2026-11-17 by two owner decisions.**
 [ADR-0016](0016-no-application-level-data-encryption.md) supersedes the SQLCipher
 requirement of decision 1 and the database-key custody of decision 2: organization
-data is no longer encrypted by the application, and no database key exists. The
+data is no longer encrypted by the application. The per-office key remains only to
+wrap an office's private keys. The
 choice of SQLite, the single writer and WAL stand.
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) amends decision 4:
 named operations may be acknowledged once committed, with the full flush following

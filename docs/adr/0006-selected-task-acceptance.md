@@ -2,6 +2,12 @@
 
 Revision 5, 2026-11-15. **ACTIVE architecture; implementation acceptance remains pending.** Original author: `01a1dfb4-1d26-7100-9ea4-72b53756ef23`, observed Sol Xhigh; overall ownership remains with the Codex lead. Investigated branch `codex/v1-assignment-integration` at `73a39c58d683b00ad8620d05f7d5ae10fdc17bc9`. Canonical decision location: `docs/adr/0006-selected-task-acceptance.md`. Revision 4 added the same original author’s focused journal-ordinal correction after independent review of revision 3. Revision 5 adds the independently reviewed focused gateway transport dependency amendment; its authentication/custody and full acceptance requirements remain unchanged. Independent focused recheck returned READY on revision 4; see review history. Valid codec, snapshot, authentication, durability and migration premises are retained. Original proposals and feasibility evidence are retained under `.agent-kit/logs/v1-assignment-integration/author/` and `codec-probe/`.
 
+> **Amended by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md)
+> (2026-11-17).** Assignment, creation, status and ownership changes keep this ADR's
+> rule: no acknowledgement before durable evidence. Comments, checklist ticks and
+> watching on a task may be acknowledged once their one atomic operation is committed,
+> with the flush following within a bounded interval.
+
 ## Decision and delivery boundary
 
 Deliver selected assignment to real, validated selected tasks through the accepting office, authenticated native transport, Rust browser gateway and static Svelte UI. Include task reads, authorized target choices, ownership/assignment queues, durable operation lookup and task history sufficient to use and verify assignment. Support every task type and projectless tasks.
