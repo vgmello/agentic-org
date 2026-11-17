@@ -1133,6 +1133,12 @@ rules, which are distinct from uninstalling software on a machine.
 **REC-1 remains open:** a reviewed manual HQ-loss recovery/re-certification/fencing
 procedure and disaster-recovery evidence are required before production recovery
 claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
+The way back after losing the server or its database is to open the organization
+again from its files
+([recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization),
+implementation plan R1). Once that works, the sentence "Recovering an organization
+after losing the HQ machine isn't supported yet" is replaced, everywhere it appears,
+by one that says how.
 
 The server and installer document the supported OS and architecture matrix,
 minimum versions and Linux service prerequisites. The host's credential custody on

@@ -28,7 +28,7 @@ single office on macOS. Its steps, in order:
 | Step | A person can | Increments |
 | --- | --- | --- |
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
-| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer | B1, B2, B3, O1, A6, U1 |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; open the organization again from its repository after losing the server's database | B1, B2, B3, O1, A6, R1, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
@@ -383,6 +383,26 @@ Three things to know about the order:
 - **Done when:** two people are signed in at once from two browsers, and a change each
   makes carries their own name.
 - **Needs:** A3, B2.
+
+### R1 · Open an existing organization
+
+- **Outcome:** on a server that has lost its database, or on a new server, the
+  administrator registers again, opens the organization from its repository, and finds
+  its teams, people, projects and records as they were.
+- **Build:** the "open an existing organization" choice beside "create"; validation of
+  the files against the data contract; registration at the host under the existing ID;
+  the office's projection rebuilt from the files; the administrator choosing their
+  person record and becoming the owner; people invited again; a plain statement of
+  what did not come back.
+- **Read:** [recovery contract, opening an existing organization](design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization)
+  and its loss boundaries, [identity contract](design/organization-data/06-identity-and-numbering.md),
+  [ADR-0007](adr/0007-hq-creation-escrow.md). Row FC-167.
+- **Code today:** nothing opens an organization from files; the office's store is the
+  source of truth until B1.
+- **Done when:** with `runtime/` and the host's database deleted, the organization is
+  opened again from its repository and every record published before the loss is
+  there; an invalid organization record refuses the open and names the file.
+- **Needs:** B1, A4, A6.
 
 ### U1 · Offices, teams, people and projects in the browser
 
