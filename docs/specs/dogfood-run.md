@@ -135,7 +135,7 @@ tells you. Don't approve, reject, start or finish anything on your own." (in
 Review, or in the request text for hires by command), and before 3a.5 message
 Dogfood Lead 1 the same. Rows 3a.5 to 3a.7 and 3b.4 rely on it. Both no-op tasks (3a.10, 3a.12) also say in their description "Dogfood run: leave
 this in To do. Don't start it until told." Use explicit bounded turns; no row
-requires automatic scheduling or an Always-on/On-call engine. Observe the actual
+requires automatic scheduling. Observe the actual
 ready/idle state supported by the execution backend. Identity profiles have one
 required home team and optional role/reporting. Role files are structural
 data; optional descriptive role_text is separate. Preserve hiring approval checks

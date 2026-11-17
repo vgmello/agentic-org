@@ -316,7 +316,7 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
     `agentic-org recovery release --org '<organization>'` command, as in the
     transcript above.
   - **The code was shown, and the answer at the last prompt wasn't `yes`:** the
-    code is **Shown, not confirmed** (§4a.6, RCV-8,). Setup prints the
+    code is **Shown, not confirmed** (§4a.6, RCV-8). Setup prints the
     `--redeliver` command instead:
 
     ```
@@ -379,9 +379,9 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
 - **The first browser visit** is an ordinary sign-in (§4a.3). After it, the first
   organization opens (OPEN-1), with the recovery notice while the code is waiting.
 
-**Other account commands (HQ machine only)**. They match
-X-02's host operations: `account create` is `account.create`, `account
-set-password` is `account.set_password`, and `account reset-password` is
+**Other account commands (HQ machine only)**. They match the host's
+operations: `account create` is `account.create`, `account set-password` is
+`account.set_password`, and `account reset-password` is
 `account.reset_password`.
 
 **Add an account.** Only an instance admin can, and they sign in first:
@@ -484,13 +484,12 @@ in with the new password now.
   alex`. Signed in as root without `sudo`, name that user with `--user <user>`.
   The first line names the Linux user, so a reset never lands on another user's
   instance unnoticed.
-- Without `sudo` on Linux, a forgotten password can't be reset. X-02's only
+- Without `sudo` on Linux, a forgotten password can't be reset. The only
   other way back is removing the instance and its data (§5). No copy suggests
   that; the not-root error says to use `sudo`.
 
-**Link, unlink and revoke an account** (2026-11-10, X-02
-§6.2 and Q9). They match X-02's `account.link`, `account.unlink` and
-`account.revoke`. Each one asks an instance admin to sign in, then asks y/N in
+**Link, unlink and revoke an account**. They match the host's `account.link`,
+`account.unlink` and `account.revoke`. Each one asks an instance admin to sign in, then asks y/N in
 words that name the account and the organization, then (on a Mac) asks the admin
 to confirm it's them in a system dialog that names the same. Enter means no.
 

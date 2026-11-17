@@ -277,7 +277,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 
 **Waiting for running agents.** A new organization changes the layout/policy context available to processes on this instance. The operation waits for the affected work to drain and for verified safe process cleanup before changing that context. [Execution document 11](../design/organization-data/11-model-profiles-and-agent-execution.md) owns turn, attempt and process evidence. Agents are never scheduled or restarted automatically for this flow.
 
-- Count affected employees with active/open turns, live main processes or unresolved stopping/cleanup evidence, including a warm idle process when it holds the old layout context. A status label such as Idle, Paused, Offline or Asleep does not prove quiescence. Admit the layout change only when the owning process controller confirms no affected active work/live process remains and cleanup is complete. Stale/unavailable evidence keeps the operation waiting with “Can't confirm that work has stopped on <instance>.” No cache deletion, elapsed timeout or zero presence count substitutes for this proof.
+- Count affected employees with active/open turns, live main processes or unresolved stopping/cleanup evidence, including a warm idle process when it holds the old layout context. A status label such as Idle, Paused or Offline does not prove quiescence. Admit the layout change only when the owning process controller confirms no affected active work/live process remains and cleanup is complete. Stale/unavailable evidence keeps the operation waiting with “Can't confirm that work has stopped on <instance>.” No cache deletion, elapsed timeout or zero presence count substitutes for this proof.
 - Waiting does not automatically stop, cancel, restart or schedule agent work. Any necessary drain/admission control and safe stop must use explicitly supported, authorized lifecycle actions and durable control state; do not imply a newly implemented drain service or invent a command. Later explicit work still requires current execution readiness, placement generation and permits.
 - The create remains accepted. Operation lookup and status stay available. The operation reports its verified turn and process blockers; a count alone never proves quiescence. Counts update in place as blockers clear. Without a trustworthy number show “Waiting for active work and process cleanup to finish”; if verification is unavailable say so instead of reporting zero or ready.
 - **Authorized list:** one row per affected employee, with a profile link, observed turn/process state, observation freshness and any supported Pause action:
@@ -452,7 +452,7 @@ Press Ctrl-C to cancel.
 ```
 
 - Numbers/names/counts update in place as verified blockers clear; one agent uses singular copy. Nonterminal output writes a new line only when state changes. Continue only after the owning controller verifies quiescence; missing/stale cleanup evidence keeps waiting with its reason.
-- **Who's named** follows §5a. Name only employees of organizations the session owns, with observed turn/process state and supported authorized controls. Setup can point to Pause/safe stop in the app but must not invent a CLI endpoint or promise Pause alone finishes cleanup. Other organizations show counts and the instruction to ask their owner. No Always on/On call/Scheduled badge or sleep prediction appears.
+- **Who's named** follows §5a. Name only employees of organizations the session owns, with observed turn/process state and supported authorized controls. Setup can point to Pause/safe stop in the app but must not invent a CLI endpoint or promise Pause alone finishes cleanup. Other organizations show counts and the instruction to ask their owner. No run-mode badge or sleep prediction appears.
 - **Without a session**, show supported counts per organization and no employee names. This includes noninteractive output, `agentic-org service status`, `agentic-org doctor` and setup without accounts. For example:
 
   ```text
@@ -650,7 +650,7 @@ it is not placed in shell arguments or ordinary logs. Setup on the destination
 accepts it through a protected input and displays the check code. HQ's owner
 approves that request here. Replacing an invitation cancels the previous one.
 Expiry/rejection shows New invitation and Remove; a reused setup resumes its
-pending request instead of creating a duplicate office. No desktop URL handler or
+pending request instead of creating a duplicate office. No
 browser folder picker is required.
 
 ### 6.3 Approve a join (through an authorized HQ browser session)

@@ -113,7 +113,7 @@ Settings includes project name/slug, accountable team, contributors and reposito
 
 ## 4. Flow 2 · Report a bug
 
-Report bug opens from project, Work, command palette, task or supporting doc. In project context the required accountable team is shown from project ownership. Outside a project, choose **Project (optional)** and **Accountable team (required)**; selecting a project derives its team. No Area/General requirement appears.
+Report bug opens from project, Work, command palette, task or supporting doc. In project context the required accountable team is shown from project ownership. Outside a project, choose **Project (optional)** and **Accountable team (required)**; selecting a project derives its team.
 
 Fields: title (1–120 characters), What happened, optional severity with all four explanations and **Not set**, optional steps/expected result/environment, priority default Normal, optional assigned team and assignee. Store selected reproduction values in `details.what_happened`, `expected`, `steps` and `environment`, distinct from description; confirmation/reopen/closure/duplicate/affected-feature/suggested-employee evidence uses document 03's `task_details` mapping. Tombstones keep those fields. A title and description plus valid accountability are sufficient to capture. Reporter comes from authentication and is not editable.
 
@@ -139,7 +139,7 @@ Who may triage is an authorization decision of the task service; no field on a r
 
 ## 6. Flow 4 · The project's bug list
 
-Rows: type/reference · title · severity (including Not set) · priority exception · status · accountable team · assigned team · assignee · reporter · age. Default grouping is **Assigned team**, with Unassigned team explicit, and sorting severity then priority then age. Alternatives: severity, priority, status, accountable team, assignee or none. No mandatory area group.
+Rows: type/reference · title · severity (including Not set) · priority exception · status · accountable team · assigned team · assignee · reporter · age. Default grouping is **Assigned team**, with Unassigned team explicit, and sorting severity then priority then age. Alternatives: severity, priority, status, accountable team, assignee or none.
 
 Filter by status, severity, assigned or accountable team, assignee, reporter and project or no project in Work. Remember filters and show counts consistently. Empty: “No bugs yet. Report one when something doesn't work.” No open bugs: “No open bugs.” No matches: “No bugs match these filters. Clear filters.” Loading uses skeletons; failed loading offers Retry without discarding the previous list. Keep row identity stable and do not reorder beneath an open menu.
 
