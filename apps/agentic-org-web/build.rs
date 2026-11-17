@@ -1,6 +1,22 @@
 //! Embed trusted public publisher policy; no runtime trust environment.
+//!
+//! Also marks release-profile (`release_profile`) and app-bundle (`ORG_BUNDLE=1`,
+//! `bundle_build`) builds, so `lib.rs` refuses to compile one with debug assertions on:
+//! the unpinned development startup path is compiled in exactly when they are.
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-env-changed=ORG_BUNDLE");
+    println!("cargo::rustc-check-cfg=cfg(release_profile)");
+    println!("cargo::rustc-check-cfg=cfg(bundle_build)");
+    if std::env::var("PROFILE").is_ok_and(|profile| profile == "release") {
+        println!("cargo::rustc-cfg=release_profile");
+    }
+    match std::env::var_os("ORG_BUNDLE") {
+        None => {}
+        Some(value) if value == "1" => println!("cargo::rustc-cfg=bundle_build"),
+        // Anything else is a mistake that would silently skip the check: refuse it.
+        Some(_) => panic!("ORG_BUNDLE must be unset or exactly 1"),
+    }
     embed_release_trust();
 }
 
