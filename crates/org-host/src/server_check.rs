@@ -195,7 +195,7 @@ impl ServerCheck {
         if let ServerCheck::Scripted(scripted) = self {
             return (scripted.0)(Step::Admit, pid);
         }
-        admit(self, || token_of(pid), satisfies)
+        admit(self, || token_of(pid), satisfies, gateway_without_keychain)
     }
 
     /// Right before child `pid`'s first line: whether it is still the image `admitted` (what
@@ -235,11 +235,13 @@ pub(crate) fn server_requirement(team_id: &str) -> Result<String, String> {
 }
 
 /// The decision, pure: `token` gives the child's audit token, `satisfies` checks the code it
-/// names against a requirement. Neither is asked unless the check needs it.
+/// names against a requirement and `keychain_free` whether that code holds no Keychain
+/// entitlement (the gateway only). None is asked unless the check needs it.
 fn admit(
     check: &ServerCheck,
     token: impl FnOnce() -> Result<AuditToken, String>,
     satisfies: impl FnOnce(&AuditToken, &str) -> bool,
+    keychain_free: impl FnOnce(&AuditToken) -> bool,
 ) -> Result<Option<AuditToken>, String> {
     match check {
         ServerCheck::Pinned(_, _) => {
@@ -264,7 +266,7 @@ fn admit(
         }
         ServerCheck::Gateway(requirement) => {
             let token = token().map_err(|why| format!("its audit token: {why}"))?;
-            if satisfies(&token, requirement) && gateway_without_keychain(&token) {
+            if satisfies(&token, requirement) && keychain_free(&token) {
                 Ok(Some(token))
             } else {
                 Err(
@@ -392,7 +394,13 @@ mod tests {
             ServerCheck::Skip
         );
         let never = || -> Result<AuditToken, String> { panic!("asked for missing-team token") };
-        assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!("signature")).is_err());
+        assert!(admit(
+            &ServerCheck::Refuse,
+            never,
+            |_, _| panic!("signature"),
+            no_keychain
+        )
+        .is_err());
         let ServerCheck::Gateway(requirement) =
             ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
         else {
@@ -402,6 +410,7 @@ mod tests {
             &ServerCheck::Gateway(requirement),
             || Ok([7; 32]),
             |_, _| false,
+            |_| true,
         )
         .unwrap_err();
         // The gateway refusal names the gateway and its full admission condition.
@@ -412,6 +421,52 @@ mod tests {
         }
     }
 
+    /// A Keychain probe for checks that must never ask it (only the gateway does).
+    fn no_keychain(_: &AuditToken) -> bool {
+        panic!("asked for the Keychain entitlement")
+    }
+
+    #[test]
+    fn the_gateway_is_admitted_only_without_a_keychain_entitlement() {
+        let ServerCheck::Gateway(requirement) =
+            ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap()
+        else {
+            panic!("release gateway policy")
+        };
+        let check = ServerCheck::Gateway(requirement.clone());
+        let probed = Cell::new(None);
+        let probe = |free: bool| {
+            let probed = &probed;
+            move |token: &AuditToken| {
+                probed.set(Some(*token));
+                free
+            }
+        };
+        let asked = Cell::new(None);
+        let satisfied = |_: &AuditToken, r: &str| {
+            asked.set(Some(r.to_owned()));
+            true
+        };
+        // A satisfying signature without a Keychain entitlement is admitted.
+        assert_eq!(
+            admit(&check, || Ok([7; 32]), satisfied, probe(true)),
+            Ok(Some([7; 32]))
+        );
+        assert_eq!(asked.take().as_deref(), Some(requirement.as_str()));
+        assert_eq!(probed.take(), Some([7; 32]));
+        // The same satisfying signature holding a Keychain entitlement is refused.
+        let refusal = admit(&check, || Ok([7; 32]), |_, _| true, probe(false)).unwrap_err();
+        assert!(refusal.contains("browser gateway"), "{refusal}");
+        assert!(refusal.contains("Keychain entitlement"), "{refusal}");
+        assert_eq!(probed.take(), Some([7; 32]));
+        // The office server's check never asks the Keychain probe.
+        let office = ServerCheck::Requirement("R".into());
+        assert_eq!(
+            admit(&office, || Ok([7; 32]), |_, _| true, no_keychain),
+            Ok(Some([7; 32]))
+        );
+    }
+
     #[test]
     fn a_child_is_admitted_only_with_a_token_that_satisfies_the_requirement() {
         let check = ServerCheck::Requirement("R".into());
@@ -420,16 +475,28 @@ mod tests {
             asked.set(Some(r.to_owned()));
             true
         };
-        assert_eq!(admit(&check, || Ok([7; 32]), yes), Ok(Some([7; 32])));
+        assert_eq!(
+            admit(&check, || Ok([7; 32]), yes, no_keychain),
+            Ok(Some([7; 32]))
+        );
         assert_eq!(asked.take().as_deref(), Some("R"));
-        assert!(admit(&check, || Ok([7; 32]), |_, _| false).is_err());
+        assert!(admit(&check, || Ok([7; 32]), |_, _| false, no_keychain).is_err());
         // No token: refused, and the requirement isn't even checked.
-        let err = admit(&check, || Err("gone".into()), |_, _| panic!("checked")).unwrap_err();
+        let err = admit(
+            &check,
+            || Err("gone".into()),
+            |_, _| panic!("checked"),
+            no_keychain,
+        )
+        .unwrap_err();
         assert!(err.contains("gone"), "{err}");
         // Debug skips; no team id refuses; neither asks for anything.
         let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
-        assert_eq!(admit(&ServerCheck::Skip, never, |_, _| panic!()), Ok(None));
-        assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!()).is_err());
+        assert_eq!(
+            admit(&ServerCheck::Skip, never, |_, _| panic!(), no_keychain),
+            Ok(None)
+        );
+        assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!(), no_keychain).is_err());
     }
 
     #[test]
