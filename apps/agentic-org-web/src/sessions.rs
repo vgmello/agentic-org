@@ -41,7 +41,8 @@ const MAX_SESSIONS: usize = org_host_control::ops::GATEWAY_SESSIONS;
 /// probes started within these 2 s + the last probe (milliseconds) is about
 /// 3 s, leaving over 6 s for pool queueing. A degraded host can still exceed it
 /// (each call keeps its 5 s deadline); the abandonment check before insertion
-/// then ends the new host session instead of binding it.
+/// then ends the new host session instead of binding it, and an abandonment
+/// after that check is undone when the reply cannot be delivered.
 const CAPACITY_RECHECK: Duration = Duration::from_secs(2);
 /// Host ends queued behind one cleanup thread. A full queue drops the end: the
 /// host's own idle/absolute expiry still reclaims that session.
@@ -53,7 +54,8 @@ pub struct BrowserSessions {
     cookie_name: String,
     secure: bool,
     proof_key: Zeroizing<[u8; 32]>,
-    sessions: Mutex<BTreeMap<[u8; 32], Arc<Session>>>,
+    /// Shared with a sign-in's delivery rollback, which may run after the call.
+    sessions: Arc<Mutex<BTreeMap<[u8; 32], Arc<Session>>>>,
     capacity_cursor: Mutex<Option<[u8; 32]>>,
     cleanup: SyncSender<Arc<SessionHandle>>,
 }
@@ -66,8 +68,8 @@ struct Session {
     created: Instant,
     touched: Mutex<Instant>,
 }
-/// An authenticated request retains the original binding. Refresh/logout revoke
-/// it through the registry before a queued request can obtain another grant.
+/// An authenticated request retains the original binding. Refresh/logout remove
+/// the binding, so a queued ticket fails `current()`.
 pub struct Ticket {
     key: [u8; 32],
     session: Arc<Session>,
@@ -122,8 +124,9 @@ fn datetime(ms: u64) -> Result<String, ApiReply> {
     Ok(time::format_ms(ms))
 }
 mod time;
-/// The single host-cleanup worker. It ends when the registry (the only sender)
-/// drops or the host control connection is no longer live.
+/// The single host-cleanup worker. It ends when the registry and any pending
+/// delivery rollbacks (the only senders) drop or the host control connection is
+/// no longer live.
 fn end_expired(host: &HostControl, queued: &Receiver<Arc<SessionHandle>>) {
     while host.live() {
         match queued.recv_timeout(Duration::from_millis(100)) {
@@ -158,7 +161,7 @@ impl BrowserSessions {
             cookie_name: format!("org_session_{}", &suffix[..16]),
             secure,
             proof_key: Zeroizing::new(random()?),
-            sessions: Mutex::new(BTreeMap::new()),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
             capacity_cursor: Mutex::new(None),
         }))
     }
@@ -248,6 +251,21 @@ impl BrowserSessions {
                 return Err(unavailable());
             }
             sessions.insert(key, Arc::new(session));
+            // The waiter can still give up after this check. If the reply then
+            // cannot be delivered, nobody holds the new pair: evict it by its
+            // host handle and queue the host end (a full queue leaves it to the
+            // host's own expiry).
+            let (map, cleanup, bound) = (
+                Arc::clone(&self.sessions),
+                self.cleanup.clone(),
+                Arc::clone(&handle),
+            );
+            watch.on_undelivered(move || {
+                if let Ok(mut sessions) = map.lock() {
+                    sessions.retain(|_, current| !Arc::ptr_eq(&current.handle, &bound));
+                }
+                let _ = cleanup.try_send(bound);
+            });
             Ok(result)
         })();
         if admission.is_err() {

@@ -24,6 +24,13 @@ use std::{
 use zeroize::Zeroizing;
 
 const DEADLINE: Duration = Duration::from_secs(5);
+/// The actor writes a job only if at least this much of its deadline remains.
+/// A job dequeued later stays unclaimed and is refused unwritten: a write with
+/// almost no reply budget would expire in flight and close the connection.
+const MIN_WRITE_BUDGET: Duration = Duration::from_millis(250);
+/// After the caller's own deadline, how long it waits for a reply the actor
+/// may be delivering at that same deadline before declaring the stream lost.
+const REPLY_GRACE: Duration = Duration::from_millis(50);
 const MAX_CONTROL_BYTES: usize = org_proto::MAX_FRAME_BYTES;
 static SPAWN_FENCE: Mutex<()> = Mutex::new(());
 #[cfg(test)]
@@ -83,12 +90,15 @@ struct Response<T> {
     result: Option<T>,
     error: Option<org_proto::ApiError>,
 }
-fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64) -> Result<T, Failure> {
+/// `desync` runs when the reply answers another request id: replies are no
+/// longer paired with requests, so the connection must not be reused.
+fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64, desync: &dyn Fn()) -> Result<T, Failure> {
     if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
         return Err(Failure::Unavailable);
     }
     let reply: Response<T> = serde_json::from_slice(bytes).map_err(|_| Failure::Unavailable)?;
     if reply.id != id {
+        desync();
         return Err(Failure::Unavailable);
     }
     match (reply.result, reply.error) {
@@ -224,8 +234,10 @@ impl HostControl {
     }
     /// Every call gets the full per-call deadline. Expiry after the actor took
     /// the request (it may have been written) leaves the stream out of step, so
-    /// it closes the connection; callers must never shorten this budget. Expiry
-    /// while still queued abandons the unwritten request and keeps the connection.
+    /// it closes the connection unless the reply arrives within the grace;
+    /// callers must never shorten this budget. Expiry while still queued, or
+    /// dequeuing with less than [`MIN_WRITE_BUDGET`] left, abandons the unwritten
+    /// request and keeps the connection.
     fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
         self.borrowed_until::<C, T>(params, Instant::now() + DEADLINE)
     }
@@ -264,13 +276,32 @@ impl HostControl {
             })
             .map_err(|_| Failure::Unavailable)?;
         match receiver.recv_timeout(until.saturating_duration_since(Instant::now())) {
-            Ok(reply) => decode(&reply?.bytes, id),
+            Ok(reply) => decode(&reply?.bytes, id, &|| self.close()),
+            Err(_) => self.settle(&claimed, &receiver, id),
+        }
+    }
+    /// The caller's deadline passed. Unclaimed: the actor will skip it unwritten.
+    /// Claimed: the actor shares this deadline, so its reply may be arriving
+    /// now; a reply delivered within [`REPLY_GRACE`] keeps the stream in step.
+    /// Otherwise a late reply would desynchronize, so the connection closes.
+    fn settle<T: DeserializeOwned>(
+        &self,
+        claimed: &AtomicBool,
+        receiver: &mpsc::Receiver<Result<Reply, Failure>>,
+        id: u64,
+    ) -> Result<T, Failure> {
+        if !claimed.swap(true, Ordering::SeqCst) {
+            return Err(Failure::Unavailable);
+        }
+        match receiver.recv_timeout(REPLY_GRACE) {
+            Ok(Ok(reply)) => decode(&reply.bytes, id, &|| self.close()),
+            // The actor failed this job and is already ending the connection.
+            Ok(Err(error)) => {
+                self.close();
+                Err(error)
+            }
             Err(_) => {
-                // Unclaimed: the actor will skip it unwritten. Claimed: it may
-                // have been written, and a late reply would desynchronize.
-                if claimed.swap(true, Ordering::SeqCst) {
-                    self.close();
-                }
+                self.close();
                 Err(Failure::Unavailable)
             }
         }
@@ -326,9 +357,11 @@ fn actor(
                 continue;
             }
         };
-        // Expired jobs stay unclaimed: a caller resuming its timeout handler
-        // must not mistake an unwritten request for possible in-flight I/O.
-        if Instant::now() >= job.until || job.claimed.swap(true, Ordering::SeqCst) {
+        // Expired or nearly expired jobs stay unclaimed and unwritten: a caller
+        // resuming its timeout handler must not mistake them for in-flight I/O.
+        if job.until.saturating_duration_since(Instant::now()) < MIN_WRITE_BUDGET
+            || job.claimed.swap(true, Ordering::SeqCst)
+        {
             let _ = job.answer.send(Err(Failure::Unavailable));
             continue;
         }

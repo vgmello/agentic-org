@@ -444,6 +444,42 @@ fn an_abandoned_sign_in_ends_its_new_host_session_instead_of_binding_it() {
 }
 
 #[test]
+fn an_undelivered_sign_in_reply_evicts_its_pair_and_ends_the_host_session() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    let waiting = || false;
+    let watch = crate::blocking::Watch::new(&waiting);
+    let established = f
+        .sessions
+        .sign_in_watched(
+            LOGIN.into(),
+            Password::new(PASSWORD.into()).unwrap(),
+            &watch,
+        )
+        .unwrap_or_else(|_| panic!("sign in"));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 2);
+    // The HTTP waiter timed out after the bind: the pool's reply send fails.
+    if let Some(rollback) = watch.into_rollback() {
+        rollback();
+    }
+    assert!(f.refused(&established.cookie, established.proof.expose()));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    let until = Instant::now() + Duration::from_secs(5);
+    while !f
+        .ended
+        .lock()
+        .unwrap()
+        .contains("synthetic native handle 2")
+        && Instant::now() < until
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(f.count("session.end"), 1);
+    assert!(f.sessions.host.live());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+}
+
+#[test]
 fn sign_in_reclaims_unpresented_host_revocations_at_capacity() {
     for keep_live in [false, true] {
         let f = Fixture::new();

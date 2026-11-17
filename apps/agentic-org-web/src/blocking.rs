@@ -1,6 +1,7 @@
 //! Fixed native workers with bounded waiting jobs and input bytes.
 //! Constructed inside service start, after the verified host handoff.
 
+use std::cell::RefCell;
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,21 +28,38 @@ pub struct Ticket<T> {
 
 /// Lets admitted work observe that its waiter is gone (the HTTP side timed out
 /// or disconnected), so work that creates authority can undo it instead of
-/// committing a result nobody will receive.
-pub struct Watch<'a>(&'a dyn Fn() -> bool);
+/// committing a result nobody will receive. The waiter can still give up after
+/// the work's last check; work then registers [`Watch::on_undelivered`], which
+/// the pool runs when delivering the finished result fails.
+pub struct Watch<'a> {
+    abandoned: &'a dyn Fn() -> bool,
+    rollback: RefCell<Option<Box<dyn FnOnce()>>>,
+}
 
 static NEVER: fn() -> bool = || false;
 
 impl<'a> Watch<'a> {
     pub fn new(abandoned: &'a dyn Fn() -> bool) -> Self {
-        Self(abandoned)
+        Self {
+            abandoned,
+            rollback: RefCell::new(None),
+        }
     }
     /// A waiter that is never abandoned, for direct (non-pool) callers.
     pub fn never() -> Watch<'static> {
-        Watch(&NEVER)
+        Watch::new(&NEVER)
     }
     pub fn abandoned(&self) -> bool {
-        (self.0)()
+        (self.abandoned)()
+    }
+    /// Replaces the undo run on this worker thread if the finished result
+    /// cannot be delivered because the waiter is already gone.
+    pub fn on_undelivered(&self, rollback: impl FnOnce() + 'static) {
+        *self.rollback.borrow_mut() = Some(Box::new(rollback));
+    }
+    /// The registered undo, taken when the result's delivery has failed.
+    pub(crate) fn into_rollback(self) -> Option<Box<dyn FnOnce()>> {
+        self.rollback.into_inner()
     }
 }
 
@@ -145,8 +163,15 @@ impl BlockingPool {
         let (reply, receiver) = oneshot::channel();
         let job = Box::new(move || {
             drop(reservation);
-            let result = work(&Watch(&|| reply.is_closed()));
-            let _ = reply.send(result);
+            let abandoned = || reply.is_closed();
+            let watch = Watch::new(&abandoned);
+            let result = work(&watch);
+            let rollback = watch.into_rollback();
+            if reply.send(result).is_err() {
+                if let Some(rollback) = rollback {
+                    rollback();
+                }
+            }
         });
         sender.try_send(job).map_err(|error| match error {
             TrySendError::Full(_) => SubmitError::QueueFull,
@@ -203,6 +228,31 @@ mod tests {
         release.send(()).unwrap();
         assert_eq!(abandoned.recv_timeout(GUARD).unwrap(), (false, true));
         assert!(!Watch::never().abandoned());
+    }
+
+    #[test]
+    fn a_failed_delivery_runs_the_registered_rollback_only_then() {
+        let pool = BlockingPool::new(1, 1, 32).unwrap();
+        let (rolled_back, observed) = mpsc::channel();
+        let submit = |gate: Option<mpsc::Receiver<()>>| {
+            let rolled_back = rolled_back.clone();
+            pool.submit_watched(8, move |watch| {
+                if let Some(gate) = gate {
+                    gate.recv_timeout(GUARD).unwrap();
+                }
+                watch.on_undelivered(move || rolled_back.send(()).unwrap());
+                7
+            })
+            .unwrap()
+        };
+        // Delivered: the rollback is dropped unrun.
+        assert_eq!(reply(submit(None)).unwrap(), 7);
+        // The waiter leaves while the work is still running: delivery fails.
+        let (release, gate) = mpsc::channel();
+        drop(submit(Some(gate)));
+        release.send(()).unwrap();
+        observed.recv_timeout(GUARD).unwrap();
+        assert!(observed.try_recv().is_err());
     }
 
     #[test]

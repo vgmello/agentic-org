@@ -154,7 +154,7 @@ fn control_replies_accept_the_native_frame_limit_and_refuse_larger_frames() {
         reply.push(b' ').unwrap();
     }
     assert_eq!(reply.bytes.len(), org_proto::MAX_FRAME_BYTES);
-    decode::<org_proto::Empty>(&reply.bytes, 1).unwrap();
+    decode::<org_proto::Empty>(&reply.bytes, 1, &|| {}).unwrap();
     assert_eq!(reply.push(b' '), Err(Failure::Unavailable));
     assert_eq!(reply.bytes.len(), org_proto::MAX_FRAME_BYTES);
 }
@@ -224,7 +224,7 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
         )
         .unwrap();
         assert_eq!(
-            decode::<ops::SessionInspectResult>(&bytes, 1).err(),
+            decode::<ops::SessionInspectResult>(&bytes, 1, &|| {}).err(),
             Some(expected)
         );
     }
@@ -234,7 +234,7 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
         br#"[1]"#,
     ] {
         assert_eq!(
-            decode::<ops::SessionInspectResult>(bytes, 1).err(),
+            decode::<ops::SessionInspectResult>(bytes, 1, &|| {}).err(),
             Some(Failure::Unavailable)
         );
     }
@@ -341,4 +341,98 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
         host.join().unwrap(),
         ["hello", "session.inspect", "session.renew"]
     );
+}
+
+/// A host on a real socket pair that answers `hello`, records every method and
+/// answers the rest through `answer` (`None`: no reply is ever written).
+fn scripted(
+    answer: impl Fn(&serde_json::Value) -> Option<serde_json::Value> + Send + 'static,
+) -> (Arc<HostControl>, JoinHandle<Vec<String>>) {
+    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (transfer, host_transfer) = UnixDatagram::pair().unwrap();
+    let host = thread::spawn(move || {
+        let _transfer = host_transfer;
+        let mut reader = BufReader::new(peer);
+        let mut methods = Vec::new();
+        while let Ok(Some(request)) =
+            org_proto::frame::read_message::<serde_json::Value>(&mut reader)
+        {
+            let method = request["method"].as_str().unwrap().to_owned();
+            let reply = if method == "hello" {
+                let result = serde_json::to_value(
+                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
+                )
+                .unwrap();
+                Some(serde_json::json!({"id":request["id"],"result":result}))
+            } else {
+                answer(&request)
+            };
+            methods.push(method);
+            if let Some(reply) = reply {
+                if org_proto::frame::write_message(reader.get_mut(), &reply).is_err() {
+                    break;
+                }
+            }
+        }
+        methods
+    });
+    let control = HostControl::from_handoff(
+        gateway.into(),
+        transfer.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+    )
+    .unwrap();
+    (control, host)
+}
+
+#[test]
+fn a_job_dequeued_below_the_write_floor_is_refused_unwritten_and_keeps_the_connection() {
+    // A written `session.end` would never be answered within its budget.
+    let (control, host) = scripted(|request| {
+        (request["method"] == "session.renew")
+            .then(|| serde_json::json!({"id":request["id"],"result":{}}))
+    });
+    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+    let near = control.borrowed_until::<ops::SessionEnd, _>(
+        &serde_json::json!({"session": &handle}),
+        Instant::now() + Duration::from_millis(100),
+    );
+    assert_eq!(near.err(), Some(Failure::Unavailable));
+    assert!(control.live());
+    assert_eq!(control.renew(&handle), Ok(()));
+    drop(control);
+    assert_eq!(host.join().unwrap(), ["hello", "session.renew"]);
+}
+
+#[test]
+fn a_reply_delivered_as_the_caller_deadline_passes_is_used_without_closing() {
+    let (control, host) = scripted(|_| None);
+    let (answer, receiver) = mpsc::sync_channel(1);
+    let mut reply = Reply::new();
+    for byte in br#"{"id":7,"result":{}}"# {
+        reply.push(*byte).unwrap();
+    }
+    answer.send(Ok(reply)).unwrap();
+    // The actor had claimed the job and answered it as the caller's wait ended.
+    let claimed = AtomicBool::new(true);
+    let result = control.settle::<serde_json::Value>(&claimed, &receiver, 7);
+    assert_eq!(result, Ok(serde_json::json!({})));
+    assert!(control.live());
+    drop(control);
+    host.join().unwrap();
+}
+
+#[test]
+fn a_reply_with_another_id_desynchronizes_and_closes_the_connection() {
+    let (control, host) = scripted(|request| {
+        let id = request["id"].as_u64().unwrap() + 1;
+        Some(serde_json::json!({"id":id,"result":{}}))
+    });
+    let handle = SessionHandle::new("synthetic native handle".into()).unwrap();
+    assert_eq!(control.renew(&handle), Err(Failure::Unavailable));
+    assert!(!control.live());
+    assert_eq!(control.renew(&handle), Err(Failure::Unavailable));
+    drop(control);
+    assert_eq!(host.join().unwrap(), ["hello", "session.renew"]);
 }
