@@ -15,9 +15,13 @@ code that exists today; their requirements stay in
 all four executables. Nothing else in the workspace contains `target_os`,
 `target_vendor` or `target_family`, in source or in tests.
 
-- **Contents.** One module per contract (`admission`, `credentials`, `confinement`,
-  `service`, `isolation`) and per supporting capability (`fs`, `dirs`, `process`,
-  `socket`, `presence`; section 4). Each module has `macos.rs`, `linux.rs` and
+- **Contents.** Ten modules, and every operating-system difference in the workspace
+  belongs to one of them: the five contracts of ADR-0017 (`admission`, `credentials`,
+  `confinement`, `service`, `isolation`; section 3) and five further capabilities
+  (`fs`, `dirs`, `process`, `socket`, `presence`; section 4). A difference found later
+  becomes a new module under the
+  [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one),
+  with its macOS, Linux and refusing adapters, and is added to section 2. Each module has `macos.rs`, `linux.rs` and
   `refused.rs`, and exports one non-conditional constructor that returns the build
   target's implementation or the refusing one. The refusing adapter returns
   `Refused::Unsupported { capability, os }` and never falls back to another system's
@@ -68,7 +72,8 @@ would be declared four times.
 | `agentic-org` (`serve`, `setup`) | Release images: static check and the host's own image | `org-host/src/release/platform.rs`, `release/runtime.rs` (`check_self`), `org-socket/src/image.rs` | `admission` |
 | `agentic-org` (`setup`, `serve`) | Instance, temp and socket locations; filesystem checks | `org-host/src/home.rs`, `instance/directory.rs`, `instance/mod.rs`, `instance/temp.rs`, `instance/setup.rs`, `human.rs` (`paths`, `user_temp`) | `dirs`, `fs` |
 | `agentic-org` (`serve`) | Durable flush and exclusive rename | `org-host/src/writer.rs`, `hostdb.rs`, `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`, `host_secrets/dev.rs` | `fs` |
-| `agentic-org` (`recovery`) | Local presence and confirmation for the recovery code | `org-host/src/recovery/presence.rs`, the bridge in `org-host/build.rs` | `presence` |
+| `agentic-org` (`recovery`) | Local presence and confirmation for the recovery code (ADR-0011) | `org-host/src/recovery/presence.rs`, the bridge in `org-host/build.rs` | `presence` |
+| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root through `sudo` on Linux (SIGN-33) | Not built (A3) | `presence` |
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/platform.rs`, `spawn.rs`, `child.rs`, `recovery/native/` | `process`, `isolation` |
@@ -84,6 +89,13 @@ and `org-host/src/signals.rs`, and the descriptor swap in
 `apps/agentic-org-office/src/fdswap.rs`. No executable's own source has a platform
 conditional outside its tests; the tests that have one are listed in the allowlist of
 section 1 or move into `org-platform`.
+
+Count today: 79 `.rs` files outside any adapter contain a platform conditional, 44 of
+them source files (35 in `org-host`, `org-socket` and `org-supervise`, plus
+`org-office`'s `durable.rs`, `org-client`'s `agent.rs` and `org-spool`'s
+`safe_read.rs`) and 35 test files. Each source file maps to a row above; X1 moves all
+of them. Until X1's check lands, milestone-one work in those files adds no new
+conditional.
 
 ## 3. The five contracts
 
@@ -122,7 +134,12 @@ type starts the office worker and the web process, each with its own
 
 **macOS adapter.** Today's code, unchanged in behaviour: `spawn_suspended`, the audit
 token from `task_name_for_pid`, the Developer ID requirement and hardened-runtime
-check, the pinned CDHash, `SIGCONT`, and the token comparison in `verify_reader`.
+check, the pinned CDHash, `SIGCONT`, and the token comparison in `verify_reader`. The
+signing identifiers (`SERVER_SIGNING_ID`, `com.ellosoft.agentic-org.org-server`, for
+the worker; `GATEWAY_SIGNING_ID` for the web process; `HOST_SIGNING_ID` for the host)
+and the team ID are this adapter's data, passed in `macos_requirement`; they keep
+their names and values. The Linux adapter has no equivalent identifier: it uses the
+release manifest digest.
 `org-host/src/spawn.rs` and the Security-framework half of `code_signing.rs` move;
 `ServerCheck` in `server_check.rs` becomes the policy that builds `ExpectedImage`
 (today: a debug build skips the check, a release build without `ORG_APP_TEAM_ID`
@@ -166,7 +183,8 @@ or write `/proc/<pid>/mem`, or follow `/proc/<pid>/exe`. The worker never calls
 sets `PR_SET_DUMPABLE` to 0 at startup, so its own memory is equally closed.
 
 `peer` on Linux returns the UID and PID from `SO_PEERCRED`. A native client is
-admitted on `host.sock` by UID alone: a command started by the person has no code
+admitted on `host.sock` by UID alone (the service user's, or root for
+`admin reset` only, section 4): a command started by the person has no code
 identity the kernel can vouch for, so its authority is only the session the person
 approved in the browser (A5). `own_image` hashes `/proc/self/exe` and compares it
 with the manifest entry for `agentic-org`; `release/platform.rs` accepts a Linux
@@ -394,10 +412,11 @@ started without one.
 `dedicated-user` (L6) uses an account created in the image or by setup and a small
 launcher; it is designed then.
 
-## 4. Supporting capabilities
+## 4. The other platform capabilities
 
-Not contracts of ADR-0017, but operating-system differences all the same, so they
-live in `org-platform` and LNX-5's check covers them.
+ADR-0017's table names five contracts; these five capabilities are the rest of the
+operating-system differences in the workspace. They live in `org-platform`, have the
+same three adapters, and LNX-5's check covers them.
 
 - **`fs`.** `full_sync(&File)`: `fsync`, and on macOS also `F_FULLFSYNC`, with no
   downgrade when it fails. `rename_noreplace_at(dir, from, dir, to)`: `renameatx_np`
@@ -435,6 +454,10 @@ live in `org-platform` and LNX-5's check covers them.
   administrator's approval of this run in the browser as the one confirmation. A
   remote shell is a local context on Linux; a run without a terminal receives no code.
   The host branches on the returned confirmation kind, never on the system.
+  `local_authority` decides who may reset the administrator: on macOS the OS dialog at
+  the console, as for the recovery code; on Linux a peer whose `SO_PEERCRED` UID is 0,
+  acting on the instance of the user that `sudo` names (`SUDO_UID`) or that `--user`
+  names (SIGN-33). Root is admitted on `host.sock` for this method only.
 
 ## 5. What a local attacker can still do on Linux
 
