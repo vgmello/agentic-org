@@ -169,9 +169,11 @@ fn actual_host_spawns_web_gateway_with_sessions_refresh_sign_out_eof_and_lockout
     fs::copy(office, &worker).unwrap();
     fs::copy(web, &program).unwrap();
     fs::create_dir(base.join("bin/ui")).unwrap();
+    // Startup validation hashes the entry's inline bootstrap into the CSP and
+    // refuses an entry without one (MissingInlineScript), as for a real build.
     fs::write(
         base.join("bin/ui/index.html"),
-        b"<html><body>public component fixture</body></html>",
+        b"<html><body>public component fixture<script>/* fixture bootstrap */</script></body></html>",
     )
     .unwrap();
     let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
