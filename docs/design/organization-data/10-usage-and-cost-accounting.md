@@ -85,8 +85,8 @@ output_micro_usd_per_million: 2000000
 cache_read_micro_usd_per_million: 500000
 cache_write_micro_usd_per_million: 1250000
 created_at: "2026-10-31T12:00:00Z"
-created_by_kind: owner
-created_by_id: null
+created_by_kind: employee
+created_by_id: 01930000-0000-7000-8000-000000000031
 ```
 
 One usage event, formatted for reading (each JSONL event is one line on disk):
@@ -261,7 +261,7 @@ CREATE TABLE model_prices (
   cache_read_micro_usd_per_million INTEGER CHECK (cache_read_micro_usd_per_million >= 0),
   cache_write_micro_usd_per_million INTEGER CHECK (cache_write_micro_usd_per_million >= 0),
   created_at TEXT NOT NULL,
-  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, provider, model, effective_from),
@@ -287,7 +287,7 @@ CREATE TABLE usage_records (
   model TEXT,
   occurred_at TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
-  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'system', 'unknown')),
   recorded_by_id TEXT,
   normalization_version INTEGER NOT NULL CHECK (normalization_version >= 1),
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),

@@ -1,10 +1,10 @@
 # Record ownership, attribution, lifecycle and relationships
 
-Status: **selected** data contract, revision 2.8. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
+Status: **selected** data contract, revision 2.9. These are data contracts shared by the organization/project/work documents, not an implementation of permissions, costs or process execution.
 
 ## Accountable owners
 
-Features, supporting documents, feature flag definitions, and process/standard content records have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content) marked `current` require an explicit owner. Active flag definitions also require an owner. Import validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
+Features, supporting documents, feature flag definitions, and process/standard content records have optional `owner_employee_id`, referencing one person or agent in the same organization. This is accountability for that record, separate from task assignment, project team ownership and management authority. An owner need not belong to the project's owning team. Planned/unassigned features and draft documents may have no owner; features in `in_progress` or `live` and documents (including process/standard content) marked `current` require an explicit owner. Active flag definitions also require an owner. Validation also requires an active owner for those active records. Transfer accountability before making such an owner inactive; historical attribution can still reference inactive employees.
 
 ## Common attribution
 
@@ -13,13 +13,13 @@ The authored tables organizations, repositories, roles, teams, offices, structur
 | Field | Meaning |
 | --- | --- |
 | `created_at` | Original creation time, quoted UTC timestamp; never replaced by a later time |
-| `created_by_kind` | `employee`, `owner`, `system` or `unknown` |
+| `created_by_kind` | `employee`, `system` or `unknown` |
 | `created_by_id` | Stable employee ID only when creator kind is employee; otherwise null |
 | `updated_at` | Time of the latest content/metadata change |
 | `updated_by_kind` | Same actor vocabulary as creator |
 | `updated_by_id` | Stable employee ID only when updater kind is employee; otherwise null |
 
-These fields are top-level front-matter/YAML scalars matching the SQL columns. Accepted records must supply actual timestamps and known actor kinds. Do not fabricate provenance. The SQL projection's columns still admit `unknown` and null; validation requires real values for every accepted write. `owner` uses the existing organization-owner designation; `system` means framework/integration automation. Neither is an employee profile. This attribution does not grant authorization or replace authentication/audit infrastructure.
+These fields are top-level front-matter/YAML scalars matching the SQL columns. Accepted records must supply actual timestamps and known actor kinds. Do not fabricate provenance. The SQL projection's columns admit `unknown` and null; validation requires real values for every accepted write. `employee` is a person or an agent; a person who signs in, the organization owner included, is recorded as their own person record ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). `system` means framework/integration automation and is not an employee. This attribution does not grant authorization or replace authentication/audit infrastructure.
 
 Updating an entity preserves creation fields, advances its revision, and updates its update fields. Nested arrays/association rows inherit the owning entity's update metadata; comments keep their own existing author/time fields. Tombstones retain original record provenance in a YAML `record_metadata` map together with deleted-record identity. SQLite projects that map as `record_metadata_json`, serialized as an object with lexically sorted keys; a missing map defaults to `{}`. These common fields describe current attribution. Tasks additionally retain the immutable activity history defined in [operational data](05-operational-data.md#task-activity-history); full organization-wide event history remains unselected.
 
@@ -37,15 +37,13 @@ For tasks of every type, `created_by_kind`/`created_by_id` is the reporter/origi
 | Feature | `status: planned | in_progress | live | retired`, authored; no transition engine |
 | Milestone, release | No stored status; done is derived from task status (document 02) |
 
-Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; import/publication checks this without erasing historical rows. Existing current documents and live features retain their recorded owners until explicitly reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
+Archiving/deactivating changes availability, not identity. Preserve profiles, handles, numbers, foreign references and historical metadata. Archived teams and inactive employees cannot receive new active assignments; validation checks this without erasing past rows. Existing current documents and live features retain their recorded owners until explicitly reassigned. Document status does not create a mandatory approval workflow. Team moves still update the explicit parent and durable path together.
 
-## Build / Run work classification: v1 finding and proposed extension
+## Build / Run work classification
 
-At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, the [cost UX specification](../../specs/costs-and-insights-ux.md) describes **Build, shown as R&D**, and reserves **KTLO** for a later version (§1, Kind breakdown and Organization Cost). The checked source has no corresponding persisted Build/Run field. Its referenced `costs-and-budgets-v1.md` PRD is not present in this checkout, so this document makes no claim about that absent contract.
+The [cost UX specification](../../specs/costs-and-insights-ux.md) shows **Build, displayed as R&D**. Features and tasks have nullable `work_type: build | run`, displayed as Build (R&D) and Run (KTLO). Build creates or materially improves capabilities; Run maintains existing service and ongoing operations. It is independent of task `type`: a bug found during new-feature development may be Build, while a production maintenance bug may be Run. It is also independent of team, project, release and office.
 
-Proposed selected-scope extension: features and tasks have nullable `work_type: build | run`, displayed as Build (R&D) and Run (KTLO). Build creates or materially improves capabilities; Run maintains existing service and ongoing operations. It is independent of task `type`: a bug found during new-feature development may be Build, while a production maintenance bug may be Run. It is also independent of team, project, release and office.
-
-Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. This adds classification data only. Usage events, historical attribution and price versions are now selected in [usage accounting](10-usage-and-cost-accounting.md). Budget data and stop-control records are now selected in [document 17](17-budgets-and-controls.md); runtime enforcement and retrospectives remain unimplemented/unselected respectively. Existing usage records are not silently reclassified; the captured Build/Run value is historical accounting data.
+Null means not classified, not Build or Run. Store each record's classification explicitly; a feature's value can be suggested when creating a task, but task values are not silently changed when the feature changes. Usage events capture the value in force when they are recorded ([usage accounting](10-usage-and-cost-accounting.md)); a later reclassification does not change them.
 
 ## Explicit relationship types
 

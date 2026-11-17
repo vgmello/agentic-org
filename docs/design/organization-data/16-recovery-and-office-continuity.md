@@ -1,6 +1,6 @@
 # Recovery and office continuity data
 
-Status: **selected** data contract, revision 2. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
+Status: **selected** data contract, revision 3. Data specification, not an implementation of federation, automatic HQ promotion, backup automation or restore commands. This document owns the metadata required to restart/rebuild safely and links existing numbering (06), accounting (10), execution (11), and messaging (15) authorities rather than replacing them.
 
 ## What recovery means
 
@@ -71,8 +71,7 @@ position, organization position and timestamp, plus complete snapshot/event,
 allocation, protected receipt/result and projection mutations. For n entries at h,
 allocate exactly h+1 through h+n and record after=h+n. At n=0, after=before; never
 append empty origin references or invent a receipt event. Keep the order, IDs and semantics of what is put. The same office writer allocates both positions together;
-there is no second writer or competing work-origin allocator. Until the store is rebuilt, mutations of the code's older work store pass through this
-boundary as well. Message allocation remains unchanged.
+there is no second writer or competing work-origin allocator. Message allocation is separate.
 
 Preparation is effect-free and freezes all decisions outside retryable callbacks.
 Durably flush immutable blobs and anchor first; flush a temporary manifest, install
@@ -83,9 +82,9 @@ chain and prior origin positions, project the full frozen mutations and both cur
 atomically in SQL, and verify coherent canonical task/event/receipt reads before ACK.
 Matching already-applied identity/digest skips effects; mismatch fails closed.
 
-Installation quiesces/fences writers and anchors retained counters, logs, snapshots,
-receipts and source hashes. Start ordinal 1 while retaining existing event
-high-water; never fabricate historical transactions. Restart/cache rebuild continues
+Opening a journal fences writers and anchors the counters, logs, snapshots,
+receipts and source hashes the office holds. Ordinals start at 1 with the
+office's event high-water kept; never fabricate transactions. Restart/cache rebuild continues
 the same incarnation. A new journal incarnation requires verified predecessor head,
 retained watermarks and writer fencing. It does not automatically rotate work/message
 incarnations; restored offices never promote themselves. Missing continuity stops
@@ -100,24 +99,20 @@ are <=64 MiB; <=1,024 references and <=64 MiB aggregate bytes per manifest, repe
 references counted. Validate actual lengths/digests. Recovery retains recorded
 profiles, not silently smaller replacements. Protected journal blobs and account-bound receipts never enter public Git.
 
-Receipts cover shared domain commands only. Credentials, passwords, login/reset outcomes, private notes and their existence never enter these shared records: retain those in the host/private stores. `result_ref` resolves through the original command's actor/scope checks, never an unrestricted file path or public URL. `actor_id` is an employee ID only; owner/system principals are bound by the existing authentication layer, not guessed from a display name. One command ID with another fingerprint or actor conflicts. Completed/rejected outcomes remain stable. An `outcome_unknown` command is reconciled before any side effect is repeated.
+Receipts cover shared domain commands only. Credentials, passwords, login/reset outcomes, private notes and their existence never enter these shared records: retain those in the host/private stores. `result_ref` resolves through the original command's actor/scope checks, never an unrestricted file path or public URL. `actor_id` is an employee ID, a person or an agent; a person who signs in, the organization owner included, is their own person record. A `system` actor has no employee ID. Accounts are bound by the host's authentication, never guessed from a display name. One command ID with another fingerprint or actor conflicts. Completed/rejected outcomes remain stable. An `outcome_unknown` command is reconciled before any side effect is repeated.
 
 The office message substrate currently shares an incarnation/sequence allocator between content and state operations; the selected stores must keep one allocator and one global high-water across the two stream categories, not create independent overlapping counters. Work uses its independent source stream. New incarnation after restore never resets/reuses an old incarnation's identity. Archive old high-water records even when payload retention expires. Persist command retention/expiry deliberately; do not delete a receipt while retries may still be valid. SQL blocks deletion/replacement of retained receipts and watermarks; an eventual reviewed expiry/archive procedure must preserve equivalent retry/tombstone evidence.
 
-For selected task commands, protected receipt metadata also binds the stable owner
+For selected task commands, protected receipt metadata also binds the stable
 account and issuing instance, command schema/method, checked organization/task/office
 scope and typed fingerprint. Session identity is not the business retry identity.
 Renewing a session can recover the same account's result after live authorization
 checks; another account or fingerprint conflicts without disclosing the old result.
-The owner event still has null employee ID. Neither an assignment nor any profile
-field establishes account authority. This protected binding must be included
-in the selected receipt schema and frozen journal; the older generic
-draft receipt columns alone do not supply it. Recovery keeps expiry/tombstone evidence
+The recorded actor is the account's person record (`actor_kind: employee`). Neither
+an assignment nor any profile field establishes account authority. This protected
+binding is part of the receipt schema and frozen journal; the columns of
+`mutation_receipts` alone do not supply it. Recovery keeps expiry/tombstone evidence
 and never deletes an eligible retry's only outcome.
-
-Until the store is rebuilt, the code holds an older receipt store beside the selected
-one. A work operation ID retained by either cannot be admitted again under the other.
-That coexistence rule goes away with the older store; nothing is imported from it.
 
 A checkpoint cannot establish authority by itself. Verify organization identity, trusted HQ/CA pins, codec compatibility, contiguous event sequence and digest chain before applying/rebuilding. Host credentials and CA pins stay in existing protected custody; they are not synthesized from Git or these tables. Higher observed epochs fence stale authority; a restored old office never promotes itself. Snapshot bytes must hash-match their transfer metadata before installation; rejected/partial artifacts confer no authority. SQL is not a lossy replacement for the binary/state-machine journal.
 
@@ -157,7 +152,7 @@ Process cleanup is machine-local. Never send a signal based solely on a restored
 
 ### Office acceptance projection format
 
-The selected office adapter uses additive office schema 7. Its protected journal
+The office adapter's protected journal
 envelope has `schema_version: 1`, `json_codec: 2` and the recorded resource profile;
 these versions are independent of task snapshot/event versions. The immutable
 anchor and each transaction retain ordered table mutations with full column names,
@@ -176,35 +171,30 @@ may advance from bytes whose hash is a verified predecessor for that same path;
 missing files may be recreated. Unfamiliar bytes or conflicting immutable files
 stop recovery. Verified final SQL/file reads precede readiness or completion.
 
-Protected owner-account registration is separate from the organization's directory.
-Selected directory generations and their exact source JSON pass through the same office
+The host's account registration, and the link from an account to its person record,
+are separate from the organization's directory. Directory generations and their exact source JSON pass through the same office
 writer; no field on an employee record grants ownership. These library mechanisms do not
 establish host lease fencing or production session verification by themselves. Their production composition remains required.
 
-### No adoption or staging interface
+### How the directory begins
 
-Withdrawn (owner decisions 2026-11-17). An earlier revision specified a local `adopt`
-command and two interfaces for staging and adopting tasks and a directory from an
-earlier store. Nothing has shipped, so there is nothing to adopt: no such command or
-interface is built, and no staging area exists. The organization's directory of
+There is no adoption, staging or import interface. The organization's directory of
 teams, employees and projects comes from creating the organization and from ordinary
 organization commands, through the same office writer and acceptance journal as every
 other change.
 
-Two things the withdrawn interface used to provide need a replacement. The proposed
-resolution, to be confirmed in the store rebuild plan (conflict plan entry B-01), is
-that both are ordinary accepted commands and neither is an import:
-
 - **The first directory generation.** Creating the organization is the first accepted
-  transaction of its acceptance journal. It writes the organization, the HQ office and
-  the initial team when one is given, and that is directory generation 1. Every later
-  organization command (create a team, add a person or agent, create a project)
-  is an accepted transaction that produces the next generation.
+  transaction of its acceptance journal. It writes the organization, the HQ office, the
+  top-level team, the creator's person record and the HR lead
+  ([document 01](01-organization-structure.md#creating-an-organization)), and that is
+  directory generation 1. Every later organization command (create a team, add a
+  person, hire an agent, create a project with its team) is an accepted transaction
+  that produces the next generation.
 - **A task's first entry.** `task.create` goes through the acceptance journal like every
   other task change. Its `created` event is revision 1 of that task's history, written
   in the same transaction as the task snapshot and the office-minted number.
   [ADR-0006](../../adr/0006-selected-task-acceptance.md) covers changes to an existing
-  task; the rebuild extends the same path to creation.
+  task and the same path covers creation.
 
 ## Moving agents and moving offices
 
@@ -236,18 +226,18 @@ would close that path.
 | Operational sources but a valid backup exists | Restore with verified identity/epoch/digests and disclose changes not covered by backup; no automatic claim of zero data loss |
 | Operational sources and backups | Git restores portable definitions/open work already published, not all acknowledged messages, receipts, authority or usage; stop affected work rather than fabricate continuity |
 
-This explicitly limits “delete office state”: the disposable directory cannot contain the only copy of acknowledged recovery evidence. Protect live source journals, host/private databases, keys, unresolved communication and process ownership until safe shutdown/archive. Recovery data is now selected; areas, Undo, automatic scheduling, memory and process-engine behavior remain unchanged.
+This explicitly limits “delete office state”: the disposable directory cannot contain the only copy of acknowledged recovery evidence. Protect live source journals, host/private databases, keys, unresolved communication and process ownership until safe shutdown/archive. Undo, automatic scheduling, memory and process-engine behavior are not part of this contract.
 
 ## SQL and field relationships
 
-All definitions below are included in `schema.sql`. All references are organization scoped. SQL enforces core identity/watermark invariants. Canonical paths, actor authorization, replay coverage, payload hashes, process verification, snapshot state transitions and filesystem/DB commit boundaries remain command/import/platform responsibilities. `generation` is the existing cleanup record generation; it is not the employee placement generation. Preserve existing IDs and generations without issuing new ones during projection rebuild.
+All definitions below are included in `schema.sql`. All references are organization scoped. SQL enforces core identity/watermark invariants. Canonical paths, actor authorization, replay coverage, payload hashes, process verification, snapshot state transitions and filesystem/DB commit boundaries remain command/platform responsibilities. `generation` is the existing cleanup record generation; it is not the employee placement generation. Preserve existing IDs and generations without issuing new ones during projection rebuild.
 
 ```sql
 CREATE TABLE mutation_receipts (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   command_id TEXT NOT NULL,
   origin_office_id TEXT NOT NULL,
-  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','owner','system')),
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','system')),
   actor_id TEXT,
   command_kind TEXT NOT NULL,
   request_sha256 TEXT NOT NULL CHECK (length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'),
