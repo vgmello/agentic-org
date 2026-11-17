@@ -22,6 +22,64 @@ pub struct GatewayFirstLine {
     /// lets it connect to.
     pub rendezvous: String,
     pub instance_id: String,
+    /// Exact protected release pin. Missing only in explicit development/legacy
+    /// fixtures; production requires it before preload or secret handoff.
+    pub release: Option<GatewayRelease>,
+}
+
+/// Non-secret startup binding, independently checked against the gateway's
+/// build-pinned publisher signature. This value alone confers no authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayRelease {
+    pub release_id: String,
+    pub manifest_sha256: String,
+    pub sequence: u64,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseWire {
+    version: u32,
+    release_id: String,
+    manifest_sha256: String,
+    sequence: u64,
+}
+impl Serialize for GatewayRelease {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        ReleaseWire {
+            version: 1,
+            release_id: self.release_id.clone(),
+            manifest_sha256: self.manifest_sha256.clone(),
+            sequence: self.sequence,
+        }
+        .serialize(s)
+    }
+}
+impl<'de> Deserialize<'de> for GatewayRelease {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let w = ReleaseWire::deserialize(d)?;
+        let id = w.release_id.as_bytes();
+        if w.version != 1
+            || id.is_empty()
+            || id.len() > 96
+            || !id[0].is_ascii_alphanumeric()
+            || !id
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            || w.sequence == 0
+            || w.manifest_sha256.len() != 64
+            || !w
+                .manifest_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        {
+            return Err(serde::de::Error::custom("invalid gateway release binding"));
+        }
+        Ok(Self {
+            release_id: w.release_id,
+            manifest_sha256: w.manifest_sha256,
+            sequence: w.sequence,
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +88,8 @@ struct FirstLineWire<T> {
     v: u32,
     rendezvous: T,
     instance_id: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    release: Option<GatewayRelease>,
 }
 
 impl Serialize for GatewayFirstLine {
@@ -38,6 +98,7 @@ impl Serialize for GatewayFirstLine {
             v: API_VERSION,
             rendezvous: &self.rendezvous,
             instance_id: &self.instance_id,
+            release: self.release.clone(),
         }
         .serialize(s)
     }
@@ -62,6 +123,7 @@ impl<'de> Deserialize<'de> for GatewayFirstLine {
         Ok(GatewayFirstLine {
             rendezvous: wire.rendezvous,
             instance_id: wire.instance_id,
+            release: wire.release,
         })
     }
 }
@@ -188,3 +250,6 @@ impl<'de> Deserialize<'de> for GatewayHandoff {
         Ok(GatewayHandoff)
     }
 }
+
+#[cfg(test)]
+mod release_tests;
