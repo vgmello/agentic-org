@@ -195,7 +195,7 @@ set up, record 3b.6 as **Blocked** with that reason (§7).
 | 4.6 | Slow the browser/event consumer and exceed queue limits | Bounded resource use; explicit reconnect/resync behavior; agents and durable writes continue | SRV-12, SRV-17 | Required |
 | 4.7 | Reject/revoke an office identity; test an incompatible protocol range | No unauthorized reconnect or half-understood apply; actionable status and preserved local data | SRV-9, SRV-10 | Required |
 | 4.8 | Disconnect satellite, Pause at HQ, restart/reconnect it; repeat with a later Resume before reconnect | HQ records paused status with stop pending; current version reconciles before work, office acknowledgement resolves stop, stale pause never overrides later Resume | SRV-28 | Required |
-| 4.9 | Change a goal while the office is known offline; then lose a forwarded reply and retry/lookup with the same ID | First is unavailable with no saved/queued goal; uncertain forwarded outcome stays pending, resolves once, and preserves expected-version conflicts | EMP-3, SRV-28 | Required |
+| 4.9 | Lose the reply to a forwarded Pause; then retry and look up with the same operation ID | The uncertain outcome stays Pending confirmation, resolves once, and preserves expected-version conflicts | SRV-12, SRV-28 | Required |
 
 ## 5. Lifecycle and removal
 

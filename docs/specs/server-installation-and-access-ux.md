@@ -148,7 +148,7 @@ with a specific reason.
 ## 4. HQ browser access and satellites
 
 The browser authenticates to HQ and receives only authorized organization data.
-No signed desktop identity or office certificate substitutes for a human session.
+No office certificate substitutes for a human session.
 No administration is available until the first account is registered from
 setup's link (§4a.2).
 Remote browser access uses HTTPS; local access binds to loopback by default.
@@ -1021,7 +1021,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-16 · Upgrading or uninstalling one instance cannot replace a running peer's helpers, remove a referenced release, delete peer data or sweep peer credentials.
 - SRV-17 · Shutdown drains acknowledged writes and reaps owned descendants within documented deadlines. Restart reconciles recorded work; browser disconnect does not cancel durable work.
 - SRV-18 · Production browser paths use the HTTP API, with an explicit unavailable state for missing features. An API failure never selects sample data. The unavailable pages' copy is in `app-shell-ux.md` §3 (SHELL-18 to SHELL-21).
-- SRV-19 · Withdrawn: there is no desktop application to exclude.
+- SRV-19 · Withdrawn: there is no native application.
 - SRV-20 · Superseded code is deleted, not adapted, and nothing is imported. Domain rules, storage durability, office identity and supervision invariants stay covered.
 - SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.
 
@@ -1032,7 +1032,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-25 · HQ creation idempotently provisions versioned encrypted CA escrow, protected one-time recovery-code delivery and off-HQ retention acknowledgement. A fixture recovers the same CA identity with the code and refuses wrong-code/damaged escrow; no code/usable CA key is replicated or logged. REC-1 remains an explicit production-recovery release decision.
 - SRV-26 · No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user depends on the agent isolation mode ([ADR-0015](../adr/0015-agent-isolation-modes.md)); in `same-user` mode it is not claimed. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; web/CLI helpers cannot obtain raw office keys through any interface the product provides.
 - SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
-- SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. Known-offline new goals are rejected without a write/queue; uncertain forwarded replies follow EMP-3.
+- SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. An uncertain forwarded outcome stays Pending confirmation and resolves by the same operation ID.
 - SRV-29 · Every home or path input on create or update, including absolute paths and traversal, is rejected before filesystem access. The launch working directory derives from managed IDs and the selected office, employee, task and repository workspace; response paths stay read-only under PROF-4.
 - SRV-30 · A hire follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision an employee, home or messaging binding before approval. The only agent created without a hire is the built-in HR lead, made with the organization in its top-level team; its execution readiness is separate and it is never teamless.
 - SRV-31 · Person-started CLI context selects explicit immutable instance and office identities; a managed binding never falls back to another office.
