@@ -540,12 +540,14 @@ fn startup_gateway(
     };
     let check =
         ServerCheck::gateway_for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
-            .unwrap_or(ServerCheck::Refuse);
+            .unwrap_or(ServerCheck::GatewayRefused("malformed app team id"));
     let check = match &config.runtime_release {
         Some(release) => release
             .cdhash("agentic-org-web")
             .map(|hash| check.pinned(hash))
-            .unwrap_or(ServerCheck::Refuse),
+            .unwrap_or(ServerCheck::GatewayRefused(
+                "the selected release has no agentic-org-web image hash",
+            )),
         None => check,
     };
     let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
@@ -768,12 +770,9 @@ impl Host {
                 Arc::new(move || eligibility.gateway_eligible()),
             ) {
                 Ok(gateway) => Some(gateway),
-                Err(_) => {
+                Err(error) => {
                     *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
-                    host_log::log(
-                        "browser service requires supported confinement and verified listener \
-                         configuration",
-                    );
+                    host_log::log(&format!("browser service not started: {error}"));
                     None
                 }
             }

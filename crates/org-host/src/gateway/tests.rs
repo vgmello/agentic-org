@@ -42,10 +42,13 @@ fn refused_gateway_start_never_becomes_ready() {
         Arc::clone(&state),
         Arc::new(|| true),
     );
-    assert!(
-        started.is_err(),
-        "a release build without a team never spawns"
-    );
+    let Err(error) = started else {
+        panic!("a release build without a team never spawns")
+    };
+    // The log names the real cause and that it is the gateway's check.
+    let message = error.to_string();
+    assert!(message.contains("browser gateway"), "{message}");
+    assert!(message.contains("no app team id"), "{message}");
     let observed = *lock(&state);
     assert_ne!(observed, GatewayState::Running);
     assert!(!crate::service::gateway_serving(true, true, observed));
@@ -340,6 +343,33 @@ fn only_consecutive_failed_starts_count_and_a_stable_run_resets_them() {
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
+    assert_eq!(*lock(&state), GatewayState::Failed);
+}
+
+#[test]
+fn a_stable_run_resets_failures_accumulated_before_it() {
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let starts = std::sync::atomic::AtomicUsize::new(0);
+    let timing = Timing {
+        serving: SERVING_DEADLINE,
+        stable: Duration::from_millis(100),
+        backoff: Duration::from_millis(1),
+    };
+    // MAX_STARTS - 1 failed starts, one stable run, MAX_STARTS - 1 more failed
+    // starts (still restarting), then one more failed start: the limit.
+    supervise(&stopping, &state, &|| true, timing, || {
+        let n = starts.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(n <= 2 * MAX_STARTS, "restarted past the limit");
+        if n == MAX_STARTS {
+            Ok(Brief {
+                until: Instant::now() + Duration::from_millis(250),
+            })
+        } else {
+            Err(io::Error::other("scripted failed start"))
+        }
+    });
+    assert_eq!(starts.load(Ordering::SeqCst), 2 * MAX_STARTS);
     assert_eq!(*lock(&state), GatewayState::Failed);
 }
 

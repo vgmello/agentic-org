@@ -62,6 +62,8 @@ pub(crate) enum ServerCheck {
     Pinned(Box<ServerCheck>, [u8; 20]),
     /// No team id: no server may be started.
     Refuse,
+    /// The browser gateway may not be started, and why (for the host log).
+    GatewayRefused(&'static str),
     /// Tests only: the admission and the re-check's token come from the test.
     #[cfg(test)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -113,7 +115,9 @@ impl ServerCheck {
         match team_id {
             Some(team) => crate::code_signing::developer_id_requirement(GATEWAY_SIGNING_ID, team)
                 .map(Self::Gateway),
-            None => Ok(Self::Refuse),
+            None => Ok(Self::GatewayRefused(
+                "no app team id (ORG_APP_TEAM_ID at build time)",
+            )),
         }
     }
     /// The check for a build (`debug`) whose app team id is `team_id`. A team id that isn't well
@@ -149,6 +153,9 @@ impl ServerCheck {
                                     no office server's signature can be checked: no office \
                                     server will be started"
                 .to_owned(),
+            ServerCheck::GatewayRefused(cause) => {
+                format!("WARNING: the browser gateway will not be started: {cause}")
+            }
             #[cfg(test)]
             ServerCheck::Scripted(_) => "scripted (tests)".to_owned(),
         }
@@ -161,6 +168,7 @@ impl ServerCheck {
             ServerCheck::Refuse => {
                 Err("this build has no app team id to check servers with".into())
             }
+            ServerCheck::GatewayRefused(cause) => Err((*cause).into()),
             ServerCheck::Skip | ServerCheck::Requirement(_) => Ok(()),
             ServerCheck::Gateway(_) => Ok(()),
             #[cfg(test)]
@@ -239,6 +247,7 @@ fn admit(
         }
         ServerCheck::Skip => Ok(None),
         ServerCheck::Refuse => Err("this build has no app team id to check servers with".into()),
+        ServerCheck::GatewayRefused(cause) => Err((*cause).into()),
         #[cfg(test)]
         ServerCheck::Scripted(_) => Err("a scripted check isn't decided here".into()),
         ServerCheck::Requirement(requirement) => {
@@ -354,8 +363,10 @@ mod tests {
     #[test]
     fn release_gateway_without_a_team_may_not_spawn() {
         let check = ServerCheck::gateway_for_build(false, None).unwrap();
-        assert_eq!(check, ServerCheck::Refuse);
+        assert!(matches!(check, ServerCheck::GatewayRefused(_)));
         assert!(check.may_spawn().is_err());
+        assert!(check.describe().contains("browser gateway"));
+        assert!(check.describe().contains("no app team id"));
         assert!(ServerCheck::gateway_for_build(true, None)
             .unwrap()
             .may_spawn()
@@ -371,10 +382,10 @@ mod tests {
         };
         assert!(requirement.contains(GATEWAY_SIGNING_ID));
         assert!(!requirement.contains(SERVER_SIGNING_ID));
-        assert_eq!(
+        assert!(matches!(
             ServerCheck::gateway_for_build(false, None).unwrap(),
-            ServerCheck::Refuse
-        );
+            ServerCheck::GatewayRefused(_)
+        ));
         assert!(ServerCheck::gateway_for_build(false, Some("bad")).is_err());
         assert_eq!(
             ServerCheck::gateway_for_build(true, None).unwrap(),

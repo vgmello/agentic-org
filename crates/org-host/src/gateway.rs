@@ -91,10 +91,21 @@ impl Supervisor {
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> io::Result<Self> {
         // No bind, child or secret handoff for unverified TLS or an unsupported OS.
-        if !cfg!(target_os = "macos") || config.listen.scheme() != ListenMode::HttpLoopback {
-            return Err(unavailable());
+        // Each refusal names its cause for the host log.
+        if !cfg!(target_os = "macos") {
+            return Err(io::Error::other(
+                "the browser gateway requires macOS process confinement",
+            ));
         }
-        config.check.may_spawn().map_err(invalid)?;
+        if config.listen.scheme() != ListenMode::HttpLoopback {
+            return Err(io::Error::other(
+                "the browser gateway requires a verified HTTP loopback listener",
+            ));
+        }
+        config
+            .check
+            .may_spawn()
+            .map_err(|_| io::Error::other(config.check.describe()))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let observing = Arc::clone(&state);
