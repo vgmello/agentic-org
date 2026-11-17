@@ -388,7 +388,7 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
-| X1 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+| X1 to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record
 for the creator, and is reached only from tests (implementation plan A4).

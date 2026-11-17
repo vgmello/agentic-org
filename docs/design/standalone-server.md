@@ -270,7 +270,9 @@ or issuing a link. Existing satellite-only state is never converted into HQ.
 `setup --non-interactive --config <file>` takes a strict JSON object with
 `version: 1`, an absolute `root` and `listen` (the host-control `ListenConfig`). It
 holds no login, password, organization, TLS private key, satellite role or extra
-property. Configuration is at most 64 KiB. Missing required input fails without a
+property, apart from `service` (`registered` or `foreground`) and `credentials` (the
+absolute directory of the Linux credential store, required on Linux;
+[Linux host design](linux-host.md#32-credential-provider)). Configuration is at most 64 KiB. Missing required input fails without a
 prompt. Noninteractive setup prints no link; its status reports
 `administrator: none` until `agentic-org admin reset` is run in a terminal. A
 container can run setup this way, without a terminal and offline. Unsupported
