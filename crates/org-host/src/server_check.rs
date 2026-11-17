@@ -57,7 +57,6 @@ pub(crate) enum ServerCheck {
     /// Every server must satisfy this requirement and run hardened code.
     Requirement(String),
     /// Same Developer ID/hardening rules, additionally forbidding Keychain entitlement.
-    #[cfg(test)]
     Gateway(String),
     /// Same platform policy plus the selected publisher-signed exact image.
     Pinned(Box<ServerCheck>, [u8; 20]),
@@ -107,7 +106,6 @@ impl ServerCheck {
     pub(crate) fn pinned(self, hash: [u8; 20]) -> Self {
         Self::Pinned(Box::new(self), hash)
     }
-    #[cfg(test)]
     pub(crate) fn gateway_for_build(debug: bool, team_id: Option<&str>) -> Result<Self, String> {
         if debug {
             return Ok(Self::Skip);
@@ -144,7 +142,6 @@ impl ServerCheck {
                 "office servers get an office's key only if they run hardened code satisfying: \
                  {requirement}"
             ),
-            #[cfg(test)]
             ServerCheck::Gateway(requirement) => format!(
                 "gateway requires hardened code without Keychain entitlement: {requirement}"
             ),
@@ -165,7 +162,6 @@ impl ServerCheck {
                 Err("this build has no app team id to check servers with".into())
             }
             ServerCheck::Skip | ServerCheck::Requirement(_) => Ok(()),
-            #[cfg(test)]
             ServerCheck::Gateway(_) => Ok(()),
             #[cfg(test)]
             ServerCheck::Scripted(_) => Ok(()),
@@ -257,7 +253,6 @@ fn admit(
                 )
             }
         }
-        #[cfg(test)]
         ServerCheck::Gateway(requirement) => {
             let token = token().map_err(|why| format!("its audit token: {why}"))?;
             if satisfies(&token, requirement) && gateway_without_keychain(&token) {
@@ -273,7 +268,7 @@ fn admit(
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn gateway_without_keychain(token: &AuditToken) -> bool {
     crate::code_signing::code_for_audit_token(token)
         .and_then(|code| crate::code_signing::signing(&code))
@@ -284,7 +279,7 @@ fn gateway_without_keychain(token: &AuditToken) -> bool {
                 .any(|(key, _)| key == "keychain-access-groups")
         })
 }
-#[cfg(all(test, not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn gateway_without_keychain(_: &AuditToken) -> bool {
     false
 }
@@ -353,6 +348,17 @@ mod tests {
         assert!(ServerCheck::Refuse.may_spawn().is_err());
         assert!(ServerCheck::Refuse.describe().starts_with("WARNING"));
         assert!(ServerCheck::Skip.may_spawn().is_ok());
+    }
+
+    #[test]
+    fn release_gateway_without_a_team_may_not_spawn() {
+        let check = ServerCheck::gateway_for_build(false, None).unwrap();
+        assert_eq!(check, ServerCheck::Refuse);
+        assert!(check.may_spawn().is_err());
+        assert!(ServerCheck::gateway_for_build(true, None)
+            .unwrap()
+            .may_spawn()
+            .is_ok());
     }
 
     #[test]

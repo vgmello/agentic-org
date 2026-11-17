@@ -264,6 +264,10 @@ impl Instance {
         Ok(())
     }
 
+    /// Reserved browser listener, if setup configured one.
+    pub(crate) fn browser(&self) -> Result<Option<org_host_control::listen::ListenConfig>, Error> {
+        self.config().map(|(config, _)| config.browser)
+    }
     pub(crate) fn id(&self) -> &str {
         &self.binding.id
     }

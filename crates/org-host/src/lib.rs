@@ -46,6 +46,7 @@ mod clock;
 mod cloexec;
 mod code_signing;
 mod error;
+mod gateway;
 mod home;
 mod host_log;
 mod host_secrets;
@@ -350,6 +351,7 @@ pub struct Host {
     lock: Option<HostLock>,
     instance: Option<instance::registry::Instance>,
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
+    gateway: Option<gateway::Supervisor>,
     service: Arc<Service>,
 }
 
@@ -524,6 +526,46 @@ fn startup_catalog(
     Ok((catalog, protected_offices, unfinished))
 }
 
+fn startup_gateway(
+    config: &Config,
+    instance: &Option<instance::registry::Instance>,
+    layout: &Layout,
+    dev_key_dir: Option<&Path>,
+) -> Result<Option<gateway::Configuration>, HostError> {
+    let Some(instance) = instance else {
+        return Ok(None);
+    };
+    let Some(listen) = instance.browser().map_err(instance_error)? else {
+        return Ok(None);
+    };
+    let check =
+        ServerCheck::gateway_for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
+            .unwrap_or(ServerCheck::Refuse);
+    let check = match &config.runtime_release {
+        Some(release) => release
+            .cdhash("agentic-org-web")
+            .map(|hash| check.pinned(hash))
+            .unwrap_or(ServerCheck::Refuse),
+        None => check,
+    };
+    let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
+    if let Some(dir) = dev_key_dir {
+        critical_paths.push(dir.to_owned());
+    }
+    Ok(Some(gateway::Configuration {
+        release: config
+            .runtime_release
+            .as_ref()
+            .map(release::RuntimeRelease::gateway_binding),
+        program: config.server_program.with_file_name("agentic-org-web"),
+        instance: instance.id().into(),
+        runtime: layout.run.clone(),
+        listen,
+        check,
+        critical_paths,
+    }))
+}
+
 struct ProtectedServices {
     writers: Option<Arc<writer::Writers>>,
     supervisor: Supervisor,
@@ -694,6 +736,7 @@ impl Host {
         let gateway_state = Arc::new(std::sync::Mutex::new(
             org_host_control::GatewayState::NotConfigured,
         ));
+        let gateway_config = startup_gateway(&config, &instance, &layout, dev_key_dir)?;
         let recovery = match (&instance, &authentication) {
             (Some(instance), Some(authentication)) => Some(Arc::new(recovery::Recovery::new(
                 Arc::clone(authentication),
@@ -716,6 +759,25 @@ impl Host {
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
+        let gateway = gateway_config.and_then(|gateway_config| {
+            let eligibility = Arc::clone(&service);
+            match gateway::Supervisor::start(
+                gateway_config,
+                service.clone(),
+                Arc::clone(&gateway_state),
+                Arc::new(move || eligibility.gateway_eligible()),
+            ) {
+                Ok(gateway) => Some(gateway),
+                Err(_) => {
+                    *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
+                    host_log::log(
+                        "browser service requires supported confinement and verified listener \
+                         configuration",
+                    );
+                    None
+                }
+            }
+        });
         Ok(Self {
             _runtime_release: config.runtime_release,
             layout,
@@ -724,6 +786,7 @@ impl Host {
             lock: Some(lock),
             instance,
             authentication_lifecycle,
+            gateway,
             service,
         })
     }
@@ -731,6 +794,12 @@ impl Host {
     /// The office home this host serves.
     pub fn home(&self) -> &Path {
         &self.layout.home
+    }
+
+    /// Whether the browser gateway is serving: host authentication is present, HQ is
+    /// Active and an admitted gateway's control connection is live.
+    pub fn gateway_ready(&self) -> bool {
+        self.service.gateway_ready()
     }
 
     /// `host.sock`, where clients connect.
@@ -749,6 +818,8 @@ impl Host {
             return;
         };
         listener.close();
+        // Ends the gateway control connection (and its sessions), then kills/reaps it.
+        self.gateway.take();
         // Before joining the listener: a create still running answers as soon as the
         // supervisor stops its server.
         self.offices.shutdown();

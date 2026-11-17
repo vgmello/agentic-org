@@ -113,6 +113,26 @@ impl Service {
         self.gateway = state;
         self
     }
+    /// Whether the host may start its browser gateway: host authentication is
+    /// present and HQ is Active. Persisted listener configuration alone never qualifies.
+    pub(crate) fn gateway_eligible(&self) -> bool {
+        self.authentication.is_some() && self.hq_active()
+    }
+    /// Whether browsers can be served: eligible, and an admitted gateway is serving
+    /// (the supervisor publishes `Running` only between admission and exit/EOF).
+    pub(crate) fn gateway_ready(&self) -> bool {
+        gateway_serving(
+            self.authentication.is_some(),
+            self.hq_active(),
+            *crate::sync::lock(&self.gateway),
+        )
+    }
+    fn hq_active(&self) -> bool {
+        self.offices.offices().iter().any(|office| {
+            office.role == org_proto::OfficeRole::Hq
+                && office.status == org_proto::OfficeStatus::Active
+        })
+    }
     #[cfg(test)]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
@@ -542,8 +562,29 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
     })
 }
 
+/// The readiness rule: all three conditions, never persisted state alone.
+pub(crate) fn gateway_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
+    authenticated && hq_active && state == GatewayState::Running
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gateway_ready_needs_authentication_active_hq_and_a_serving_gateway() {
+        use super::gateway_serving;
+        assert!(gateway_serving(true, true, GatewayState::Running));
+        for state in [
+            GatewayState::NotConfigured,
+            GatewayState::Starting,
+            GatewayState::Failed,
+            GatewayState::Unknown,
+        ] {
+            assert!(!gateway_serving(true, true, state), "{state:?}");
+        }
+        assert!(!gateway_serving(false, true, GatewayState::Running));
+        assert!(!gateway_serving(true, false, GatewayState::Running));
+    }
+
     use super::*;
     use std::path::Path;
 

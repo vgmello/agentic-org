@@ -99,6 +99,51 @@ struct Gateway {
     listen: org_host_control::listen::ListenConfig,
 }
 
+/// Lifetime of the sole authenticated gateway control connection. Constructed only by
+/// the gateway supervisor, after its image/reader/sandbox admission and handoff ACK.
+/// This is the only production path that gives a connection gateway privilege:
+/// host.sock and setup connections stay `ChannelKind::Local`.
+pub(crate) struct GatewayConnection {
+    connection: Arc<Connection>,
+    thread: Option<JoinHandle<()>>,
+}
+impl GatewayConnection {
+    pub(crate) fn start(
+        stream: UnixStream,
+        transfer: std::os::unix::net::UnixDatagram,
+        listen: org_host_control::listen::ListenConfig,
+        handler: Arc<dyn Handler>,
+    ) -> io::Result<Self> {
+        let (mut connection, queue) =
+            Connection::new(stream.try_clone()?, Accepted::sample(&stream));
+        Arc::get_mut(&mut connection)
+            .ok_or_else(|| io::Error::other("shared admission"))?
+            .gateway = Some(Gateway {
+            transfer: Arc::new(transfer),
+            listen,
+        });
+        let serving = Arc::clone(&connection);
+        let thread = thread::Builder::new()
+            .name("gateway-control".into())
+            .spawn(move || serve(stream, serving, queue, handler, 4))?;
+        Ok(Self {
+            connection,
+            thread: Some(thread),
+        })
+    }
+    pub(crate) fn live(&self) -> bool {
+        !self.connection.closed.load(Ordering::SeqCst)
+    }
+}
+impl Drop for GatewayConnection {
+    fn drop(&mut self) {
+        self.connection.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// Reverse control connection made by bootstrap mode to setup's listener. It
 /// has no gateway descriptor privilege and is never accepted on host.sock.
 pub(crate) struct SetupConnection {
@@ -1144,6 +1189,73 @@ mod tests {
             },
         );
         assert_eq!(polls.get(), 1);
+    }
+
+    fn loopback_listen() -> org_host_control::listen::ListenConfig {
+        serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap()
+    }
+
+    #[test]
+    fn only_the_admitted_gateway_connection_is_gateway_kind() {
+        let (host, peer) = UnixStream::pair().unwrap();
+        let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let gateway =
+            GatewayConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
+        assert_eq!(
+            gateway.connection.channel_kind(),
+            org_office_launch::v3::ChannelKind::Gateway
+        );
+        assert!(gateway.connection.gateway_listen().is_some());
+        assert!(gateway.live());
+
+        // A setup reverse connection never gets gateway privilege.
+        let (setup_host, _setup_peer) = UnixStream::pair().unwrap();
+        let setup = SetupConnection::start(setup_host, Arc::new(Echo)).unwrap();
+        assert_eq!(
+            setup.connection.channel_kind(),
+            org_office_launch::v3::ChannelKind::Local
+        );
+        assert!(setup.connection.gateway_listen().is_none());
+
+        // Every connection the host.sock listener accepts is built by `Connection::new`,
+        // which carries no gateway.
+        let (accepted, _accepted_peer) = UnixStream::pair().unwrap();
+        let (plain, _queue) =
+            Connection::new(accepted.try_clone().unwrap(), Accepted::sample(&accepted));
+        assert_eq!(
+            plain.channel_kind(),
+            org_office_launch::v3::ChannelKind::Local
+        );
+
+        // Peer EOF ends the gateway control connection.
+        drop(peer);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while gateway.live() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!gateway.live());
+    }
+
+    #[test]
+    fn host_sock_connections_are_local() {
+        let dir = short_tempdir();
+        let (listener, path) = start(dir.path(), org_socket::effective_uid());
+        let _client = UnixStream::connect(&path).unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let kinds: Vec<_> = lock(&listener.live)
+                .values()
+                .map(|live| live.connection.channel_kind())
+                .collect();
+            if !kinds.is_empty() {
+                assert!(kinds
+                    .iter()
+                    .all(|k| *k == org_office_launch::v3::ChannelKind::Local));
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "no accepted connection");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     struct Echo;
