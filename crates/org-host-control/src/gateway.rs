@@ -22,7 +22,7 @@ pub struct GatewayFirstLine {
     /// lets it connect to.
     pub rendezvous: String,
     pub instance_id: String,
-    /// Exact protected release pin. Missing only in explicit development/legacy
+    /// Exact protected release pin. Missing only in explicit debug-build development
     /// fixtures; production requires it before preload or secret handoff.
     pub release: Option<WebRelease>,
 }

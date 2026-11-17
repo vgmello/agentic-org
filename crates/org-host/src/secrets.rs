@@ -1,4 +1,5 @@
-//! Making the host's secrets, `std` only: app tokens (ADR-0003 §2.1) and database keys.
+//! Making the host's secrets, `std` only: app tokens (ADR-0003 §2.1) and database keys, plus
+//! non-secret unique names drawn from the same source.
 //!
 //! The host makes a fresh app token for each office every time it starts (and for an office it
 //! creates) and keeps it only in memory, in that office's supervision: it reaches the office's
@@ -23,6 +24,12 @@ pub(crate) fn generate_app_token() -> io::Result<AppToken> {
 /// which the host keeps in a `Box` (`supervisor::child::CreateLine`).
 pub(crate) fn generate_db_key() -> io::Result<DbKey> {
     random(DbKey::from_bytes)
+}
+
+/// A fresh non-secret unique name: 16 lowercase hex characters (8 bytes) from `/dev/urandom`,
+/// for per-spawn file names such as a rendezvous socket. It is not a key and carries no authority.
+pub(crate) fn generate_unique_name() -> io::Result<String> {
+    random(|bytes| bytes[..8].iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// 32 bytes from `/dev/urandom`, wrapped by `wrap`. The bytes read are zeroed afterwards (best
@@ -61,6 +68,22 @@ mod tests {
         let (a, b) = (generate_db_key().unwrap(), generate_db_key().unwrap());
         assert!(a != b);
         assert!(a != DbKey::from_bytes([0; 32]));
+    }
+
+    #[test]
+    fn unique_names_are_random_lowercase_hex() {
+        let (a, b) = (
+            generate_unique_name().unwrap(),
+            generate_unique_name().unwrap(),
+        );
+        assert_ne!(a, b);
+        for name in [&a, &b] {
+            assert_eq!(name.len(), 16);
+            assert!(
+                name.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')),
+                "{name}"
+            );
+        }
     }
 
     #[test]

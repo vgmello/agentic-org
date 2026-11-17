@@ -91,7 +91,7 @@ pub(crate) fn load(assets: &Path, pin: Option<&WebRelease>) -> Result<BuildFiles
     let Some(pin) = pin else {
         #[cfg(debug_assertions)]
         {
-            // Existing explicit unpinned debug/legacy startup frames carry no
+            // Explicit unpinned debug-build startup frames carry no
             // production release assertion. This branch does not exist in a
             // release build and cannot substitute runtime trust configuration.
             eprintln!("agentic-org-web: explicit debug unpinned fixture preload; no production release admission");

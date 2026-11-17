@@ -289,12 +289,7 @@ impl Rendezvous {
             Err(e) => return Err(e),
         }
         home::owner_only_dir(&directory).map_err(invalid)?;
-        let random = crate::secrets::generate_db_key()?;
-        let suffix: String = random.expose_bytes()[..8]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let path = directory.join(suffix);
+        let path = directory.join(crate::secrets::generate_unique_name()?);
         org_proto::location::check_socket_path(&path).map_err(invalid)?;
         let listener = {
             let _fence = lock(&SPAWN_LOCK);
