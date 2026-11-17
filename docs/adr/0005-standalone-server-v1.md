@@ -107,10 +107,6 @@ Remaining domain-layout changes are implementation requirements. Explicit baseli
 - Use Cargo package `agentic-org` at `apps/agentic-org` for the CLI. The old
   same-named Tauri workspace member is removed; stage the current CLI artifact.
 
-The [review decisions](../design/standalone-v1-review-decisions.md) map every review
-item to its clarification and acceptance evidence. These are documentation changes;
-their required security/platform/runtime checks have not run.
-
 ## Consequences
 
 Standalone service registration and production key custody need implementation on
@@ -127,7 +123,6 @@ transport for cross-office coding remains a separate dependency; do not silently
 pull the deferred GitHub integration into this pivot.
 
 The [UX requirements](../specs/server-installation-and-access-ux.md),
-[implementation design](../design/standalone-server.md) and
-[deletion inventory](../design/standalone-server-removal-inventory.md) define the
+and [implementation design](../design/standalone-server.md) define the
 scope and evidence. Detailed security/platform choices remain review gates;
 this ADR records no completed implementation or merge approval.

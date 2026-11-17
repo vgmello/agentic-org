@@ -1,76 +1,64 @@
-# Proposed v1 project structure and architecture profile
+# v1 project structure
 
-Status: **owner-requested implementation proposal**, 2026-11-10. This document
-extends PR #5 with application naming, domain modules containing vertical slices,
-shared-code ownership, and a concrete reorganization sequence. The proposal changed
-documentation only. The worker and UI renames and Tauri removal are now implemented;
-the copilot module move has landed, and the remaining domain moves are pending.
-Source observations refer to `a4039a0c810ca222d574a44eba5f84b83d07e9a4`.
-
-Read the language-agnostic [architecture rules](../architecture-rules.md) first.
-[ADR-0005](../adr/0005-standalone-server-v1.md), the
-[standalone design](standalone-server.md), and the
-[removal inventory](standalone-server-removal-inventory.md) retain authority over
-product scope, process/security boundaries, and deletion acceptance.
-
-**Executable migration implementation:** [executable-migration.md](executable-migration.md) records the aligned application directories, packages and binaries. Host behavior is the org-host library composed by agentic-org serve; pending bootstrap/HTTP authentication remains explicit.
-
-## Selected data and source ownership
-
-The [documentation authority map](documentation-authority.md) and [organization-data index](organization-data/README.md) own target entity/file relationships, including the messaging, recovery and budget contracts. The domain/vertical-slice layout here is code organization, not permission to infer a new database, public API or executable for every table. Earlier bug/request handler names can remain implementation details while target identities become typed tasks; public references follow document 06.
-
-Repository registrations/caches are organization-wide; project/repository associations own integration branches. Runtime task worktrees follow document 04's employee hierarchy. Protected operational sources and private data are separate from code repository checkouts. These are target ownership rules; actual module/storage migrations remain pending.
+How the code is organized: application names, domain modules containing vertical
+slices, and where shared code lives. Read the language-agnostic
+[architecture rules](../architecture-rules.md) first. Product scope and process
+boundaries are in [ADR-0005](../adr/0005-standalone-server-v1.md) and the
+[standalone design](standalone-server.md); records and storage are in the
+[data contract](organization-data/README.md). This layout is code organization: it
+does not create a database, public API or executable for each table.
 
 ## 1. Names and process boundaries
 
 | Source / Cargo package | Executable / output | Responsibility |
 | --- | --- | --- |
-| apps/agentic-org / agentic-org | agentic-org | Human CLI and serve composition |
-| apps/agentic-org-office / agentic-org-office | agentic-org-office | One HQ/satellite office worker |
-| apps/agentic-org-web / agentic-org-web | agentic-org-web | Browser HTTP, assets and APIs |
-| apps/agent-os / agent-os | agent-os | Agent-facing CLI |
-| crates/org-host / org-host | Library only | Host lifecycle and key custody |
-| apps/agentic-org-ui / agentic-org-ui | Static assets | Browser application |
+| `apps/agentic-org` / `agentic-org` | `agentic-org` | The person's CLI and the `serve` composition |
+| `apps/agentic-org-office` / `agentic-org-office` | `agentic-org-office` | One HQ or satellite office |
+| `apps/agentic-org-web` / `agentic-org-web` | `agentic-org-web` | Browser HTTP, assets and APIs |
+| `apps/agent-os` / `agent-os` | `agent-os` | The agent's CLI |
+| `crates/org-host` / `org-host` | Library only | Host lifecycle and key custody |
+| `apps/agentic-org-ui` / `agentic-org-ui` | Static assets | Browser application |
 
-Application source directories, package names and production executable names are aligned. Reusable org-* libraries retain domain/contract names. Existing signing identifiers, persisted data and wire fields remain stable; filenames do not define trust. HQ bootstrap/service registration and production web handoff are still unavailable as documented in executable-migration.md. The obsolete desktop/Tauri executable is removed; it must not overwrite the current agentic-org artifact.
+Source directories, package names and executable names match. Reusable `org-*`
+libraries keep domain and contract names. Signing identifiers and persisted
+identities do not follow file names; file names never define trust. Which entry
+points work today is in [executables and entry points](executable-migration.md).
 
-## 2. Architecture to follow
+## 2. Domain modules containing vertical slices
 
-The accepted [Rust browser BFF and static SvelteKit architecture](rust-browser-bff-and-static-sveltekit.md) records browser API priorities, reusable module boundaries, future integration adapters, and browser preloading.
-
-Use **domain modules containing vertical slices**:
+The [browser BFF design](rust-browser-bff-and-static-sveltekit.md) sets the browser
+API boundary and reusable module boundaries.
 
 `application -> domain module -> feature/use case`
 
-Crates establish useful package and visibility boundaries. Modules establish
-cohesive capabilities within those crates. Features implement concrete use cases.
-One feature does not imply one crate, service, database, or mandatory stack of
-handler/repository/interface files.
+Crates give package and visibility boundaries. Modules group a cohesive capability
+inside a crate. Features implement concrete use cases. One feature does not imply
+one crate, service, database or a mandatory stack of handler, repository and
+interface files.
 
-| Capability | Rules and ownership | Proposed implementation home |
+| Capability | Rules it owns | Implementation home |
 | --- | --- | --- |
-| Organization | Single home-team membership, recursive teams/leads, roles, accountable project ownership and repository registrations | Organization module inside `org-office` |
-| Work | Typed tasks, independent assignment, immutable reporter/history, scoped numbering and conflict handling; private notes use a distinct author-only store | Existing `org-work`, with office-owned implementations of its ports; migration and private-note service remain pending |
-| Messaging | Conversations, channels, membership, delivery and authorization rules | Existing `org-mailbox`, with office storage/session implementations |
-| Employees | Execution configuration, ordered model profiles/connections, permits, turns/attempts, fenced placement and verified process cleanup; employment and pause/hold states remain separate | Employee policy/state inside `org-office`; runtime adapters and supervision integrate documents 04/11/14/16/17 |
-| Processes | Selected process/standard definitions, scope metadata and override flags; inherited resolution/execution remains deferred for the target | Existing `org-process`/`org-docs` provide earlier implementation evidence; office integration and target disposition follow [processes.md](processes.md#7-where-the-code-lives) |
-| Instance lifecycle | Setup, catalogs, service registration, release pins, key custody | Host/platform implementation composed by applications |
-| Federation | Enrollment, replication, reconnect, ownership generations | Proposed sync/PKI components under their existing design ownership |
+| Organization | One home team per employee, recursive teams and leads, roles, accountable project ownership, repository registrations | Organization module in `org-office` |
+| Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private notes in a separate author-only store | `org-work`, with office-owned implementations of its ports |
+| Messaging | Conversations, channels, membership, delivery, asks and authorization | `org-mailbox`, with office storage and session implementations |
+| Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-runtime` |
+| Processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |
+| Instance lifecycle | Setup, catalog, service registration, release pins, key custody, accounts and sessions | `org-host`, composed by `agentic-org` |
+| Federation | Enrollment, replication, reconnect, ownership generations | `org-sync`, `org-sync-proto`, `org-pki` |
 
-Employee identity/profile is canonical organization data; current office placement
-is a projection of the durable placement-generation authority. A recreated runtime
-record does not become a second membership source or permission to launch. Workflows spanning modules
-call small public capabilities. Keep intermodule source dependencies acyclic.
+Employee identity is organization data; an agent's office placement is a projection
+of the durable placement authority, and a recreated runtime record is never
+permission to launch. Workflows that span modules call small public capabilities.
+Module dependencies are acyclic.
 
-## 3. Proposed Rust layout
+## 3. Rust layout
 
-This is a target sketch. Feature filenames illustrate cohesive responsibilities;
-adjust their granularity to actual implementation complexity. Existing exports and
-test behavior need an explicit disposition before files move.
+Feature file names illustrate cohesive responsibilities; size them to the real
+complexity. Do not create empty packages.
 
 ```text
 crates/
-  org-host/                         # Shared host lifecycle and key custody
+  org-host/                         # Host lifecycle, accounts, sessions, key custody
   org-office/src/
     organization/
       mod.rs                         # Intentional module API
@@ -82,120 +70,98 @@ crates/
     employees/
       mod.rs
       features/
-        set_goal.rs
+        launch_agent.rs
         pause_employee.rs
-        request_checkpoint.rs        # Proposed memory use case; not selected by data model
+        suspend_on_ask.rs
       policy.rs                      # Health, recovery, budget rules
       model.rs
     processes/
-      mod.rs
-      features/
-        resolve_effective.rs         # Deferred target engine, not selected structural data
-        publish_revision.rs
-      policy.rs                      # Office integration; pure rules in org-process
-    store/                           # Private storage adapters (the only place that knows the engine, ADR-0018)
+      mod.rs                         # Office integration; pure rules in org-process
+    store/                           # Storage adapters: the only place that knows the engine (ADR-0018)
     office.rs                        # Office lifecycle and public facade
 
   org-work/src/
     features/
       create_task.rs
-      complete_task.rs
-      report_bug.rs
+      set_assignment.rs
     model.rs
-    ports.rs                         # Consumer-owned storage/read/clock contracts
+    ports.rs                         # Consumer-owned storage, read and clock contracts
 
   org-mailbox/src/
     features/
       join_channel.rs
-      ask_channel.rs
+      ask.rs
       open_dm.rs
     model.rs
     ports.rs
 
-  org-proto/                         # Local request/event contracts
-  org-office-launch/                 # Private host/worker launch contract
+  org-proto/                         # Local request and event contracts
+  org-office-launch/                 # Private host/worker launch contract (the verified rendezvous)
   org-client/                        # Local IPC client
-  org-socket/                        # Shared Unix-socket reads and liveness checks (libc only)
-  org-runtime/                       # Harness contracts and conformance support
-  org-copilot/                       # Existing bounded draft-only capability
-  org-spool/                         # Explicitly retained offline CLI behavior
-
-  # Present crates; existence does not establish selected-target integration:
-  org-process/                      # Earlier process rules/resolution; target engine deferred
-  org-docs/                         # Document/front-matter support
-  org-supervise/                    # OS process ownership and cleanup
-  org-sync/                         # Replication library; target source adaptation pending
-  org-sync-proto/                   # Versioned sync contracts
-  org-pki/                          # Recovery-code escrow envelope; used by the office worker
-  org-release/                      # Release manifest verification; used by org-host
-  # Planned components, absent from this revision:
-  org-git/                          # Local Git adapter
-  org-office-sessions/              # Office session coordination
-  org-runtime-claude/               # Harness adapters behind org-runtime
+  org-socket/                        # Unix-socket admission, confinement and liveness (libc only)
+  org-runtime/                       # Vendor runtime contract and conformance support
+  org-supervise/                     # OS process ownership and cleanup
+  org-process/                       # Process and standard resolution
+  org-docs/                          # Document and front-matter parsing and editing
+  org-sync/                          # Replication
+  org-sync-proto/                    # Replication contracts
+  org-pki/                           # Recovery escrow and private-key wrapping
+  org-release/                       # Release manifest verification
+  org-copilot/                       # Bounded draft-only helper
+  # Added when their first caller is built:
+  org-git/                           # Local Git adapter
+  org-runtime-claude/                # Vendor adapters behind org-runtime
   org-runtime-codex/
-  org-runtime-agy/
-  # Deferred v2 integration, not a standalone-v1 dependency:
-  org-github/
 
 apps/
-  agentic-org-office/                        # Per-office worker: domain/IPC/runtime composition
-  agentic-org-web/                       # HTTP library/executable; production handoff pending
-  agentic-org/                         # CLI/serve; protected setup remains unavailable
-  # Host lifecycle is a library at crates/org-host, not a separate app.
-  agent-os/                         # Small employee CLI
-  agentic-org-ui/                            # Static browser application; see below
+  agentic-org/                       # CLI and serve composition
+  agentic-org-office/                # Office: domain, IPC, runtime composition
+  agentic-org-web/                   # Browser HTTP
+  agent-os/                          # Agent CLI
+  agentic-org-ui/                    # Static browser application
 ```
 
-The sketch distinguishes present libraries from proposed packages. Present code
-and its tests describe the implemented contract, not completion of the selected
-organization-data schema, runtime routing or replication-source migration. Reassess
-physical extraction during implementation rather than creating empty packages.
-The agentic-org application composes org-host. Its setup command and serve process share library behavior; there is no additional host/updater daemon.
+`org-office` combines domain behaviour and storage. It keeps a private store and one
+accepting writer per stream. Logical domain ownership does not need separate
+databases, writers or public SQL repositories. Store adapters implement
+consumer-owned contracts such as the work and messaging ports, and keep transactions,
+deduplication, outbox writes and sequence allocation atomic.
 
-`org-office` currently deliberately combines domain behavior and storage. Keep its
-private store and single-writer invariant. Logical domain ownership does not require
-separate databases, writers, or public SQL repositories. Its store adapters implement
-consumer-owned contracts such as the work and messaging ports. Keep transactions,
-deduplication, outbox writes, and sequence allocation atomic as their designs require.
-
-Source dependencies point from adapters/composition toward policies and contracts:
+Dependencies point from adapters and composition towards policies and contracts:
 
 ```text
-web process -> typed authorized host/office client operations
-per-office server -> public use-case APIs / selected runtime and sync adapters
+web process -> typed authorized host and office client operations
+office -> public use-case APIs, runtime and sync adapters
 office storage implementations -> work and messaging ports
-work and messaging -> their required protocol vocabulary
+work and messaging -> their protocol vocabulary
 session coordinator -> employee policy + runtime contracts
-harness adapters -> runtime contracts
+vendor adapters -> runtime contracts
 ```
 
-The standalone design chooses one `agentic-org-web` process per instance for browser
-HTTP/TLS, routing all authorized HQ organizations on the same listener. The host
-keeps office keys/catalog provisioning; each `agentic-org-office` remains one office worker.
-Create organization requires instance-admin authority, not just organization
-ownership. Keep web endpoint code focused on principal authorization, decoding,
-typed public operations and result mapping; never return an office key to it. A small HTTP adapter crate remains an option
-when its dependency boundary or actual callers justify extraction. Do not depend on
-one runnable application's library from another to assemble the service.
+One `agentic-org-web` per instance serves browser HTTP and TLS for every authorized
+HQ organization on its listener. The host keeps office keys and catalog
+provisioning; each `agentic-org-office` is one office. Web endpoint code is limited to
+principal authorization, decoding, typed public operations and result mapping, and
+never receives an office key. A small HTTP adapter crate is extracted when its
+callers justify it. No runnable application depends on another application's
+library.
 
-### Libraries that are built but not yet reached
+### Libraries built but not yet reached
 
-Owner request 2026-11-17 (conflict plan entry B-11): say what each one is for, whether
-to continue it, and when. "Reached" means a person or agent can exercise it through a
-running executable.
+"Reached" means a person or agent can exercise it through a running executable.
 
-| Library | Purpose | Reached today | Decision | Work continues when |
-| --- | --- | --- | --- | --- |
-| `org-process` | Parses process and standard documents and computes the effective set for a piece of work | No. Nothing depends on it. | **Continue.** Resolution is now selected (processes design, decision 4). Simplify it to the one-chain rule first. | With the agent launch path: the office calls it to build the agent's instructions (FC-110, FC-112). |
-| `org-copilot` | Bounded draft-only helper: proposes text for a person to accept | No. Nothing depends on it. | **Parked.** Keep compiling and tested; add nothing. | After a vendor runtime adapter exists (FC-101), since it needs a model to call. |
-| `org-release` | Verifies a signed release manifest and its files | Linked into `org-host`; no setup or update command calls it yet. | **Continue.** | With `agentic-org setup` and update (FC-010, FC-011). |
-| `org-pki` | Seals and recovers the office CA key with the recovery code | Linked into the office worker; reachable only through HQ creation, which setup does not start yet. | **Continue.** Also gains the office-secrets-key wrapping of ADR-0016. | With HQ creation through setup (FC-016, FC-162). |
-| `org-sync`, `org-sync-proto` | Replication of organization changes between HQ and satellite offices | Linked into the office; no satellite can be enrolled. | **Parked until the storage move.** Its source adapter must read the canonical files, not the legacy tables (B-01). | After the store reads and writes the selected files; then satellite enrolment. |
-| `org-runtime`, `org-supervise` | The contract for vendor runtimes, and process start, stop and cleanup | Linked into the office worker; no agent is launched. | **Continue.** This is the next foundation for running agents. | With the first vendor adapter and the launch path (FC-101), using the isolation modes of ADR-0015. |
-| `org-host` `hostdb` | The host's accounts, sessions and office registry storage | Compiled; marked unused outside tests. | **Continue.** | With stored browser sessions and setup (FC-159, FC-010). |
-| `org-spool` | Offline queue for the agent CLI when the office is not running | Yes, through `agent-os`. | **Review when the agent CLI changes.** The session mode of ADR-0014 may make it unnecessary. | When the agent CLI moves to session mode (FC-160). |
+| Library | Purpose | Decision | Work continues when |
+| --- | --- | --- | --- |
+| `org-process` | Parses process and standard documents and computes the effective set | Continue; simplify it to the one-chain rule first | The office builds an agent's instructions at launch (FC-110, FC-112) |
+| `org-copilot` | Bounded draft-only helper that proposes text for a person to accept | Parked: keep it compiling and tested, add nothing | A vendor runtime adapter exists (FC-101) |
+| `org-release` | Verifies a signed release manifest and its files | Continue | `agentic-org setup` and update (FC-010, FC-011) |
+| `org-pki` | Seals and recovers the CA key with the recovery code | Continue; it also gains the office-secrets-key wrapping of ADR-0016 | HQ creation through setup (FC-016, FC-162) |
+| `org-sync`, `org-sync-proto` | Replication between HQ and satellites | Parked until the store reads and writes the canonical files | After the storage move; then satellite enrollment |
+| `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
+| `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
+| `org-spool` | File queue `agent-os` uses when no office is named | Decided with the session mode of ADR-0014; it may be removed | When `agent-os` gains session mode (FC-160) |
 
-## 4. Proposed Svelte/TypeScript layout
+## 4. Svelte and TypeScript layout
 
 ```text
 apps/agentic-org-ui/
@@ -208,15 +174,14 @@ apps/agentic-org-ui/
           hire-employee/
         work/features/
           create-task/
-          report-bug/
+          assign-task/
         messaging/features/
           join-channel/
-          ask-question/
+          answer-question/
           open-dm/
         employees/features/
-          set-goal/
           pause-employee/
-          inspect-run/
+          view-session/
         processes/features/
           edit-process/
           inspect-effective/
@@ -224,7 +189,7 @@ apps/agentic-org-ui/
         http/
           client.ts
           events.ts
-      components/ui/                 # Reusable visual primitives/design tokens
+      components/ui/                 # Reusable visual primitives and design tokens
   static/
   test-vectors/
   e2e/
@@ -232,25 +197,23 @@ apps/agentic-org-ui/
   svelte.config.js
 ```
 
-A feature can contain its component, interaction state, API integration, validation
-feedback, and tests. Place shared domain UI types/state beside that domain's
-features. A simple route may remain self-contained when extraction adds no value.
+A feature can hold its component, interaction state, API integration, validation
+feedback and tests. Shared domain UI types and state sit beside that domain's
+features. A simple route may stay self-contained.
 
-Retain the static SvelteKit adapter: the instance's Rust `agentic-org-web` serves assets, commands,
-queries, authentication, and live events. Implement browser forms against that API;
-this profile does not introduce a Node backend or SvelteKit server actions. Browser
-state is a view of server authority, with loading/unavailable/error/freshness states.
-Keep shared HTTP/event code free of unrelated business policy.
+The UI uses the static SvelteKit adapter, shadcn-svelte and Bits UI. The Rust
+`agentic-org-web` serves assets, commands, queries, sign-in and live events; there is
+no Node backend and no SvelteKit server action. Browser state is a view of server
+authority, with loading, unavailable, error and freshness states. Shared HTTP and
+event code holds no business policy. Tailwind Plus components stay inside
+`apps/agentic-org-ui` and never become a published kit, template, package or crate.
 
-Tailwind Plus components remain inside `apps/agentic-org-ui`, the renamed product UI home.
-They must not become a separately published kit, template, package, or crate.
+## 5. Shared functionality: upload, validation and hashes
 
-## 5. Shared functionality: upload, validation, and hashes
-
-Use the narrowest meaningful owner. Feature-specific avatar validation belongs to
-the avatar feature; rules shared by one domain belong to its internal policy module.
-A genuinely reusable upload capability can have a `files` owner with a public API.
-The following is an **illustrative future example**, not an added v1 upload requirement:
+Use the narrowest meaningful owner. Avatar validation belongs to the avatar feature;
+rules shared by one domain belong to its policy module. A genuinely reusable upload
+capability may have a `files` owner with a public API. An illustration, not a v1
+requirement:
 
 ```text
 office implementation/
@@ -272,64 +235,45 @@ apps/agentic-org-ui/src/lib/
   modules/employees/features/upload-avatar/AvatarEditor.svelte
 ```
 
-Employee/project operations own their business permissions and restrictions; file
-operations enforce their common invariants and own storage integration. Consumers
-call public operations rather than reconstructing a sequence of internal helpers.
-Client checks provide feedback; Rust enforces policy on received content. Share
-policy metadata, contracts, and test vectors across runtimes where useful.
+Employee and project operations own their permissions; file operations own their
+common invariants and storage. Consumers call public operations rather than
+reassembling internal helpers. Client checks give feedback; Rust enforces policy on
+what it receives.
 
-Use an established hashing library, such as the workspace's `sha2`, for the basic
-algorithm. File fingerprints, retry-deduplication hashes, and message-content hashes
-have different canonicalization and compatibility contracts. Keep those semantics
-with their owners. Existing `org-work::params_hash` and `org-mailbox::content_hash`
-must not be merged merely because both use hashing. Extract a shared digest type or
-module only for deliberately identical semantics; a separate crate needs a real
-package-level purpose. Avoid a generic shared/Common/Utils dumping ground.
+Use an established hashing library such as `sha2`. File fingerprints, retry
+deduplication hashes and message content hashes have different canonicalization
+contracts and stay with their owners: `org-work::params_hash` and
+`org-mailbox::content_hash` are not merged because both hash. A shared digest type
+exists only for identical semantics. There is no generic shared, Common or Utils
+module.
 
-## 6. End-to-end slice example: set employee goal
+## 6. End-to-end slice: assign a task
 
-1. The Svelte feature captures the goal and displays submission/outcome state.
-2. HQ authenticates the human, authorizes the employee scope, and validates the
-   operation ID and expected version through a typed HTTP operation.
-3. The command reaches the owning office through an explicit, authorized contract.
-4. The employee module validates and persists the update through office-owned storage.
-5. Local session coordination delivers the current goal at a safe boundary under
-   the single-main-session, takeover, and bounded reminder rules.
-6. The browser observes the command outcome and runtime delivery/freshness separately.
+1. The Svelte feature captures the new team and assignee and shows the submission
+   and outcome state.
+2. The web process authenticates the person and passes a typed operation with its
+   operation ID and expected revision ([web API, Tasks](web-api-v1.md#tasks)).
+3. The command reaches the office with the person's principal and a host grant.
+4. `org-work` validates the change and the office store commits the task, its
+   history event and its idempotency result together.
+5. The browser sees the outcome on the response and the change on the work feed.
 
-A new goal change to an office known to be offline is rejected before admission,
-with no goal write or queued update; keep the unsaved draft. A forwarded request
-with unknown outcome uses Pending confirmation and the same operation ID for lookup/
-retry, as [employee-supervision.md](employee-supervision.md#goal-command-admission-and-offline-behavior)
-specifies. Acceptance does not prove completion or that a model read the goal. Browser disconnection does
-not end durable work. Pause is a durable HQ status command even for an offline office, with runtime
-stop pending until acknowledged, as the employee and session designs require; renaming/moving code does not transfer that authority.
+A lost response is resolved by lookup of the same operation ID. Closing the browser
+never ends durable work.
 
-## 7. Source-to-target implementation sequence
+## 7. Verification
 
-| Step | Source-to-target work | Verification |
-| --- | --- | --- |
-| 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
-| 2. Application naming | Rename retained browser sources to `apps/agentic-org-ui`; rename server app/package/binary to `apps/agentic-org-office` / `agentic-org-office`; use distinct `agentic-org` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
-| 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve visibility, transactions, invariants, and acyclic source direction |
-| 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
-| 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |
-| 6. Runtime/federation acceptance | Implement the planned session/harness/sync capabilities according to their designs | Run platform, isolation, reconnect, durability, and cleanup evidence required by PR #5 |
+Evaluate coupling at the package and the logical-domain level when new ports and
+cross-domain workflows are wired. Done means consistent names, intentional public
+APIs, no source cycles, authoritative server rules, licensed UI containment and no
+production mock fallback. Run formatting, Clippy, Rust tests, frontend checks, tests
+and build, and the relevant browser tests.
 
-Keep implementation commits buildable. Naming, domain extraction, HTTP integration,
-and deletion may be grouped where callers require an atomic change. No old desktop
-data migration or Tauri compatibility adapter is required. New standalone upgrades
-still require their own schema/version compatibility handling.
+## What the code does today
 
-Evaluate coupling at both workspace-package and logical-domain levels. For example,
-the inspected normal internal package dependencies give `org-work` Ce=1,
-`org-mailbox` Ce=1, and `org-office` Ce=2, excluding external/dev dependencies.
-These are current package observations, not target counts or proof that internal
-boundaries are correct. Reassess when wiring new ports and cross-domain workflows.
-
-Completion requires consistent target names, intentional public APIs, no new source
-cycles, authoritative server rules, licensed UI containment, no production mock
-fallback, and preserved office/process/storage semantics. Run repository formatting,
-Clippy, Rust tests, frontend checks/tests/build, and relevant browser tests for the
-actual implementation. Validate docs/links and preserved acceptance IDs for this
-documentation proposal; do not claim source moves or runtime checks here.
+The application renames and host extraction are done. The domain modules above are
+not finished: `org-office` has `organization`, `employees`, `processes` and `rules`
+modules that implement the older model with several memberships per member, and `store` holds the SQL for all of them,
+with two files outside it (`organization/bootstrap.rs`, `organization/admission.rs`)
+that move behind it under ADR-0018. `org-git` and the vendor runtime adapters do
+not exist yet.

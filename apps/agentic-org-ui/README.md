@@ -18,7 +18,7 @@ bun run test:e2e
 
 Playwright starts an explicitly composed test-only fake server plus a separate static production build. Retained UI workflows run against the test fakes; production checks prove unserved areas stay unavailable and browser flags cannot enable fakes. Screenshots and reports stay ignored under `test-results/` and `playwright-report/`.
 
-See [TECH-STACK.md](TECH-STACK.md), the [standalone design](../../docs/design/standalone-server.md), [project structure](../../docs/design/project-structure.md) and [removal inventory](../../docs/design/standalone-server-removal-inventory.md). Server setup and release packaging remain separate work.
+See [TECH-STACK.md](TECH-STACK.md), the [standalone design](../../docs/design/standalone-server.md) and [project structure](../../docs/design/project-structure.md). Server setup and release packaging remain separate work.
 
 
 ## Gateway CSP browser gate (Part A)

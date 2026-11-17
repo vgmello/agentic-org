@@ -58,7 +58,7 @@ person can sign in.
   - The host holds one office secrets key per office and passes it over the rendezvous.
     The office wraps its private keys (the CA key today) with it; no private key is ever
     stored in the clear.
-- **Read:** [host boundary design](design/office-host-boundary.md#owner-decisions-2026-11-17-that-this-document-must-be-read-with)
+- **Read:** [host boundary design](design/office-host-boundary.md#what-the-code-does-today)
   (rows B-06, B-07, F-03), [ADR-0016](adr/0016-no-application-level-data-encryption.md)
   (ENC-1 to ENC-6), [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows
   FC-017, FC-162.

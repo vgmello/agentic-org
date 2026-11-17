@@ -168,7 +168,7 @@ The earlier design kept two clones per project so that the clone with network cr
   - *Nothing is lost:* uncommitted changes, or local commits that are on neither the remote branch nor the integration branch, stop the cleanup. The worktree stays and a person is asked.
   - The office deletes only `task/*` branches it created and that have a record. It never deletes a default or integration branch, or any tag.
 
-  The branch-record states and the one-open-branch rule are in the [process design](processes.md#4-enforcement-one-open-task-branch-a54-a55). Its text still names the earlier clones and one repository per project; its rules apply per task and repository against the single cache.
+  The branch-record states are in the [process design](processes.md#4-task-branch-records).
 - **Submodules and Git LFS** are not designed here. Office commands never recurse into submodules, and no filter driver is configured.
 
 ### Hardening every office Git command
