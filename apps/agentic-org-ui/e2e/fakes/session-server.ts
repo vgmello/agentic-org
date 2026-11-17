@@ -187,7 +187,8 @@ export function sessionTestMiddleware() {
 			}
 			if (signOut) {
 				// A pool refusal or timeout leaves the HQ session alive, but the browser's pair still ends.
-				if (state.signOutFails) json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
+				if (state.signOutFails)
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
 				else {
 					state.pair = undefined;
 					respond({}, ended);
