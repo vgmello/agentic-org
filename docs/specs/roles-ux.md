@@ -71,7 +71,7 @@ Follow approved processes and enforced permission policy.
 
 An agent's instructions come from its execution configuration (document 11) and the processes that apply to its task ([processes design](../design/processes.md)). A referenced role alone does not authorize or start anything.
 
-- **Hire:** when the HR lead can't run, the requester can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the owner to confirm; suggestions are not role fields (`processes-ux.md` §4a).
+- **Hire:** when the HR lead can't run, the requester can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the owner to confirm; suggestions are not role fields.
 
 ## 3. UX acceptance criteria (ROLE)
 
