@@ -287,7 +287,7 @@ Every R phase is deferred product integration/earlier planning, not a selected r
 | Phase | What | Owners |
 | --- | --- | --- |
 | **R1** | The contract (§6). `org-process` with its tests (Appendix C). Needs `org-docs`' parser first (A70). | ada; `org-process` owner |
-| **R2** | Enforcement: records and the backfill (Appendix A), the start check, guarded moves, branch creation at a sha, `one_branch_open`, refusals, exceptions, merged by hand, `work.branch_state`, cleanup, inbox notices, the CLI. *Interim (A64):* until R3 the rule is on for every project. PROC-14, 15, 19. | server-dev; River; Remy |
+| **R2** | Enforcement: records, the start check, guarded moves, branch creation at a sha, `one_branch_open`, refusals, exceptions, merged by hand, `work.branch_state`, cleanup, inbox notices, the CLI. *Interim (A64):* until R3 the rule is on for every project. PROC-14, 15, 19. | server-dev; River; Remy |
 | **R3** | The handbook (create, seed, the deny, migration), the index, sets and cache, project-wide conflicts, delivery, the fallback, the read calls, the reviewer setting and its fallback. PROC-2 to 7, PROC-8 reads, 10, 16, 17. | River; server-dev; Remy; ada (the deny) |
 | **R4** | Writes, the write checks, approve and reject, the handbook merge, private proposals, versions, drift fixes, checklists and moments, the CLI writes, the app's views. PROC-8 writes, 9, 11, 12, 18. Project merges depend on A62. | server-dev; app-frontend-dev; Remy |
 | **R5** | Retro items of kind Process (PROC-13), with retros (W7 P5). Branch-wait insights (spec §4). | as retros |
@@ -306,7 +306,7 @@ Each step: its own branch, an independent review, the reviewer's READY, a merge 
 - A72 · Import/direct Git publication validation and approval provenance remain design work; invalid authored content must be visible without granting powers.
 - U25–U28 · Earlier UX preferences remain proposal context. They do not select process/branch/autonomy engines or override selected structure.
 
-## Appendix A. Migration
+## Appendix A. No migration
 
 Nothing is migrated or backfilled: no tasks exist before the product is first used (owner, 2026-11-17).
 - **Software repository documentation remains here.** Earlier plans to move branch-and-merge.md into a handbook are superseded for selected storage. This documentation reconciliation moves no files and changes no AGENTS.md rules.

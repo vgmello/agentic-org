@@ -9,7 +9,7 @@ Revision 5, 2026-11-15. **ACTIVE architecture; implementation acceptance remains
 > which the selected path replaces.
 
 > **Amended by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md)
-> (2026-11-17).** Assignment, creation, status and ownership changes keep this ADR's
+> (2026-11-17).** Assignment, status and ownership changes keep this ADR's
 > rule: no acknowledgement before durable evidence. `work.comment`, `work.watch` and
 > `checklist.check` may be acknowledged once their one atomic operation is committed,
 > with the flush following within a bounded interval. Their journal envelope may be

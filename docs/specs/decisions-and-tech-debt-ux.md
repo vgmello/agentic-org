@@ -75,7 +75,7 @@ projects/<project-id>/
 
 Supporting `documents` use `kind: brief | decision | design | report | changelog`. Every one requires project; at most one feature/release/deployment ID is present and must belong to the same project. `brief` is project-wide; feature support is design/decision/report; changelogs belong only to a release or deployment. `feature.md` projects into `features`, not a duplicate document. Shared architecture stays at project scope and links from several features rather than becoming several canonical copies. Process/standard content uses the separate selected structural contract at organization, recursive team or project scope, not another general document kind.
 
-A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. IDs are UUIDv7. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links. No automatic renumbering of imported records.
+A document has stable `id`, optional display `key`, schema/revision, title, `owner_employee_id`, lifecycle `draft | current | deprecated`, and common creation/update attribution. Current requires an active accountable owner. IDs are UUIDv7. Documents have no selected ADR/EVAL/DEBT numeric allocation engine. Existing labels can remain keys; they are not primary keys. Rename a title/key without renaming the stable-ID file or breaking ID links.
 
 Organization/team process and standard files share this organization repository (`processes/<id>.md`, `standards/<id>.md`, recursively nested `teams/<id>/.../processes/<id>.md`). Their overrides default allowed unless explicitly prohibited. Private process storage/access is an unresolved deferred proposal; shared Git cannot provide author-only visibility.
 
@@ -142,7 +142,7 @@ ADR labels in this example are retained optional display keys; the canonical rec
 - **New ▾:** Brief (project scope) · **Decision** · **Design** · **Report**; Changelog is available only in release/deployment scope. An Evaluation entry may choose the Report envelope and evaluation body template. Each opens the selected metadata and body template (§3), allocates a stable UUIDv7 ID for a new record, shows the canonical derived path and offers an optional display key. The filename follows immutable identity and is not editable. There is no next ADR/EVAL document-number counter. Save is explicit and import preserves existing IDs/keys.
 - **Header** (reader): selected metadata from front matter (§3.0): kind, optional key, title, lifecycle, owner, creation/update attribution/time and explicit scope. Show authored links as links and the canonical path as read-only. A quoted “accepted by” or “superseded by” statement may appear in the Decision body; it is not inferred as authenticated approval or read from unsupported front-matter fields.
 - **Footer:** **Led to** (items and docs linked from this one, or that link it as their Why) and **Mentioned in**.
-- **Filters:** Status · Owner · search. Search matches permitted canonical title, stable ID/display key and body text; feature definitions appear as feature results linked to their single canonical record. Group by record type, include scope/status and label body-match excerpts as excerpts. Declare actual indexed scope/freshness and title-only, truncated-body or unavailable coverage; no matches never proves absent content outside that coverage. Author-private notes, protected chat and inaccessible records never enter these shared results. **Earlier decisions (v0)** is a read-only group with a note: "From ada's notes before offices. Some are superseded by current decisions." (A18).
+- **Filters:** Status · Owner · search. Search matches permitted canonical title, stable ID/display key and body text; feature definitions appear as feature results linked to their single canonical record. Group by record type, include scope/status and label body-match excerpts as excerpts. Declare actual indexed scope/freshness and title-only, truncated-body or unavailable coverage; no matches never proves absent content outside that coverage. Author-private notes, protected chat and inaccessible records never enter these shared results. 
 - **States:** a doc whose front matter is missing or invalid shows "Details not recognized: <field> <problem>" with **Fix** (opens the Details panel), and the body still shows, and the doc still shows · a duplicate display key shows both with scope and **Resolve key…**; stable IDs are never changed · everything else as work-items Flow 8 (conflicts, history, git errors).
 
 ## 3. Templates: front matter and sections
@@ -392,7 +392,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Authoring through the tool (AUTH)**
 - AUTH-1 · Tool authoring writes selected documents at canonical organization-Git scopes with stable IDs, required metadata and admitted attribution; reviewed branch publication remains a proposal. Code-task --here convenience requires explicit cross-repository adaptation.
 - AUTH-2 · **Deferred specialized editor/approval workflow:** a future status edit uses only Draft/Current/Deprecated and selected revision/attribution. Decision acceptance/rejection semantics stay in explicit body evidence or a separately selected extension; the earlier accepted/decided front-matter writes are superseded.
-- AUTH-3 · Canonical files changed directly in organization Git are validated/indexed from its state branch without losing content, stable identity or provenance. Code-repository files are import sources, not automatically canonical.
+- AUTH-3 · Canonical files changed directly in organization Git are validated/indexed from its state branch without losing content, stable identity or provenance. Files in a code repository are not canonical organization records.
 - AUTH-4 · Proposed activity records link creation/content/link changes to the admitted actor and stable document ID, displaying its optional key/title; no document number counter or editable identity is assumed. Specialized approval/supersede activity remains deferred.
 - AUTH-5 · **Deferred CLI adaptation:** list/show use the same selected kinds, optional keys, stable identities, lifecycle and scope as the app; the earlier numbered ADR/EVAL kinds/statuses are not target fields.
 - AUTH-6 · **Deferred debt capture:** a one-sentence shortcut can prefill task/branch/commit evidence; preserve task details.shortcut tagged IDs. Canonical knowledge cannot silently be placed on a code task branch.
@@ -428,12 +428,12 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 
 ## 9. Open questions
 
-- C11 / TPL-7 · Front-matter import remains useful; map to selected fields and show a per-file diff, never fabricate provenance.
+- C11 / TPL-7 · Withdrawn 2026-11-17 with the document import.
 - C17 / TPL-4–6 · Deferred custom schema/template storage and extensibility; earlier docs/.templates locations are not selected organization-data paths.
 - C12 / C18 / AUTH-6 · Deferred debt subsystem and cross-repository capture/recovery. Preserve tagged shortcut IDs without inventing debt tables.
 - C16 · The earlier doc/debt CLI command proposal needs a supported agent-os contract and selected organization-Git scope mapping before availability is claimed.
 - C13 / A36 · Organization knowledge uses state_branch; required integration_branch belongs to each code-repository association. Reviewed metadata publication still needs implementation design.
-- A18 / A19 / A23 / A24 · Historical software docs remain import sources. Selected organization files use stable-ID paths, while protected operational records remain outside shared Git.
+- A18 / A19 / A23 / A24 · Organization files use stable-ID paths, while protected operational records remain outside shared Git. The import of historical software docs is withdrawn.
 - A20 / U14 · Record useful rationale and shortcuts; automatic guidance/capture is independently deferred.
 - U15 · Deferred decision approval/delegation policy must authenticate actors; document owner/status fields grant no security authority.
 
