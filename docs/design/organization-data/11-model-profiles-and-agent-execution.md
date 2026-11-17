@@ -18,7 +18,7 @@ An agent employee has zero or one execution configuration; a runnable agent requ
 
 One logical turn belongs to one employee/office/placement generation and has one or more execution attempts once routing succeeds. Each attempt records its selected connection, permit and optional process instance; skipped candidates do not fabricate a running attempt. Shared quota is keyed to the canonical connection, not a profile or credential directory. Full columns, foreign keys and constraints appear in §12; configuration files and recovery authorities appear in §3.
 
-Requirements source: owner-supplied `requirements_design_document_subscription_pool_model_profile_architecture.md`, SHA-256 `c3189b7af897be77cc9e8d4214edcc71a66039f3c14a95f6d08d3da5678c43dc`. Provider commands/model names in that source are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
+Provider commands and model names in examples are illustrative. Adapter conformance tests establish what an installed version supports; unsupported capability returns a defined error instead of leaving an architecture decision open.
 
 ## 1. Fixed decisions and scope
 
