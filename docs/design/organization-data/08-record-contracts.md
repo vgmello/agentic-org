@@ -102,6 +102,27 @@ erDiagram
 | `links` | Source entity's `links[]`, with IDs and fields above. |
 | `entity_relationships` (view) | Derived from links, task feature membership and supporting-document scope; no authored file. |
 
+## Hash codec registry
+
+Several contracts store a SHA-256 over canonical content. They do not all canonicalize the same way, on purpose: each form is frozen with the records already written in it. This registry lists those forms. The owning document keeps the field list (what is hashed); this section owns the set of forms (how bytes are produced).
+
+| Codec ID | Canonical form | Defined in | Used for |
+| --- | --- | --- | --- |
+| `canonical-json/2` | Task-event codec 2: keys sorted by Unicode scalar order, compact UTF-8, exact original number tokens, duplicate decoded keys rejected. Exactly one top-level field is omitted: the record's own checksum field, named by the owning document (`payload_sha256` for task events, `envelope_sha256` for document 11 journal envelopes, whose `payload_sha256` is hashed as content) | [Document 05](05-operational-data.md#task-event-codec-2) | Task events; assignment fingerprint version 1 ([12](12-task-assignment-and-history.md)); work-acceptance journal envelope digests ([16](16-recovery-and-office-continuity.md)); execution command and supervisor-journal digests ([11](11-model-profiles-and-agent-execution.md)) |
+| `sorted-compact-json/1` | UTF-8 JSON, lexically sorted keys, compact separators, no ASCII escaping, nullable fields expanded, checksum field omitted | [Document 10](10-usage-and-cost-accounting.md#durable-storage-and-multi-office-recovery) | Usage event `payload_sha256` |
+| `jcs-rfc8785/1` | RFC 8785 canonical JSON over the listed immutable message columns | [Document 15](15-messaging-and-chat.md#storage-and-durability) | Message `content_sha256` |
+| `v1_lenprefixed_sha256` | Version byte plus seven length-prefixed fields | [ADR-0003 §3.4](../../adr/0003-agent-messaging-office-first.md) | Imported v1 message hashes only (`source_content_sha256`); never used for new records |
+| `task-event/1` (legacy) | The original schema-1 task-event bytes as stored. No selected verifier: these events stay retained or staged with unverified coverage under document 05 | [Document 05](05-operational-data.md#task-event-codec-2) | Existing schema-1 task events only; never produced for new events |
+| `raw-bytes/1` | The exact stored bytes, no canonicalization | This section | Content-addressed files: message attachments, `work-history/blobs/sha256/`, recovery snapshot and result content |
+
+Rules that keep this extensible:
+
+1. **One codec per stored hash, known without guessing.** The record's `schema_version`, or an explicit codec column such as `source_hash_codec`, selects the codec. A verifier never tries codecs in turn until one matches.
+2. **Additive only.** A new canonical form gets a new codec ID and a new `schema_version` on the records that use it. Existing bytes and hashes are never re-encoded, recomputed or renamed. Import keeps the original hash beside any new one, as messaging does.
+3. **New record families reuse a registered codec.** The default for new JSON records is `canonical-json/2`: it is specified to the byte, keeps integer amounts and ordinals as exact tokens instead of floating-point numbers, and already has an implementation. Introducing another form needs a row here first.
+4. **SHA-256 throughout, lowercase hexadecimal, 64 characters.** A different algorithm is a new codec ID, not a parameter.
+5. **Shared test vectors.** Each codec has fixed input/output vectors that every implementation, in any language, must reproduce. A verification failure fails closed; it never falls back to another codec.
+
 ## SQLite tables and views
 
 ```sql

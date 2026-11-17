@@ -16,10 +16,10 @@ Recovery is answering, after a crash or lost cache: “Did this command already 
 
 ## Ownership, storage and rebuilding
 
-Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in the configured durable operational root outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
+Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in `durable/recovery/` under the one selected [storage root](README.md#shared-storage-contract), outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
 
 ```text
-<organization-operational-root>/recovery/          # protected, never org Git
+<data-root>/<organization-id>/durable/recovery/     # protected, never org Git
 ├── commands/<command-id>.json                    # receipt, immutable fingerprint/actor
 ├── results/<content-id>                          # protected command outcome
 ├── offices/<office-id>/
@@ -151,7 +151,9 @@ check the current admission; host EOF or an epoch/root mismatch fences acceptanc
 The host checkpoint is continuity/fencing evidence, not another event allocator,
 journal or domain decision. Restoring host custody itself, machine migration and
 handover remain explicit unsupported recovery cases until verified fencing and
-retained-head evidence are supplied; copying files does not authorize them.
+retained-head evidence are supplied; copying files does not authorize them. These
+are office relocation, distinct from re-placing one agent; see
+[Moving agents and moving offices](#moving-agents-and-moving-offices).
 
 Process cleanup is machine-local. Never send a signal based solely on a restored PID: verify the ownership mark, generation, boot and process-start identity through the existing process-control library. A copied record on another machine is unverified. Cleanup and existing fencing must establish the previous process has stopped before the new one runs. These records complement document 11; they do not allocate a second placement generation or authorize launch.
 
@@ -255,6 +257,26 @@ acceptance transaction, allocating no work-origin event positions. Exact retry
 returns the original directory generation even after later advancement. Assignment
 capability still requires a verified directory; staging/adoption capability needs
 the protected writer/owner admission independently of that directory.
+
+## Moving agents and moving offices
+
+Two different moves share the word "machine". They have different status.
+
+| Move | What changes | Status |
+| --- | --- | --- |
+| Agent re-placement | One agent's current office changes. Its identity, home team, tasks and history do not. | Selected. [Document 11 §3](11-model-profiles-and-agent-execution.md#3-storage-authority-and-exact-paths) owns the rule: the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence, then HQ journals the new office and an incremented `placement_generation`. It needs a second office, so it is first exercised when satellite offices ship. |
+| Office relocation | An office's durable sources, host key custody and writer custody move to another machine. Replacing the HQ machine is the same operation. | Not supported in v1; planned for v2. Copying or restoring files does not perform it and confers no authority. |
+
+V1 keeps office relocation possible without supporting it. The evidence a
+relocation procedure needs is already part of the selected records: office
+incarnation and organization epoch on origin streams and checkpoints, placement
+generation on every command, permit and attempt, the host's protected
+writer-custody checkpoint, and immutable hash-chained journals. A v2 relocation
+therefore adds a procedure (verified fencing of the old machine, custody transfer
+with retained-head evidence, a new incarnation), not a new record format. Until
+then, any change that would bind a durable record to a machine-local identity
+without an incarnation, epoch or generation needs a recorded decision, because it
+would close that path.
 
 ## Loss boundaries
 

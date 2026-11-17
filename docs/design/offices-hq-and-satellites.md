@@ -68,27 +68,27 @@ They must be preserved through any target adapter. Filenames do not rename
 The selected target separates data by durability:
 
 ```text
-<organization-data-root>/<organization-id>/
-├── durable/
-│   ├── state/                       # ordinary tracked organization files
-│   ├── journal/                     # acknowledged unpublished persistence
-│   ├── authority/                   # numbering and recovery evidence
-│   ├── accounting/                  # durable usage archive/checkpoints
-│   ├── local/offices/               # private bindings; never Git
-│   └── checkpoints/                 # local/unpushed code recovery
-└── runtime/<office-id>/
-    ├── office.db                    # projections and explicitly transient data
+<data-root>/<organization-id>/
+├── durable/                  # sources: back up all of it; never removed by cleanup
+│   ├── state/                # ordinary organization Git files
+│   ├── journal/              # acknowledged unpublished changes
+│   ├── authority/            # numbering, placement generations, permits (06, 11)
+│   ├── accounting/           # durable usage streams/checkpoints (10)
+│   ├── messaging/            # protected envelopes and attachments (15)
+│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── budgets/              # policies, periods, events, extensions/holds (17)
+│   ├── private/              # HQ only: author-private task notes (05)
+│   ├── local/offices/        # private local bindings, never Git
+│   └── checkpoints/          # local/unpushed code recovery
+└── runtime/<office-id>/      # caches: rebuildable
+    ├── office.db             # projections and explicitly transient state
     ├── repositories/<repository-id>.git/
     └── teams/<root-team-id>/teams/<child-team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
-<organization-operational-root>/
-├── messaging/                       # protected envelopes and attachments (15)
-├── recovery/                        # receipts/streams/snapshots/cleanup (16)
-└── budgets/                         # policies, periods, events, holds (17)
 ```
 
-Provision and protect the operational root independently of disposable caches.
+The [organization-data index](organization-data/README.md#shared-storage-contract) owns this layout. Provision and protect `durable/` independently of the disposable `runtime/<office-id>/` caches.
 Private task notes use a separate durable author-private DB; host credentials/CA
 pins and execution journals retain their protected custody. The current runtime
 still uses encrypted `org.db`/`office.db`, `office-state/` markers and legacy
@@ -331,7 +331,7 @@ new address from its administrator without accepting a different HQ identity.
   - Organization changes wait in the satellite's **outbox**, in order. A queued edit to something already edited in the outbox expects the version that earlier edit will produce, so two queued edits of one thing don't conflict with each other. When HQ is back, they're sent **one at a time, in order**.
   - If HQ rejects one, the commands queued after it are held, not sent. The app shows them as **blocked** for the owner to retry or discard, because they may depend on the rejected one.
   - Until they're committed, queued changes show in the app as **pending**. They aren't in the copy.
-- **Messages between agents** (ADR-0003, proposed):
+- **Messages between agents** (ADR-0003; routing and ownership in §2.2 and §§3.1–3.4 accepted 2026-11-17):
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
 - **The browser when HQ is unavailable:** HQ's application cannot be reached.
@@ -422,7 +422,7 @@ use the model/process sections above and the current launch contract.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
-- **ADR-0003 (proposed):**
+- **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is compatibility evidence):**
   - `org-agent` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):

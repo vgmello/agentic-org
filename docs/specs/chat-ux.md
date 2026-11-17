@@ -162,12 +162,12 @@ They use app-only calls, so agents don't use them. Agents use available `agent-o
 Search authorized channels/DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Apply the same per-message imported visibility to search results, snippets, counts, attachments and deep links as to history. Pins per channel retain the same scope. No new purge policy is selected; retention UI must not imply a shipped deletion service.
 
 ```text
-<organization-operational-root>/messaging/       # protected; never shared org Git
+<data-root>/<organization-id>/durable/messaging/ # protected; never shared org Git
 ├── conversations/<conversation-id>/
 │   ├── conversation.json                      # memberships, preferences, read markers
 │   └── messages/<message-id>.json             # envelope, recipients, reactions, attachments
 └── attachments/<sha256>                       # immutable verified content
-<office-state>/cache/                          # SQL/unread/thread indexes; rebuildable
+<data-root>/<organization-id>/runtime/<office-id>/ # SQL/unread/thread indexes; rebuildable
 ```
 
 Whole source envelopes have stable IDs, schema/revision and expected-revision checks. Durably flush an atomic source update, required receipt/journal evidence and verified attachments before acknowledgement through a demonstrated recoverable commit boundary. Agent office moves do not change conversation ownership. Losing an office cache must retain acknowledged unresolved asks, handoffs and undelivered messages; organization Git alone cannot restore these or their authority.

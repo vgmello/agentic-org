@@ -38,19 +38,19 @@ Raising/clearing/extending task budgets requires a person with owner/project-man
 
 Changing a task budget's unit also requires that person authority, whether reached or not. An authorized agent project manager may set its first budget or lower its limit in the same unit. Any attribution correction reducing a reached task budget's spend requires an authorized person, even if the correction leaves it reached. This does not extend a parent budget to descendant records. Acceptance checks must refuse an agent manager's unit change, accept its authorized first set/lower, and prove that a below-reach Allow once attempt does not consume the later extension. A positive saved policy at/below known spend is accepted and reevaluated under this contract; the older special Raise refusal is not imported.
 
-Hard limits are operational controls, not a promise of exact provider spend: reporting lag, current-turn completion and concurrent in-flight turns can overshoot. All offices consult the same authorized budget-control state before admitting new affected turns. An unreachable coordinator cannot authorize clearing an existing hold, and an unknown command outcome must be reconciled before retry. Unknown usage alone follows the warning-only rule above, not an automatic admission block. This model does not allocate independent per-office budgets, duplicate spending counters or claim a completed distributed admission engine. Atomic evaluation/action receipts and the existing execution permits/placement fencing must be integrated before automatic stopping is advertised.
+Hard limits are operational controls, not a promise of exact provider spend: reporting lag, current-turn completion and concurrent in-flight turns can overshoot. All offices consult the same authorized budget-control state before admitting new affected turns. The admission point is [document 11 §6 step 3](11-model-profiles-and-agent-execution.md#6-shared-quota-and-deterministic-selection): HQ, which already issues every turn permit, grants none while an unreleased hold applies and returns `BUDGET_HELD`. No office evaluates a hold from its own cache. An unreachable coordinator cannot authorize clearing an existing hold, and an unknown command outcome must be reconciled before retry. Unknown usage alone follows the warning-only rule above, not an automatic admission block. This model does not allocate independent per-office budgets, duplicate spending counters or claim a completed distributed admission engine. Atomic evaluation/action receipts and the existing execution permits/placement fencing must be integrated before automatic stopping is advertised.
 
 ## Files and SQL mapping
 
 ```text
-<organization-operational-root>/budgets/<budget-id>/ # protected, never shared org Git
+<data-root>/<organization-id>/durable/budgets/<budget-id>/ # protected, never shared org Git
 ├── budget.md                    # immutable target/current revision and latest policy
 ├── versions/<revision>.yaml      # append-only policy history, including limits
 ├── periods/<period-id>.json      # evaluation and extension/kept-pause state
 ├── events/<event-id>.json        # immutable actor-bound decisions/evaluation snapshots
 ├── notices/<notice-id>.json      # durable notification/outcome state
 └── holds/<period-id>/<revision>-<stage>.json
-<office-state>/cache/            # access-controlled SQL/rollups; not sole source
+<data-root>/<organization-id>/runtime/<office-id>/ # access-controlled SQL/rollups; not sole source
 ```
 
 budget.md has schema_version, organization_id, id, current_revision, scope_kind, nullable task_id/agent_id/release_id, period_kind, time_zone, time_zone_source, time_zone_subject_ref, created_at and optional Markdown body. Version YAML has organization_id, budget_id, revision, state, unit, limit_amount, changed_by_kind/id, changed_at, reason. The latest version fields shown in budget.md must exactly match its version file, not form a second independently writable policy. Preserve task/release identities as archived records when budget history references them; deletion must archive, not cascade away budget history.

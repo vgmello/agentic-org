@@ -155,14 +155,14 @@ The runtime contract can carry token/cost deltas and cumulative scopes independe
 <data-root>/<organization-id>/durable/accounting/
 ├── usage/<origin-office-id>/<producer-id>/<UTC-date>.jsonl
 └── checkpoints/<origin-office-id>/<producer-id>.json
-<organization-operational-root>/budgets/<budget-id>/
+<data-root>/<organization-id>/durable/budgets/<budget-id>/
 ├── budget.md                         # protected current revision, not shared Git
 ├── versions/<revision>.yaml          # retained policy history
 ├── periods/<period-id>.json
 ├── events/<event-id>.json
 ├── notices/<notice-id>.json
 └── holds/<period-id>/<revision>-<stage>.json
-<office-state>/cache/                 # indexed views only
+<data-root>/<organization-id>/runtime/<office-id>/ # indexed views only
 ```
 
 Accepted usage IDs/source keys, producer sequence/checkpoint hashes and correction chains survive retries and cache rebuild; an identical retry compares payload hash and a mismatch conflicts. Coverage is as of a known checkpoint, with gaps/disconnected sources visible; it is not real-time proof of zero spend. Durably append usage/checkpoints and source policy/decision/receipt evidence before acknowledgement through a recoverable commit boundary. Organization Git alone restores neither usage nor budget limits/just-used extensions; protected backup/journal evidence is required. Monetary files, events, exports and notices obey the same access rules as the UI. No prompts, private notes, credentials or chat text enter usage/budget metadata. A shared Git report contains safe identity/state and authorized token summaries only, never private amounts/limit history.

@@ -15,13 +15,13 @@ This set owns the **selected target data relationships, fields and canonical sou
 | [Operational data](05-operational-data.md) | Shared comments, checklists, watchers, questions, waiting spans, task history and private notes (including mirrors, receipts and retention) | Notification delivery, timers, scheduling or process-engine behaviour |
 | [Identity and numbering](06-identity-and-numbering.md) | Stable IDs, readable references, slugs, handles and durable scoped allocations | Service deployment, failover or messaging implementation |
 | [Release deployments](07-release-deployments.md) | Deployment attempts, environments, outcomes, rollback references and commit snapshots | Build artifacts or deployment execution |
-| [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification and typed relationships | Cost/budget engines, permissions or organization-wide event history |
+| [Record contracts](08-record-contracts.md) | Accountability, provenance, lifecycle, work classification, typed relationships and the hash codec registry | Cost/budget engines, permissions or organization-wide event history |
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 | [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or execution routing |
 | [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) | Provider/subscription connections, ordered model profiles, agent execution configuration, office bindings, permits, turns/attempts/processes and durable placement generations | Agent memory, automatic scheduling, installation implementation or task lifecycle |
 | [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics, v1 evidence and migration boundaries | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 | [Model providers, connections and pools](14-model-providers-and-connection-pools.md) | Provider/driver identity, connections, ordered pools, office bindings, discovered models and agent selection in the common data-structure format | A second provider system, additional tables or supervisor/failover implementation |
-| [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions | Transport/wake engines and external bridges |
+| [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions; runtime ownership and routing rules merged from ADR-0003 | Transport/wake engines and external bridges |
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
 
@@ -60,20 +60,31 @@ The organization repository must be remote. Its tracked content is mirrored as o
 
 ```text
 <data-root>/<organization-id>/
-├── durable/
-│   ├── state/                 # Latest organization repository content
-│   ├── accounting/            # Durable usage streams/checkpoints; separately backed up
-│   ├── authority/             # Durable numbering ledger and recovery journal
-│   ├── journal/               # Pending local persistence; not Git content
-│   ├── local/offices/         # Machine-specific bindings; not Git content
-│   └── checkpoints/           # Local-only/unpushed code recovery bundles and edits
-└── runtime/<office-id>/
-    ├── office.db              # Projection + explicitly transient state
-    ├── repositories/          # One bare clone per repository used by this office
+├── durable/                         # Sources. Back up all of it. Cache cleanup never touches it.
+│   ├── state/                       # Latest organization repository content (published to Git)
+│   ├── journal/                     # Pending local persistence; not Git content
+│   ├── authority/                   # Numbering ledger and its recovery journal (06); HQ placement
+│   │                                #   generations, permits and cooldowns (11)
+│   ├── accounting/                  # Usage streams/checkpoints (10)
+│   ├── messaging/                   # Protected conversations, messages, attachments (15)
+│   ├── recovery/                    # Receipts, origin streams, acceptance journals, checkpoints (16)
+│   ├── budgets/                     # Protected policies, periods, events, holds (17)
+│   ├── private/task-notes.db        # HQ only: author-private task notes (05)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11)
+│   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
+└── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
+    ├── office.db                    # Projection + explicitly transient state
+    ├── repositories/                # One bare clone per repository used by this office
     └── teams/<team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/  # Team tasks
 ```
+
+**One root, two halves.** This tree is the only selected on-disk layout; every numbered document and every design or UX guide refers to it. `durable/` holds every organization data source: nothing under it is rebuilt from anything else, a backup must include all of it, and no cleanup may remove it. `runtime/<office-id>/` holds only what can be rebuilt from `durable/`, organization Git and verified probes. Only `durable/state/` is published to organization Git. `messaging/`, `recovery/`, `budgets/`, `accounting/`, `authority/`, `private/` and `local/` are protected local sources and never become Git content.
+
+`<data-root>` is resolved once by the instance under the [standalone design](../standalone-server.md#3-instance-selection-and-storage) and saved in instance configuration; it is never inferred from a client ID, a shell's working directory or `HOME`. An operator may place `durable/` on separate storage, but its logical location stays `<data-root>/<organization-id>/durable/`. Earlier revisions used other names for parts of this tree: `<organization-data-root>` is `<data-root>`, `<organization-operational-root>` is `<data-root>/<organization-id>/durable`, and `<office-state>/cache/` is `<data-root>/<organization-id>/runtime/<office-id>/`. Do not introduce another root name. Two things are deliberately outside this tree and are backed up separately: the host's key and writer custody, and credential stores (document 16; [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md)).
+
+This is the selected target. The checked code still keeps its authoritative `org.db` and `office.db` under `offices/<office-id>/` of the host home ([ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md), [host boundary](../office-host-boundary.md)); those databases are sources, not caches, until an approved migration moves each record family here.
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 
@@ -82,6 +93,10 @@ Shared SQLite is the indexed projection for domain records, task activity and ac
 Structural import validation rejects duplicate IDs, invalid references, team cycles, path/field mismatches and a team lead outside that team's direct membership. A lead manages the team's entire subtree; ordinary members gain no management authority from their location. This describes the relationship only, not tool permissions or authorization implementation.
 
 Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
+
+## Organization authority
+
+In v1 the **organization authority is the HQ office worker**. It is a role of that process, not a separate service or daemon: the single writer at HQ owns `durable/authority/`, allocates readable numbers, registers feature slugs and flag keys, accepts usage corrections, issues turn permits and cooldowns, and holds placement generations and budget-control state. Wherever a document in this set says "shared organization authority", "shared logical organization authority" or "HQ's organization service", it means this role. Other offices submit requests to it and never act as it, including while disconnected. Moving the role to another office is promotion; it is manual, fenced by epoch, and deferred ([offices design](../offices-hq-and-satellites.md), [document 16](16-recovery-and-office-continuity.md)).
 
 ## Selected and pending v1 decisions
 
@@ -96,6 +111,7 @@ Saving files and Git publication remain separate. Hourly pending-work publicatio
 | Single home team, nested teams, lead authority | Include the agreed structure |
 | Offices | Durable organization records; support multiple offices |
 | Creation authority | HQ creates teams/projects/releases/milestones; any office creates tasks/features |
+| Organization authority | The HQ office worker in v1: one role for numbering, slug/key registration, permits, placement generations, budget-control state and corrections; promotion deferred |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
 | Accountability and lifecycle | Feature/document owners; active/archived teams, active/inactive employees, draft/current/deprecated documents |

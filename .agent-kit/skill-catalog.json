@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git.",
+  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs-only reassessment 2026-11-17 (conflict register A-01..A-06): ADR0002 gains a layout-precedence note; organization-data README selects one durable/runtime tree and defines HQ as organization authority; document16 separates agent re-placement from office relocation. No stack, tool, boundary, role or skill change; existing guidance still covers them. The authority map links the new conflict-resolution plan. Refresh only these4 evidence hashes.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "a77502af12f59a2d65778414261eefa078c4b39ba62db467a23e1b801288283a"
+      "sha256": "3b279f3450913450340977b5309f6f4819babcc742ffff325554536d8660f953"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
@@ -150,11 +150,11 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "667e5bd5d11b4fc5d871c15f963681442148a399a915f5ec5bab3240b9f272b6"
+      "sha256": "abf2d17bb603ff93e799ab32214f5259ef8d815aaf2d3d807c0a6079f6a37015"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "64a93cde7d9d5458db28d9c91da12afb44ae5bda5423260b6c9f43108565e095"
+      "sha256": "46514dbacaffc55541acd188c46b924be01c19f07fbe5682ba475e33d7c10091"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -186,7 +186,7 @@
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "662a8a4d032f79aca78cc9f154674741334b7cee908ea2414bf50a71a4acacf5"
+      "sha256": "0d5a3270c5913ff373d585ed2a0f22b8a15f195ae3261e65c5379568ef49e543"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
