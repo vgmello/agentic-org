@@ -410,10 +410,13 @@ UTF-8 bytes, keeps array order, uses compact separators and the `serde_json` sca
 encoding. The test vectors are in
 [`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json).
 
-[`engine.rs`](../../crates/org-work/src/engine.rs) checks the caller first: a person's
-request may act only as that person or the owner, an agent's only as an active or
-paused agent. It then looks up the receipt before checking age and state: the same ID
-and hash replays, changed params are refused. An operation ID is admitted for 29 days,
+The actor of a call is the authenticated principal of a person's request or the
+binding of an agent's run; no parameter chooses it, and an agent acts only while
+active or paused. The receipt is looked up before age and state are checked: the same
+ID and hash replays, changed params are refused. In the code today
+[`engine.rs`](../../crates/org-work/src/engine.rs) lets any connection bound with the
+application token act as the owner or as any person, and treats the owner as a flag on
+a member; both go with the token (implementation plan A1) and the owner flag (B2). An operation ID is admitted for 29 days,
 up to five minutes in the future, and its receipt kept 30 days from its encoded time.
 
 Task-event hashing is different: document 05 hashes the UTF-8 event JSON with sorted

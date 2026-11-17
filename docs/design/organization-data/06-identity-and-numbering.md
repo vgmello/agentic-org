@@ -1,12 +1,12 @@
 # Identity and numbering
 
-Status: **selected** data contract, revision 2.8. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Status: **selected** data contract, revision 2.9. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 
 Generate a new stable ID before submitting a creation. An ID is not an incrementing number.
 
-**Stable IDs are UUID version 7** (RFC 9562; selected 2026-11-17). An ID is 128 bits and starts with a 48-bit millisecond timestamp, so IDs sort by the millisecond they were made in and indexes stay compact; two IDs made in the same millisecond have no defined order. It is written as 36 characters of lowercase hyphenated text, for example `01930000-0000-7000-8000-000000000040`, in files, file names, wire messages and SQLite, where there is no UUID type, so the column is `TEXT`. An adapter for an engine with a native UUID type, such as PostgreSQL, stores it in that type ([ADR-0018](../../adr/0018-storage-engine-independence.md)). The owner asked for the commonly used industry standard and the lead selected UUIDv7 for that reason: it is the published standard, with direct support in the common Rust library (`uuid`) and a native type in PostgreSQL; ULID is a community specification with the same properties and a shorter text form. The rule covers every ID the product mints, including operation, message and command IDs. Most of the code mints ULIDs today and changes with the store rebuild (FC-142); documents that describe that code say ULID where they quote it.
+**Stable IDs are UUID version 7** (RFC 9562). An ID is 128 bits and starts with a 48-bit millisecond timestamp, so IDs sort by the millisecond they were made in and indexes stay compact; two IDs made in the same millisecond have no defined order. It is written as 36 characters of lowercase hyphenated text, for example `01930000-0000-7000-8000-000000000040`, in files, file names, wire messages and SQLite, where there is no UUID type, so the column is `TEXT`. An adapter for an engine with a native UUID type, such as PostgreSQL, stores it in that type ([ADR-0018](../../adr/0018-storage-engine-independence.md)). The owner asked for the commonly used industry standard and the lead selected UUIDv7 for that reason: it is the published standard, with direct support in the common Rust library (`uuid`) and a native type in PostgreSQL; ULID is a community specification with the same properties and a shorter text form. The rule covers every ID the product mints, including operation, message and command IDs. Most of the code mints ULIDs today and changes with the store rebuild (FC-142); documents that describe that code say ULID where they quote it.
 
  Slugs/handles are explicit identity fields. `key` columns are generated from stored fields, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers. Every numbered record has its number from the moment it exists, except a feature created while HQ is unreachable, whose number is null until HQ registers it. Resolve slugs and handles by their documented scope rather than by display names.
 
@@ -24,7 +24,7 @@ There are two ways a number is given.
 
 Teams and projects each have their own organization-wide sequence. Team nesting and office placement never introduce another numbering level. A milestone's full reference can be `P-8/R-3/M-2`.
 
-**Task numbers, given by the office that creates the task** (owner decisions 2026-11-17, [ADR-0019](../../adr/0019-office-coded-task-numbers.md)). A task reference is `T-<CODE><N>`:
+**Task numbers, given by the office that creates the task** ([ADR-0019](../../adr/0019-office-coded-task-numbers.md)). A task reference is `T-<CODE><N>`:
 
 - `CODE` is the creating office's letter code: one or two uppercase letters from A to Z without I and O. HQ is `A`.
 - `N` is a positive integer with no leading zeros, from that office's one sequence for all its tasks, whatever project or team they belong to and whatever their type.
@@ -90,7 +90,7 @@ Allocation entries survive closure and deletion of the record they name. A cache
 
 **Task sequences.** An office's `task-counter.yaml` is that office's own durable state. It is part of what the office backs up, it is not a cache, and removing `runtime/` must not remove it. A task that was closed or deleted keeps its reference reserved, because the sequence only moves forward. If the file is lost, or restored from a copy older than tasks the office has already created, the office cannot prove its sequence: it stops creating tasks and asks HQ for a new code. HQ never reconstructs an office's sequence from the tasks it has seen, since an office may hold tasks HQ has not received yet.
 
-Import validation must ensure counter scope IDs resolve, allocations point to the matching live entity or tombstone, accepted entity numbers match their active-scope allocation, and each counter is at least the maximum of every retained allocation in its scope. The schema's `record_refs` is derived from all participating entities/tombstones, including organization, team, project and release scope records. A task's `office_code` must be a code in `office-codes.yaml`, and no two tasks share a code and number.
+Projection validation must ensure counter scope IDs resolve, allocations point to the matching live entity or tombstone, accepted entity numbers match their active-scope allocation, and each counter is at least the maximum of every retained allocation in its scope. The schema's `record_refs` is derived from all participating entities/tombstones, including organization, team, project and release scope records. A task's `office_code` must be a code in `office-codes.yaml`, and no two tasks share a code and number.
 
 ## Indexes and ownership
 

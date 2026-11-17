@@ -200,7 +200,7 @@ router.
 ## 4. Task branch records
 
 A task branch record exists per task and per repository the task targets:
-`{ task_id, employee_id, project_id?, repository_id, branch, base_sha, own_tip?, state: reserved | open | closing | merged | archived, merged_by_hand?, opened_at, last_moved_at, closed_at? }`.
+`{ task_id, employee_id, project_id?, repository_id, branch, base_sha, own_tip?, state: reserved | open | closing | merged | archived, opened_at, last_moved_at, closed_at? }`.
 The office writes it in the same transaction as the change that causes it.
 
 - **Reserved** when the assignee starts the task, before any Git; **open** once the
@@ -217,9 +217,8 @@ The office writes it in the same transaction as the change that causes it.
 - **`own_tip`** is the latest tip the office has seen on the branch that descends from
   `base_sha` and is reachable from no other branch in the cache. A fast-forward or
   reset onto the integration branch or another branch never sets it.
-- **Merged** when `own_tip` is reachable from the integration branch, or when a
-  project lead or the owner marks it merged by hand at a named integration commit.
-  Once merged, the office refuses pushes to the branch.
+- **Merged** when `own_tip` is reachable from the integration branch. Once merged,
+  the office refuses pushes to the branch.
 - **Pushes need a record.** `agent-os push` takes a `task/*` branch only from the
   holder of its open record.
 - **Released** when a reservation's task leaves In progress, closes or moves before
@@ -231,11 +230,14 @@ The office writes it in the same transaction as the change that causes it.
   unmerged work** is any copy, `own_tip` or remote head that descends from `base_sha`,
   differs from it and is not in the integration branch, or uncommitted changes in the
   worktree. A missing branch, an unreadable HEAD, a failed copy or a copy that neither
-  descends from `base_sha` nor is in the integration branch counts as own work. With
-  own work, closing needs a project lead who is not the assignee, or the owner; the
-  assignee gets `one_branch_open`, naming the branch. The office answers first, then
-  ends the task's sessions. The record's revision and the copied commits go into the
-  work write, which refuses with `conflict` if any changed.
+  descends from `base_sha` nor is in the integration branch counts as own work. A
+  close never loses own work and is never refused because of it (decision 7): the
+  close proceeds, the result names the branch that holds unmerged work, and cleanup
+  keeps that work under an `archive/` tag. The office answers first, then ends the
+  task's sessions. The record's revision and the copied commits go into the work
+  write, which refuses with `conflict` if any changed.
+- **One record per task and repository.** An agent may hold several open records at
+  once. Nothing limits an agent to one open branch in v1 (decision 7).
 - **Reassignment** keeps the worktree and branches (decision 6); only a confirmed
   closure enters cleanup.
 
@@ -269,8 +271,8 @@ Reads, for any employee bound to the organization:
 `agent-os` commands `process list`, `process why` and `process show` call these. The
 local API version is 1 and these calls change in place until v1 ships.
 
-`task.set_status` gains `one_branch_open` for a close refused under §4. `work.changed`
-gains the branch-record changes. Unknown values decode as `Unknown`.
+The result of `task.set_status` names a branch left with unmerged work at a close
+(§4). `work.changed` gains the branch-record changes. Unknown values decode as `Unknown`.
 
 Project and association writes refuse an integration branch starting with `task/`,
 `docs/`, `merged/` or `archive/` (`invalid_request`). The comparison ignores ASCII
@@ -286,7 +288,7 @@ share the rule as `org_proto::has_reserved_branch_prefix`.
 - **`org-office`:** the index, caches, branch records, the calls and the checks
   inside the work write.
 - **`org-git`:** repository reads, branch creation at a commit and cleanup.
-- **`agent-os`:** the `process` read commands and the `one_branch_open` exit code.
+- **`agent-os`:** the `process` read commands.
 - **`apps/agentic-org-ui`:** the Processes views and the profile tab.
 
 ## 8. Tests that prove the rules
@@ -301,14 +303,14 @@ Each test fails without its rule.
   size; a non-overridable set over the budget refuses the launch and names the
   documents; the overridable cap and order hold; a fresh context gets the manifest
   again; nothing truncated is marked read.
-- **Branch records:** of two starts for one agent, exactly one reserves; a failed
+- **Branch records:** a failed
   worktree add leaves no reservation; one own commit sets `own_tip`, a fast-forward
   onto another branch does not; a `--no-ff` merge marks it merged, also after the
   branch is deleted; pushes after a merge or without a record are refused; reused
   names get a suffix; a planted local branch makes the add fail, not overwrite.
 - **Closing:** a detached HEAD at `base_sha` with an unpushed commit on the branch is
-  own work; a failed copy is own work; the assignee's close with own work is
-  `one_branch_open`; a lead's or the owner's close proceeds; a change between check
+  own work; a failed copy is own work; a close with own work proceeds, names the
+  branch and leaves the work under an `archive/` tag; a change between check
   and write is `conflict`; reassignment keeps the worktree.
 - **Reads:** no agent-movable ref reaches a set; an unreadable repository gives
   `stale_since` and the last set.
@@ -320,4 +322,4 @@ Each test fails without its rule.
 `checklist`), resolves several team chains with conflict rules, renders a section
 and implements one-open-branch checks for a single repository. Nothing calls it. It is
 simplified to the one-chain rule and the envelope above when the agent launch path is
-built (implementation plan C3). The UI's Processes screens run on sample data.
+built (implementation plan C5). The UI's Processes screens run on sample data.

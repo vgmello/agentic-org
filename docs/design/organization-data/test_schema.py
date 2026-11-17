@@ -609,16 +609,16 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         self.db.row_factory = sqlite3.Row
         self.addCleanup(self.db.close)
         self.db.executescript((ROOT / "private-notes-schema.sql").read_text())
-        for kind, author in (("employee", "ana"), ("employee", "reporter"), ("owner", "subject-1")):
-            insert(self.db, "private_note_authors", organization_id="org", author_kind=kind, author_id=author)
+        for author in ("ana", "reporter"):
+            insert(self.db, "private_note_authors", organization_id="org", author_id=author)
         insert(self.db, "private_note_tasks", organization_id="org", task_id="task")
         insert(self.db, "private_task_notes", organization_id="org", id="note", schema_version=1, revision=1,
-               task_id="task", author_kind="employee", author_id="ana", body_markdown="Private draft",
+               task_id="task", author_id="ana", body_markdown="Private draft",
                created_at="2026-11-15T12:00:00.000Z", updated_at="2026-11-15T12:00:00.000Z")
         self.db.commit()
 
     def receipt(self, **overrides):
-        fields=dict(organization_id="org", author_kind="employee", author_id="ana", operation_id="operation",
+        fields=dict(organization_id="org", author_id="ana", operation_id="operation",
                     request_sha256="a"*64, command="create", note_id="note", result_revision=1, state="completed",
                     created_at="2026-11-15T12:00:00.000Z", finished_at="2026-11-15T12:00:00.000Z")
         fields.update(overrides)
@@ -679,6 +679,99 @@ class PrivateNoteSchemaTests(unittest.TestCase):
     def test_receipt_cannot_impersonate_another_author(self):
         with self.assertRaises(sqlite3.IntegrityError):
             self.receipt(author_id="reporter")
+        self.db.rollback()
+
+    def test_a_private_note_author_is_an_employee_id_with_no_kind(self):
+        for table in ("private_note_authors", "private_task_notes", "private_note_command_receipts"):
+            with self.subTest(table=table):
+                columns = [row[1] for row in self.db.execute(f"PRAGMA table_xinfo({table})")]
+                self.assertIn("author_id", columns)
+                self.assertNotIn("author_kind", columns)
+
+
+ACTOR_COLUMN = re.compile(r"^\s*(\w*_by_kind|actor_kind)\s+TEXT\b.*?\bIN\s*\(([^)]*)\)", re.M)
+
+
+class ActorAndAddresseeTests(unittest.TestCase):
+    """Who did something is an employee (a person or an agent) or the system, never 'owner'.
+    A column that addresses someone may still name the organization owner."""
+
+    def setUp(self):
+        self.db = database()
+        self.addCleanup(self.db.close)
+        seed_organization(self.db)
+        seed_task(self.db)
+
+    def test_no_actor_column_accepts_owner(self):
+        found = []
+        for table, sql in self.db.execute("SELECT name, sql FROM sqlite_schema WHERE type='table'"):
+            for column, values in ACTOR_COLUMN.findall(sql):
+                found.append((table, column))
+                with self.subTest(table=table, column=column):
+                    self.assertNotIn("'owner'", values)
+        self.assertGreaterEqual(len(found), 30)
+        self.assertNotIn("changed_by_kind",
+                         [row[1] for row in self.db.execute("PRAGMA table_xinfo(budget_policy_versions)")])
+        self.assertNotIn("author_kind", [row[1] for row in self.db.execute("PRAGMA table_xinfo(comments)")])
+
+    def test_an_owner_actor_is_refused(self):
+        statements = (
+            ("UPDATE tasks SET updated_by_kind='owner', updated_by_id=NULL", ()),
+            ("UPDATE employees SET created_by_kind='owner' WHERE id='ana'", ()),
+            ("INSERT INTO mutation_receipts (organization_id,command_id,origin_office_id,actor_kind,actor_id,command_kind,"
+             "request_sha256,state,created_at,updated_at) VALUES ('org','c','numbering-a','owner',NULL,'task.create',?,"
+             "'reserved','2026-11-15T00:00:00Z','2026-11-15T00:00:00Z')", ("a" * 64,)),
+        )
+        for statement, parameters in statements:
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(statement, parameters)
+            self.db.rollback()
+        record = event(2, {"type": "status_changed"})
+        record.update(actor_kind="owner", actor_id=None)
+        with self.assertRaises(sqlite3.IntegrityError):
+            project_event(self.db, record)
+        self.db.rollback()
+
+    def test_the_owner_as_a_person_is_an_ordinary_employee_actor(self):
+        self.db.execute("UPDATE tasks SET updated_by_kind='employee', updated_by_id='reporter'")
+        self.db.commit()
+        row = self.db.execute("SELECT updated_by_kind, updated_by_id FROM tasks").fetchone()
+        self.assertEqual(tuple(row), ("employee", "reporter"))
+
+    def comment(self, **overrides):
+        insert(self.db, "comments", **(dict(organization_id="org", target_kind="task", target_id="task", id="comment",
+               position=0, author_id="reporter", created_at="2026-11-15T10:00:00Z", body_markdown="Question") | overrides))
+
+    def test_a_comment_author_is_an_existing_employee(self):
+        self.comment()
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.comment(id="no-author", position=1, author_id=None)
+        self.db.rollback()
+        self.comment(id="unknown-author", position=1, author_id="nobody")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+
+    def test_the_owner_can_still_be_addressed(self):
+        self.comment()
+        insert(self.db, "watchers", organization_id="org", target_kind="task", target_id="task", id="w-owner",
+               watcher_kind="owner", watcher_id=None)
+        insert(self.db, "watchers", organization_id="org", target_kind="task", target_id="task", id="w-ana",
+               watcher_kind="employee", watcher_id="ana")
+        insert(self.db, "owner_questions", organization_id="org", target_kind="task", target_id="task", id="q",
+               question_comment_id="comment", asked_by_id="ana", state="open", created_at="2026-11-15T10:00:00Z")
+        insert(self.db, "waiting_spans", organization_id="org", target_kind="task", target_id="task", id="span",
+               reason="Owner decision needed", waiting_on_kind="owner", waiting_on_id=None, question_id="q",
+               started_at="2026-11-15T10:00:00Z")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "watchers", organization_id="org", target_kind="task", target_id="task", id="w-owner-2",
+                   watcher_kind="owner", watcher_id=None)
+        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "watchers", organization_id="org", target_kind="task", target_id="task", id="w-bad",
+                   watcher_kind="owner", watcher_id="reporter")
         self.db.rollback()
 
 
@@ -939,7 +1032,7 @@ class BudgetSchemaTests(unittest.TestCase):
         insert(self.db,"budgets",**(dict(organization_id="org",id=identity,current_revision=1,scope_kind=scope,
                period_kind=period,time_zone="UTC",time_zone_source="hq",created_at="2026-11-15T00:00:00Z",**{target:value}) | overrides))
         insert(self.db,"budget_policy_versions",organization_id="org",budget_id=identity,revision=1,state="active",unit="tokens",limit_amount=100,
-               changed_by_kind="owner",changed_at="2026-11-15T00:00:00Z")
+               changed_by_id="reporter",changed_at="2026-11-15T00:00:00Z")
         self.db.commit()
 
     def period(self, budget="budget", identity="period"):
@@ -969,7 +1062,7 @@ class BudgetSchemaTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE budget_periods SET extension_used=0")
         self.db.rollback()
         insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="tokens",limit_amount=200,
-               changed_by_kind="owner",changed_at="2026-11-15T01:00:00Z")
+               changed_by_id="reporter",changed_at="2026-11-15T01:00:00Z")
         self.db.execute("UPDATE budgets SET current_revision=2")
         self.db.execute("UPDATE budget_periods SET policy_revision=2,extension_used=0,used_amount=120")
         self.db.commit()
@@ -989,7 +1082,7 @@ class BudgetSchemaTests(unittest.TestCase):
         self.budget()
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="micro_usd",limit_amount=0,
-                   changed_by_kind="owner",changed_at="2026-11-15T01:00:00Z")
+                   changed_by_id="reporter",changed_at="2026-11-15T01:00:00Z")
         self.db.rollback()
         with self.assertRaises(sqlite3.IntegrityError): self.budget("invalid","task","day")
         self.db.rollback()

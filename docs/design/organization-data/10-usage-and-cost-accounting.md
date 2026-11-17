@@ -1,6 +1,6 @@
 # Usage, token accounting and cost attribution
 
-Status: **selected** data contract, revision 2.7. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
+Status: **selected** data contract, revision 2.8. This document owns usage accounting data, historical attribution, price versions and durable stream checkpoints. It does not implement runtime adapters, pricing services, permission enforcement, budgets or automatic pausing. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns routing/execution records; its attempts supply actual selected connection/model and consumer context for this ledger. Configuration and observations are integrated in the same schema, while immutable usage remains authoritative for accounting.
 
 ## v1 evidence and selected port
 
@@ -26,7 +26,7 @@ Counters are nullable nonnegative integers: null means unknown, while zero means
 
 Compute a token estimate with exact integer/decimal intermediate arithmetic, sum category charges, then round half up once per usage record to integer `cost_micro_usd`. Avoid overflowing a SQLite integer multiplication or using binary floats for stored ledger amounts. A zero-count category does not need a rate; a nonzero/unknown category with no rate makes the valuation incomplete. The included example's $1/M input, $2/M output and $0.50/M cache-read yield 1650 micro-USD, or $0.001650.
 
-`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. V1's runtime-reported list-price estimate remains an estimate, even where an older UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
+`cost_basis` distinguishes runtime_estimate, token_estimate, unpriced and unknown. A runtime-reported list-price estimate is an estimate, even where a UX table calls it Reported. Existing events are never automatically repriced when model prices change. Actual invoices, currency conversion and billing reconciliation are not represented here.
 
 ## Historical attribution and corrections
 
@@ -85,8 +85,8 @@ output_micro_usd_per_million: 2000000
 cache_read_micro_usd_per_million: 500000
 cache_write_micro_usd_per_million: 1250000
 created_at: "2026-10-31T12:00:00Z"
-created_by_kind: owner
-created_by_id: null
+created_by_kind: employee
+created_by_id: 01930000-0000-7000-8000-000000000031
 ```
 
 One usage event, formatted for reading (each JSONL event is one line on disk):
@@ -261,7 +261,7 @@ CREATE TABLE model_prices (
   cache_read_micro_usd_per_million INTEGER CHECK (cache_read_micro_usd_per_million >= 0),
   cache_write_micro_usd_per_million INTEGER CHECK (cache_write_micro_usd_per_million >= 0),
   created_at TEXT NOT NULL,
-  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, provider, model, effective_from),
@@ -287,7 +287,7 @@ CREATE TABLE usage_records (
   model TEXT,
   occurred_at TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
-  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  recorded_by_kind TEXT NOT NULL CHECK (recorded_by_kind IN ('employee', 'system', 'unknown')),
   recorded_by_id TEXT,
   normalization_version INTEGER NOT NULL CHECK (normalization_version >= 1),
   source_metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),

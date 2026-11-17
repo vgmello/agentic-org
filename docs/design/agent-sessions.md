@@ -131,8 +131,9 @@ The decisions this design applies:
        `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` the commit identity, an
        empty `credential.helper`, `core.hooksPath=/dev/null`, `core.fsmonitor=false`,
        `gc.auto=0` and `maintenance.auto=false`.
-     - `GH_CONFIG_DIR=<TMPDIR>/gh/`, an empty folder, so `gh` sees no login. Agents get
-       a GitHub credential only through `agent-os gh-token` (Git design).
+     - `GH_CONFIG_DIR=<TMPDIR>/gh/`, an empty folder, so `gh` sees no login. Agents hold
+       no GitHub or Git credential; they publish only through `agent-os push`
+       ([Git design](projects-git-github.md)).
      - Office-set runtime switches such as `DISABLE_AUTOUPDATER=1`.
 
      Everything else is dropped, including `SSH_AUTH_SOCK`, `GH_TOKEN`, other `GIT_*`
@@ -248,7 +249,9 @@ The decisions this design applies:
    writes in its worktree changes what the office tells the next session. Instruction
    files a runtime reads from its working directory on its own (`AGENTS.md`,
    `.agents/rules`) are the task branch's content and steer only that task's sessions;
-   Claude reads none under `--setting-sources ""`. Each runtime receives the
+   Claude was observed to read none under `--setting-sources ""`; a nested
+   `CLAUDE.md` loaded lazily is untested and is treated as untrusted. Each runtime
+   receives the
    instructions its own way:
    - **Claude:** `--agents <json>` defines the agent inline and `--agent <id>` selects
      it; the instructions go in `--append-system-prompt-file`. The ID is reserved,
@@ -384,6 +387,8 @@ incomplete and warns. Release caps never stop turns.
 
 Pause, holds and offline offices follow [employee supervision](employee-supervision.md#2-pause-holds-and-offline-offices).
 `StopAgent` stops the agent's active and idle processes and creates no future start.
+It is not Pause: the `agent.stop` call is Pause, which records a held manual pause and
+then runs `StopAgent`.
 
 A required ask that times out suspends the agent: the office tells it, waits for its
 turn to end or the grace period, stops its process and any process it started, and
@@ -444,11 +449,8 @@ again on hand-back, and the command warns about this when it starts.
 - **Holds are capped.** One held call on a token-bound connection lasts at most 60 s.
   An `ask` waits as ADR-0020 says: `agent-os` renews the hold until the answer, the
   timeout, a required-answer-pending result or a withdrawal.
-- **No file queue for office-run agents.** `agent-os` with `ORG_SESSION_TOKEN` set
-  exits `5` instead of writing to a local queue. While the file queue exists for
-  person-started commands, its ingest accepts a send only from an active agent that
-  the office does not run, and dead-letters any other sender (a person, the owner, an
-  office-run, offboarded, paused or unknown agent) with a log line that holds no body.
+- **No file queue.** `agent-os` never writes to a local queue; every call goes to
+  the office.
 - **Delivery** follows ADR-0003: a message is kept for the agent's next turn boundary,
   never interrupts a busy turn, and never wakes a paused agent. A reply that satisfies
   a wait creates no second turn.
@@ -599,6 +601,8 @@ office.
 - The runtime signs in from the private home with the connection the pool selected, and
   a file search from its tools finds nothing of the service user's vendor folders
   (ISO-8); on macOS a tool cannot read a vendor sign-in from the Keychain.
+- Claude: a nested `CLAUDE.md` in a subdirectory of the worktree is not loaded, or is
+  shown to steer only that task's sessions.
 - Claude: under the isolation switches, no user instruction file, skill, agent,
   command, synced plugin or user MCP server loads; `init.tools` holds only the allowlist
   under `--tools` and `--disallowedTools`; the office's MCP tools appear and can be
@@ -676,4 +680,4 @@ and probes. It has no `isolation_mode` yet, and it still has a one-off session
 kind, which is not part of v1. `crates/org-supervise` implements piped
 spawn, identity ordering, stop and reap and the recovery API. No adapter crate exists;
 the vendor protocol fixtures are research evidence. Nothing launches an agent
-(implementation plan C1, C2).
+(implementation plan C1, C3).

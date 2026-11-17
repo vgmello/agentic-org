@@ -44,8 +44,9 @@ process.
   execution configuration, fresh local connection evidence and a permit from HQ.
   Placement needs the durable placement generation and cleanup or fencing of any prior
   process.
-- **Access.** The browser authenticates to HQ; no local office is needed. Initial setup
-  creates HQ only; a satellite is created by enrollment started from HQ. Replication
+- **Access.** The browser authenticates to HQ; no local office is needed. The HQ
+  office is created with its organization, from the browser; a satellite is created
+  by enrollment started from HQ. Replication
   scope never overrides chat visibility, private-note author-only access or cost and
   budget authorization. Presence is ephemeral and grants nothing.
 
@@ -168,7 +169,7 @@ was last seen. Satellites open no public listener.
 1. An owner creates an invitation in the HQ web application. HQ reserves the office
    identity and a pending registry entry.
 2. On the target machine, the enrollment flow issued by HQ selects a named instance and
-   joins the organization; initial `agentic-org setup` stays HQ-only. It shows the
+   joins the organization; `agentic-org setup` creates no office. It shows the
    organization and the pinned HQ identity before the owner confirms that the office
    may run agents there. Automation supplies that consent explicitly.
 3. The satellite's worker, not setup or the host, generates and holds the office's TLS

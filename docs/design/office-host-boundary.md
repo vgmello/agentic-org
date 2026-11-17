@@ -22,9 +22,9 @@ Linux implementation.
 A person's request reaches the office with that person's principal and a grant from the
 host, which the office verifies ([ADR-0006](../adr/0006-selected-task-acceptance.md),
 [ADR-0012](../adr/0012-office-channel-lifecycle.md)). There is no application token.
-Creating an organization needs an authenticated instance administrator, including
-during initial setup; an organization owner or an office certificate cannot create
-another organization. A browser request never selects a raw local method or a storage
+Creating an organization needs the signed-in server administrator; setup creates
+none. An organization owner or an office certificate cannot create another
+organization. A browser request never selects a raw local method or a storage
 path. The web process holds no office key and no key-store entitlement.
 
 ## 1. The office catalog
@@ -180,11 +180,12 @@ conflicting bytes require recovery.
 
 The native `organization.provision.v1` call carries the session, a UUIDv7
 `operation_id` and a plan with explicit `name`, `slug`, `repository_remote_url`,
-`state_branch` and `home_team_name`. The host rechecks the live instance administrator
-and binds the operation and its fingerprint to that account. The initial profile
-creates one root home team, an HR agent identity in it (not runnable without its own
-execution configuration), and no owner employee; the owner's security principal is
-separate.
+and `state_branch`. It asks for no team. The host rechecks the live administrator and
+binds the operation and its fingerprint to that account. Creation makes one top-level
+team named after the organization, the creator's person record in it as its lead, and
+the built-in HR employee (not runnable without its own execution configuration). The
+creator's account owns the organization; ownership is a permission of the account at
+the host, not a field on the person.
 
 The host freezes the UUIDv7 entity IDs and the key fingerprint in its protected
 provisioning reservation, with the recovery code in credential custody under an opaque
@@ -271,6 +272,10 @@ restarted.
   | The owner stopped it | `stopped_by_owner` | `offline`, no restart pending |
   | A satellite join waiting for approval or synchronization | `join_pending` | `starting` |
   | A satellite join ended | `join_expired`, `join_cancelled` or `join_rejected` | `unavailable`, no restart |
+
+  A non-fatal `failed` followed by the ready timeout reports that code, not
+  `start_timeout`. `invalid_name` or `already_exists` from a normal run is never
+  restarted: it becomes `unavailable` with reason `invalid_request`.
 
 - **Restart:** backoff 1, 2, 4 … 60 s, reset after 60 s of uptime. Fatal codes never
   restart on their own.
@@ -373,14 +378,17 @@ it restarts the worker; it never races a live worker over its agents.
 
 ## What the code does today
 
-| Conflict plan entry | Requirement | Code today |
+| Increment | Requirement | Code today |
 | --- | --- | --- |
-| B-06 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
-| B-07 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
-| B-08 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
-| B-10 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| F-03 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
-| B-09 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+| A1 | One launch contract, the verified rendezvous | The host implements both the older first-line contract (`"v":2`) and the rendezvous (`crates/org-office-launch/src/v3.rs`), choosing the rendezvous only for a registered, protected instance (`crates/org-host/src/supervisor/child.rs`). The worker reads both. The older form and the gate are removed (implementation plan A1). |
+| A1, A3 | People are authorized by grants; no application token | The older first line still carries `app_token`, and the host still has `app_auth.rs`; the worker stores the grant key unused. |
+| A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
+| A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
+| A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
+| A7 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+
+`organization.provision.v1` today carries a `home_team_name`, creates no person record
+for the creator, and is reached only from tests (implementation plan A4).
 
 The office directory today is `<home>/offices/<office-id>/` under the host home
 resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
