@@ -480,6 +480,79 @@ fn an_undelivered_sign_in_reply_evicts_its_pair_and_ends_the_host_session() {
 }
 
 #[test]
+fn an_abandoned_refresh_keeps_the_old_pair_and_binds_no_new_one() {
+    let f = Fixture::new();
+    let first = f.sign_in();
+    let gone = || true;
+    let error = f
+        .sessions
+        .refresh_watched(ticket(&f.sessions, &first), &Watch::new(&gone))
+        .err()
+        .expect("an abandoned refresh must not rotate the pair");
+    assert_eq!(error.inspected().0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    assert!(f.sessions.get(ticket(&f.sessions, &first)).is_ok());
+    assert_eq!(f.count("session.end"), 0);
+}
+
+#[test]
+fn an_undelivered_refresh_reply_restores_the_old_pair_and_evicts_the_new_one() {
+    let f = Fixture::new();
+    let first = f.sign_in();
+    let other = f.sign_in();
+    let waiting = || false;
+    let watch = Watch::new(&waiting);
+    let second = f
+        .sessions
+        .refresh_watched(ticket(&f.sessions, &first), &watch)
+        .unwrap_or_else(|_| panic!("refresh"));
+    assert!(f.refused(&first.cookie, first.proof.expose()));
+    // The HTTP waiter timed out after the swap: the pool's reply send fails.
+    if let Some(rollback) = watch.into_rollback() {
+        rollback();
+    }
+    // The browser never received the new pair: it is refused (no orphan), and
+    // the old pair it still holds maps to the same live host session again.
+    assert!(f.refused(&second.cookie, second.proof.expose()));
+    assert!(f.refused(&first.cookie, second.proof.expose()));
+    assert!(f.refused(&second.cookie, first.proof.expose()));
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 2);
+    assert!(f.sessions.get(ticket(&f.sessions, &first)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &other)).is_ok());
+    assert_eq!(f.count("session.end"), 0);
+    assert!(f.sessions.host.live());
+    // The restored pair can rotate again normally.
+    let third = f
+        .sessions
+        .refresh(ticket(&f.sessions, &first))
+        .unwrap_or_else(|_| panic!("refresh after restore"));
+    assert!(f.refused(&first.cookie, first.proof.expose()));
+    assert!(f.sessions.get(ticket(&f.sessions, &third)).is_ok());
+}
+
+#[test]
+fn an_undelivered_refresh_never_restores_a_pair_signed_out_meanwhile() {
+    let f = Fixture::new();
+    let first = f.sign_in();
+    let waiting = || false;
+    let watch = Watch::new(&waiting);
+    let second = f
+        .sessions
+        .refresh_watched(ticket(&f.sessions, &first), &watch)
+        .unwrap_or_else(|_| panic!("refresh"));
+    // A sign-out with the new pair lands before the rollback runs.
+    f.sessions
+        .sign_out(ticket(&f.sessions, &second))
+        .unwrap_or_else(|_| panic!("sign out"));
+    if let Some(rollback) = watch.into_rollback() {
+        rollback();
+    }
+    assert!(f.refused(&first.cookie, first.proof.expose()));
+    assert!(f.refused(&second.cookie, second.proof.expose()));
+    assert!(f.sessions.sessions.lock().unwrap().is_empty());
+}
+
+#[test]
 fn a_failed_reply_construction_binds_nothing_and_keeps_the_old_pair() {
     let f = Fixture::new();
     let live = f.sign_in();
@@ -499,7 +572,9 @@ fn a_failed_reply_construction_binds_nothing_and_keeps_the_old_pair() {
         .contains("synthetic native handle 2"));
     let refreshed = f
         .sessions
-        .refresh_with(ticket(&f.sessions, &live), |_| Err::<(), _>(unavailable()));
+        .refresh_with(ticket(&f.sessions, &live), &Watch::never(), |_| {
+            Err::<(), _>(unavailable())
+        });
     assert!(refreshed.is_err());
     // The old pair stays bound and usable; its host session stays open.
     assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);

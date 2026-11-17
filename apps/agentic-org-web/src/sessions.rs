@@ -453,12 +453,22 @@ impl BrowserSessions {
         Ok(())
     }
     pub fn refresh(&self, ticket: Ticket) -> Result<Established, ApiReply> {
-        self.refresh_with(ticket, Ok)
+        self.refresh_watched(ticket, &Watch::never())
+    }
+    pub fn refresh_watched(
+        &self,
+        ticket: Ticket,
+        watch: &Watch<'_>,
+    ) -> Result<Established, ApiReply> {
+        self.refresh_with(ticket, watch, Ok)
     }
     /// `respond` builds the reply; a failure there leaves the old pair bound.
+    /// `watch` reports that the HTTP waiter gave up: the browser then never
+    /// receives the new pair and keeps the old one bound instead.
     pub fn refresh_with<R>(
         &self,
         ticket: Ticket,
+        watch: &Watch<'_>,
         respond: impl FnOnce(Established) -> Result<R, ApiReply>,
     ) -> Result<R, ApiReply> {
         self.current(&ticket)?;
@@ -489,8 +499,36 @@ impl BrowserSessions {
         if sessions.contains_key(&key) {
             return Err(unavailable());
         }
+        // Checked under the map lock, last: an abandoned request keeps the old pair.
+        if watch.abandoned() {
+            return Err(unavailable());
+        }
+        let rotated = Arc::new(session);
         sessions.remove(&ticket.key);
-        sessions.insert(key, Arc::new(session));
+        sessions.insert(key, Arc::clone(&rotated));
+        // The waiter can still give up after this check. Then the browser never
+        // receives the new pair and still holds the old one, so the rotation did
+        // not happen from its side (§4 keeps exactly one valid pair): evict the
+        // undelivered pair and rebind the old one. Both share one host handle,
+        // which renewal extends but never replaces, so the old pair maps to the
+        // same live host session. Only while the new pair is still bound: a
+        // sign-out or host denial that evicted it in between stays final.
+        let (map, old_key, old) = (
+            Arc::clone(&self.sessions),
+            ticket.key,
+            Arc::clone(&ticket.session),
+        );
+        watch.on_undelivered(move || {
+            if let Ok(mut sessions) = map.lock() {
+                if sessions
+                    .get(&key)
+                    .is_some_and(|current| Arc::ptr_eq(current, &rotated))
+                {
+                    sessions.remove(&key);
+                    sessions.insert(old_key, old);
+                }
+            }
+        });
         Ok(reply)
     }
 }

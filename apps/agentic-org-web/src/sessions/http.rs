@@ -175,9 +175,11 @@ impl ApiBackend for SessionApi {
                 Ok(view) => ApiReply::json(StatusCode::OK, serde_json::json!({"result":view})),
                 Err(reply) => reply,
             },
+            // As sign-in: the reply is built before the swap, and an undelivered
+            // reply restores the old pair.
             Command::Refresh(ticket) => self
                 .sessions
-                .refresh_with(ticket, |result| self.established(result))
+                .refresh_with(ticket, watch, |result| self.established(result))
                 .unwrap_or_else(|reply| reply),
             // Every sign-out reply clears the browser's cookie half.
             Command::SignOut(ticket) => match self.sessions.sign_out(ticket) {
