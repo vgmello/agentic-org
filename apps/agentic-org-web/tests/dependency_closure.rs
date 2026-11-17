@@ -2,8 +2,14 @@
 //! normal (linked) dependency closure never reaches the host or office crates.
 
 use std::collections::{BTreeSet, HashMap};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// `cargo metadata --offline` normally finishes in well under a second; a hung
+/// subprocess fails the test instead of stalling CI.
+const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Crates that own host supervision, office storage/keys, work execution or the
 /// privileged client. None may be linked into the gateway.
@@ -14,7 +20,8 @@ const FORBIDDEN: &[&str] = &["org-host", "org-office", "org-work", "org-client"]
 fn normal_closure() -> BTreeSet<String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let output = Command::new(cargo)
+    let mut output = Command::new(cargo);
+    output
         .args([
             "metadata",
             "--offline",
@@ -23,16 +30,40 @@ fn normal_closure() -> BTreeSet<String> {
             "1",
             "--manifest-path",
         ])
-        .arg(&manifest)
-        .output()
+        .arg(&manifest);
+    // Files, not pipes, so a large metadata document can never block the child.
+    let mut stdout = tempfile::tempfile().expect("stdout file");
+    let mut stderr = tempfile::tempfile().expect("stderr file");
+    let mut child = output
+        .stdout(Stdio::from(stdout.try_clone().expect("stdout clone")))
+        .stderr(Stdio::from(stderr.try_clone().expect("stderr clone")))
+        .spawn()
         .expect("run cargo metadata");
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait for cargo metadata") {
+            break status;
+        }
+        if started.elapsed() > METADATA_DEADLINE {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("cargo metadata did not finish within {METADATA_DEADLINE:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let read = |file: &mut std::fs::File| {
+        let mut bytes = Vec::new();
+        file.seek(SeekFrom::Start(0)).expect("rewind");
+        file.read_to_end(&mut bytes).expect("read output");
+        bytes
+    };
+    let (out, err) = (read(&mut stdout), read(&mut stderr));
     assert!(
-        output.status.success(),
+        status.success(),
         "cargo metadata failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&err)
     );
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("cargo metadata JSON");
+    let metadata: serde_json::Value = serde_json::from_slice(&out).expect("cargo metadata JSON");
     let names: HashMap<&str, &str> = metadata["packages"]
         .as_array()
         .expect("packages")
