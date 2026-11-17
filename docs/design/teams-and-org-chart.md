@@ -20,9 +20,15 @@ acceptance criteria are in the [offices and teams UX](../specs/offices-and-teams
 - Every project has one accountable owner team and may name contributing teams.
   Working on a task never requires joining another team.
 - Offices place agents; they own neither teams nor projects. People have no placement.
-- The authenticated owner is a security principal held by the host. A person record
-  for the owner obeys the home-team rule. An owner bar on the chart presents account
-  authority; it is not an exemption from the employee rules.
+- The owner is a person: an ordinary employee with one home team, whose account the
+  host records as the organization's owner. Every organization has exactly one, and
+  the owner can hand ownership to another person who has an account. An owner bar on
+  the chart presents that person; it is not an exemption from the employee rules.
+- Creating an organization makes one top-level team named after it, without asking
+  for a team. The creator's person is its lead, and the built-in HR lead is its
+  other member. Creating a project creates its team by default: a new team named
+  after the project, under the top-level team, accountable for the project. An
+  existing team can be chosen instead, and a team can still be created directly.
 
 ## The model
 
@@ -44,20 +50,22 @@ An employee has no membership rows. `title_in_team` describes the one home-team
 appointment. A move changes `home_team_id` and the canonical path together and keeps
 ID, handle and history; it never changes task assignment by itself. A null
 `reports_to_employee_id` means no manager is recorded. The UI may group records
-below an owner bar without inventing an owner employee reference.
+below the owner bar without inventing a manager reference.
 
 ## Rules HQ enforces
 
 - Reject team and reporting cycles, references to another organization, path and
   field mismatches, and a lead whose home team is elsewhere.
-- Creating an employee, including the HR agent and an owner person at bootstrap,
-  requires a valid home team. A runnable agent also needs a valid execution
-  configuration and placement.
+- Creating an employee requires a valid home team. The owner's person and the HR
+  lead get the top-level team made with the organization. An agent is created only
+  by an approved hire; the built-in HR lead is the one exception. A runnable agent
+  also needs a valid execution configuration and placement.
 - A home-team move is one revision-checked, recoverable operation. A lead
   appointment that the move would invalidate is resolved first, and paths change
   with the move. Moving an agent to another office is separate: it needs a safe
   workspace transfer and fencing.
-- A project cannot be created or left without its owner team. Contributors do not
+- A project cannot be created or left without its owner team. Creating a project
+  with no team named creates its team in the same operation. Contributors do not
   share accountability. Changing the owner updates the accountable `team_id` of the
   project's tasks in the same recoverable operation and records history; current
   assignments stay.
@@ -110,9 +118,9 @@ Employee discovery uses Members and the shell search.
 
 Team rows show the hierarchy, direct employee counts, the lead and the team's Owner
 or Contributor role on projects. Reporting nodes show explicit reporting, the home
-team and subtree-lead responsibility. An owner account card is a visual root, never
-an employee reference; a linked owner employee stays in its real home team and
-reporting position. HR is likewise an employee in a home team.
+team and subtree-lead responsibility. The owner bar is a visual root, never a
+manager reference; the owner's person stays in its real home team and reporting
+position. HR is likewise an employee in a home team.
 
 The actions are New team, Move team, Move home team, Change manager, and editing a
 project's owner and contributors. Every drag has a menu or dialog equivalent.
