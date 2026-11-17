@@ -404,7 +404,7 @@ live in `org-platform` and LNX-5's check covers them.
   with `RENAME_EXCL` on macOS, `renameat2` with `RENAME_NOREPLACE` on Linux; a
   filesystem without it refuses. `set_errno`. `check_instance_root(dir)`: Linux
   refuses a case-folding directory and a filesystem other than ext4, XFS without
-  case-insensitive names, Btrfs, F2FS or bcachefs (the checks in
+  case-insensitive names, Btrfs, F2FS or overlayfs (the checks in
   `instance/directory.rs` today); macOS keeps its rules. `require_disk(dir)`: refuses
   `tmpfs`, `ramfs` and `hugetlbfs` where data must persist. These replace the copies
   in `org-host` (`writer.rs`, `hostdb.rs`, `release/files.rs`,
@@ -495,3 +495,36 @@ fails on Linux with unused items that only macOS code reaches (the reason CI all
 `dead_code` and `unused_imports` for those two crates on Linux).
 
 ## 7. Working in parallel with the macOS track
+
+Track X (Linux) runs beside Track A (getting in) and Track B (the store). The
+increments are in the [implementation plan](../implementation-plan.md#track-x--linux-and-containers).
+
+| Increment | Files it changes | Also changed by |
+| --- | --- | --- |
+| X1 seams | new `crates/org-platform/`; `org-socket/src/{confinement.rs, confinement/, image.rs, peer.rs, rights.rs, rights/}`; `org-supervise/src/{platform.rs, spawn.rs, child.rs, recovery/native/}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, bootstrap.rs, human.rs, human/recovery.rs, home.rs, writer.rs, hostdb.rs, recovery/presence.rs, keys/, host_secrets.rs, host_secrets/, release/, instance/, supervisor/child.rs, supervisor/channels.rs, lib.rs}`, `org-host/build.rs` and `Cargo.toml`; `org-office/src/store/acceptance/durable.rs`; `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; the workspace `Cargo.toml`; `.github/workflows/ci.yml` and the check script | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `keys/`, `hostdb`. A2: `instance/`, `bootstrap.rs`, `human.rs`, `home.rs`. A3: the web process's start in the host and its confinement call |
+| X2 first worker | `org-platform/src/{admission, fs, dirs, process, socket}/linux.rs`; the allowlisted tests; `ci.yml` | none in `org-platform`; the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |
+| X3 credentials | `org-platform/src/credentials/`; `org-host/src/keys/mod.rs`, `host_secrets.rs` (the typed views); the two development stores deleted | A1 (`keys/`, the office secrets key) |
+| X4 web confinement | `org-platform/src/confinement/linux.rs` and its tests | A3 composes `confine_web` and `verify_web`; X4 does not edit the web process or the host's web start |
+| X5 service and container | `org-platform/src/service/`; `org-host` setup configuration (`service`, `credentials`); `serve --setup`; the container file and `.dockerignore` | A2 (setup, service registration) |
+| X6 close-out | `ci.yml`, the allowlist, `docs/` | none |
+
+How the tracks avoid each other:
+
+- **Carve the seams first and land them early.** X1 is a series of small commits, each
+  moving one capability behind `org-platform` with no change on macOS, each reviewed
+  and merged into `v1-integration` the same day. Order: `fs`, `process` and `socket`
+  first (no Track A file); then `confinement`, `dirs` and `service` before A3 starts
+  the web process and before A2 writes service registration, so both write against the
+  contract; then `admission`; then `credentials`.
+- **Agree the two shared hot spots.** `supervisor/child.rs` and
+  `supervisor/channels.rs` (A1 removes the older launch form there) and `keys/` (A1
+  renames the database key to the office secrets key) are edited by both. The Track X
+  lead asks the A1 lead which lands first; the second rebases. X1's change in those
+  files is limited to call sites: `spawn_suspended`, `ServerCheck::admit`, `still` and
+  `reader_is_child` become `Admission::spawn` and `verify_reader`.
+- **After X1, the rule is mechanical.** A Track A or B change that needs something
+  new from the system adds it to `org-platform`: the macOS adapter, the refusing
+  adapter, and a note for Track X, which writes the Linux adapter. The CI check refuses
+  a conditional anywhere else, so a new one cannot creep into a shared file.
+- **After X1, Linux work stays inside `org-platform`** and the composition in
+  `org-host`, so X2 to X4 do not touch the files A1 to A5 edit.
