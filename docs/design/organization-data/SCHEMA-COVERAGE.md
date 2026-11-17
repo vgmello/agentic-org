@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 75 tables and 10 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 77 tables and 10 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -128,36 +128,33 @@ As of 2026-11-17 none of the 77 tables or 10 views is implemented as drafted. 16
 
 | Invariant | Enforcement / boundary |
 | --- | --- |
-| Organization scope, stable identities, task/project/team ownership | Composite keys/FKs and checks; shared source records and tombstones retain historical identity |
+| Organization scope, stable identities, task/project/team ownership | Composite keys/FKs and checks; shared source records and tombstones keep identities that past records refer to |
 | Task owner versus assigned team/person | Independent references; project/task accountable team still matches; active membership and authorization are command-service checks |
 | Team tree, employee reporting and task dependency cycles | SQL insertion/update guards; reporting chain is separate from team hierarchy |
 | Release/deployment repository history | Stable repository FK; capture validates project eligibility, while later project detachment leaves history valid |
-| Flag types and used identity | Both setting-side and definition-side validation, including deferred import order; used identity deletion/replacement guarded |
+| Flag types and used identity | Both setting-side and definition-side validation, including deferred projection order; used identity deletion/replacement guarded |
 | Immutable task/usage events and historical prices | Revision/stream identity and mutation guards; corrections append new facts; recursive triggers required on every write connection |
 | Usage stream checkpoints | Immutable stream identity, monotonic coverage and sealed-state checks; replacement/deletion guarded |
 | Subscription uniqueness | Canonical provider/subscription key and replacement guards; external identity verification is adapter/service work |
 | Private note attachment/author and receipts | Same-organization private mirror FKs, immutable attachment/author, expected revisions, deletion tombstones and durable command receipts; authenticated reads/writes remain service work |
 | Execution state and recoverability | SQL references/checks plus journal files with distinct full-envelope checksums; ADR-0002 platform flush guarantees |
 
-All write connections must set `foreign_keys=ON` and `recursive_triggers=ON`. The latter makes SQL replacement run deletion guards; bypassing either connection setting invalidates the contract. SQL columns that contain timestamps, file paths or canonical identifiers still need format/path validation at the service/import boundary.
+All write connections must set `foreign_keys=ON` and `recursive_triggers=ON`. The latter makes SQL replacement run deletion guards; bypassing either connection setting invalidates the contract. SQL columns that contain timestamps, file paths or canonical identifiers still need format/path validation at the service boundary.
 
 ## Durable data outside tables
 
-Selected task-event schema 2 adds a recorded resource profile and retained complete
-event bytes alongside lossless change/provenance text. Schema-1 rows/bytes/hashes
-are not recoded. SQL accepts the two structural versions; supported-codec/hash,
-duplicate, header and coverage validation remains admission work, and unsupported
-codecs stay staged/unverified. A nullable retained-schema-1 byte column does not
-prove that missing original source is recoverable. The distinct immutable
+A task event (schema 2, the only version) carries its recorded resource profile and
+its complete event bytes alongside lossless change/provenance text. Codec/hash,
+duplicate, header and coverage validation is admission work, not SQL. The
 work-acceptance journal ordinal/anchor in document 16 is not an event-source stream
-sequence or evidence of an executable migration. See ADR-0006 for its frozen mapping.
+sequence. See ADR-0006 for its frozen mapping.
 
-Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, authority journals, and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Credentials and authenticated-subject identities remain in the existing authentication subsystem; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate encrypted database defined by document 05. Document 13 is a compatibility link to that canonical operational-data section.
+Organization Markdown/YAML, task event JSON, accounting streams/checkpoints, authority journals, and execution transaction envelopes/input/checkpoints/tool receipts have explicit serialization/storage contracts in documents 01, 05, 06, 10 and 11. They are not missing tables merely because their durable source is a file. Accounts, credentials and the link from an account to its person record are host data; private mirrors do not create credentials. Private notes and their command receipts are authoritative in the separate private database defined by document 05; document 13 points to that section.
 
 ## Verification and limits
 
-`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, document 11's execution definitions in the consolidated schema, every diagram field against its owning database, this inventory's coverage, FK integrity and regression cases for the relationships above. Private tests use in-memory SQLite to check structure; they do not implement SQLCipher or authenticated privacy.
+`python3 -B docs/design/organization-data/test_schema.py` checks structural document/SQL equality, document 11's execution definitions in the consolidated schema, every diagram field against its owning database, this inventory's coverage, FK integrity and regression cases for the relationships above. Private tests use in-memory SQLite to check structure; they do not implement authenticated privacy.
 
-Required service behavior still includes actor binding/access control, active-record validation, atomic revisioned mutations and idempotency, historical import validation, allocation arbitration, generated-profile membership rules, permit capacity/freshness, durable journals and authorized backup recovery. These are specified contracts rather than facts established by passing DDL tests. The application is not implementation-complete.
+Required service behavior still includes actor binding/access control, active-record validation, atomic revisioned mutations and idempotency, projection validation, allocation arbitration, generated-profile membership rules, permit capacity/freshness, durable journals and authorized backup recovery. These are specified contracts rather than facts established by passing DDL tests. The application is not implementation-complete.
 
-The ledger deliberately rounds each event half-up to integer micro-USD. Partitioning consumption across events can change the rounded total; sums report recorded estimates rather than exact provider bills. This precision policy is explicit and was not silently changed by the integrity fixes.
+The ledger deliberately rounds each event half-up to integer micro-USD. Partitioning consumption across events can change the rounded total; sums report recorded estimates rather than exact provider bills. This precision policy is deliberate.

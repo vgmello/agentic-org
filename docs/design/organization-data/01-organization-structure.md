@@ -121,7 +121,7 @@ erDiagram
 
 ## Creating an organization
 
-Setup creates the instance and its first account, an instance administrator; it creates no organization and no office. A signed-in instance administrator creates the organization, and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
+Setup creates the instance; it creates no account, no organization and no office. The first account is registered through a one-time link that setup prints, and it is an instance administrator ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)). A signed-in instance administrator creates the organization, and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
 
 Creation is one accepted transaction, the first of the organization's acceptance journal ([document 16](16-recovery-and-office-continuity.md#how-the-directory-begins)). It writes:
 

@@ -70,7 +70,7 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 
 - In each organization an account can open, the account is tied to exactly one employee whose `kind` is `person`. A person can open several organizations; it is then tied to one person record in each, because a person record belongs to one organization.
 - A person record does not need an account. An account is never tied to an agent.
-- The creator's account is tied to the person record made when the organization is created. Further accounts are created by an instance administrator on the HQ machine; each is tied to a person in the organization, either an existing person record or a new one created in the top-level team. That person is then moved between teams like anyone else.
+- The creator's account is tied to the person record made when the organization is created. Further accounts are registered by the person in the browser, through a one-time registration link an instance administrator issues on the server machine; each is tied to a person in the organization, either an existing person record or a new one created in the top-level team. That person is then moved between teams like anyone else.
 - The link between an account and its person record is host data. No employee field names an account, and the link grants no authority by itself: what the account may do is decided at the host and checked by the office on every call.
 - What an account does in an organization is recorded under its person record: the actor is kind `employee` with that person's ID. No record names an account or "the owner" as the one who did something.
 
