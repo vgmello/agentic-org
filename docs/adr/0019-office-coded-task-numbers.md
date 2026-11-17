@@ -1,6 +1,6 @@
 # ADR-0019 · Task numbers are minted by the creating office
 
-Status: **accepted by the owner 2026-11-17** (conflict plan entry C-12), and applied to
+Status: **accepted by the owner 2026-11-17**, and applied to
 the data contract ([document 06](../design/organization-data/06-identity-and-numbering.md)).
 The owner accepted three things: the office part of a task reference is a letter
 (`T-B37`); the scheme applies to tasks only; and an office counts all its tasks in one

@@ -66,10 +66,11 @@ must stay fast under load. People take part too, through the product's own chat.
     office runs binds with the session token the office gave that run; the office also
     checks that the caller descends from the process it started. Being admitted to the
     socket is never authorization by itself.
-13. **How a person acts.** A person acts through the web process, and each request
-    reaches the office with that person's principal and a host-issued grant
+13. **How a person acts.** A person acts through the browser or through `agentic-org`
+    in a terminal after signing in. Either way each request reaches the office with
+    that person's principal and a host-issued grant
     ([host boundary design](../design/office-host-boundary.md)). There is no application
-    token.
+    token, and a person never uses `agent-os`.
 14. **Directory and presence.** An agent can list who is in the organization and what
     they report doing, and set its own status. Presence is not stored durably.
 15. **Conversations belong to the organization,** not to an office. Re-placing an agent
@@ -129,9 +130,12 @@ replaced.
 
 ## Person-started commands
 
-A person who starts `agent-os` by hand names the instance and the office, or uses a
-saved context bound to those two IDs. With neither, the command fails and says how to
-select one. An agent the office runs uses the binding the office injected.
+A person's command line is `agentic-org`. After `agentic-org sign-in`, approved in the
+browser, it offers the same office commands that `agent-os` offers an agent, from one
+shared library, under the person's name. A person-started command names the instance
+and the office, or uses a saved context bound to those two IDs; with neither, it fails
+and says how to select one. `agent-os` is for agents only: it runs with the binding the
+office injected into a run it started, and refuses without one.
 
 ## Consequences
 

@@ -147,4 +147,4 @@ RQS IDs are criterion identities; requests themselves use T- references.
 
 - Request-specific statuses; a request uses the five task statuses.
 - Waking an agent when a request is routed to it.
-- Attachment storage.
+- Attachments on a request. Chat attachments are v1 ([chat UX](chat-ux.md)).

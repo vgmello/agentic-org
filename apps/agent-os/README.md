@@ -26,8 +26,10 @@ cargo build -p agent-os
 - `relay run | status`, which delivers the file queue (also run when invoked as `org-relay`).
 
 The caller is named by `$ORG_AGENT` or `--as`. Nothing authenticates that name in the
-file-queue path: any caller can act as any member. Authentication comes with sign-in
-for people (A5) and the run binding for agents (C3).
+file-queue path: any caller can act as any member. Authentication comes with the run
+binding for agents (C3). People then use `agentic-org` after signing in (A5), which
+offers the same commands from the same library, and `agent-os` refuses to run without
+a run binding.
 
 ### Two routes
 

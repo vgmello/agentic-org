@@ -117,7 +117,7 @@ Ask option buttons and Reply share height, horizontal padding and centered label
 
 ### 2.1 Tied answers and ask resolution
 
-Only agents create asks, each addressed to exactly one agent or person. An owner creating an ask is refused: “Only agents can send asks. Send a message, or create a task.” Owner messages and typed tasks remain available through their own services.
+An agent or a person creates an ask, each addressed to exactly one agent or person ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md), [REQ-04](req-04-channel-messaging-and-question-components.md)). A person who asks is never suspended: a required ask from a person simply stays open until it is answered or withdrawn.
 
 Only a reply explicitly tied to an ask answers it: choosing a card option, its Reply action in Chat/Inbox, a thread reply to that ask, or an authorized CLI reply to its ID. An unrelated message in the same DM answers none, including when several asks are open. Reading or marking a message done does not resolve an ask; deadline expiry without an authorized default outcome does not resolve it either.
 
@@ -198,7 +198,7 @@ to start anyone's work.
 
 Product-authored notices display System, with a neutral product-mark avatar, no presence/profile, and no member/DM-picker entry. Only an authorized office/system path may create them; an employee cannot spoof this identity. Keep `sender_kind: office` and origin/security namespaces on the selected data/wire contract; System is display copy, not a fabricated employee or a wire rename. Product notices reject replies with “System messages can't be replied to.” A default-applied notice is shown only after the outcome exists.
 
-Messages, including urgent asks and System notices, wait behind a busy turn and are delivered at its end; urgency affects order and badges, never permission to cut a turn short. Only the owner's Pause stops a busy agent; security, offboarding, placement and recovery controls enforce their own stops under the execution and recovery contracts. A paused agent keeps messages waiting and is not started. A message to an agent run by hand is delivered and waits for its next message check, without a fabricated wake or delivery failure: "{name} runs by hand: they'll see this when they next check messages". A waiting ask receives its reply without that being an interruption.
+Messages, including urgent asks and System notices, wait behind a busy turn and are delivered at its end; urgency affects order and badges, never permission to cut a turn short. Only a Pause by the owner or by a person above the agent in the hierarchy stops a busy agent; security, offboarding, placement and recovery controls enforce their own stops under the execution and recovery contracts. A paused agent keeps messages waiting and is not started. A waiting ask receives its reply without that being an interruption.
 
 **MA-7–9 acceptance:** authentic system notices have no employee affordances and cannot be impersonated or replied to; urgent and System messages do not interrupt busy work; paused agents are not started; hand-run recipients produce the waiting guidance without spurious delivery_failed; returned replies remain readable on their next check.
 

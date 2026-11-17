@@ -1,6 +1,6 @@
 # ADR-0018 · The storage engine is replaceable; PostgreSQL must be possible
 
-Status: **accepted by the owner 2026-11-17** (conflict plan entry B-13): "we will need to
+Status: **accepted by the owner 2026-11-17**: "we will need to
 support PostgreSQL; we need to be able to abstract what we need there." Implementation
 pending. No PostgreSQL adapter is built now. Builds on
 [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) and
@@ -72,4 +72,4 @@ pending. No PostgreSQL adapter is built now. Builds on
   existing suites, with domain rules, wire contract and UI untouched.
 - There is a cost now: two files to move, one seam to add and three suites to write,
   for an engine that is not being built yet. Doing it alongside the storage move
-  (conflict plan entry B-01) touches the same code once.
+  (implementation plan B1) touches the same code once.

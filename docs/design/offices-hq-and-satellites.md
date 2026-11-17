@@ -354,4 +354,4 @@ the [standalone design](standalone-server.md#ca-escrow-and-the-explicit-recovery
 linked into the office, but no satellite can be enrolled: there is no enrollment
 listener, invitation or `office.join` call, and the launch contract refuses a satellite
 create in its older form. Replication reads the office's older tables; it is parked
-until the store writes the canonical files (implementation plan, later increment L5).
+until the store writes the canonical files (implementation plan, increment S1).
