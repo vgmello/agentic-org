@@ -1,5 +1,4 @@
 use super::*;
-use zeroize::Zeroizing;
 const INSTANCE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 fn binding(root: &Path) -> Binding {
     let public_root = root.join("state");
@@ -32,7 +31,7 @@ fn material(prior: Option<LocalRecord>) -> Result<LocalRecord, OfficeError> {
         "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
         public,
         vec![7; 140],
-        Zeroizing::new(vec![5; 100]),
+        vec![5; 100],
     )
 }
 #[test]
@@ -295,7 +294,7 @@ fn completed_hq_retry_refuses_missing_or_empty_organization_history_without_rein
             .unwrap();
         assert_eq!(retained.public_key, record.public_key);
         assert_eq!(retained.package, record.package);
-        assert_eq!(retained.local_der(), record.local_der());
+        assert_eq!(retained.wrapped_ca_key(), record.wrapped_ca_key());
     }
 }
 
@@ -414,7 +413,7 @@ fn admitted_hq_retry_with_lost_marker_refuses_lost_native_history() {
             .unwrap();
         assert_eq!(retained.public_key, record.public_key);
         assert_eq!(retained.package, record.package);
-        assert_eq!(retained.local_der(), record.local_der());
+        assert_eq!(retained.wrapped_ca_key(), record.wrapped_ca_key());
     }
 }
 

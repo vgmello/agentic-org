@@ -320,14 +320,14 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         identity.instance_id
     });
     let opened = match instance.as_deref() {
-        Some(instance) => Office::open_for_instance(folder, key, instance),
-        None => Office::open(folder, key),
+        Some(instance) => Office::open_for_instance(folder, key.clone(), instance),
+        None => Office::open(folder, key.clone()),
     };
     let office = match opened {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    if let Err(error) = hq_creation::verify_existing(&office) {
+    if let Err(error) = hq_creation::verify_existing(&office, &key) {
         return fail_with(&mut control, &error);
     }
     serve_office(control, from_host, runtime, office, auth, instance)

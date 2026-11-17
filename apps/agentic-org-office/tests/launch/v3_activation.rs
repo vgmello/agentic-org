@@ -951,8 +951,8 @@ fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
     for root in [world.home.join("state"), world.home.join("protected")] {
         let published = bytes(&root);
         assert!(!published
-            .windows(record.local_der().len())
-            .any(|s| s == record.local_der()));
+            .windows(record.wrapped_ca_key().len())
+            .any(|s| s == record.wrapped_ca_key()));
     }
 }
 #[test]
@@ -1030,7 +1030,7 @@ fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedM
     assert_eq!(record.operation_id, retained.record.operation_id);
     assert_eq!(record.public_key, retained.record.public_key);
     assert_eq!(record.package, retained.record.package);
-    assert!(record.local_der() == retained.record.local_der());
+    assert!(record.wrapped_ca_key() == retained.record.wrapped_ca_key());
 }
 
 fn selected_expect_start_refusal(
