@@ -54,9 +54,7 @@ still require implementation.
 7. **Delete superseded code directly.** No dual desktop/web implementation, legacy
    IPC adapter or old-app data importer is required. Retain domain logic, useful
    tests and security invariants. Installers/tests never erase user data merely
-   because this is an undeployed product. Existing live Phase A coordination and
-   retained stable IDs still require explicit preservation; the selected data model
-   is not a blanket authorization to reset them.
+   because this is an undeployed product.
 
 Selected entity, storage and recovery contracts are owned by
 [organization-data](../design/organization-data/README.md), with precedence and
@@ -100,8 +98,9 @@ Remaining domain-layout changes are implementation requirements. Explicit baseli
 - Pause durably commits at HQ while a disconnected office's stop remains pending.
   New goal changes to a known-offline office are rejected before admission; an
   already-forwarded uncertain outcome remains Pending confirmation by operation ID.
-- Existing live Phase A messaging has a conditional, verified cutover; no old
-  desktop application import is required. HR approval still precedes provisioning.
+- No old desktop application import is required, and nothing is carried over from
+  the earlier coordination tool's message queue (owner decision 2026-11-17). HR
+  approval still precedes provisioning.
 - V1 creation includes CA escrow/recovery-code provisioning and protected delivery.
   REC-1 explicitly remains an open production-release decision for the reviewed
   manual HQ-loss recovery/fencing procedure; automatic promotion remains deferred.

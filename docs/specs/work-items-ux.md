@@ -27,7 +27,7 @@ Criterion IDs remain stable. **Deferred** criteria below preserve earlier UX req
 
 1. **Task is the entity.** Bug and Request are types with dedicated views and fields; every type uses T-. An optional project does not determine whether something is a task.
 2. **Work spans projects and teams.** Keep Tasks | Bugs | Requests views, with Debt linking to knowledge rather than inventing another task entity. Include projectless team work. Type filters avoid accidental double counting in combined totals.
-3. **References have scope.** Inside Reservations P-8: Bug T-A42. Outside: Bug T-A42. A projectless request may be Request T-A42. Features use F-6 (P-8/F-6 outside project); no new B-/REQ-/FEAT- counters. Never rewrite an old readable reference without an explicit import mapping.
+3. **References have scope.** Inside Reservations P-8: Bug T-A42. Outside: Bug T-A42. A projectless request may be Request T-A42. Features use F-6 (P-8/F-6 outside project); no B-/REQ-/FEAT- counters.
 4. **Every task has one accountable team.** Project tasks use the project's owner team; team tasks choose one. An assigned team and an individual are optional independent fields. Assignment changes neither accountability nor numbering.
 5. **Severity and priority differ.** Severity is optional bug-impact metadata, explained in plain words. Priority is Urgent/High/Normal/Low, default Normal and shared across types.
 6. **Reporter is immutable.** Show original admitted creator separately from current assignment, latest updater and recorded fix/closure actor. Missing historical provenance stays unknown.
@@ -124,13 +124,13 @@ Overview shows the living Brief, real open/blocked counts and the five latest ac
 
 Optional lead, due date and health show only when backed by supported explicit data; contributors never imply co-leads. The source's manual health control in the header's More menu remains pending a selected health field/write contract; no inferred health or invented planning date is saved. Progress denominators and Flow follow the separately gated analytics definitions in costs-and-insights-ux.md/project-status-ux.md.
 
-Settings includes project name/slug, accountable team, contributors and repositories. Each repository association shows its own required integration branch. Sharing a repository does not share a branch setting or create duplicate office caches. A project always has a team; invalid imported ownership is surfaced for resolution and cannot become a teamless accepted project. Archived project records remain readable. Loading uses skeletons; missing/tombstoned records explain their state and offer navigation. Disconnection keeps last known data readable and disables unavailable actions with visible reasons.
+Settings includes project name/slug, accountable team, contributors and repositories. Each repository association shows its own required integration branch. Sharing a repository does not share a branch setting or create duplicate office caches. A project always has a team; a teamless project is never accepted. Archived project records remain readable. Loading uses skeletons; missing/tombstoned records explain their state and offer navigation. Disconnection keeps last known data readable and disables unavailable actions with visible reasons.
 
 ## 4. Flow 2 · Report a bug
 
 Report bug opens from project, Work, command palette, task or supporting doc. In project context the required accountable team is shown from project ownership. Outside a project, choose **Project (optional)** and **Accountable team (required)**; selecting a project derives its team. No Area/General requirement appears.
 
-Fields: title (1–120 characters), What happened, optional severity with all four explanations and **Not set**, optional steps/expected result/environment, priority default Normal, optional assigned team and assignee. Store selected reproduction values in `details.what_happened`, `expected`, `steps` and `environment`, distinct from description; confirmation/reopen/closure/duplicate/affected-feature/suggested-employee evidence uses document 03's `task_details` mapping. Preserve those fields on import and tombstones; only unknown unsupported variants stay staged. A title and description plus valid accountability are sufficient to capture. Reporter comes from authentication and is not editable.
+Fields: title (1–120 characters), What happened, optional severity with all four explanations and **Not set**, optional steps/expected result/environment, priority default Normal, optional assigned team and assignee. Store selected reproduction values in `details.what_happened`, `expected`, `steps` and `environment`, distinct from description; confirmation/reopen/closure/duplicate/affected-feature/suggested-employee evidence uses document 03's `task_details` mapping. Tombstones keep those fields. A title and description plus valid accountability are sufficient to capture. Reporter comes from authentication and is not editable.
 
 When a configured copilot drafts the report, each filled field has a visible
 and accessibly named **Drafted** marker until that field is edited or explicitly
@@ -164,7 +164,7 @@ Filter by status, severity, assigned/accountable team, assignee, reporter and pr
 
 Main column: description and selected report detail from task details (reproduction/expected/steps/environment, confirmation/reopen/closure/duplicate/affected-feature evidence); linked fix tasks; shared comments; immutable task activity. Side column: reference/type, accountable team, optional project/feature/milestone, assigned team/assignee, reporter/time, latest update and per-repository branch/worktree/integrated-commit evidence. Resolution events name their actor/time; do not label the current assignee as “fixed by” without actual evidence. Helpers/reviewers appear through usage attribution, not an inferred owner field.
 
-Activity shows assignment old/new pair, status/resolution and metadata changes, actors/times and causes when known. Unknown future events render as “Unknown change” and remain retained. Imports with only a snapshot show “Earlier activity unavailable” at a history baseline; do not manufacture a complete activity feed. Closed/archived tasks retain history and stable references.
+Activity shows assignment old/new pair, status/resolution and metadata changes, actors/times and causes when known. Unknown future events render as “Unknown change” and remain retained. Closed/archived tasks retain history and stable references.
 
 **Shared discussion** and **Private notes** are distinct controls. The former note comment is labeled Shared comment. The private pane contains only the current author's notes, supports multiple notes/edit/delete with revision conflict recovery, and never shows anyone else's count, author or existence. An assignee/team lead/administrator gains no access. Reassignment preserves original private ownership. Publishing explicitly previews a new shared comment and asks the author to confirm its audience; the private original stays private. Private-note failure cannot fall back to a shared save. Private retention, authorized recovery and deletion follow document 05, including backups; no note bodies/IDs/author association enter shared history/Git.
 
@@ -184,7 +184,7 @@ Retained UX for a future selected bug lifecycle: Mark as fixed asks what fixed i
 
 Board and list use one task projection with optional type filter, scope selector and persistent view preference. The familiar To do | In progress | Blocked | Done presentation applies to task lifecycle records; unsupported type statuses stay visible in an explicit status view rather than being coerced. Done defaults to the last seven days with Show all done. Cards show type/reference/title, assignment, priority exceptions and checklist count. Menu and keyboard Move to accompany drag, with live-region announcements. Status controls require actual supported lifecycle handlers; they do not trigger another record's transition.
 
-New task asks for a title and valid accountable scope. In selected project/team context only title needs typing. Projectless capture needs a team; project selection derives project ownership. Feature and milestone pickers offer only the chosen project's records and are unavailable when projectless. Assignment uses the pair flow in §5. Every new accepted task is admitted-actor reported, starts durable history at revision 1 and receives UUIDv7 identity; an imported old ID remains exact.
+New task asks for a title and valid accountable scope. In selected project/team context only title needs typing. Projectless capture needs a team; project selection derives project ownership. Feature and milestone pickers offer only the chosen project's records and are unavailable when projectless. Assignment uses the pair flow in §5. Every new accepted task is admitted-actor reported, starts durable history at revision 1 and receives UUIDv7 identity.
 
 A Blocked record shows an explicit reason. Structured decision blocking and automatic return to prior status are deferred; links to a decision do not prove a waiting state. “Start now” and current task/agent execution are separate services: never type into a running session or assume assignment starts execution. Preserve worktrees on handoff; placement changes need safe migration/fencing/process reconciliation.
 
@@ -218,7 +218,7 @@ Two panes: Brief pinned first, then project/feature/release/deployment documents
 
 Example: `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`, title **Prevent overlapping table bookings**, project Reservations P-8, feature F-6. The definition itself is `features/<feature-id>/feature.md` with Purpose/How it works/Rules/Known limitations/Non-goals; it is not duplicated in the supporting list as a second authored record. Cross-feature architecture is a project document linked by relates_to rather than copied to several features. Release changelog describes product changes; deployment changelog describes technical delivery.
 
-Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Selected scoped task references render chips with type/status, resolving stable IDs. A local reference resolves only in its unambiguous owning scope: project/team for a task, project for a release and project plus release for a milestone. Global lookup lists each permitted match with its canonical qualified reference instead of selecting the first; a chat thread without scope never guesses. An ambiguous or historical reference stays visibly unresolved until mapped; do not parse old B-/REQ- into new T- numbers. Mention indexes are derived, not canonical relationship authority.
+Reader sanitizes Markdown: no raw HTML or automatic remote images, deliberate external navigation. Selected scoped task references render chips with type/status, resolving stable IDs. A local reference resolves only in its unambiguous owning scope: project/team for a task, project for a release and project plus release for a milestone. Global lookup lists each permitted match with its canonical qualified reference instead of selecting the first; a chat thread without scope never guesses. An ambiguous reference stays visibly unresolved. Mention indexes are derived, not canonical relationship authority.
 
 Write/Preview, Save (⌘S), Cancel and unsaved-navigation prompts remain. Saving first durably persists a validated stable-ID record/history as appropriate, then separately reports publication; never claim Git merge or shared publication before acknowledgment. Exact organization Git editing/branch APIs remain implementation work. Preserve the older code-repository doc adapter's expected-blob/ref-CAS, safe paths/Git hardening, durable intents and no cross-agent-worktree writes when adapting it. An agent co-author trailer is a from-git claim, not authenticated provenance.
 
@@ -271,7 +271,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 - PRJ-1 · The IA target uses Overview, Work, Team, Activity and Conversations with Projects back navigation. Work filters typed tasks. Backlog/Releases/Insights appear with their services; unsupported feature/debt/docs/settings/routine tabs are not fabricated. AC-IA17-1–4's source health editor remains pending its field/write contract.
 - PRJ-2 · Overview shows the living Brief, real open/blocked counts and five latest qualified activity entries. Team separates accountable/contributing teams from member rows; Conversations exposes only authorized linked threads. Empty states and optional lead/health/due fields are honest.
-- PRJ-3 · The header shows one required accountable team and optional contributors. Settings keeps repository integration branches on each project/repository association; invalid teamless imports require resolution.
+- PRJ-3 · The header shows one required accountable team and optional contributors. Settings keeps repository integration branches on each project/repository association; a teamless project is never accepted.
 - PRJ-4 · When the accepting service is unavailable, writes have an accessible reason and last known data stays readable with a stale/read-only label.
 - PRJ-5 · Projects list accountable team separately from contributors, bug severity counts including unset, and lifecycle-supported triage counts.
 
@@ -308,7 +308,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - BUG-3 · After 3 characters of title, up to three similar open bugs in the project show. **This is the same bug** adds the text as a comment to that bug and opens it, and no new bug is created.
 - BUG-4 · Severity may remain Not set; Critical/Major/Minor/Trivial each have an explanation. No area/General field is required.
 - BUG-5 · The capture shows required Accountable team, optional Assigned team/Assignee and valid project context; suggestions do not change accountability or grant permissions.
-- BUG-6 · Environment shows only actual available office/app and per-repository branch/commit evidence and can be edited/cleared; selected legacy report detail is preserved through details/task_details; unknown variants retain controlled import staging.
+- BUG-6 · Environment shows only actual available office/app and per-repository branch/commit evidence and can be edited/cleared; report detail is stored in details/task_details.
 - BUG-7 · Reporting creates type bug in the shared T- scope with required accountability, immutable reporter and explicit assignment pair. Confirmation distinguishes accepted/number-pending from unsaved; no separate B- counter exists.
 - BUG-8 · A bug reported by an agent shows that agent's immutable reporter identity, initial avatar and the word Agent; agent/person distinction never relies on avatar shape.
 - BUG-9 · Closing the form with text in it asks "Discard this bug report?".
@@ -364,7 +364,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 - DOC-1 · Docs pins project brief.md then supporting organization Git records by explicit scope/kind/status/update; features retain their distinct feature.md definitions and no duplicate supporting row.
 - DOC-2 · Rendering sanitizes Markdown with no raw HTML, no automatic remote images and deliberate external-link navigation; existing v1 safety rules remain required.
-- DOC-3 · Selected task references become typed status chips only when unambiguous in scope; historical references need explicit mapping. Mention indexes are derived.
+- DOC-3 · Selected task references become typed status chips only when unambiguous in scope. Mention indexes are derived.
 - DOC-4 · Write/Preview and keyboard Save preserve draft text, stable identity, owner/status/scope and attribution, with durable save and Git publication shown separately. Exact organization Git editor/branch API remains implementation work; preserve hardened Git/worktree boundaries.
 - DOC-5 · A newer revision offers Compare/explicit Keep mine/Discard mine without loss; failure retains text and Retry/Copy. No silent overwrite or publication claim.
 - DOC-6 · The project brief is pinned at projects/<project-id>/brief.md with an empty hint and Write the brief; no code repository is required for organization Git knowledge.
@@ -377,7 +377,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 - WORK-1 · Work spans projects and projectless teams with type views Tasks/Bugs/Requests plus knowledge/debt navigation, qualified references, project/no-project and team filters.
 - WORK-2 · Saved filters distinguish Owned by my team, Assigned to my team, Assigned to me, Reported by me, Blocked and All; lifecycle-specific triage/verify filters require their selected rules.
 - WORK-3 · **Lifecycle-dependent:** badge counts actionable owner questions/verification/blocked work using explicitly selected rules; account ownership does not imply employee assignment.
-- WORK-4 · Every task type displays its type word/icon and T- reference in the selected scope; imported old references remain explicit historical mappings.
+- WORK-4 · Every task type displays its type word/icon and T- reference in the selected scope.
 - WORK-5 · Displayed severity, priority and status have a meaningful icon and word, announced to screen readers. Severity/priority remain separate meta text, with neutral priority icons and no amber except an actual owner blocker; Normal may be omitted on rows/cards. Each row has one work-status signal.
 - WORK-6 · Changes by others appear without a reload and never reorder a list while a menu is open in it.
 - WORK-7 · The admitted service actor is recorded for all accepted changes. Current permissive phase-1 handlers remain implementation evidence; no target permissions are granted by this UX or assignment.
@@ -389,9 +389,9 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 - TSK-12 · Accountable team is required for every type; project tasks match project owner. Project/feature/milestone references stay same-project; projectless tasks have neither feature nor milestone.
 - TSK-13 · All four assignment states are supported. Both fields and their old/new event commit with expected revision and durable receipt; stale/conflicting writes update neither. Home-team moves never silently rewrite assignments.
-- TSK-14 · Reporter is admitted-creator-derived/immutable; old IDs, event order, times and actors survive import. Unknown history is marked unavailable, never invented from current state.
+- TSK-14 · Reporter is admitted-creator-derived/immutable. Unknown history is marked unavailable, never invented from current state.
 - TSK-15 · Accepted snapshot/events/receipt recover together; history survives task closure/archive/tombstone and unknown event tags. Pending numbering, pending publication and unsaved drafts remain distinct.
-- TSK-16 · Type changes preserve stable ID/number/metadata. Import detects old namespace collisions and never blindly converts B-/REQ- numbers to T- numbers.
+- TSK-16 · Type changes preserve stable ID/number/metadata.
 - DOC-10 · Each supporting doc requires project and at most one same-project feature/release/deployment; scope/path/kind agree, current requires an active accountable employee, and scope moves preserve ID without duplicate canonical copies.
 - DOC-11 · Feature definitions use stable-ID feature.md paths, local_slug plus derived project prefix, explicit owners/status and behavior/limitation sections; task completion never silently rewrites feature status.
 - TSK-17 · PN-01–06 in document 05 are required: author-only private CRUD/conflicts, no admin exception or shared existence metadata, durable recovery/closure continuity, unchanged privacy after assignment, explicit publish and documented retention/backup deletion. Shared note comments remain shared. Private runtime/store/access/UI are still unimplemented.
@@ -401,7 +401,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 - C1/C10/A10/A11: resolved by selected data contracts: one T- sequence per creating office, organization Git knowledge without a code repository, any-office local task/feature creation with organization registration, and HQ-only project/team/release/milestone creation. Earlier contrary answers are historical.
 - C3/C19/C20/A49/A110: automatic fix/feature/decision/checklist behavior and Undo remain deferred; their older decisions do not select an engine. Plain checklist metadata and task history are selected.
-- C5/C21: exact target CLI/wire adapters remain implementation work. Preserve actual old command/codec support; do not invent new task-assignment/private-note commands.
+- C5/C21: the exact target CLI/wire contract remains implementation work; do not invent new task-assignment/private-note commands.
 - C7: safe target worktree handling, commit attribution and uncommitted-work closure policy require execution/lifecycle decisions. Handoff preserves worktrees; it is not closure.
 - C8: same-organization cross-project dependencies are selected. Exact bug fix/duplicate lifecycle constraints remain explicit decisions; no old same-project assumption overrides general dependency data.
 - C4/A48: preserve resolution/reason data; target supported transitions and cancellation validation need lifecycle selection.
@@ -410,7 +410,7 @@ Active criteria define selected UX intent and needed implementation evidence; th
 
 ## 16. Out of scope here (follow-ups)
 
-Areas · advanced checklist/templates/promotion/gates · Undo · automatic bug/feature/debt propagation · process execution · scheduling/memory · retrospective analytics · attachments until storage design · GitHub Issues import. Releases/milestones, usage and budgets have selected data in their owning documents; their lifecycle/enforcement services are not implemented by this spec. Target wire/mutation/import/organization Git adapters and private-note runtime/access/UI still require implementation.
+Areas · advanced checklist/templates/promotion/gates · Undo · automatic bug/feature/debt propagation · process execution · scheduling/memory · retrospective analytics · attachments until storage design · GitHub Issues import. Releases/milestones, usage and budgets have selected data in their owning documents; their lifecycle/enforcement services are not implemented by this spec. Target wire/mutation/organization Git handlers and private-note runtime/access/UI still require implementation.
 
 Retained task proposals still needing contracts:
 

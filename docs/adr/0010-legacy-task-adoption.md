@@ -1,38 +1,6 @@
-# LEGACY-ADOPT-1: conservative source-evidenced legacy adoption
+# ADR-0010: legacy task adoption (LEGACY-ADOPT-1)
 
-> **Withdrawn 2026-11-17.** The owner decided that nothing is deployed, so there is no
-> legacy data to adopt and no compatibility obligation before v1 ships
-> ([rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
-> Legacy task adoption is not built. This ADR is kept as a record only.
+**Withdrawn 2026-11-17 by the owner: nothing was deployed, so there is no legacy data to adopt.**
 
-Revision1, 2026-11-16. **ACTIVE architecture; implementation acceptance remains pending.** Focused decomposition of active ADR0006r5 TAI-P7/P9/P11, documents05/06/08/12/16 and unchanged full assignment acceptance. Root architecture/plan/integration owner. Independent focused ARCHITECTURE review returned READY; this permits the bounded implementation, not migration/code/production acceptance. The same original fullstack author continues unaffected authentication/setup work.
-
-## Verified requirements and current evidence
-
-1. ADR6 TAI-P11 explicitly requires evidenced missing mappings; its recheck trigger includes a concrete manifest/mapping/source dataset. Current adoption.rs rejects every work_ids identity. Existing task.selected.adopt.v1 Manifest already transports exact public snapshots, history/blobs and explicit number allocation, and accepted adoption gates fence legacy writes. No new route, authority, source allocator, journal or projection machinery is proposed.
-2. Active ADR6 already requires complete raw original WorkEvent in source_metadata.legacy_event, lossless numeric tokens, immutable original sources, exact public full-state evidence for selected created/baseline and no baseline hiding known missing history. Parent scope does not require reconstructing every historical workflow; unsupported/unmapped originals remain intact in staging.
-3. Author intake author/legacy-adoption-profile-intake-1.json identifies legacy Created has no initial full snapshot. Current snapshot at version>1 does not prove all historical full states. This is a source limitation, not permission to fabricate history or weaken coverage.
-
-## Selected bounded profile for the first executable legacy fixture
-
-Keep Action/Manifest wire version unchanged. Use documented persistent source_metadata.legacy_mapping.version=1 plus exact original legacy_snapshot and legacy_event objects captured before typed decoding. Every source component entering public history must already be explicitly public and pass the same applicable classification/resource checks as other admitted public source; owner authority cannot relabel private-note/memory/credential provenance as public. Unclassified/unsupported source remains protected staging. Never automatically copy unknown DB data into public artifacts.
-
-Admit a legacy version1 task only when the complete surviving DB event inventory consists of exactly the corresponding version1 Created event, snapshot/version/type/reference/actor/time/identity are consistent, and explicit owner/project/scope/number/principal mappings satisfy the current trusted directory generation and owning contracts. Otherwise stay staged. Preserve opaque task ID and literal original reference/type; explicit numeric number mapping must be checked against the original reference under documented bug/request syntax, not silently strip identifiers, choose arbitrary new numbers or allocate during assignment. Missing/colliding mappings and owner pseudo-recipient conversions remain staged. Preserve raw snapshot/event objects, all unknown fields and exact number tokens, original actor/time/change/auto/cause/org_position, original DB rows/origin/feed/watermarks.
-
-The default selected imported event is an explicit history_baseline at revision1 and import time, with authenticated migration actor. It contains exact classified current selected public Markdown and records the complete original Created WorkEvent in legacy_event, preserving its actual original actor/time/version inside that object. Earlier selected history remains unavailable, even at baseline1. This avoids backdating newly supplied selected owner/project/mapping facts as if they were known at original creation. It does not discard the one known legacy event. A selected created-at-original-time alternative is allowed only by existing admission with genuine as-of historical full selected-state evidence for every required fact; do not implement a reconstruction engine or infer as-of mappings here. Longer histories, gaps, tombstones or extra surviving events remain intact/staged in this initial bounded profile, with explicit reason; unchanged legacy commands continue on unadopted records.
-
-Install selected state/adoption gate through existing frozen acceptance in one journal ordinal; no new Work-origin entries are allocated for import. Writer-ordered source/directory comparison catches races. Exact account-bound retry returns original adoption result after later assignment/reopen; do not rerun migration mapping after durable publication. All normal/cascade/Undo/replication/raw SQL legacy writes on adopted identity reject; unadopted semantics remain unchanged.
-
-## Required validation and falsification
-
-Use temporary generated real legacy store fixtures: version1 Created+snapshot import, baseline1 explicit unknown earlier history, all raw event/snapshot/unknown numeric tokens preserved, explicit B-/REQ reference mapping, scope/owner/individual mappings, number collision, source/version/directory race, wrong account/org, private/unclassified-source refusal, longer/gapped histories staged without hidden rows, malformed/extra event refusal, exact retry after later assignment/reopen, and real adopted mutator/cascade/Undo/replication/SQL refusal with unadopted controls. Existing frozen publication/fault/reopen foundation remains mandatory; full actual protected setup/transport/browser/fullchecks/reviews remain parent acceptance. Focused architecture READY is not migration/code/production acceptance.
-
-## Bounds and review question
-
-Do not change codec/schema/checksum rules, existing selected events, public-private classification, IDs, history completeness, authorization, numbering policy, dependency direction or persistence boundary. No automatic migration or live data mutation. Review whether this minimum baseline1 wrapper truthfully preserves the known original Created object and missing selected historical facts; identify any actual conflict with original authority or missing essential evidence. If it cannot do so, return CHANGES_REQUIRED/INCOMPLETE and the exact required correction. Do not silently substitute a snapshot-only baseline that drops known events. One focused review plus at most one same-session recheck; other implementation continues independently.
-
-## Independent review and activation
-
-Fresh read-only reviewer session `01a1e228-4b0e-78c3-bd6f-e86dda01d7c1` returned ARCHITECTURE **READY**, no findings, on exact candidate SHA256 `b629d871cdb8455f872933b9304d3dc1c7cc2c7b6e571266a591e9f9beac5ae0`. Assigned Sol/Xhigh; actual model/effort was not independently exposed. Root validated actual ordered eight-source reading ACK and installed current preflight0, including updated AGENTS and delegate communication skill. One fresh pass, no recheck or tests. Evidence: `.agent-kit/logs/v1-assignment-integration/legacy-adoption-profile-review/`. Activation changes status wording only and adds this evidence record; the reviewed mechanism remains unchanged.
-
-ADR6r5 and its valid premises remain active; this resolves only TAI-P11's concrete first legacy import profile. Original reporter/creation attribution remains immutable independently of migration actor/time. Full contract, actual runtime/recovery/legacy tests, initial independent code review, same-author intent validation and separate fresh final exact-commit review remain required. Root owns architecture/integration; original fullstack author owns dependent code and owning-document updates before examples. Recheck this decision if source/version/attribution facts differ, a longer-history profile is proposed, public classification is uncertain, or mapping/fencing/recovery evidence contradicts the mechanism.
+Legacy task adoption is not built. The rule is
+[No compatibility obligations before v1 ships](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships).

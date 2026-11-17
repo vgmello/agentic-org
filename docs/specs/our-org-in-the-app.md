@@ -25,7 +25,7 @@ Full revision history is preserved in [revision 23 at the pre-reconciliation com
 
 - Revisions 22–23 (2026-11-13): Cost tab, owner-only agent budgets and project-manager cost scope; the absent costs-and-budgets-v1 PRD is historical context only, not operative authority.
 - Revisions 20–21 (2026-11-10): manual proposal fallback when HR cannot run; existing-role selection; partial-hire idempotent recovery; approver unavailability; missing runtime/readiness feedback. Pending approval API enforcement remains A96, and partial-hire visibility/readiness remain A97/A98.
-- Revision 18 (2026-11-09): fresh standalone setup retires existing-team onboarding import and IMP-1–11. This does not waive eventual approved data migration preserving legacy IDs/history and explicitly chosen home teams.
+- Revision 18 (2026-11-09): fresh standalone setup retires existing-team onboarding import and IMP-1–11.
 - Revisions 16–17 (2026-11-09): role/process approval, overrides and autonomy UX remain earlier proposals beyond selected structural data. They are not implemented authority fields.
 - Revision 12 (2026-11-08): live-update loss has persistent freshness copy and Retry, retaining user input.
 - Revisions 1–15 (2026-11-08): initial roster survey, runtime visibility, atomic legacy move, offboarding state and HR drafting/approval requests. Department/team-hints import defaults and older task-reference examples are superseded, not repeated as active guidance. Remy/Riley status notes are survey evidence, not launch authority.
@@ -35,7 +35,7 @@ Full revision history is preserved in [revision 23 at the pre-reconciliation com
 > All of us (ada, Eden, the reviewer, codex-dev and the other devs) are registered as an organization in the application. From it you can see everything that's happening, add agents, hire more, deallocate agents, assign agents and change teams, with a great user experience.
 
 **Success test (the dogfood run).** In the real HQ browser application, with no mock data:
-1. The owner creates a fresh organization and provisions members through supported organization/hiring operations. Each agent appears under the right team and manager with its runtime; no HR/spool import is required.
+1. The owner creates a fresh organization and provisions members through supported organization/hiring operations. Each agent appears under the right team and manager with its runtime; nothing is imported.
 2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other (like ada's phase-1 push), tasks and bugs moving, and merges into `v1`.
 3. The owner hires a new agent, chooses its required home team and assigns project or team work independently, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
 
@@ -48,7 +48,7 @@ The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2
 - **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
 - **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
 - **Hiring has no design and no contract.** The teams design says agents "join through hiring (the HR flow, its own design)", and that design was never written. This spec writes the UX.
-- **Nothing imports an existing team.** The only planned import (ADR-0003 Phase B, `import-v1-old-spool`) brings the spool's messages, profiles, statuses and read/snooze state into HQ, not team members. Live Phase A coordination state has the explicit cutover/retention contract in ADR-0003. Imported profiles/statuses remain historical provenance, never new members, managed homes or launch authority; retired IMP criteria do not authorize team import.
+- **Nothing imports an existing team.** The earlier coordination tool's messages, profiles and statuses are not imported either (owner decision 2026-11-17); retired IMP criteria do not authorize team import.
 - **An app `Member` can't describe our agents.** It has no role, title, focus, runtime, model, home folder or messaging id.
 - **Our roster is split across three sources** (below), and they disagree.
 
@@ -72,7 +72,7 @@ Historical dogfood roster captured 2026-11-08; runtime/account availability and 
 **What the historical survey established:**
 - An organization is **mixed-runtime**. The app must show and respect each agent's runtime, and never assume Claude Code.
 - Some historical agents were started manually. Fresh standalone v1 uses **Add agent record** through approved provisioning; it does not import an external home or assume launch authority from that history.
-- Records **drift**. Employment, observed presence/readiness and authority are distinct; historical snapshots cannot prove a process can start. Any future approved import must surface conflicting facts rather than copy them blindly.
+- Records **drift**. Employment, observed presence/readiness and authority are distinct; historical snapshots cannot prove a process can start.
 
 ## 2. The shape of our organization (approved, U11)
 
@@ -157,11 +157,11 @@ Notes and memory initially says “Not available yet: notes and memory arrive in
 
 - **Cost:** actual consumption comes from durable usage records. Owner sees agent daily/monthly budgets and costs; project managers see cost for their projects only, labelled **in your projects**; others lack this tab. Preserve the own-agent CLI budget/cost access exception, without letting it query other agents. Policy data is selected; evaluators/pause services remain unimplemented. Incomplete usage is labelled incomplete, never zero. Compatible cost and budget requirements are governed by the integrated [cost UX](costs-and-insights-ux.md), [accounting contract](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md).
 - **Agent setup fields:** identity edits use employee revision; execution edits use execution revision and affect future admissions under document 11. Model/driver are never independently written onto `profile.md`. Managed home is read-only from the same office resolver used by launch, with no picker or `home/clear_home` inputs. Local credential changes stay private to that office.
-- **Missing data:** “No role on record”, “Execution not configured”, “Runtime readiness unknown” or “Unplaced”, naming the appropriate fix if supported. Missing home team is an invalid/staged record, never a valid “No team” state. A configured agent can be hired while readiness is unavailable; show why it cannot start.
+- **Missing data:** “No role on record”, “Execution not configured”, “Runtime readiness unknown” or “Unplaced”, naming the appropriate fix if supported. Missing home team is an invalid record, never a valid “No team” state. A configured agent can be hired while readiness is unavailable; show why it cannot start.
 
 ### Current-contract mapping (c6e520a, before target migration)
 
-Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships and `expected_version` wire calls remain the existing API at [this base](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/crates/org-proto/src/org.rs). The target needs explicit mappings to employee handle, one chosen home team, independent execution/placement and revisions. Existing `member.move` consumes a membership ID/version; it does not already implement an employee home-team transaction. `member.offboard` currently removes membership links; target offboarding retains required home team. Existing owner/HR protections cannot be silently redefined on the wire. No new replacement command or completed migration is claimed here.
+Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships and `expected_version` wire calls are the API the code has today, at [this base](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/crates/org-proto/src/org.rs). They are replaced by employee handle, one chosen home team, independent execution/placement and revisions. Existing `member.move` consumes a membership ID/version; it does not already implement an employee home-team transaction. `member.offboard` currently removes membership links; target offboarding retains required home team. No new replacement command is claimed here.
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
 
@@ -181,7 +181,7 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
 ```
 
 - **Kinds**: All · Work · Conversations · Decisions · Runs · Org changes, with team/member/project filters. Work includes typed tasks and Git merges; Org changes includes team/member changes. Noisy Status rows and separately deferred Decision auditing remain governed by the grouping/privacy rules below.
-- **Authorized messages** are shown as one line with **Open thread**. Authenticated-owner read access follows the existing explicit chat policy; no employee field grants it. Threads open in a side panel with per-message authorization, read-only unless the owner is a participant allowed to reply. Imported directed threads retain each message's original visibility; do not expose a hidden old message through a newer thread membership. Shared activity never contains author-only private task notes, IDs or author associations. Broadcasts are one row ("ada → 7 members").
+- **Authorized messages** are shown as one line with **Open thread**. Authenticated-owner read access follows the existing explicit chat policy; no employee field grants it. Threads open in a side panel with per-message authorization, read-only unless the owner is a participant allowed to reply. Shared activity never contains author-only private task notes, IDs or author associations. Broadcasts are one row ("ada → 7 members").
 - **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy (they live as dots on the cards), and Decisions, which are for auditing (shown with the Decisions filter, and never on Home) *(rev 16)*.
 - **Home** follows the section order and Inbox summary below; it retains the Activity live-scroll/freshness rules.
 - **Live:** new rows slide in at the top with a 2-second highlight. When the owner has scrolled down, a pill shows "3 new · Jump to latest" and the list doesn't move.
@@ -218,7 +218,7 @@ Show only supported source kinds. A missing model item requires an exact selecte
 
 Where structured owner blocking is supported, a blocked task has its open Approval/Question, otherwise one Blocked on you Problem. Refusal leaves the work blocked and the Problem replaces the refused ask. When a new Approval/Question opens, withdraw the derived Problem without a Handled entry. A budget-caused block uses its Budget reached item alone; an independent owner block predating the budget stop retains its own item. This does not select the deferred decision-blocking or budget evaluator engines. Routine Problems remain deferred with routines; Retro ready is not an Inbox item.
 
-Activity uses All, Work, Conversations, Decisions, Runs, Org changes filters, with team/member/project scopes. Merge organization and work events newest first; profiles/team/project tabs reuse the filtered feed. A recorded run expands in place to its trigger, duration, outcome and supported log summary. No fabricated run or presence entries appear before runtime evidence exists. Keep the existing private-note, imported-message, default noisy-status/decision filtering and live-scroll protections.
+Activity uses All, Work, Conversations, Decisions, Runs, Org changes filters, with team/member/project scopes. Merge organization and work events newest first; profiles/team/project tabs reuse the filtered feed. A recorded run expands in place to its trigger, duration, outcome and supported log summary. No fabricated run or presence entries appear before runtime evidence exists. Keep the existing private-note, default noisy-status/decision filtering and live-scroll protections.
 
 - AC-IA04-1–4 / LIVE-4: assert Home order, five-item summary/common count, conditional cards, real project fields, section states and outline actions.
 - AC-IA09-1–4: assert Inbox tabs, responsive detail, contextual cards, inline tied Reply, clear-anywhere behavior and the shared count.
@@ -300,7 +300,7 @@ The historical heading is retained for links. **Remove from team** is replaced b
 
 ## 10. Accessibility and copy
 
-Task references are the same everywhere, for example T-A15. All task types use T-. Legacy B-/REQ- references and stable IDs require explicit import mappings, never prefix replacement or renumbering.
+Task references are the same everywhere, for example T-A15. All task types use T-.
 
 - Status, runtime, Paused and Lead are always words plus icons. Screen reader: "codex-dev, agent, Agent tooling, runs on Codex, working".
 - Activity rows are list items with time, actor, kind and text. **Open thread** is a button labelled with the thread's subject.
@@ -330,7 +330,7 @@ Task references are the same everywhere, for example T-A15. All task types use T
 
 **Activity (LIVE)**
 - LIVE-1 · *(rev 24)* Activity lists authorized messages, status, typed tasks (including bugs/requests), team changes, git merges and sessions, newest first, filterable by team/member/project/kind. Decision auditing is deferred with its engine; when available its rows and noisy Status rows stay hidden by default. Cross-scope task references include their project/team scope.
-- LIVE-2 · An authorized visible message appears in Activity within 2 seconds; Open thread, previews and counts preserve per-message directed-thread import visibility and existing explicit authenticated-owner policy. Shared activity never contains private task-note bodies, IDs or author associations.
+- LIVE-2 · An authorized visible message appears in Activity within 2 seconds; Open thread, previews and counts follow message visibility and the explicit authenticated-owner policy. Shared activity never contains private task-note bodies, IDs or author associations.
 - LIVE-3 · The owner can reply only as an authorized participant/recipient. Otherwise the thread is read-only and says “Reading as the owner. To weigh in, message {agent}”. Reading never grants answer/accept authority.
 - LIVE-4 · Home shows Needs you (first five Inbox items and the common count), Projects, Happening now and Recent activity, with conditional Following/away cards only when separately supported (§6.1). Each section has its own empty/loading/error state.
 - LIVE-5 · New rows never move the list while the owner is scrolled down. A "n new · Jump to latest" pill appears instead.
@@ -390,8 +390,8 @@ The selected data contracts do not yet implement proposal routing/approval flags
 
 | # | Gap | Proposed owner | Plan row |
 | --- | --- | --- | --- |
-| G1 | Migrate current Member/AgentProfile into employee home-team identity, separate execution/placement and retained lifecycle/provenance | ada (contract) + server-dev (store) | W3 / W10 |
-| G2 | Current member commands exist at the legacy contract; new home-team/required-owner transaction and retained-home offboarding adapters remain implementation work | ada + server-dev | W3 |
+| G1 | Replace the current Member/AgentProfile with employee home-team identity, separate execution/placement and lifecycle | ada (contract) + server-dev (store) | W3 / W10 |
+| G2 | The code's member commands follow the earlier contract; the home-team/required-owner transaction and retained-home offboarding remain implementation work | ada + server-dev | W3 |
 | G3 | Retired: no old-team import or migration in standalone v1 | — | rev 18 |
 | G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
 | G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
@@ -415,7 +415,7 @@ Historical resolved wire decisions below remain current-contract evidence only, 
 - A96 · *(rev 20)* SRV-30 and STAFF-4 require HQ to refuse member creation without an authorized approval, including direct API callers, but `member.add_agent` (`crates/org-proto/src/org.rs`) has no approval reference and no approval error today. Which field carries the approval, and which error code does a call without one return? `dogfood-run.md` 3a.8 checks it.
 - ~~A47~~ · *Resolved (ada):* `can_approve_hires` (owner-set only), `HireProposal` with routing up the reporting line, and `hire.request|approve|reject` (server-dev the contract, codex-dev the flow). In our team, ada has the flag.
 - ~~A46~~ · *Resolved (ada):* server-dev adds a built-in `hr_lead` agent with the reserved handle `hr`, created with the organization; codex-dev builds the HR lead's runs. Note: `member.add_agent` is app-only today (`teams-and-org-chart.md`), so provisioning approved by an agent needs an exception for the HR lead's run (ada). *Superseded by rev 21:* the office provisions an approved hire, not the HR lead's run, so no exception for it is needed (§2a, §7.1, A96).
-- ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. The selected target now retains required home team through offboarding; legacy membership-cascade behavior remains current-contract evidence only.
+- ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. The selected target now retains required home team through offboarding; the membership-cascade behavior is what the code does today.
 - ~~A15~~ · *Resolved (ada):* `Member.agent: Option<AgentProfile>` (one entity, one version) with role, title, focus, runtime (claude_code | codex | antigravity | other), home, messaging_name, status (active | paused). Commands: `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`.
 - ~~A14~~ · *Partly resolved (ada):* codex-dev and server-dev run on Codex, agy-senior-dev on Antigravity. app-frontend-dev and the reviewer: ada is asking the user.
-- ~~A16~~ · *Resolved:* `member.move { membership_id, to_team_id, title_in_team? }`, atomic. ~~A17~~ · *Historical resolution:* office-wide app reads were the original rule; selected message import retains per-message visibility and protected sources under document 15.
+- ~~A16~~ · *Resolved:* `member.move { membership_id, to_team_id, title_in_team? }`, atomic. ~~A17~~ · *Historical resolution:* office-wide app reads were the original rule; message visibility and protected sources now follow document 15.

@@ -116,4 +116,4 @@ The following start/wake composition, override and approval flows are deferred r
 ## 4. Questions
 
 - A74 · Selected storage is resolved: `roles/<role-id>.md` in organization Git; fields/body follow document 01. Still pending: local override storage, line identities, role defaults, permission-policy versioning and role/process composition/approval services. Do not port the earlier TOML or slug-path proposal as a parallel canonical format.
-- A75 · Selected association is resolved: optional stable `employees.role_id` alongside preserved `role_text`. Last-read role/override revisions, drift and start/wake delivery need the deferred engine's own contract. Execution profile/model settings belong to `execution.md`, never to the role or identity record.
+- A75 · Selected association is resolved: optional stable `employees.role_id` alongside free-text `role_text`. Last-read role/override revisions, drift and start/wake delivery need the deferred engine's own contract. Execution profile/model settings belong to `execution.md`, never to the role or identity record.

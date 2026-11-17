@@ -62,8 +62,7 @@ No action or pass condition changed.
 
 **Revision 4 (2026-11-09):** replaces the old desktop/team-import walkthrough.
 The product has never been deployed. Start from fresh disposable instances, with
-no old HR import or desktop migration. Fresh instances skip live Phase A cutover;
-its preservation contract is tested separately with disposable fixtures under §6. Run the real HTTP application and
+no old HR import or desktop migration. Run the real HTTP application and
 server; explicitly injected fakes support lower-level tests but do not satisfy
 this acceptance run. Commands in the linked design are proposed until implemented.
 
@@ -223,7 +222,7 @@ read authority follows existing chat policy, not any field on the employee recor
 | 3b.1 | Give the 3.4 employee a bounded non-repository task. While it works, open Home | Home shows **Needs you**, **Working now** with the 3.4 employee and its current task on one line, and **Latest**: the newest 8 Activity rows with **All activity**. Only real members and tasks; no sample data | LIVE-4 | Required |
 | 3b.2 | Send between the two agents, inspect Activity/thread, then send to the selected owner contact and reply where authorized | Activity is filtered to authorized messages. Open thread shows visible content only, preserving directed recipient restrictions and hidden-parent previews. Reply is available only with an authorized recipient/actor; no thread-participant union grants read access | LIVE-2, LIVE-3, SRV-39 | Required |
 | 3b.3 | Explicitly start a bounded turn for Dogfood QA 2, then let it finish | Card and Working now reflect the real turn within allowance; Activity default Status filtering works. Turn completion does not close the task, and message membership alone does not require an automatic wake engine | LIVE-6, LIVE-4, PROF-3, selected 11/15 | Required |
-| 3b.4 | Start the task through an advertised supported command, move another task on the board and report a bug type in Dogfood Desktop | Activity and board update once within allowance; all task types have T- references, required accountable team and durable ordered history. Preserve retained bug detail without fabricating a separate B- counter | LIVE-1, selected 03/12 | Required |
+| 3b.4 | Start the task through an advertised supported command, move another task on the board and report a bug type in Dogfood Desktop | Activity and board update once within allowance; all task types have T- references, required accountable team and durable ordered history. Bug detail is kept on the task; there is no separate B- counter | LIVE-1, selected 03/12 | Required |
 | 3b.5 | In Activity, scroll down, then have Dogfood QA 2 send another message. Press **Jump to latest** | The list doesn't move, and an "n new · Jump to latest" pill appears (1 new when only that message arrived). Jump to latest goes to the top with the new row there | LIVE-5 | Required |
 | 3b.6 | Merge a reviewed branch into the integration branch of a repository the HQ office fetches | A Git row in Activity ("merged … into …") once the office has fetched | LIVE-1 | Optional |
 | 3b.7 | With Activity open in both browsers, run `agentic-org service stop` on the HQ machine. Move to another screen already loaded, and press **Retry**. While HQ is down, have the 3.4 employee send Dogfood QA 2 a message. Then run `agentic-org service start` | Both browsers show "Live updates paused. Showing what was loaded at <HH:MM>." with **Retry**, on every screen; Retry reads "Retrying…" and the line stays while HQ is down. Once HQ is back the line clears by itself, with no sign-in (under ADR-0013 a restart does not end a browser session). The message sent while HQ was down then shows in Activity once, with no gap | LIVE-8, SIGN-17, SIGN-13, SRV-10, SRV-12 | Required |
@@ -266,11 +265,8 @@ the profile displays the launcher's actual managed path. Verify SRV-32 with mixe
 local protocol versions and setup build/staging: unsupported versions fail before
 dispatch and the staged agentic-org is the CLI from apps/agentic-org, never the retired shell.
 
-Use disposable Phase A fixtures for SRV-31: unresolved asks/replies, expiry, read/
-defer/done state, interrupted import and repeated import. Preserve IDs and state,
-require the selected instance/office context, and prove managed agents reject
-spool/context fallback. Do not import, mutate or delete the team's actual live
-spool in this acceptance run. REC-1 remains separately gated recovery work; row
+For SRV-31, require the selected instance/office context for person-started
+commands and prove managed agents reject spool/context fallback. REC-1 remains separately gated recovery work; row
 1.7 verifies escrow material, not completed promotion/fencing.
 
 Verify SRV-22: retained browser code/package uses `apps/agentic-org-ui` / `agentic-org-ui`, and
@@ -291,19 +287,19 @@ tests and build on the implementation, with the deletion ledger reviewed.
 
 ## 6a. Selected data and recovery checks
 
-Use disposable authored-source fixtures and explicitly supported import/restore
-entry points. No such command is invented here; a missing adapter/restore service
+Use disposable authored-source fixtures and explicitly supported restore
+entry points. No such command is invented here; a missing restore service
 makes its row **Blocked** with that capability named. The draft SQL alone cannot
 pass these checks. Each row below is Required for a complete selected-model run.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
-| 6a.1 | Save/reload bootstrap and an employee move; import a retained legacy ID and a new UUIDv7 | Explicit slug/remote repo/state_branch and home-team/path consistency; offline saves retain remote registration with unverified connectivity/publication until authorized online. Valid direct-member lead/subtree relationship. Owner security grants unchanged. Old IDs retained; no regenerated identities | SRV-35, SRV-36; data 01/04/06 | Required |
-| 6a.2 | Create a task type change and cross-team assignment; replay with same ID, then conflicting expected revision; close/archive and reload | All types retain stable ID/T- number. Accountable team is project's owner or team scope; nullable assigned team/assignee pair atomic, including independently null assigned-team/assignee cases. Reporter unchanged, ordered history retained. P-/TEAM-scoped T- resolves correctly; old B-/REQ- mappings preserved without renumbering | Data 03/05/06/12 | Required |
+| 6a.1 | Save/reload bootstrap and an employee move | Explicit slug/remote repo/state_branch and home-team/path consistency; offline saves retain remote registration with unverified connectivity/publication until authorized online. Valid direct-member lead/subtree relationship. Owner security grants unchanged. IDs are UUIDv7 and unchanged across reload; no regenerated identities | SRV-35, SRV-36; data 01/04/06 | Required |
+| 6a.2 | Create a task type change and cross-team assignment; replay with same ID, then conflicting expected revision; close/archive and reload | All types retain stable ID/T- number. Accountable team is project's owner or team scope; nullable assigned team/assignee pair atomic, including independently null assigned-team/assignee cases. Reporter unchanged, ordered history retained. T- references resolve correctly | Data 03/05/06/12 | Required |
 | 6a.3 | Associate one registered repo to two projects with different integration branches, plus a second repo/local-only code registration | Many repos per project and branches round-trip per association; one bare cache per office/repo. Local code supported, local organization Git rejected. Feature definition is feature.md; supporting docs require project and at most one same-project feature/release/deployment scope | SRV-35, SRV-41; data 01/02/03 | Required |
 | 6a.4 | Persist acknowledged changes/messages/allocations/receipts; stop processes and remove only the verified disposable projection; rebuild from sources | Same domain versions, actor/fingerprint results, origin/incarnation high-waters and allocations. Hash-verified snapshots, trusted HQ/CA pins and highest epoch checked. Unknown operation side effects reconciled before retry; retained native/base/pending source payload remains lossless | SRV-38; data 06/16 | Required |
 | 6a.5 | Repeat restore with a missing journal/blob, corrupt hash, older authority checkpoint or missing credential; simulate a stale surviving child | Explicit recovery-required/unavailable result with missing coverage; no invented receipt, lower high-water or duplicate execution. A restored PID is never signalled without ownership/machine/boot/start proof; prior cleanup/fence and placement generation verified before start | SRV-26, SRV-37, SRV-38; data 11/16 | Required |
-| 6a.6 | Import A→B then B→C in one directed thread; inspect as each participant and authorized owner; retry message/state writes | Per-message bodies/counts/previews/search/attachments retain original visibility. Original seven-input v1_lenprefixed_sha256 hash/envelope verified separately from normalized canonical JSON; mixed content/state original allocator and high-water preserved. One logical delivery | SRV-39; data 15/16 | Required |
+| 6a.6 | Send A→B then B→C; inspect as each participant and authorized owner; retry message/state writes | Message bodies/counts/previews/search/attachments are visible only to each message's audience. Content verified by its normalized canonical-JSON hash. One logical delivery | SRV-39; data 15/16 | Required |
 | 6a.7 | Save a private task note and a shared comment, rebuild shared caches and inspect as author/another employee/owner | Author-private separate durable DB survives; no admin exception or existence leak through shared receipts/search/export. Shared comment remains shared under its own policy | SRV-38, SRV-39; data 05/13 | Required |
 | 6a.8 | Create partial/unavailable usage, a budget extension and pending/held manual/security/budget reasons; restart/rebuild then release only the budget reason | Protected policy revisions/period/extension-use/notices/holds restored; no invented zero spend/capacity, second extension or held acknowledgement. Other holds remain; release caps warn only. Owner/project-manager cost scope and only the own-agent CLI current-task/daily/monthly amount exception preserved | SRV-40; data 10/17 | Required |
 | 6a.9 | Run concurrent turns across two profiles/offices sharing a registered connection; fail one route; restart/relocate with retained work | One canonical subscription quota/permit context, ordered eligible routes and actual attempts/usage. Fresh model/auth evidence required, safe process reuse/switch, no unsafe replay or duplicate placement. Handoff keeps task worktrees and local/unpushed checkpoints; target Git/credential/other-task/managed-state denies verified | SRV-37, SRV-41; data 11/14 | Required |

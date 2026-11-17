@@ -3,7 +3,7 @@
 Status: **selected office/data target reconciled 2026-11-15; networking and
 recovery implementation remain gated**. The [authority map](documentation-authority.md)
 and organization-data documents own relationships/canonical sources. The 2026-11-08
-transport/launch design supplies compatibility and failure requirements, not proof
+transport/launch design supplies transport and failure requirements, not proof
 that remote enrollment, restore or promotion is implemented. Current executables
 are `agentic-org`, `agentic-org-office`, `agentic-org-web` and `agent-os`; host
 lifecycle is `crates/org-host`. See [availability](executable-migration.md).
@@ -92,10 +92,9 @@ The [organization-data index](organization-data/README.md#shared-storage-contrac
 Private task notes use a separate durable author-private DB; host credentials/CA
 pins and execution journals retain their protected custody. The current runtime
 still uses encrypted `org.db`/`office.db`, `office-state/` markers and legacy
-workspaces. Those databases currently contain non-disposable sources and must
-not be deleted on the strength of the target diagram. A reviewed migration must
-extract/verify all acknowledged sources and re-derive sandbox denies before
-switching paths. Handoff preserves task worktrees until closure; local-only and
+workspaces. In the code today those databases are the only copy of what they
+hold, so they are not caches until the store writes the selected durable sources.
+Re-derive sandbox denies before switching paths. Handoff preserves task worktrees until closure; local-only and
 unpushed edits require protected checkpoint recovery before cleanup.
 
 Host death stops workers and owned processes; restart requires lock exclusion,
@@ -115,7 +114,7 @@ journal/receipt evidence before acknowledging. Hourly Git publication cannot be
 the only copy of an accepted change. Features may have `number: null` while
 the shared authority registers their scope and allocates the final reference.
 Preserve every acknowledged allocation across restore; never increment a replica
-counter or renumber imported B-/REQ- records.
+counter.
 
 The existing work protocol's **owning office** is a serialization/transport role,
 separate from task `team_id`, assigned team and individual. Current routing to an
@@ -150,12 +149,10 @@ Retain these current transport safety requirements when adapting that model:
 Messages have immutable content plus separately revisioned recipient/card state;
 conversation participation is independent of team/office placement. Persist
 protected JSON envelopes and verified attachments under document 15 before
-acknowledgement. Retain delivery identities and source codecs. Imported
-`directed_thread` A→B then B→C does not grant A the B→C message: filter message
-bodies, counts, reply previews and search by per-message visibility. An owner
+acknowledgement. Retain delivery identities. Filter message
+bodies, counts, reply previews and search by message visibility. An owner
 requires the existing authenticated chat policy; private task notes have no
-owner exception. Active Phase A asks/replies and read/triage state remain intact
-until the separately verified conditional cutover.
+owner exception.
 
 Cross-office messages travel office → HQ → destination on existing outbound
 connections. Local messages may work without HQ; cross-office delivery waits in
@@ -172,8 +169,9 @@ automatic scheduling engine is selected.
    above, rather than becoming a second HQ writer.
 2. Validate required target fields/references and expected revision. The remote
    organization repository, state branch, home teams and accountable owner teams
-   must round-trip at canonical stable-ID paths. New stable entities use UUIDv7;
-   current ULID command/change admission remains a separate versioned contract.
+   must round-trip at canonical stable-ID paths. Every ID is a UUIDv7, command and
+   operation IDs included (identity contract); the code admits ULID command/change
+   IDs today.
 3. The admitting writer commits domain changes, required source journal evidence
    and the bound receipt/outcome at one recoverable boundary. One operation ID
    with another actor or fingerprint conflicts. Unknown side effects are
@@ -423,7 +421,7 @@ use the model/process sections above and the current launch contract.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
-- **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is compatibility evidence):**
+- **ADR-0003 (routing and ownership accepted 2026-11-17; the rest is earlier design evidence):**
   - `agent-os` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):

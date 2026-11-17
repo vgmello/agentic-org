@@ -1,16 +1,16 @@
 # Design: typed tasks, features, projects and project docs (W7)
 
-Status: **selected target integration design, revision 4**, 2026-11-15. Owner: lead. The library remains **`org-work`**. This document reconciles W7 with [organization data](organization-data/README.md); it does not change application code, authorize a migration or claim that the target services exist. The [authority map](documentation-authority.md) separates target data from current runtime evidence.
+Status: **selected target integration design, revision 4**, 2026-11-15. Owner: lead. The library remains **`org-work`**. This document reconciles W7 with [organization data](organization-data/README.md); it does not change application code or claim that the target services exist. The [authority map](documentation-authority.md) separates target data from current runtime evidence.
 
 ## In one paragraph
 
-There is one task entity with extensible `type`, required accountable team, optional project and independent current team/individual assignment. All task types share T- references, shared operational metadata and durable immutable task history. Projects require an accountable team and can associate many registered repositories, each with its own integration branch. Authored project/task/feature/knowledge records live in the remote organization Git repository, mirrored as durable ordinary files and indexed in shared SQLite. Private task notes have a separate durable author-only database. Runtime caches, execution placement and code worktrees are distinct from those sources. Existing code retains its old contracts until an explicitly reviewed adaptation; §4 preserves the earlier contract and security reference in a bounded section.
+There is one task entity with extensible `type`, required accountable team, optional project and independent current team/individual assignment. All task types share T- references, shared operational metadata and durable immutable task history. Projects require an accountable team and can associate many registered repositories, each with its own integration branch. Authored project/task/feature/knowledge records live in the remote organization Git repository, mirrored as durable ordinary files and indexed in shared SQLite. Private task notes have a separate durable author-only database. Runtime caches, execution placement and code worktrees are distinct from those sources. The code today still implements the earlier contracts, which are replaced in place; §4 keeps the earlier contract and security reference in a bounded section.
 
 ## Decisions
 
 1. **One typed task.** `type: task | bug | request | ...` is classification, not a different entity/table/folder. Optional `work_type: build | run` is a separate classification; null means unclassified.
 2. **Accountability and assignment differ.** Required task `team_id` equals `projects.owner_team_id` when project-scoped. Nullable `assigned_team_id` and `assignee_id` form one atomic current assignment pair. Neither is inferred from the other or from employee home membership.
-3. **Identity is stable.** New records use UUIDv7. Preserve existing stable IDs exactly. Readable T- references are scoped to project or to the accountable team when projectless. Type changes and assignment never renumber tasks.
+3. **Identity is stable.** Records use UUIDv7. Readable T- references are scoped to project or to the accountable team when projectless. Type changes and assignment never renumber tasks.
 4. **Sources are durable.** Task files and published immutable task events are organization Git content. Acknowledged unpublished changes require a durable journal. SQLite is their indexed projection, not the sole recovery source.
 5. **Features are definitions.** `projects/<project-id>/features/<feature-id>/feature.md` defines behavior, rules, limitations and non-goals. Its status and owner are authored fields, not values automatically calculated from task completion.
 6. **Supporting documents have explicit scope.** Required project; zero or one same-project feature, release or deployment; stable IDs and common attribution. `feature.md` is not duplicated as a supporting-document row.
@@ -83,9 +83,9 @@ Every foreign reference and filename uses the immutable stable ID. IDs are UUIDv
 | Release | `R-3` | Project |
 | Milestone | `M-2` | Release; full reference `P-8/R-3/M-2` |
 
-A task reference such as `T-A42` is complete on its own in every view; it never needs a project or team in front. Type icons/words distinguish Bug T-A42 and Request T-A43. A feature that HQ has not yet registered shows **Pending number** plus a copyable stable ID (a task never does: its creating office numbers it at once); any short display must resolve unambiguously and is not a final reference. Never strip B-/REQ- prefixes to reuse their old number. An approved import must resolve namespace collisions and record explicit historical-reference mappings.
+A task reference such as `T-A42` is complete on its own in every view; it never needs a project or team in front. Type icons/words distinguish Bug T-A42 and Request T-A43. A feature that HQ has not yet registered shows **Pending number** plus a copyable stable ID (a task never does: its creating office numbers it at once); any short display must resolve unambiguously and is not a final reference.
 
-A target resolver requires unambiguous owning scope, not a first match: project/team for T, project for R and project plus release for M. Explicit page/conversation context supplies only the scopes it actually knows. Global lookup lists permitted matches with canonical qualified references; insufficient scope asks for qualification. Echo the resolved qualified reference before a mutation. Case-insensitive/hyphen-less conveniences, legacy text-key/short-ID precedence and reserved-key grammar require a separate adapter decision; they cannot change selected counters or historical mappings.
+A target resolver requires unambiguous owning scope, not a first match: project/team for T, project for R and project plus release for M. Explicit page/conversation context supplies only the scopes it actually knows. Global lookup lists permitted matches with canonical qualified references; insufficient scope asks for qualification. Echo the resolved qualified reference before a mutation. Case-insensitive/hyphen-less conveniences, text-key/short-ID precedence and reserved-key grammar require a separate decision; they cannot change selected counters.
 
 ### 1.2 The core (every kind)
 
@@ -152,13 +152,13 @@ The task-page Output view can collect existing permitted document links and supp
 
 ### 1.4 Bug
 
-A bug is a task with `type: bug`, optional severity and selected structured `details` in its task front matter. The UX offers severity explanations and can suggest confirmation at triage without requiring an area. Document 03 maps `what_happened`, `expected`, `steps`, `environment`, `severity_confirmed`, `reopen_count`, `closed_reason`, `duplicate_of_task_id`, `affects_feature_id`, `suggested_triager_id` and `suggested_verifier_id` into `task_details`. Reproduction text remains distinct from description; affected feature remains distinct from the implementing feature and must match the bug's project. Duplicate references resolve retained same-organization task identities, with target type/cycles validated. Suggested employees are neither assignments nor permissions. Preserve those selected fields atomically with the task/event, including final details in tombstone record metadata. Only unsupported unknown variants or still-unmapped legacy values remain in controlled staging.
+A bug is a task with `type: bug`, optional severity and selected structured `details` in its task front matter. The UX offers severity explanations and can suggest confirmation at triage without requiring an area. Document 03 maps `what_happened`, `expected`, `steps`, `environment`, `severity_confirmed`, `reopen_count`, `closed_reason`, `duplicate_of_task_id`, `affects_feature_id`, `suggested_triager_id` and `suggested_verifier_id` into `task_details`. Reproduction text remains distinct from description; affected feature remains distinct from the implementing feature and must match the bug's project. Duplicate references resolve retained same-organization task identities, with target type/cycles validated. Suggested employees are neither assignments nor permissions. Preserve those selected fields atomically with the task/event, including final details in tombstone record metadata.
 
 ### 1.5 Request
 
 A request is a task with `type: request`, project-scoped or projectless with required accountable team. Routing uses the same assignment pair. Its selected `details` retain `request_kind`, `request_text` (old WorkItem.text), `route_reason`, `routing_source`, optional `routed_by_employee_id`, `request_outcome`, `merged_into_task_id` and `decline_reason`. Old routed_by maps to person/rule/copilot source, never to an employee FK; independently known routing actor may populate the optional employee ID.
 
-`details.request_outcome` projects to `request_outcome_json`: optional `feature: {type: new | extends, feature_id}`, `docs[]: {project_id, doc_key}`, `draft_tasks[]` with required draft_id/title and optional description/assignee_id/team_id/priority, and estimate with effort/cost_usd_cents_min/cost_usd_cents_max. Validate every nested reference/tag, nonnegative estimate bounds and min≤max. Draft IDs are proposals, not accepted tasks; an estimate is not a budget. These selected data structures preserve outcome evidence without implementing approval, automatic wake or feature/task creation. Public transition/approval handlers and migration execution still require explicit implementation decisions.
+`details.request_outcome` projects to `request_outcome_json`: optional `feature: {type: new | extends, feature_id}`, `docs[]: {project_id, doc_key}`, `draft_tasks[]` with required draft_id/title and optional description/assignee_id/team_id/priority, and estimate with effort/cost_usd_cents_min/cost_usd_cents_max. Validate every nested reference/tag, nonnegative estimate bounds and min≤max. Draft IDs are proposals, not accepted tasks; an estimate is not a budget. These selected data structures preserve outcome evidence without implementing approval, automatic wake or feature/task creation. Public transition/approval handlers still require explicit implementation decisions.
 
 ### 1.6 Checklist
 
@@ -166,7 +166,7 @@ Shared task front matter stores ordered stable-ID steps with text, required/done
 
 ### 1.7 Links
 
-Authored `links[]` contains stable link ID, kind, target kind and stable target ID. `depends_on` rejects self-links/cycles and can cross projects in the same organization; inverse `blocks` is derived. `fixes` targets a bug-typed task; inverse `fixed_by` is derived. `relates_to` does not imply ownership. Task `feature_id` derives `implements`; document scope derives `documents`. Do not author both directions. A dependency on a tombstone needs explicit disposition before accepting new active work, never automatic satisfaction. Old `from_request` and other W7-only link kinds require explicit migration treatment rather than unsupported target fields.
+Authored `links[]` contains stable link ID, kind, target kind and stable target ID. `depends_on` rejects self-links/cycles and can cross projects in the same organization; inverse `blocks` is derived. `fixes` targets a bug-typed task; inverse `fixed_by` is derived. `relates_to` does not imply ownership. Task `feature_id` derives `implements`; document scope derives `documents`. Do not author both directions. A dependency on a tombstone needs explicit disposition before accepting new active work, never automatic satisfaction. The code's `from_request` and other W7-only link kinds are not target fields.
 
 ### 1.8 Feature record (office data, P3)
 
@@ -178,13 +178,13 @@ Projects require `owner_team_id`, number and organization-unique slug; optional 
 
 ### 1.10 State machines
 
-The selected draft stores status/resolution data. It does not select every v1 transition engine. Preserve task To do/In progress/Blocked/Done and old bug New/Triaged/In progress/Fixed/Closed, request New/Routed/Scoping/Scoped/Approved/Declined/Merged, and terminal resolutions as import evidence. A future lifecycle decision must define supported transitions, verification, cancellation, unresolved-question disposition and authorization before those controls ship. No automatic Fixed, Delivered, Paid, required-step gate, request approval or Undo is inferred from data fields. Existing implemented handlers remain current-contract behavior, described by source and §4, until adaptation.
+The selected draft stores status/resolution data. It does not select every v1 transition engine. The code today has task To do/In progress/Blocked/Done, bug New/Triaged/In progress/Fixed/Closed, request New/Routed/Scoping/Scoped/Approved/Declined/Merged, and terminal resolutions. A future lifecycle decision must define supported transitions, verification, cancellation, unresolved-question disposition and authorization before those controls ship. No automatic Fixed, Delivered, Paid, required-step gate, request approval or Undo is inferred from data fields. The implemented handlers are what the code does today, described by source and §4.
 
 ## 2. The rules
 
 ### 2.1 Validation
 
-Validate at the accepting backend boundary: organization/scope IDs, required accountable team, project-owner equality, active assignment recipients, same-project feature/milestone/document scopes, repository eligibility, path/field consistency, cycles and duplicate stable identities. New assignment is limited to active teams/employees within the organization; an individual's home team need not equal the assigned team or any project team. Preserve text validation, safe Markdown rendering and explicit size errors. Existing W7 numerical wire limits remain compatibility evidence in §4; they are not newly enacted target service limits.
+Validate at the accepting backend boundary: organization/scope IDs, required accountable team, project-owner equality, active assignment recipients, same-project feature/milestone/document scopes, repository eligibility, path/field consistency, cycles and duplicate stable identities. New assignment is limited to active teams/employees within the organization; an individual's home team need not equal the assigned team or any project team. Preserve text validation, safe Markdown rendering and explicit size errors. The W7 numerical wire limits in §4 are what the code enforces today; they are not newly enacted target service limits.
 
 ### 2.2 Who may do what
 
@@ -214,7 +214,7 @@ The heading is retained; office placement no longer defines task ownership. Each
 
 ### 2.8 Deleting
 
-Retain immutable task history, allocated numbers and stable reference tombstones after closure/archive/deletion. Tombstones retain record provenance, terminal state, last assignment pair and revision. Deletion does not reuse a number or silently satisfy dependencies. Private-note deletion uses its separate retention/backup policy and must not be blocked by immutable shared history. Existing records absent from selected draft stay in staging until disposition is approved.
+Retain immutable task history, allocated numbers and stable reference tombstones after closure/archive/deletion. Tombstones retain record provenance, terminal state, last assignment pair and revision. Deletion does not reuse a number or silently satisfy dependencies. Private-note deletion uses its separate retention/backup policy and must not be blocked by immutable shared history.
 
 ### 2.9 Projects and docs without a repository
 
@@ -228,18 +228,18 @@ Current source names are `apps/agent-os`, `apps/agentic-org`, `apps/agentic-org-
 
 ### 3.2 The ports `org-work` defines
 
-The checked current ports are in [`crates/org-work/src/ports.rs`](../../crates/org-work/src/ports.rs); the current stored model is in [`model.rs`](../../crates/org-work/src/model.rs), task handlers in [`tasks.rs`](../../crates/org-work/src/tasks.rs), and wire types in [`org-proto/src/work.rs`](../../crates/org-proto/src/work.rs). They retain per-kind `NumberScope`, old `StoredItem` and `WorkEvent` semantics. Do not replace actual trait signatures with an invented target service. Required adaptation boundaries:
+The checked current ports are in [`crates/org-work/src/ports.rs`](../../crates/org-work/src/ports.rs); the current stored model is in [`model.rs`](../../crates/org-work/src/model.rs), task handlers in [`tasks.rs`](../../crates/org-work/src/tasks.rs), and wire types in [`org-proto/src/work.rs`](../../crates/org-proto/src/work.rs). They retain per-kind `NumberScope`, old `StoredItem` and `WorkEvent` semantics. Do not replace actual trait signatures with an invented target service. What changes:
 
-| Current contract / evidence | Target integration requirement |
+| Code today | Target |
 | --- | --- |
-| `StoredItem.created_by`, `assignee_id`; `task.assign` records individual `Assigned { from, to }` | Preserve reporter and prior individual facts; add nullable team assignment and atomic expected-revision pair |
+| `StoredItem.created_by`, `assignee_id`; `task.assign` records individual `Assigned { from, to }` | Keep the immutable reporter; add nullable team assignment and the atomic expected-revision pair |
 | Old optional `team_id`, required project for tasks/bugs | Require accountable team for all types; allow projectless tasks and enforce project-owner equality |
-| Old Task/Bug/Request identity and per-kind number scopes | One typed task identity and office-minted T- references; explicit collision/reference mapping |
-| ULID command/entity validators and typed canonical command hashing | Keep old codec when reading/retrying old commands; separately version new UUIDv7 creation/target persistence |
-| `work_events` immutable store and current-state transaction | Preserve immutable ordered events; materialize target files/journal and receipts recoverably |
-| Per-field `expected_version` conflict checks | Preserve old behavior for old methods; new assignment pair requires exact expected task revision |
+| Old Task/Bug/Request identity and per-kind number scopes | One typed task identity and office-minted T- references |
+| ULID command/entity validators and typed canonical command hashing | Every ID becomes a UUIDv7, command IDs included (identity contract); typed canonical command hashing stays as in §3.4 |
+| `work_events` immutable store and current-state transaction | Events stay immutable and ordered; materialize target files/journal and receipts recoverably |
+| Per-field `expected_version` conflict checks | The assignment pair requires the exact expected task revision |
 | `CommentKind::Note`, `work.comment`, shared activity | Shared comments stay shared; private notes require separate store/API/access controls |
-| `work.snapshot`/`work.activity`/`work.changed` wire references | Target read adapters map stable IDs, scopes and revisions without presenting old shapes as target files |
+| `work.snapshot`/`work.activity`/`work.changed` wire references | Target reads carry stable IDs, scopes and revisions; the old shapes are not target files |
 | `doc.*` / code-repository docs design in §4.9 | Implement organization Git scope/path validation separately, preserving all security and crash guarantees |
 
 ### 3.3 Tables (a sketch for server-dev, `office.db`)
@@ -248,11 +248,11 @@ The authoritative draft DDL is [schema.sql](organization-data/schema.sql), not t
 
 ### 3.4 Verified current codec and access evidence
 
-At the checked base commit, [`hash.rs`](../../crates/org-work/src/hash.rs) computes the command receipt digest as **SHA-256(method UTF-8 + NUL + bound member ID UTF-8 + NUL + canonical typed-params UTF-8)**. Params are decoded to their actual Rust type and re-encoded before hashing; unknown ignored input fields cannot change the request fingerprint. Canonical JSON recursively sorts object keys by their UTF-8 bytes, preserves array order, emits compact separators and uses the existing serde_json scalar encoding. Its pinned test vectors are in [`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json). This is a compatibility/security contract; replacing old entity generation with UUIDv7 does not change old command IDs or digests.
+At the checked base commit, [`hash.rs`](../../crates/org-work/src/hash.rs) computes the command receipt digest as **SHA-256(method UTF-8 + NUL + bound member ID UTF-8 + NUL + canonical typed-params UTF-8)**. Params are decoded to their actual Rust type and re-encoded before hashing; unknown ignored input fields cannot change the request fingerprint. Canonical JSON recursively sorts object keys by their UTF-8 bytes, preserves array order, emits compact separators and uses the existing serde_json scalar encoding. Its pinned test vectors are in [`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json). This digest is the security contract for a retried command. Command IDs are ULIDs in the code today and become UUIDv7 with every other ID (identity contract); the digest rule is unchanged.
 
 [`engine.rs`](../../crates/org-work/src/engine.rs) first enforces app-only and admitted-caller checks. An app caller may act only as a valid person/owner; another connection only as an active/paused agent, never owner/person. Then it looks up the change receipt before age/current-state validation: same ID/hash replays, changed params refuse. The old command ID remains a ULID, maximum age 29 days, future tolerance five minutes and receipt retention 30 days from its encoded time. Existing field-aspect conflicts retain their method semantics; target assignment-pair exact-revision validation is a separate adaptation. Keep canonical unknown-value decoding, request/frame bounds and stored failure behavior as implemented rather than silently recalculating old receipts. The earlier permissive binding residual risk remains in ADR-0003; this document makes no security-identity or key-namespace changes.
 
-Target task-event hashing is **different**: document 05 hashes UTF-8 event JSON with sorted keys, compact separators, no ASCII escaping, explicit optional nulls, `{}` source metadata and checksum omitted. A replay compares actual canonical payload hash before returning an identical event; same identity/different payload conflicts. Validate contiguous revisions from a known baseline and final snapshot/tombstone agreement. Import keeps the entire original WorkEvent including auto/cause/org_position under `source_metadata.legacy_event`, retains its original change payload, actor/time/version and maps bug/request entity kind to task. Historical individual-only assignment events never infer past team assignments from today's home membership. Preserve unselected workflow evidence in staging. When only a snapshot survives, create an explicit history_baseline at its current revision and identify earlier history as unavailable.
+Target task-event hashing is **different**: document 05 hashes UTF-8 event JSON with sorted keys, compact separators, no ASCII escaping, explicit optional nulls, `{}` source metadata and checksum omitted. A replay compares actual canonical payload hash before returning an identical event; same identity/different payload conflicts. Validate contiguous revisions and final snapshot/tombstone agreement.
 
 ### 3.5 Private-note storage and recoverable publication
 
@@ -266,7 +266,7 @@ Deletion clears body and leaves private identity/revision/time tombstone; there 
 
 ## 4. The contract: `org_proto::work`
 
-**Pre-migration W7 reference, 2026-11-08, retained for codec and security review.** This section reproduces the earlier wire/design reference, including proposed later phases; it is not a new target contract or an implementation inventory. The checked source at `c6e520a36c4dc7c738c68915fac5e7d5d1cbe804` is authoritative for actual signatures and availability. In particular old ULIDs/change IDs, B-/REQ-/FEAT- references, per-kind enums, optional task ownership, office ownership, areas, code-repository docs, automatic transitions and numbering must not be used as selected-target examples. See §3 for the required mapping. Do not change old codecs or required security identity namespaces through this reconciliation.
+**W7 reference, 2026-11-08: the contract the code implements today, kept for security review.** This section reproduces the earlier wire/design reference, including proposed later phases; it is not a new target contract or an implementation inventory. The checked source at `c6e520a36c4dc7c738c68915fac5e7d5d1cbe804` is authoritative for actual signatures and availability. In particular old ULIDs/change IDs, B-/REQ-/FEAT- references, per-kind enums, optional task ownership, office ownership, areas, code-repository docs, automatic transitions and numbering must not be used as selected-target examples. See §3 for what replaces them. This contract is replaced in place; nothing in it is kept for compatibility.
 
 The `org-docs` ports, docs branch/intent algorithms and later-phase doc calls below are retained design requirements, not evidence that those services are installed. Their path and scope assumptions require a new organization-repository adapter before use against the target. References to §1/§2 describe the historical W7 concepts where they conflict with the active sections above; obsolete detailed plans are available in the [base document](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/tasks-projects-docs.md).
 
@@ -628,23 +628,23 @@ Reused: `invalid_request`, `invalid_name`, `not_found`, `not_authorized`, `confl
 
 ## 5. The `agent-os` commands
 
-The executable is **`agent-os`**. The command-line tool previously installed on the development team's machine is cut over separately (see `AGENTS.md`); that is a transport cutover, not a rename. See [executable migration](executable-migration.md) for available entry points. The earlier command inventory is in the [base W7 design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/tasks-projects-docs.md#5-the-org-agent-commands-remy). Actual source remains authoritative for support. No new target `assign-team`, private-note or organization-repository commands are invented here.
+The executable is **`agent-os`**. See [executable migration](executable-migration.md) for available entry points. The earlier command inventory is in the [base W7 design](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/tasks-projects-docs.md#5-the-org-agent-commands-remy). Actual source remains authoritative for support. No new target `assign-team`, private-note or organization-repository commands are invented here.
 
-Target UX/CLI adaptation must resolve stable IDs and selected scoped references; distinguish type from reference prefix; show accountable versus assigned team and individual; send atomic assignment pairs with expected revision; retain pending-number feature records; reuse operation identity on retry; show conflict/unknown outcome without claiming acceptance; and expose private notes only through an authenticated separate author-only capability. Preserve bound-actor checks, app-only restrictions and accepted exit/error contracts for existing methods.
+Target UX/CLI adaptation must resolve stable IDs and selected scoped references; distinguish type from reference prefix; show accountable versus assigned team and individual; send atomic assignment pairs with expected revision; retain pending-number feature records; reuse operation identity on retry; show conflict/unknown outcome without claiming acceptance; and expose private notes only through an authenticated separate author-only capability. Keep bound-actor checks and app-only restrictions.
 
-Future adapters should provide compact one-item-per-line default lists, documented JSON output and actionable refusals in a deterministic state/actor/guard order, without leaking inaccessible identities. Preserve existing command support/security and same-operation retry behavior. Old PRD command inventories and flags are not newly available agent-os methods; help must reflect implemented capabilities. Shared comments stay named comments, and mutations do not automatically post private rationale or started/done chatter.
+Future adapters should provide compact one-item-per-line default lists, documented JSON output and actionable refusals in a deterministic state/actor/guard order, without leaking inaccessible identities. Keep command security and same-operation retry behavior. Old PRD command inventories and flags are not newly available agent-os methods; help must reflect implemented capabilities. Shared comments stay named comments, and mutations do not automatically post private rationale or started/done chatter.
 
 ## 6. Time figures: how they're derived
 
 Use the [shared duration definitions](../specs/costs-and-insights-ux.md#shared-duration-definitions). With complete evidence, Started is first In progress, preserved across reopen; a verified direct To do → Done records both at once and has zero cycle. Lead runs from creation and cycle from first Started to last completion (or now while open), excluding the union of intervening Done/Cancelled spans. Start day 0, Done day 2, reopen day 9, Done day 10 yields three days of cycle time. Sum status intervals from actual events; “picked up” requires an actual start after assignment.
 
-A `history_baseline` starts evidence at import and leaves earlier endpoints/time unavailable, never zero or fabricated. Show coverage and open intervals “so far”. Waiting is measured from saved spans independently of status; overlaps count once. Shared formatting/units follow the cost spec. This selects neither wait creation nor an analytics engine. Never infer a historical fixer or active work from current assignment or wall-clock status.
+Show coverage and open intervals “so far”. Waiting is measured from saved spans independently of status; overlaps count once. Shared formatting/units follow the cost spec. This selects neither wait creation nor an analytics engine. Never infer a historical fixer or active work from current assignment or wall-clock status.
 
 Retain the UX distinction between working time and untracked time: until complete session evidence exists, show **the rest (working time isn't tracked yet)**, never label it idle. Example: lead 28 h, waiting 3 h, blocked 0 min, rest 25 h. Working/idle splits need complete evidence for their reported interval. Usage/cost attribution comes from document 10's durable ledger including helpers/reviewers and historical snapshots, not counters in the task file or joins to current ownership. Budget records/controls in document 17 remain distinct; no runtime budget evaluator is claimed.
 
 ## 7. Phases and owners
 
-Documentation selects the data target; implementation/migration phases need explicit planning. Domain rules remain with the `org-work` owner, storage with `org-office`, contracts with their defining crates and UX with the spec owner. Required work includes source-preserving import, durable task/history/receipt writes, organization authority registration, target read/command adapters, organization Git knowledge editing, author-private notes and lifecycle decisions. None is marked shipped by this reconciliation.
+Documentation selects the data target; implementation phases need explicit planning. Domain rules remain with the `org-work` owner, storage with `org-office`, contracts with their defining crates and UX with the spec owner. Required work includes durable task/history/receipt writes, organization authority registration, target reads/commands, organization Git knowledge editing, author-private notes and lifecycle decisions. None is marked shipped by this reconciliation.
 
 ### 7.1 Gaps from Eden's review, as plan items
 
@@ -666,8 +666,8 @@ These are implementation acceptance obligations, not tests run by this documenta
 
 - All task types require accountable team; project tasks match project owner; projectless tasks use the full team path. Any valid assignment pair (neither, team-only, individual-only, both) is accepted only with active same-organization recipients.
 - A stale assignment revision changes neither field nor history. A successful pair replacement atomically records old/new pair, actor/time, snapshot and receipt; retry returns the same result after response loss/crash.
-- Reporter is immutable and admitted-actor derived. Deactivation, assignment, closure and import preserve original actors/times; absent history gets an explicit baseline, never fabricated events.
-- Type changes retain stable identity, number, comments and links. Import preserves old IDs/events/codec metadata, detects namespace collisions and retains unmapped details/workflows in staging. No blind B-/REQ- renaming.
+- Reporter is immutable and admitted-actor derived. Deactivation, assignment and closure preserve original actors/times; events are never fabricated.
+- Type changes retain stable identity, number, comments and links.
 - Multi-office concurrent creations allocate distinct numbers in the right project/team scope; pending local tasks/features remain usable. Restore includes every acknowledged allocation and unpublished task/event/receipt journal.
 - Task activity remains immutable across updates, replacement attempts, deletion, archive and projection rebuild. Unknown event tags survive. Shared metadata changes have matching task events.
 - Documents require project and at most one same-project feature/release/deployment. Path and metadata agree; a feature definition is never also a supporting-document row. Features/current documents enforce active-owner requirements.
@@ -682,7 +682,7 @@ These are implementation acceptance obligations, not tests run by this documenta
 
 ## 10. Open questions
 
-- Target public mutation/wire contracts and migration sequencing remain implementation work. Choose explicit historical readable-reference mappings and preserve namespace collision evidence before publication.
+- Target public mutation/wire contracts remain implementation work.
 - The lifecycle contract must select supported bug/request/type transitions, cancellation/verification, closure with unresolved questions/waits, duplicate resolution and existing-assignment disposition on deactivation.
 - Areas, Undo, advanced checklist/process engines and automatic status propagation remain unselected. Do not reactivate them because the current code happens to implement an earlier rule.
 - Organization Git editing/publication and safe target runtime sandbox adapters require designs preserving existing security/durability guarantees. Required private-note storage/access/UI remain unimplemented.
