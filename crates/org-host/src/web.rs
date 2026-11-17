@@ -193,7 +193,9 @@ trait Serving {
 /// Only consecutive failed starts count toward [`MAX_STARTS`]: a web process that
 /// stayed `Running` for `timing.stable` resets the count. No backoff follows
 /// the final failed start. Every failed start and every exit is passed to `log`
-/// with its cause, escaped, together with the restart it leads to.
+/// with its cause, escaped, together with the restart it leads to. When `eligible`
+/// ends while the web process runs, it is stopped with a logged reason and starts
+/// again only once eligible, without counting a failure or waiting a backoff.
 fn supervise<S: Serving>(
     stopping: &AtomicBool,
     state: &Mutex<GatewayState>,
@@ -232,8 +234,17 @@ fn supervise<S: Serving>(
                 } else if child.serving() && child.reported() {
                     *lock(state) = GatewayState::Running;
                     let running = Instant::now();
-                    while !stopping.load(Ordering::SeqCst) && child.serving() {
+                    while !stopping.load(Ordering::SeqCst) && child.serving() && eligible() {
                         thread::park_timeout(POLL);
+                    }
+                    if !stopping.load(Ordering::SeqCst) && child.serving() {
+                        // Eligibility ended (HQ left Active or authentication went
+                        // away): stop serving now and wait to become eligible again.
+                        // This is not a failed start and spends no restart attempt.
+                        *lock(state) = GatewayState::Starting;
+                        drop(child); // end sessions/control, then kill/reap
+                        log("authenticated browser stopped because the host is no longer eligible; it starts again once eligible");
+                        continue;
                     }
                     stable = running.elapsed() >= timing.stable;
                     format!("the running web process stopped: {}", child.ended())

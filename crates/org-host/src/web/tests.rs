@@ -246,6 +246,75 @@ fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
     assert_eq!(*lock(&state), GatewayState::Failed);
 }
 
+/// HQ leaving Active or authentication going away while the web process runs stops it
+/// with a logged reason. It starts again once eligible: no failure is counted and no
+/// backoff is waited (the 30-second backoff would exceed `wait_for`'s deadline).
+#[test]
+fn a_running_web_stops_when_eligibility_ends_and_restarts_once_eligible() {
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let eligible = Arc::new(AtomicBool::new(true));
+    let live = Arc::new(AtomicBool::new(true));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let logged = Arc::new(Mutex::new(Vec::<String>::new()));
+    let supervisor = {
+        let (stopping, state, eligible, live, dropped, starts, logged) = (
+            Arc::clone(&stopping),
+            Arc::clone(&state),
+            Arc::clone(&eligible),
+            Arc::clone(&live),
+            Arc::clone(&dropped),
+            Arc::clone(&starts),
+            Arc::clone(&logged),
+        );
+        thread::spawn(move || {
+            supervise(
+                &stopping,
+                &state,
+                &|| eligible.load(Ordering::SeqCst),
+                Timing {
+                    backoff: Duration::from_secs(30),
+                    ..Timing::PRODUCTION
+                },
+                &|line| lock(&logged).push(line.to_owned()),
+                || {
+                    starts.fetch_add(1, Ordering::SeqCst);
+                    Ok(Fake {
+                        live: Arc::clone(&live),
+                        reported: Arc::new(AtomicBool::new(true)),
+                        dropped: Arc::clone(&dropped),
+                    })
+                },
+            )
+        })
+    };
+    wait_for("running", || *lock(&state) == GatewayState::Running);
+    eligible.store(false, Ordering::SeqCst);
+    wait_for("child stopped", || dropped.load(Ordering::SeqCst));
+    wait_for("not serving", || *lock(&state) == GatewayState::Starting);
+    assert!(!crate::service::web_serving(true, true, *lock(&state)));
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        starts.load(Ordering::SeqCst),
+        1,
+        "restarted while ineligible"
+    );
+    assert_eq!(*lock(&state), GatewayState::Starting);
+    eligible.store(true, Ordering::SeqCst);
+    wait_for("running again", || *lock(&state) == GatewayState::Running);
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+    let logged = lock(&logged).clone();
+    assert_eq!(
+        logged,
+        ["authenticated browser stopped because the host is no longer eligible; it starts again once eligible"],
+        "no failure or backoff was logged"
+    );
+}
+
 #[test]
 fn an_ineligible_host_never_starts_the_web() {
     let stopping = Arc::new(AtomicBool::new(false));
