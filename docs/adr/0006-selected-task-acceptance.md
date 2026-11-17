@@ -4,9 +4,11 @@ Revision 5, 2026-11-15. **ACTIVE architecture; implementation acceptance remains
 
 > **Amended by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md)
 > (2026-11-17).** Assignment, creation, status and ownership changes keep this ADR's
-> rule: no acknowledgement before durable evidence. Comments, checklist ticks and
-> watching on a task may be acknowledged once their one atomic operation is committed,
-> with the flush following within a bounded interval.
+> rule: no acknowledgement before durable evidence. `work.comment`, `work.watch` and
+> `checklist.check` may be acknowledged once their one atomic operation is committed,
+> with the flush following within a bounded interval. Their journal envelope may be
+> published without a flush; a durable publication first flushes every earlier
+> unflushed envelope, and recovery stops at the first missing or incomplete ordinal.
 
 ## Decision and delivery boundary
 

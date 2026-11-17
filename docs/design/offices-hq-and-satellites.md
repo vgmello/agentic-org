@@ -189,7 +189,9 @@ automatic scheduling engine is selected.
    hash-check staged snapshot bytes before install. Partial/stale snapshots confer
    no authority. The existing encrypted `org.db` snapshot/swap isolates `office.db`
    and keeps one-time transport keys private; the target importer must preserve
-   those guarantees and protected pending/native/base payloads losslessly.
+   those guarantees (except that under ADR-0016 the snapshot file is no longer
+   encrypted with a transport key: it travels only over the office TLS connection
+   and is verified by its content digest) and protected pending/native/base payloads losslessly.
 6. Rebuild SQLite only from complete authorized Git plus protected sources.
    Credentials are rebound, acknowledged receipt/stream/allocation high-waters
    retained, and marked-process cleanup/fencing verified before execution. Lost

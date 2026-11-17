@@ -42,11 +42,15 @@ and the acknowledgement sentence in
    - **Durable.** The office answers only after the full flush. This is the existing
      rule of ADR-0002 decision 4.
 3. **Which operations use which class (owner decision 2026-11-17).**
-   - Committed: messaging (send, reply, mark read, done or deferred, status text) and
-     non-critical task activity (comments, checklist ticks, watching and unwatching).
-     Reads involve no write, and presence is not persisted.
+   - Committed, messaging: `msg.send`, `msg.reply`, `msg.ask`, and the recipient-state
+     changes `msg.read`, `msg.done` and `msg.defer`; and `status.set`.
+   - Committed, non-critical task activity: `work.comment`, `work.watch` and
+     `checklist.check`. A comment that opens or answers an owner question is the
+     exception: it starts or ends a waiting span, so it is durable.
+   - Reads involve no write, and presence is not persisted.
    - Durable: everything else. That includes task creation, status and resolution
-     changes, assignment, ownership and scope changes, links that change dependencies,
+     changes, assignment, ownership and scope changes, links, every other `checklist.*`
+     method, the bug lifecycle methods,
      organization commands, numbering, turn permits and placement, budget actions, HQ
      creation, and account and session changes.
    A committed-class task change is still one atomic, recoverable operation: its
@@ -72,19 +76,29 @@ and the acknowledgement sentence in
 
 8. **The class belongs to the storage contract, not to the database engine.** The
    owner asked that this survive a later change of engine, for example to PostgreSQL.
-   - Each domain operation declares its class once, in the domain crate that owns it
-     (`org-mailbox`, `org-work`), as a value of one small two-valued durability type.
-     The classes of all operations are listed in one place per crate.
+   - Each domain operation declares its class once, in the crate that owns it, as a
+     value of one small two-valued durability type: `org-mailbox` for messaging,
+     `org-work` for task activity, and `org-office` for `status.set`, which it writes
+     directly today. The classes of all operations are listed in one place per crate.
    - The storage ports carry that value with the write. Domain code never names a
      flush, a write-ahead log, a pragma or any engine setting.
-   - The store adapter decides how to honour it. For SQLite: commit, answer, then
-     flush within the bounded interval. For another engine: its own equivalent, such
-     as turning off synchronous commit for that transaction in PostgreSQL.
+   - The store adapter decides how to honour it. For another engine that is its own
+     equivalent, such as turning off synchronous commit for that transaction in
+     PostgreSQL. For the current SQLite store it means three changes. The writer
+     batches up to 64 requests in one transaction and commits once with a full flush;
+     each request needs its class on the write job, the commit must not force the
+     drive, and a flush must complete before any durable reply in the batch is sent.
+     `org-mailbox` has several write entry points and a port comment promising that
+     success means durable; both are updated. Where the store publishes journal
+     envelope files, as the work-acceptance journal does at HQ, a committed-class
+     envelope may be published without a flush, a durable publication first flushes
+     every earlier unflushed envelope, and recovery stops at the first missing or
+     incomplete ordinal.
    - What every adapter must guarantee is stated in engine-neutral terms: a committed
      write survives a crash of the office process and is flushed within the bounded
      interval; a durable write is not acknowledged before it would survive a power
      cut. These guarantees are tested by a suite that does not depend on the engine.
-   This is one of the steps of conflict plan entry B-13.
+   Conflict plan entry B-13 lists this as one of its steps.
 
 ## Acceptance criteria
 
@@ -101,7 +115,7 @@ and the acknowledgement sentence in
 ## Consequences
 
 - Sends become fast enough that many agents can message constantly.
-- For the committed class only, a message acknowledged in the moments before a power
+- For the committed class only, a message, comment, checklist tick or watch acknowledged in the moments before a power
   cut or kernel crash can be lost while its sender believes it was sent. This is a
   stated exception to "acknowledge after durable evidence".
 - `agent-os` gains a second way of running, which must enforce the same binding and

@@ -3,8 +3,8 @@
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
 plan entry E-01). Implementation pending. The owner chose the key storage of decision 3 on 2026-11-17
 (option 2 in the options table below). Supersedes the SQLCipher requirement of
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and the
-database-key custody of its decision 2. ADR-0002's choice of SQLite, its single writer
+[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and narrows the
+key custody of its decision 2 to wrapping an office's private keys. ADR-0002's choice of SQLite, its single writer
 and WAL stand, and its durability rule stands as amended by
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md).
 
@@ -61,9 +61,13 @@ and WAL stand, and its durability rule stands as amended by
 4. **Stored values that grant access are digests.** Session records hold digests
    (ADR-0013) and password records hold verifiers, never the values themselves.
 5. **What is removed, and what stays.** Removed: SQLCipher and every database key
-   use (the `PRAGMA key` path for the office databases and the private-notes
-   database), the host registry database's own key (its `registry` secret and the
-   `NoCipher` check), and the rule that a missing key prevents an office from opening
+   use: the `PRAGMA key` path for the office databases, the same for the planned
+   private-notes database (not yet in code), the host registry database's own key
+   (its `registry` secret and the `NoCipher` check), and the one-time transport key
+   that encrypts the replication snapshot file. That snapshot becomes a plain SQLite
+   file that travels only over the office TLS connection and is verified by its
+   content digest; this is to be confirmed when the federation transport is built.
+   Also removed: the rule that a missing key prevents an office from opening
    its data. Staying, with a narrower purpose: generation and custody of one key per
    office, now the office secrets key of decision 3, and its delivery in the launch
    handoff, which also still carries the grant key and the recovery code. Staying
@@ -104,7 +108,7 @@ HQ-creation flow.
 | ID | Passing evidence |
 | --- | --- |
 | ENC-1 | No database is encrypted. An office opens and serves its data when its office secrets key is absent; only functions that need a private key report unavailable. |
-| ENC-2 | No private key or credential is present in any database or in Git content; credential files exist only in the designated owner-only directories; a scan of a provisioned instance proves it. |
+| ENC-2 | No private key or credential is present in plaintext in any database or in Git content; credential files exist only in the designated owner-only directories; a scan of a provisioned instance proves it. |
 | ENC-3 | Setup reports the state of disk encryption and the file permissions it set. |
 | ENC-4 | Where `dedicated-user` mode is in use, ISO-1 of ADR-0015 holds, so removing encryption exposes no source data to agents. In `same-user` mode the product states the reduced protection. |
 | ENC-5 | The CA private key is stored only as a record encrypted with the office secrets key; the host never receives it; the HQ creation and recovery flows of ADR-0007 and ADR-0011 pass. A copy of the office database alone does not yield a usable private key. |
