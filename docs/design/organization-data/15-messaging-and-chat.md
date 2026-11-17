@@ -1,6 +1,6 @@
 # Messaging and chat data structure
 
-Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
+Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It does select who stores and routes messages at run time: see [Runtime ownership and routing](#runtime-ownership-and-routing), merged from ADR-0003. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
 
 ## Relationships and identity
 
@@ -24,6 +24,31 @@ Use `durable/messaging/` under the one selected [storage root](README.md#shared-
 ```
 
 Each JSON source envelope has `schema_version: 1`, stable IDs, a positive `revision`, and the same-named table fields below. Conversations embed `memberships[]`, `preferences[]` and `read_markers[]`; messages embed `recipients[]`, `reactions[]`, `attachments[]`. Revisions belong to the containing envelope. Save a whole envelope atomically under a single owning writer before acknowledging it; expected-revision checks prevent state/reaction changes from overwriting each other. Attachments must be durably stored and hash-verified before their references are acknowledged. The new `content_sha256` hashes the RFC 8785 canonical JSON (UTF-8; codec `jcs-rfc8785/1` in the [hash codec registry](08-record-contracts.md#hash-codec-registry)) of immutable message columns: organization_id, id, conversation_id, sender_kind, sender_employee_id, sender_office_id, sender_display_name, kind, priority, subject, body_markdown, metadata_json parsed as an object, thread_root_id, reply_to_message_id, also_in_channel, created_at, expires_at, ttl_ms, origin_office_id, origin_incarnation, origin_sequence, org_epoch and org_sequence. Include nullable keys as null. Remove mutable card-state keys from that parsed metadata before hashing. Mutable card state (`answer`, acceptance, pin/fold state), recipient state and reactions are excluded; validate their envelope revision independently. No credentials or arbitrary local attachment paths enter metadata. Source/import validators enforce formats, byte limits and nested schemas; SQL does not replace those checks.
+
+## Runtime ownership and routing
+
+[ADR-0003](../../adr/0003-agent-messaging-office-first.md) decided how messages are stored and routed at run time. Its runtime decisions are selected and are part of this contract. This section states them in the vocabulary of the model above. ADR-0003 keeps the exact v1 algorithms, table names and wire calls as compatibility and implementation evidence. Where the two differ on data shape or storage location, this document wins. Where this document is silent on runtime behaviour, ADR-0003 §§2–3 apply.
+
+| Rule | Statement | ADR-0003 |
+| --- | --- | --- |
+| Office first | The sender's own office commits a send durably and allocates the next origin sequence for `(origin_office_id, origin_incarnation)` in the same transaction as the message. Sending never requires HQ to be reachable. | §3.1 |
+| Local delivery | A recipient placed in the same office is delivered and woken immediately after that commit. | §2.2, §3.1 |
+| Routing | Otherwise the change travels office → HQ → recipient's office over the office's outbound connection. HQ deduplicates by `(origin_office_id, origin_incarnation, origin_sequence)`, acknowledges the origin and then forwards. Offices never connect to each other directly. | §3.1 |
+| Owner of recipient state | The office where the recipient agent is placed, as of the organization position recorded on the change, is the single writer of that recipient's `message_recipient_states`. HQ is the owner for people, for the organization owner, and for recipients that were removed or have no office. | §3.1, §3.2 |
+| Ownership hand-off | When an agent is re-placed, ownership moves at that organization position. The previous office stops resolving that agent's state as soon as it applies the move; competing changes are ordered by organization position first. | §3.1 item 3 |
+| Recipient check | The sender's office validates the recipient against the organization position it has applied and records that position on the message. A receiving office that has not yet applied that position stores the message and withholds delivery until it has. | §3.2 |
+| Failure notices | Only the owning office moves a message to `expired` or `dead_letter`, and it emits the single `delivery_failed` notice. Every other office applies the synchronized state and emits nothing. | §3.2 item 3 |
+| Deadlines | An ask carries `expires_at`. A receiving office treats it as live only until `expires_at` plus a skew bound of at most 2 seconds. A late arrival is expired on arrival and never acted on. | §3.3 |
+| Idempotent re-ask | A retry reuses the same message ID and content. A matching ID returns the existing ask and its reply if one exists; a different sender or different content is rejected. | §3.3 item 4 |
+| Delivery never interrupts | Urgency controls order and badges. It never cuts a busy turn short ([chat UX §4.2](../../specs/chat-ux.md#42-system-notices-and-delivery)). | Scope header |
+| Conversation ownership | Conversations belong to the organization, not to an office. Membership changes are authorized through the [organization authority](README.md#organization-authority). Re-placing an agent does not move conversation ownership. | §6.2 |
+
+What the merge changes in ADR-0003: its SQL tables (`msg_headers`, `msg_bodies`, `msg_state`, the unread and thread indexes) become projections in `runtime/<office-id>/office.db` of the protected envelopes in `durable/messaging/`. They stop being the source. Its ordering, deduplication, ownership and deadline rules are unchanged.
+
+Two consequences remain open and must be settled before the target adapter is built:
+
+- **Durability cost.** ADR-0003 §5 sets latency targets (same-office send p50 under 15 ms and p95 under 30 ms) that assume one batched full-flush SQLite commit shared by concurrent senders. Saving one envelope file per message before acknowledgement needs its own flush discipline. Either the adapter batches envelope publication behind one flush, or the targets are restated. Record the choice with measurements.
+- **Not a shipped transport.** This section selects rules. The cross-office transport, wake scheduling and external bridges remain unimplemented, and the live Phase A spool stays in place until its separately verified cutover.
 
 ## File/SQL mapping and v1 compatibility
 
