@@ -1,13 +1,10 @@
 ---
 kind: spec
 title: "App shell: navigation and shared interaction standards (UX)"
-status: for-review
-revision: 2
+status: current
 owner: lead
 created: "2026-11-10"
-updated: "2026-11-15"
-requested_by: ac-product-designer-eden
-reviewers: [ac-staff-engineer-ada, owner]
+updated: "2026-11-17"
 builds_on: [our-org-in-the-app, offices-and-teams-ux]
 ---
 
@@ -20,20 +17,7 @@ page titles and landmarks. Area specs build on it: `chat-ux.md` and
 `server-installation-and-access-ux.md` SRV-18 points here for the unavailable
 pages.
 
-**Source:** the Principal Product Designer's decision of 2026-11-10 on narrow
-widths (BUG-52 and BUG-53, the shell nav and unavailable pages; BUG-49, Chat),
-with its follow-ups. Breakpoints are **viewport widths in CSS px**.
-
-## Changelog
-
-**Revision 2 (2026-11-15):** integrate company-oriented navigation, settings/search/New, and shared visual, accessibility and interaction
-requirements from Eden's design system v2.6. These rules apply to supported
-screens; they do not enable gated routes, presence reporting or deferred engines.
-
-**Revision 1 (2026-11-10): new spec.** Navigation by viewport width (full nav,
-icon rail, top bar with a nav drawer), the 320 px rule (WCAG 1.4.10), the
-unavailable pages' copy, page titles, landmarks, and Back with a modal open.
-**New:** SHELL-1 to SHELL-28.
+Breakpoints are **viewport widths in CSS px**.
 
 ## 0. Information architecture
 
@@ -51,24 +35,24 @@ All entity URLs use stable IDs. Keep the following redirects indefinitely and pr
 
 `/settings` contains General, Offices, Agent setup, Roles, Processes, Members and access, Costs where authorized and implemented, and Updates. Use an underline navigation bar, or a left column of links from 960 px. General shows organization name/workspace and supported runtime configuration without exposing credentials. `/settings/offices` reuses the office flows in offices-and-teams-ux.md; it changes their location, not their safety requirements. Personal preferences and About belong in the account menu.
 
-A section outside this release uses “Not in this release” and its explanatory sentence; an included section awaiting implementation uses “{Title} isn't built yet” and “It's coming in this release.” Never use Coming soon or mix these states. Processes remains linked from settings but its production route is the root Unavailable page without a navigation list or Back to Home. Processes, Roles, Members and access and Updates do not become active through moving their links. The selected structural process records remain separate from the deferred process engine. Updates does not offer restart-to-update before a supported distribution/update flow exists.
+A section outside this release uses “Not in this release” and its explanatory sentence; an included section awaiting implementation uses “{Title} isn't built yet” and “It's coming in this release.” Never use Coming soon or mix these states. Processes, Roles, Members and access and Updates become active only when their flows are built, never merely by moving their links. Updates does not offer restart-to-update before a supported distribution and update flow exists.
 
-`/preferences` initially contains Keyboard, with a Single-key shortcuts switch, on by default. Persist one device-wide `agentic-org.singleKeyShortcuts` value (`1`/`0`), without server sync; unavailable/unreadable storage falls back to on. Appearance and Notifications sections appear when they have an actual setting. Time zone follows the target requirement below when its account contract is selected.
+`/preferences` initially contains Keyboard, with a Single-key shortcuts switch, on by default. Persist one device-wide `agentic-org.singleKeyShortcuts` value (`1`/`0`), without server sync; unavailable/unreadable storage falls back to on. Appearance and Notifications sections appear when they have an actual setting. Time zone follows the requirement below once its account contract exists.
 
 Actions the viewer is not authorized to perform are hidden. When omission would make the state confusing, show the unavailable action with a visible reason instead. UI visibility never replaces server authorization.
 
-### Target account time display
+### Account time display
 
-Account-zone persistence, protected account authorization and account-to-employee mapping require their owning contract before this preference can ship. This display requirement adds no employee, provider or execution timezone field and no account data contract. The separately [deferred private digest](project-status-ux.md#deferred-account-digest-requirements) remains deferred.
+Account-zone persistence, protected account authorization and account-to-employee mapping need their owning contract before this preference ships. This display requirement adds no employee, provider or execution time zone field.
 
 At first sign-in without a saved account zone, detect a validated IANA zone and let that authenticated account change it under Your preferences → Time zone. The searchable list shows city/name, current offset and local time. Invalid or missing detection may show **unsaved UTC** with “Time zone not detected: set it in Your preferences”; retry at later sign-in until a valid zone is saved. This display fallback never establishes a budget zone.
 
-Event lists show relative time within 24 hours and absolute time thereafter. Headers, ranges, logs and card/problem times use absolute 24-hour values in the saved viewing-account zone, with full date/time/offset accessible. A separately selected schedule uses its own zone and full date/city/offset at the instant, never time-only or Today/tomorrow. No personal agent timezone is introduced.
+Event lists show relative time within 24 hours and absolute time thereafter. Headers, ranges, logs and card/problem times use absolute 24-hour values in the saved viewing-account zone, with full date/time/offset accessible. A schedule uses its own zone and full date/city/offset at the instant, never time-only or Today/tomorrow. There is no personal agent time zone.
 
-Retain temporal instants exactly and apply each instant's DST offset; compute elapsed duration from instants, never by subtracting local clock readings. Changing a display preference cannot mutate retained budget period keys/bounds or old daily-summary snapshots. Travel prompts, people/agent directory zone reads and private digest services remain deferred.
+Retain temporal instants exactly and apply each instant's DST offset; compute elapsed duration from instants, never by subtracting local clock readings. Changing a display preference never changes retained budget period keys and bounds or old daily-summary snapshots. Travel prompts, zones in the people and agent directory, and the private away digest are not in v1.
 
 - AC-IA20-1: New York 2026-03-08 01:30 UTC−5 to 03:30 UTC−4 is one hour elapsed; two viewers render the same retained instant in their saved zones without changing it.
-- AC-IA20-2: invalid detection shows unsaved UTC while [budget controls](../design/organization-data/17-budgets-and-controls.md) still refuse budget creation without a known selected owner/HQ zone. Preference changes leave retained period keys/bounds and summary snapshots intact; no employee timezone or private digest service appears.
+- AC-IA20-2: invalid detection shows unsaved UTC while [budget controls](../design/organization-data/17-budgets-and-controls.md) still refuse budget creation without a known selected owner/HQ zone. Preference changes leave retained period keys/bounds and summary snapshots intact; no employee time zone appears.
 
 ### 0.2 Search and creation
 
@@ -81,7 +65,7 @@ N or Shift+N outside editable text opens New; arrows/Enter choose, Escape closes
 **IA acceptance criteria:**
 
 - AC-IA01-1–4: verify the sidebar order, bounded sub-lists, common Inbox count, footer, exact redirects with query preservation, current-page marking and heading focus across rail/drawer/full nav.
-- AC-IA03-1–3: verify settings destinations, Offices relocation, honest included/deferred copy and the production Processes gate.
+- AC-IA03-1–3: verify settings destinations, Offices relocation, honest included and not-in-release copy, and that a section whose flow is not built stays gated.
 - AC-IA13-1–2: grouped keyboard-search results and `/search?q=` work; the narrow search control preserves accessible naming.
 - AC-IA19-1–4: verify New's order and omitted unavailable flows, narrow target/name, N/Shift+N behavior, device persistence/fallback, and disabled shortcut hints. Test `/` against the same setting when it is introduced.
 
@@ -149,7 +133,7 @@ The full nav, as today.
 
 A nav item may supply a **badge** (an optional count). When it does, both the
 rail and the full nav (and so the drawer) render it. There's **no global badge**
-in v1.0.
+in v1.
 
 ### 1.5 Test widths
 
@@ -336,42 +320,42 @@ overlay slide lasts longer than 200 ms.
 ## 7. UX acceptance criteria (SHELL)
 
 **Navigation**
-- SHELL-1 · *(new, rev 1)* At a viewport 960 px wide or wider, the full nav shows.
-- SHELL-2 · *(new, rev 1)* From 640 to 959 px, the nav is a 64 px icon rail with icon-only items and no expand toggle.
-- SHELL-3 · *(new, rev 1)* Each rail item's accessible name is the item's name, and a tooltip with that name shows on hover and on keyboard focus.
-- SHELL-4 · *(new, rev 1)* In the rail, `aria-current` marks the current page's item.
+- SHELL-1 · At a viewport 960 px wide or wider, the full nav shows.
+- SHELL-2 · From 640 to 959 px, the nav is a 64 px icon rail with icon-only items and no expand toggle.
+- SHELL-3 · Each rail item's accessible name is the item's name, and a tooltip with that name shows on hover and on keyboard focus.
+- SHELL-4 · In the rail, `aria-current` marks the current page's item.
 - SHELL-5 · In the rail, the logo links to Home and is named "{organization} home". Switching organization is in the account menu.
-- SHELL-6 · *(new, rev 1)* Below 640 px, the rail is hidden, and a 56 px top bar shows the page title and a "Menu" button with `aria-expanded` and `aria-controls`.
-- SHELL-7 · *(new, rev 1)* Menu opens the full nav as a modal drawer from the left, `min(288 px, 100vw − 56 px)` wide, so the scrim always shows beside it.
-- SHELL-8 · *(new, rev 1)* Opening the drawer moves focus to the current page's item, and focus is trapped in the drawer while it's open.
-- SHELL-9 · *(new, rev 1)* Esc, the scrim or Close close the drawer and return focus to Menu, whether the drawer was opened by mouse or keyboard, in every browser engine.
-- SHELL-10 · *(new, rev 1)* Choosing an item in the drawer closes it and moves focus to the new page's `h1`.
-- SHELL-11 · *(new, rev 1)* Back with the drawer open closes the drawer only, doesn't navigate, and returns focus to Menu (SHELL-28).
-- SHELL-12 · *(new, rev 1)* A nav item that supplies a badge (an optional count) shows it in both the rail and the full nav. There's no global badge in v1.0.
-- SHELL-13 · *(new, rev 1)* The shell is tested at viewport widths 959, 720 (200% zoom of 1440), 639, 600 and 320 (400% zoom of 1280) px.
+- SHELL-6 · Below 640 px, the rail is hidden, and a 56 px top bar shows the page title and a "Menu" button with `aria-expanded` and `aria-controls`.
+- SHELL-7 · Menu opens the full nav as a modal drawer from the left, `min(288 px, 100vw − 56 px)` wide, so the scrim always shows beside it.
+- SHELL-8 · Opening the drawer moves focus to the current page's item, and focus is trapped in the drawer while it's open.
+- SHELL-9 · Esc, the scrim or Close close the drawer and return focus to Menu, whether the drawer was opened by mouse or keyboard, in every browser engine.
+- SHELL-10 · Choosing an item in the drawer closes it and moves focus to the new page's `h1`.
+- SHELL-11 · Back with the drawer open closes the drawer only, doesn't navigate, and returns focus to Menu (SHELL-28).
+- SHELL-12 · A nav item that supplies a badge (an optional count) shows it in both the rail and the full nav. There's no global badge in v1.
+- SHELL-13 · The shell is tested at viewport widths 959, 720 (200% zoom of 1440), 639, 600 and 320 (400% zoom of 1280) px.
 
 **The 320 px rule**
-- SHELL-14 · *(new, rev 1)* At 320 px, no page scrolls sideways and no text column is narrower than 200 px; where one would be, the panel overlays or the layout stacks.
+- SHELL-14 · At 320 px, no page scrolls sideways and no text column is narrower than 200 px; where one would be, the panel overlays or the layout stacks.
 - SHELL-15 · Two-dimensional content such as the chart scrolls inside its own region. Below 640 px member/agent/task rosters become divided rows; neither they nor the surrounding page require sideways scrolling.
-- SHELL-16 · *(new, rev 1)* Below 640 px, dialogs and sheets take the full width, with their buttons wrapped and visible. The nav drawer is the exception (SHELL-7).
-- SHELL-17 · *(new, rev 1)* Page toolbars wrap, and search fields are full width below 640 px.
+- SHELL-16 · Below 640 px, dialogs and sheets take the full width, with their buttons wrapped and visible. The nav drawer is the exception (SHELL-7).
+- SHELL-17 · Page toolbars wrap, and search fields are full width below 640 px.
 
 **Unavailable pages**
-- SHELL-18 · *(new, rev 1)* The root's unavailable page shows the heading "Agentic Org isn't ready in the browser yet" and the body "This server is running, but this release doesn't serve its pages in the browser yet. To see what it can do now, run `agentic-org doctor` on the HQ machine.", with `agentic-org doctor` in a code span.
-- SHELL-19 · *(new, rev 1)* An area's unavailable page shows the heading "<Area> isn't available yet" and the body "This release of the server doesn't serve <Area> in the browser. Nothing is wrong with your organization. To see what this server can do now, run `agentic-org doctor` on the HQ machine.", with `agentic-org doctor` in a code span.
+- SHELL-18 · The root's unavailable page shows the heading "Agentic Org isn't ready in the browser yet" and the body "This server is running, but this release doesn't serve its pages in the browser yet. To see what it can do now, run `agentic-org doctor` on the HQ machine.", with `agentic-org doctor` in a code span.
+- SHELL-19 · An area's unavailable page shows the heading "<Area> isn't available yet" and the body "This release of the server doesn't serve <Area> in the browser. Nothing is wrong with your organization. To see what this server can do now, run `agentic-org doctor` on the HQ machine.", with `agentic-org doctor` in a code span.
 - SHELL-20 · A gated production shell shows its logo and one `main`, no nav list and no Back to Home button. A feature unavailable inside a supported shell keeps that shell's navigation. Static copy has no `role="status"`.
-- SHELL-21 · *(rev 2)* Links in supported shells use the shared indigo-400 2 px focus outline (§6a). Root Unavailable pages do not add a home link or navigation list (§3).
+- SHELL-21 · Links in supported shells use the shared indigo-400 2 px focus outline (§6a). Root Unavailable pages do not add a home link or navigation list (§3).
 
 **Titles and landmarks**
-- SHELL-22 · *(new, rev 1)* An app area's title is "<Area> · Agentic Org", the root's is "Agentic Org", and the 404's is "Page not found · Agentic Org".
-- SHELL-23 · *(new, rev 1)* A place inside an area is titled "<Place> · <Area> · Agentic Org".
-- SHELL-24 · *(new, rev 1)* Each history entry carries its own place's title, never the next one's.
-- SHELL-25 · *(new, rev 1)* Each client-side move announces the new title once.
-- SHELL-26 · *(new, rev 1)* Each page has exactly one `main` landmark, named by the page's `h1`, and it's kept across client-side navigation.
-- SHELL-27 · *(new, rev 1)* The nav is a `navigation` landmark named "Main".
+- SHELL-22 · An app area's title is "<Area> · Agentic Org", the root's is "Agentic Org", and the 404's is "Page not found · Agentic Org".
+- SHELL-23 · A place inside an area is titled "<Place> · <Area> · Agentic Org".
+- SHELL-24 · Each history entry carries its own place's title, never the next one's.
+- SHELL-25 · Each client-side move announces the new title once.
+- SHELL-26 · Each page has exactly one `main` landmark, named by the page's `h1`, and it's kept across client-side navigation.
+- SHELL-27 · The nav is a `navigation` landmark named "Main".
 
 **Back with a modal open**
-- SHELL-28 · *(new, rev 1)* Back with any modal open (a dialog, a sheet, the nav drawer or Chat's Conversations overlay) closes the modal only, doesn't navigate, and returns focus to the control that opened it.
+- SHELL-28 · Back with any modal open (a dialog, a sheet, the nav drawer or Chat's Conversations overlay) closes the modal only, doesn't navigate, and returns focus to the control that opened it.
 
 **Shared UI standards**
 - SHELL-29 · Supported screens use §6a's dark palette, scalable typography and aligned gutters; lists are flat, and contrast passes in default/hover/selected states.
@@ -388,4 +372,4 @@ overlay slide lasts longer than 200 ms.
 
 ## 8. Open questions
 
-None open.
+None.

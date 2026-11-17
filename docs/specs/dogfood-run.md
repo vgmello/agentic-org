@@ -1,70 +1,21 @@
 ---
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
-status: for-review
-revision: 12
+status: current
 owner: lead
 created: "2026-11-08"
-updated: "2026-11-15"
+updated: "2026-11-17"
 requested_by: owner
-reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-teams-ux, work-items-ux, agent-run-modes-ux]
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
 
-**Revision 12 (2026-11-15):** adds the product-validation matrix and evidence
-rules from Eden's validation playbook. It does not mark any unimplemented
-capability as shipped or replace the real-service prerequisites below.
-
-**Revision 11 (2026-11-15):** selected-data acceptance replaces multi-membership,
-teamless, Always-on and Undo pass conditions. Adds concrete §6a source/recovery
-rows and target setup/profile/permit checks; keeps existing row IDs and marks
-superseded requirements individually. Areas, Undo, advanced checklist execution,
-retrospectives, automatic scheduling/memory and process execution remain deferred.
-These are required future release checks, not claims of a working installer or
-migration. Earlier revision entries record the older run, not active acceptance.
-
-**Revision 10 (2026-11-15):** HQ-only one-command initial setup, automatic service registration, separate HQ-issued satellite onboarding and target executable names. Adds coverage for SRV-33/34; preserves existing recovery and identity checks.
-
-**Revision 9 (2026-11-10):** follows `server-installation-and-access-ux.md` rev 5
-(X-02 §6.2, §6.4 and Q8). Row 1.7 collects the code with `agentic-org recovery
-release`, interrupts it after the code is shown, and shows it again with
-`--redeliver`. Row 2.5 expects noninteractive setup to end with the recovery code
-waiting, and to collect it later at the machine. Rows 1.7 and 2.5 cite the new
-RCV criteria. No criteria changed here.
-Later in revision 9 (Rowan's answers A99 and A100, 2026-11-10; X-02 Q9): row 1.7
-expects one confirmation per run, the Recovery row's new copy with the count of
-second showings, and `agentic-org recovery status` listing who showed the code
-and when; it also cites RCV-24 and RCV-25.
-
-**Revision 8 (2026-11-10):** 3a.14 checks project creation in the chart only (Activity has no row for it). In §7, an Optional row that can't run in the setup is Blocked with the reason, doesn't change the run's result and files no bug. §7's timing rule says the office, not the HR lead, provisions an approved hire. No criteria changed.
-
-**Revision 7 (2026-11-10):** the run tests the whole success test of
-[our-org-in-the-app.md](our-org-in-the-app.md) again. New **§3a Manage the team
-(HQ)** (rows 3a.1 to 3a.16: hire and approve, an agent approving and rejecting,
-Add agent record refused before approval, assign, move, pause and resume, offboard)
-and **§3b See what's happening, live (HQ)** (rows 3b.1 to 3b.7: Home, Activity,
-Jump to latest, and the paused line while HQ restarts). Every row is now marked
-Required or Optional (a new Type column; existing rows are all Required). New
-**§7 Required rows and the result**, with the N/A rule, and with the live-update
-allowance, bug severities and results file restored from revision 3. The pass
-rule moved from §6 to §7, which adds what makes a Required row complete. No
-existing row's action, pass condition or requirements changed, and no criterion
-was added. §0 records each row's result as §7 defines it. §6's retained-features check no
-longer includes processes (Wave A, after v1.0).
-
-**Revision 6 (2026-11-10):** rows 1.1, 1.2, 1.5, 1.6, 1.7 and 2.7 also cite the
-screen criteria that now define them: SIGN and RCV in
-[server-installation-and-access-ux.md §4a](server-installation-and-access-ux.md#4a-sign-in-first-access-and-recovery-code-rev-4)
-and OFC-14 to OFC-25 in [offices-and-teams-ux.md §5a](offices-and-teams-ux.md#5a-create-organization-instance-admin-only-rev-14).
-No action or pass condition changed.
-
-**Revision 4 (2026-11-09):** replaces the old desktop/team-import walkthrough.
-The product has never been deployed. Start from fresh disposable instances, with
-no old HR import or desktop migration. Run the real HTTP application and
-server; explicitly injected fakes support lower-level tests but do not satisfy
-this acceptance run. Commands in the linked design are proposed until implemented.
+The acceptance run of a release: fresh disposable instances, the real HTTP
+application and server, an HQ and a satellite on two operating systems. Injected
+fakes support lower-level tests but never satisfy this run. Selected-model data
+checks are in §6a. Undo, advanced checklists, retrospectives, automatic
+scheduling and memory are not in v1 and are not checked.
 
 ## 0. Preconditions and evidence
 
@@ -76,9 +27,9 @@ runtime. Choose at least one implemented harness for a separately authorized rea
 agent smoke test. Keep provider credentials out of test output.
 
 Before running, the release must implement browser authentication, HQ APIs, office
-enrollment/sync, instance lifecycle and production key custody on both platforms.
-The inspected branch does not yet meet these prerequisites. Missing capabilities
-are **blocked**, not passed through mocks or marked ready because assets loaded.
+enrollment and sync, instance lifecycle and the host's credential custody on both
+platforms. Missing capabilities are **blocked**, not passed through mocks or marked
+ready because assets loaded.
 See [SRV criteria](server-installation-and-access-ux.md#6-acceptance-criteria).
 
 For every row record its result (§7), timestamp, exact release and evidence.
@@ -122,11 +73,11 @@ screen's older acceptance criteria pass. Recheck affected cases after a fix.
 
 ## 1. Install and access HQ
 
-Owner amendment (2026-11-15): use agentic-org setup as the one initial HQ command. Verify automatic component preparation/service registration and agentic-org serve as the service entry point; no separate install/service-install prerequisite or satellite selection is present. Repeated setup resumes the same HQ/service. Include offline local-bundle and missing-service-manager cases from SRV-33/34. Current source/package names are mapped to target binaries in project-structure.md.
+`agentic-org setup` is the one initial HQ command. Verify automatic component preparation and service registration, with `agentic-org serve` as the service entry point; there is no separate install step and no satellite choice. Repeated setup resumes the same HQ and service. Include the offline local-bundle and missing-service-manager cases of SRV-33 and SRV-34.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
-| 1.1 | Run HQ-only setup without an instance name; configure owner access, slug, remote organization repository/state branch and valid bootstrap home team | One default instance, private roots, verified release and ready service; canonical fields/team references round-trip. No local-only organization Git, teamless HR, Tauri or frontend build tools. Agent and remote connectivity/publication readiness are separate; offline validation cannot mark either externally verified | SRV-1, SRV-2, SRV-7, SRV-35, SRV-36, SIGN-21, SIGN-22, RCV-13 | Required |
+| 1.1 | Run HQ-only setup without an instance name; configure owner access, slug, remote organization repository/state branch and valid bootstrap home team | One default instance, private roots, verified release and ready service; canonical fields/team references round-trip. No local-only organization Git, teamless HR or frontend build tools. Agent and remote connectivity/publication readiness are separate; offline validation cannot mark either externally verified | SRV-1, SRV-2, SRV-7, SRV-35, SRV-36, SIGN-21, SIGN-22, RCV-13 | Required |
 | 1.2 | Open its URL from a browser on the other machine | Authenticate and see the real organization without installing/enrolling the browser machine | SRV-8, SRV-18, SIGN-23 | Required |
 | 1.3 | Repeat install/setup without a name | Same instance/office identity, root, endpoint and release pin; no duplicate process, enrollment or configuration reset | SRV-2, SRV-6 | Required |
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 | Required |
@@ -142,14 +93,14 @@ Owner amendment (2026-11-15): use agentic-org setup as the one initial HQ comman
 | 2.2 | Repeat `lab` setup concurrently; try another name pointing to the same data root/alias | One persisted identity and service; duplicate storage writer refused before database access | SRV-4, SRV-6 | Required |
 | 2.3 | Configure an occupied port | Actionable conflict; no silent endpoint change or corruption of another instance | SRV-4 | Required |
 | 2.4 | Interrupt setup before/after office provisioning markers, then repeat | Resume recorded operation; no duplicate office, lost key or destructive discard of committed data | SRV-6 | Required |
-| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider; later collect the recovery code at the machine | Same result as wizard when valid, except the recovery code, which stays waiting until `agentic-org recovery release` at the machine; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26, RCV-20 | Required |
+| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider; later collect the recovery code at the machine | Same result as wizard when valid, except the recovery code, which stays waiting until `agentic-org recovery release` at the machine; predictable failures without prompts, secrets or a development-key fallback | SRV-5, SRV-26, RCV-20 | Required |
 | 2.6 | Use default/lab and a hostile dev server on the same host; copy/overwrite cookies and try read, mutation, stream, refresh/proof recovery and logout | No cross-origin/instance authority without the matching proof; proof never enters URL/log/redirect; valid paired sessions still work | SRV-23 | Required |
 | 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27, SIGN-14, SIGN-20 | Required |
 | 2.8 | Run complete local-bundle HQ setup with --offline while recording attempted external requests; supply a syntactically valid remote organization URL/branch and local credential references, then later authorize online operation | Zero external requests: no Git fetch/auth, provider/model discovery or update checks. HQ may be locally ready; registration remains remote and connectivity/publication/provider readiness stays unverified or pending. Missing local prerequisites fail without fetching. Later authorized online verification/publication updates its own status without changing organization identity; remote-auth failure cannot fabricate success | SRV-34, SRV-35; data 11 AE-17 | Required |
 
 ## 3. Enroll and execute at a satellite
 
-Satellite onboarding starts from HQ's Add office UI or an HQ-issued command on the destination. Initial agentic-org setup is HQ-only; it must not offer a join choice. Reuse the destination installation/service internals without running initial HQ setup there. Verify the target helpers agentic-org-office and agent-os and no web child on a satellite-only installation.
+Satellite onboarding starts from HQ's Add office UI or an HQ-issued command on the destination. Initial agentic-org setup is HQ-only; it must not offer a join choice. Reuse the destination installation/service internals without running initial HQ setup there. Verify the helpers `agentic-org-office` and `agent-os` and no web child on a satellite-only installation.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
@@ -161,7 +112,7 @@ Satellite onboarding starts from HQ's Add office UI or an HQ-issued command on t
 | 3.6 | Inspect the session through HQ and pause/resume through supported authorized controls | Routed to the correct office/employee; no second main session or uncontrolled descendants | SRV-11, SRV-17 | Required |
 
 Use a team-scoped non-repository task for 3.5 until a supported cross-office code
-transport exists. The selected model allows local-only code repositories, but an
+transport exists. The data contract allows local-only code repositories, but an
 HQ filesystem path is not another host's remote. Organization metadata Git must
 already be remote. This run proves no cross-office coding unless real checkout,
 commit and transport evidence is added. §6a.3 checks repository associations/cache
@@ -184,30 +135,30 @@ tells you. Don't approve, reject, start or finish anything on your own." (in
 Review, or in the request text for hires by command), and before 3a.5 message
 Dogfood Lead 1 the same. Rows 3a.5 to 3a.7 and 3b.4 rely on it. Both no-op tasks (3a.10, 3a.12) also say in their description "Dogfood run: leave
 this in To do. Don't start it until told." Use explicit bounded turns; no row
-requires automatic scheduling or an Always-on/On-call engine. Observe the actual
+requires automatic scheduling. Observe the actual
 ready/idle state supported by the execution backend. Identity profiles have one
-required home team and optional role/reporting. Role files are selected structural
+required home team and optional role/reporting. Role files are structural
 data; optional descriptive role_text is separate. Preserve hiring approval checks
 without inferring roles or authority from free text.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
-| 3a.1 | Create Dogfood App and Dogfood Office teams with no lead; create Dogfood Desktop and Dogfood Server projects with the corresponding owner_team_id | Both teams show; each project has one required accountable owner team. No Area is created as an implicit requirement | TEAM-5, selected organization-data 01/02 | Required |
+| 3a.1 | Create Dogfood App and Dogfood Office teams with no lead; create Dogfood Desktop and Dogfood Server projects with the corresponding owner_team_id | Both teams show; each project has one required accountable owner team. No Area is created as an implicit requirement | TEAM-5, data 01/02 | Required |
 | 3a.2 | From Dogfood App open Hire for Dogfood Lead 1, select its one home team, optional role/reporting, execution profile/model and HQ placement, then stop at Review | Review separates identity, reporting, execution and placement; proposed managed path/handle are read-only. No employee, home or messaging binding before approval; Requests is Waiting for you | STAFF-1, HRL-3, APPR-3, SRV-36, SRV-37 | Required |
 | 3a.3 | Approve the hire. Then make Dogfood Lead 1 the lead of Dogfood App | Hiring progress in words, then "Dogfood Lead 1 is hired and in Dogfood App." The card appears in Dogfood App, highlighted; Activity has one row, "Dogfood Lead 1 was hired into Dogfood App"; the profile records who requested and approved it. The card then shows Lead, and the team card names it | STAFF-2, APPR-5, MOVE-5 | Required |
 | 3a.4 | Hire Dogfood QA 1 into Dogfood App the same way, and approve it | Review suggests Dogfood Lead 1 as its manager (the team's lead). After approval it's in Dogfood App, under Dogfood Lead 1 in Reporting lines | STAFF-1, STAFF-2 | Required |
 | 3a.5 | In Dogfood Lead 1's Settings, turn on **Can approve hires**. Then have Dogfood QA 1 run `agent-os hire request "A QA engineer named Dogfood QA 2 for Dogfood App, at HQ's office, with the focus: Dogfood run: act only when the runner tells you. Don't approve, reject, start or finish anything on your own."` | The roster and quick view show "Approves hires" on Dogfood Lead 1. The request becomes a proposal in Requests with requester Dogfood QA 1 and state **Waiting for Dogfood Lead 1**; Dogfood Lead 1 gets it in its inbox; nothing is hired yet | APPR-1, APPR-2, HRL-4, APPR-8 | Required |
 | 3a.6 | Have Dogfood Lead 1 run `agent-os hire approve <id>` with no reason, then again with `--reason "…"` | Without a reason it's refused and nothing changes. With one, Dogfood QA 2 is hired with no human step, one home team Dogfood App, HQ placement and the dogfood-run focus; separate execution readiness remains visible: its card appears in Dogfood App, highlighted; its profile and Activity say it was requested by Dogfood QA 1 and approved by Dogfood Lead 1; Home shows "Dogfood Lead 1 approved hiring Dogfood QA 2…" with **Open** | APPR-4, APPR-5, APPR-8, STAFF-2 | Required |
 | 3a.7 | Have Dogfood QA 2 request another hire ("Dogfood QA 4"). Have Dogfood Lead 1 run `agent-os hire reject <id>` with no reason, then with `--reason "…"` | Without a reason it's refused. With one, Requests shows **Rejected**; no card, roster row or messaging name exists for Dogfood QA 4 | APPR-8, HRL-4 | Required |
-| 3a.8 | Open **Add agent record** for Dogfood QA 3 (handle, optional role/title/reporting, home team Dogfood App, separate execution profile/model and HQ placement) and submit. Before approving, attempt direct employee provisioning through the advertised typed target adapter with the owner's session (legacy native name: member.add_agent; no new HTTP route is implied). Then **Reject** the proposal with a reason | Submitting creates only a proposal, **Waiting for you**. The direct call is refused (the error it returns is A96 in `our-org-in-the-app.md` §13), and creates no member, home or messaging binding. After Reject, Requests shows **Rejected**, and Dogfood QA 3 appears nowhere else: not in the chart, the roster or the HQ office's agents | STAFF-4, HRL-3, SRV-30, APPR-6 | Required |
-| 3a.9 | Try adding a second home team and clearing Dogfood QA 2's home team through the UI/target adapter; cancel moving Dogfood Lead 1; add Dogfood Office as a contributor to Dogfood Desktop | Second simultaneous home membership and teamless result refused; cancelled move changes nothing, including lead appointment. Contributor changes do not move employees or change project owner. Any lead transfer explicitly updates the direct-member appointment | Selected 01/02/04; TEAM-2 and last-team DEAL-2 superseded, project-to-membership MOVE-3 superseded | Required |
-| 3a.10 | Create a task on Dogfood Desktop and atomically assign team/individual at expected revision to Dogfood App/Dogfood QA 1 | Required accountable team remains the project owner; assigned pair is separate and reporter immutable. Task has a T- reference minted by the creating office, retained assignment event and the employee Tasks tab entry | MOVE-4, selected 03/12 | Required |
-| 3a.11 | Move Dogfood QA 1's single home team from Dogfood App to Dogfood Office and inspect task/workspace state | One atomic home-team/path move preserving ID/handle and history; optional reporting is explicit. Existing project accountability/assignment is not silently rewritten and worktree is retained. Show a textual confirmation/toast; Undo is deferred | Selected 04/12; MOVE-1 home move retained, MOVE-2 Undo portion deferred | Required |
+| 3a.8 | Open **Add agent record** for Dogfood QA 3 (handle, optional role/title/reporting, home team Dogfood App, separate execution profile/model and HQ placement) and submit. Before approving, attempt direct employee provisioning through the employee-creation operation with the owner's session. Then **Reject** the proposal with a reason | Submitting creates only a proposal, **Waiting for you**. The direct call is refused (the error it returns is A96 in `our-org-in-the-app.md` §13), and creates no member, home or messaging binding. After Reject, Requests shows **Rejected**, and Dogfood QA 3 appears nowhere else: not in the chart, the roster or the HQ office's agents | STAFF-4, HRL-3, SRV-30, APPR-6 | Required |
+| 3a.9 | Try adding a second home team and clearing Dogfood QA 2's home team through the UI and the employee operation; cancel moving Dogfood Lead 1; add Dogfood Office as a contributor to Dogfood Desktop | Second simultaneous home membership and teamless result refused; cancelled move changes nothing, including lead appointment. Contributor changes do not move employees or change project owner. Any lead transfer explicitly updates the direct-member appointment | Data 01/02/04 | Required |
+| 3a.10 | Create a task on Dogfood Desktop and atomically assign team/individual at expected revision to Dogfood App/Dogfood QA 1 | Required accountable team remains the project owner; assigned pair is separate and reporter immutable. Task has a T- reference minted by the creating office, retained assignment event and the employee Tasks tab entry | MOVE-4, data 03/12 | Required |
+| 3a.11 | Move Dogfood QA 1's single home team from Dogfood App to Dogfood Office and inspect task/workspace state | One atomic home-team/path move preserving ID/handle and history; optional reporting is explicit. Existing project accountability/assignment is not silently rewritten and worktree is retained. Show a textual confirmation or toast | Data 04/12; MOVE-1 | Required |
 | 3a.12 | Check that Dogfood QA 2 is Idle, then **Pause** it. While it's paused, have Dogfood QA 1 send it a message, and assign it a new task "Dogfood QA: no-op 2" on the Dogfood Desktop board. Then **Resume** it | The dialog says HQ will record Pause and new work waits once the office applies it. The card shows **Paused · stop pending at office** (at HQ's own office this may be too brief to see; 4.8 covers it), then **Paused** once HQ's office confirms. Paused, it isn't woken and the message waits; assigning asks "Dogfood QA 2 is paused. Assign anyway? They'll see it when resumed." Resume is one click, and the message then reaches it | DEAL-3, MOVE-4 | Required |
-| 3a.13 | Offboard Dogfood Lead 1 and Dogfood QA 1 using the supported explicit reconciliation; try reusing Dogfood QA 1's handle | Profiles inactive with IDs/handles/history retained, active assignments reconciled and lead removed. Reporters/history do not change. Any reporting reassignment names a valid active employee or null; no implicit teamless owner fallback. Reusing retained handle refused | DEAL-4, PEOPLE-4, selected 04/08/12 | Required |
+| 3a.13 | Offboard Dogfood Lead 1 and Dogfood QA 1 using the supported explicit reconciliation; try reusing Dogfood QA 1's handle | Profiles inactive with IDs/handles/history retained, active assignments reconciled and lead removed. Reporters/history do not change. Any reporting reassignment names a valid active employee or null; no implicit teamless owner fallback. Reusing retained handle refused | DEAL-4, PEOPLE-4, data 04/08/12 | Required |
 | 3a.14 | Throughout 3a.1 to 3a.13, watch the second browser | Each of these changes from 3a.1 to 3a.13 (hires, lead, teams, task, move, pause, resume, offboard) shows in its org chart, where the chart shows it (cards, teams, lead and status; tasks aren't on cards), and in its Activity (Pause and Resume are Status changes, hidden by default: turn on the Status filter to see them; consecutive changes by one member collapse into a group such as "… changed team 3 times · Show", and Show lists one row per change), within the live-update allowance (§7) and without a reload. Proposals, rejections and the Can approve hires setting add no card and aren't counted as Activity rows here. Project creation (3a.1) is checked in the chart only: Activity has no row for it (decision 7 and LIVE-1 list team and member changes, not project changes) | LIVE-1, LIVE-6, STAFF-2, MOVE-1, Success test 3 (`our-org-in-the-app.md`) | Required |
 | 3a.15 | Throughout 3a.1 to 3a.13, watch the 3.4 employee | The 3.4 employee keeps working on its own runtime: nothing stops, restarts or pauses it | Success test 3 (`our-org-in-the-app.md`; no criterion ID) | Required |
-| 3a.16 | Check words/icons throughout; inspect HR identity and its chosen home team separately from its bootstrap-management restrictions | No deallocate wording or meaning by color alone. HR has a real required home team and separate execution readiness; restricted destructive bootstrap controls do not imply a teamless employee | DEAL-1; HRL-1 teamless interpretation superseded by selected 04 | Required |
+| 3a.16 | Check words/icons throughout; inspect HR identity and its chosen home team separately from its bootstrap-management restrictions | No deallocate wording or meaning by color alone. HR has a real required home team and separate execution readiness; restricted destructive bootstrap controls do not imply a teamless employee | DEAL-1, data 04 | Required |
 
 ## 3b. See what's happening, live (HQ)
 
@@ -221,8 +172,8 @@ read authority follows existing chat policy, not any field on the employee recor
 | --- | --- | --- | --- | --- |
 | 3b.1 | Give the 3.4 employee a bounded non-repository task. While it works, open Home | Home shows **Needs you**, **Working now** with the 3.4 employee and its current task on one line, and **Latest**: the newest 8 Activity rows with **All activity**. Only real members and tasks; no sample data | LIVE-4 | Required |
 | 3b.2 | Send between the two agents, inspect Activity/thread, then send to the selected owner contact and reply where authorized | Activity is filtered to authorized messages. Open thread shows visible content only, preserving directed recipient restrictions and hidden-parent previews. Reply is available only with an authorized recipient/actor; no thread-participant union grants read access | LIVE-2, LIVE-3, SRV-39 | Required |
-| 3b.3 | Explicitly start a bounded turn for Dogfood QA 2, then let it finish | Card and Working now reflect the real turn within allowance; Activity default Status filtering works. Turn completion does not close the task, and message membership alone does not require an automatic wake engine | LIVE-6, LIVE-4, PROF-3, selected 11/15 | Required |
-| 3b.4 | Start the task through an advertised supported command, move another task on the board and report a bug type in Dogfood Desktop | Activity and board update once within allowance; all task types have T- references, required accountable team and durable ordered history. Bug detail is kept on the task; there is no separate B- counter | LIVE-1, selected 03/12 | Required |
+| 3b.3 | Explicitly start a bounded turn for Dogfood QA 2, then let it finish | Card and Working now reflect the real turn within allowance; Activity default Status filtering works. Turn completion does not close the task, and a message starts no work | LIVE-6, LIVE-4, PROF-3, data 11/15 | Required |
+| 3b.4 | Start the task through the task status command, move another task on the board and report a bug type in Dogfood Desktop | Activity and board update once within allowance; all task types have T- references, required accountable team and durable ordered history. Bug detail is kept on the task | LIVE-1, data 03/12 | Required |
 | 3b.5 | In Activity, scroll down, then have Dogfood QA 2 send another message. Press **Jump to latest** | The list doesn't move, and an "n new · Jump to latest" pill appears (1 new when only that message arrived). Jump to latest goes to the top with the new row there | LIVE-5 | Required |
 | 3b.6 | Merge a reviewed branch into the integration branch of a repository the HQ office fetches | A Git row in Activity ("merged … into …") once the office has fetched | LIVE-1 | Optional |
 | 3b.7 | With Activity open in both browsers, run `agentic-org service stop` on the HQ machine. Move to another screen already loaded, and press **Retry**. While HQ is down, have the 3.4 employee send Dogfood QA 2 a message. Then run `agentic-org service start` | Both browsers show "Live updates paused. Showing what was loaded at <HH:MM>." with **Retry**, on every screen; Retry reads "Retrying…" and the line stays while HQ is down. Once HQ is back the line clears by itself, with no sign-in (under ADR-0013 a restart does not end a browser session). The message sent while HQ was down then shows in Activity once, with no gap | LIVE-8, SIGN-17, SIGN-13, SRV-10, SRV-12 | Required |
@@ -259,15 +210,15 @@ set up, record 3b.6 as **Blocked** with that reason (§7).
 
 ## 6. Source and feature acceptance
 
-Verify SRV-29/30 with forged home/clear_home inputs and direct pre-approval agent
-creation: no external path or unapproved member/home/binding is provisioned. Confirm
-the profile displays the launcher's actual managed path. Verify SRV-32 with mixed
-local protocol versions and setup build/staging: unsupported versions fail before
-dispatch and the staged agentic-org is the CLI from apps/agentic-org, never the retired shell.
+Verify SRV-29 and SRV-30 with forged path inputs and direct agent creation before
+approval: no external path and no unapproved member, home or binding is
+provisioned. Confirm the profile displays the launcher's actual managed path.
+Verify SRV-32: an unsupported local protocol version fails before dispatch, and
+the staged `agentic-org` is the CLI from `apps/agentic-org`.
 
-For SRV-31, require the selected instance/office context for person-started
-commands and prove managed agents reject spool/context fallback. REC-1 remains separately gated recovery work; row
-1.7 verifies escrow material, not completed promotion/fencing.
+For SRV-31, person-started commands require the selected instance and office
+context, and managed agents use only their injected binding. Row 1.7 verifies
+escrow material, not recovery after losing HQ (REC-1).
 
 Verify SRV-22: retained browser code/package uses `apps/agentic-org-ui` / `agentic-org-ui`, and
 worker source/package/executable use apps/agentic-org-office / agentic-org-office. Verify agentic-org-web and agent-os helper names and agentic-org serve host composition.
@@ -276,13 +227,10 @@ references against the [project structure](../design/project-structure.md). Veri
 domain/feature moves preserve private SQL, transactions, public boundaries and
 licensed UI containment before treating the reorganization as complete.
 
-Verify no Tauri build/runtime dependency, native capture/menu, old-team import or
-production mock fallback remains. Exercise the retained roster, team, hiring,
-task/message features against their real advertised HTTP capabilities (processes
-are Wave A, after v1.0, so they're not part of this check).
+Verify no production mock fallback exists. Exercise the roster, team, hiring,
+task, message and process features against their real HTTP capabilities.
 Report unsupported features as gaps; do not substitute test fixtures for product
-behavior. Native/global capture and old import criteria are retired by the updated
-specs. Run repository formatting, relevant Rust tests/Clippy and frontend checks,
+behavior. Run repository formatting, relevant Rust tests/Clippy and frontend checks,
 tests and build on the implementation, with the deletion ledger reviewed.
 
 ## 6a. Selected data and recovery checks
@@ -297,23 +245,20 @@ pass these checks. Each row below is Required for a complete selected-model run.
 | 6a.1 | Save/reload bootstrap and an employee move | Explicit slug/remote repo/state_branch and home-team/path consistency; offline saves retain remote registration with unverified connectivity/publication until authorized online. Valid direct-member lead/subtree relationship. Owner security grants unchanged. IDs are UUIDv7 and unchanged across reload; no regenerated identities | SRV-35, SRV-36; data 01/04/06 | Required |
 | 6a.2 | Create a task type change and cross-team assignment; replay with same ID, then conflicting expected revision; close/archive and reload | All types retain stable ID/T- number. Accountable team is project's owner or team scope; nullable assigned team/assignee pair atomic, including independently null assigned-team/assignee cases. Reporter unchanged, ordered history retained. T- references resolve correctly | Data 03/05/06/12 | Required |
 | 6a.3 | Associate one registered repo to two projects with different integration branches, plus a second repo/local-only code registration | Many repos per project and branches round-trip per association; one bare cache per office/repo. Local code supported, local organization Git rejected. Feature definition is feature.md; supporting docs require project and at most one same-project feature/release/deployment scope | SRV-35, SRV-41; data 01/02/03 | Required |
-| 6a.4 | Persist acknowledged changes/messages/allocations/receipts; stop processes and remove only the verified disposable projection; rebuild from sources | Same domain versions, actor/fingerprint results, origin/incarnation high-waters and allocations. Hash-verified snapshots, trusted HQ/CA pins and highest epoch checked. Unknown operation side effects reconciled before retry; retained native/base/pending source payload remains lossless | SRV-38; data 06/16 | Required |
+| 6a.4 | Persist acknowledged changes/messages/allocations/receipts; stop processes and remove only the verified disposable projection; rebuild from sources | Same domain versions, actor/fingerprint results, origin/incarnation high-waters and allocations. Hash-verified snapshots, trusted HQ/CA pins and highest epoch checked. Unknown operation side effects reconciled before retry | SRV-38; data 06/16 | Required |
 | 6a.5 | Repeat restore with a missing journal/blob, corrupt hash, older authority checkpoint or missing credential; simulate a stale surviving child | Explicit recovery-required/unavailable result with missing coverage; no invented receipt, lower high-water or duplicate execution. A restored PID is never signalled without ownership/machine/boot/start proof; prior cleanup/fence and placement generation verified before start | SRV-26, SRV-37, SRV-38; data 11/16 | Required |
 | 6a.6 | Send A→B then B→C; inspect as each participant and authorized owner; retry message/state writes | Message bodies/counts/previews/search/attachments are visible only to each message's audience. Content verified by its normalized canonical-JSON hash. One logical delivery | SRV-39; data 15/16 | Required |
 | 6a.7 | Save a private task note and a shared comment, rebuild shared caches and inspect as author/another employee/owner | Author-private separate durable DB survives; no admin exception or existence leak through shared receipts/search/export. Shared comment remains shared under its own policy | SRV-38, SRV-39; data 05/13 | Required |
 | 6a.8 | Create partial/unavailable usage, a budget extension and pending/held manual/security/budget reasons; restart/rebuild then release only the budget reason | Protected policy revisions/period/extension-use/notices/holds restored; no invented zero spend/capacity, second extension or held acknowledgement. Other holds remain; release caps warn only. Owner/project-manager cost scope and only the own-agent CLI current-task/daily/monthly amount exception preserved | SRV-40; data 10/17 | Required |
 | 6a.9 | Run concurrent turns across two profiles/offices sharing a registered connection; fail one route; restart/relocate with retained work | One canonical subscription quota/permit context, ordered eligible routes and actual attempts/usage. Fresh model/auth evidence required, safe process reuse/switch, no unsafe replay or duplicate placement. Handoff keeps task worktrees and local/unpushed checkpoints; target Git/credential/other-task/managed-state denies verified | SRV-37, SRV-41; data 11/14 | Required |
 
-Restore rows do not demonstrate automatic promotion, zero backup data loss, automatic
-scheduling/memory, advanced checklist/Undo or a process engine. Budget data tests
-do not claim a running pause evaluator. Record those features separately as deferred.
+Restore rows do not demonstrate automatic promotion or zero backup data loss.
 
 ## 7. Required rows and the result
 
 **Type.** Every row is **Required** or **Optional**. Required rows decide the
 result. An Optional row is still run and recorded; its failure becomes a bug but
-doesn't fail the run. §6's checks and every §6a row count as Required; deferred portions explicitly marked
-in §3a are excluded rather than reported as supported.
+doesn't fail the run. §6's checks and every §6a row count as Required.
 
 **Results.** Each row gets one result per platform assignment: **Pass**, **Pass
 with notes**, **Fail**, **Blocked** or **N/A**.

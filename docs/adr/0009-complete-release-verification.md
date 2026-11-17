@@ -1,83 +1,198 @@
-# ADR-0009: authenticated complete release bundles
+# ADR-0009 · Authenticated complete release bundles
 
-Status: ACTIVE revision 2 for implementation architecture after independent ARCHITECTURE READY and lead evaluation. Revision 1 is superseded by this focused UI-profile and kernel-evidence clarification; all valid RLS-P1–P6 and prior ADR requirements remain. Actual code and full feature acceptance remain pending. Lead: Codex. Original fullstack author: 01a1dfb4-1d26-7100-9ea4-72b53756ef23. This completes a missing setup prerequisite; it does not supersede ADR-0006 P1–P13, ADR-0007 or ADR-0008, change the stable assignment contract, or establish code acceptance.
+Status: accepted. Implementation pending. Setup uses this verifier before it
+provisions anything ([standalone design](../design/standalone-server.md)). Process
+admission per platform is owned by [ADR-0017](0017-linux-and-container-hosting.md);
+web confinement on macOS by [ADR-0008](0008-gateway-macos-sandbox.md).
 
-## Requirements, evidence and premises
+## Requirement
 
-| Premise | Evidence and state | Recheck trigger |
-| --- | --- | --- |
-| RLS-P1: complete release authenticity is required before setup provisions | VERIFIED requirement: standalone-server.md section2 first-release paragraph and HQ-only/offline setup section; plan revision4 section4. Bind four executables and static UI together. A bare downloaded checksum is insufficient. | Owning setup/release requirements change. |
-| RLS-P2: running-image admission does not authenticate the static release inventory | VERIFIED inspected boundary: org-host server_check.rs and app_auth.rs check existing platform identities; web BuildFiles derives CSP from its supplied assets. None of those checks establishes the publisher of every static asset. | A concrete complete-release verifier is identified or implemented. |
-| RLS-P3: a signed format and production release public-key registry are missing | VERIFIED bounded source observation, not global absence proof: original author release-verification-proposal.md and the selected setup/docs/host paths it inspected. UNVERIFIED production keys; no credential/keychain inspection or key generation for production. | Concrete existing release format/key distribution is supplied. |
-| RLS-P4: existing ring supports exact-message Ed25519 verification | SOURCE-VERIFIED API: pinned ring0.17.14 signature ED25519 and UnparsedPublicKey. Disposable compile/tamper probe remains required before READY. | Dependency/API/version or signature profile changes. |
-| RLS-P5: bounded tar/gzip parsing can avoid archive-directed writes | PROPOSED mechanism, not code evidence: use maintained parsers as entry readers only; manually copy authenticated regular payloads into a new private tree through no-follow directory handles. tar documentation explicitly excludes concurrent destination mutation from unpack safety; never rely on Archive::unpack for our boundary. | Container/parser/copy/durability assumptions fail or versions change. |
-| RLS-P6: production signing configuration is a release-build input | SELECTED requirement: installer trust cannot originate in its own untrusted input bundle. Release owners supply public verification keys at build/package time and retain private signing keys outside application custody. No production key exists merely because a temporary fixture signs successfully. | Publisher/root distribution or supported-platform policy changes. |
-| RLS-P7: a complete activated release must fit the web process preloader before secrets | SOURCE-VERIFIED existing apps/agentic-org-web/src/assets.rs: MAX_BUILD_BYTES=64MiB and MAX_BUILD_FILES=4096. Whole-release revision1 bounds alone allow a publisher-valid UI too large to preload. Preserve the existing bounded-memory execution requirement rather than silently increasing it. | Web preload implementation, shared resource constants or measured supported sizing changes. |
+A complete release is authenticated before setup provisions anything. The four
+executables and the static UI are bound together by one publisher signature. A bare
+downloaded checksum is not enough, and running-image admission does not
+authenticate the static assets. The installer's trust never comes from its own
+input bundle: release owners supply public verification keys at build time and
+keep private signing keys outside the application. A complete activated release
+also fits the web process's bounded preloader.
 
-## Decision candidate
+## Format: profile `agentic-org-release-v1`
 
-Select profile `agentic-org-release-v1`, with an exact-byte Ed25519 signature over bounded UTF-8 `release.v1.json`. Signature sidecar `release.v1.sig` contains exactly64 raw bytes. The installer parses one strict object with duplicate/unknown structural keys rejected before semantic use, verifies the signature with a build-pinned key, and never reserializes the manifest to decide what was signed.
+An exact-byte Ed25519 signature over a bounded UTF-8 `release.v1.json`. The sidecar
+`release.v1.sig` contains exactly 64 raw bytes. The installer parses one strict
+object, rejecting duplicate and unknown structural keys before any semantic use,
+verifies the signature with a build-pinned key using `ring`, and never reserializes
+the manifest to decide what was signed.
 
-The manifest fields are `format` (=agentic-org-release-v1), `release_id`, positive integer `sequence`, `platform` (macos or linux), `architecture` (aarch64 or x86_64), `installer_contract` (=1), `key_id` and `files`. `key_id` is lowercase full SHA256 of the32-byte Ed25519 public key. Release IDs use1–96 ASCII letters/digits/dot/underscore/hyphen, start with an alphanumeric, and cannot be dot/dotdot. Each file entry has exactly `path`, `size`, `sha256`, `role`, `macos_cdhash`; macos_cdhash is the40-lowercase-hex Darwin CodeDirectory unique hash for a macOS executable and null for Linux/data entries. It is produced after platform signing, from that exact payload. size is a nonnegative integer, sha256 is64 lowercase hex, role is executable or data. Do not accept floats/coercion or duplicate/case-colliding normalized paths.
+Manifest fields: `format` (= `agentic-org-release-v1`), `release_id`, positive
+integer `sequence`, `platform` (`macos` or `linux`), `architecture` (`aarch64` or
+`x86_64`), `installer_contract` (= 1), `key_id` and `files`. `key_id` is the
+lowercase full SHA-256 of the 32-byte Ed25519 public key. A release ID has 1 to 96
+ASCII letters, digits, dots, underscores or hyphens, starts with an alphanumeric,
+and is not `.` or `..`. Each file entry has exactly `path`, `size`, `sha256`,
+`role` and `macos_cdhash`. `macos_cdhash` is the 40-lowercase-hex Darwin
+CodeDirectory unique hash of a macOS executable, produced after platform signing
+from that exact payload, and null for Linux and data entries. `size` is a
+non-negative integer, `sha256` is 64 lowercase hex, `role` is `executable` or
+`data`. Floats, coercion and duplicate or case-colliding normalized paths are
+refused.
 
-The closed payload inventory contains exactly the four executable paths `agentic-org`, `agentic-org-office`, `agentic-org-web`, `agent-os` plus nonempty `ui/` static assets including `ui/index.html`. These paths preserve existing sibling executable discovery and web UI-root composition. Manifest/signature are control files, outside their own signed payload inventory. Data may exist only below `ui/`; executable role is limited to the four names. Reject any extra payload, missing entry, file/directory-prefix collision, repeated entry or unsupported role. Parent directories are inferred, never executable payloads. Before activation all executable headers must match the selected OS/CPU; platform code-signing/hardening/team/identity checks remain independently mandatory where applicable. No invocation of a bundle binary is part of verification.
+The payload inventory is closed: exactly the four executables `agentic-org`,
+`agentic-org-office`, `agentic-org-web` and `agent-os`, plus non-empty static
+assets under `ui/` including `ui/index.html`. Manifest and signature are control
+files outside the signed inventory. Data exists only under `ui/`; the executable
+role is limited to the four names. Extra, missing, repeated or prefix-colliding
+entries and unsupported roles are refused. Parent directories are inferred, never
+payloads. Before activation every executable header matches the selected OS and
+CPU; platform signing and identity checks stay mandatory. Verification never runs a
+bundle binary.
 
-Bound manifest<=2MiB, files<=16384, relative path UTF-8<=1024bytes, payload<=2GiB in aggregate, per executable<=512MiB and per UI asset<=64MiB. Reject empty/dot/dotdot components, leading/trailing slash, repeated slash, backslash, NUL/control characters, absolute/drive paths and case-insensitive path collisions. Structural metadata/control filenames are exact. Any larger supported package needs an explicit profile revision and reviewed sizing evidence rather than silent unbounded parsing.
+Bounds: manifest ≤ 2 MiB, files ≤ 16384, relative path ≤ 1024 UTF-8 bytes, payload
+≤ 2 GiB in total, each executable ≤ 512 MiB, each UI asset ≤ 64 MiB. Empty, `.` or
+`..` components, leading or trailing or repeated slashes, backslashes, NUL and
+control characters, absolute and drive paths and case-insensitive collisions are
+refused.
 
-The same release-v1 profile also bounds the aggregate of all `ui/` payload entries to 64MiB (67,108,864 bytes) and their complete loader-entry count to 4096, inclusive. This count equals all declared regular UI payload files plus each distinct proper directory prefix inferred beneath `ui/`, excluding the `ui/` root itself. For example `ui/index.html` and `ui/_app/a.js` count as three entries: two files and `_app`. Empty undeclared directories remain forbidden by exact inventory; directories are not signed payload files and add zero payload bytes. These are nested UI limits, not replacements for the unchanged whole-release 2GiB/16384 and per-file bounds. Count files and inferred directories consistently with the directory loader and sum signed file sizes with checked arithmetic; reject excess before payload staging/publication or web allocation/preload. The pure `org-release` verifier owns and exports these fixed profile constants and enforces them during manifest verification, so host and web receive the same validated contract. The existing web loader consumes those constants and retains independent actual-file byte/count enforcement, exact signed size/hash/inventory checks, sole-thread/presecret ordering and no filesystem after confinement. No runtime knob, debug production exception or larger preload budget is introduced. No release-v1 bundle has been activated by this feature; this focused pre-activation tightening needs no data rewrite, and future larger supported profiles require a distinct reviewed revision rather than bypassing these limits.
+The UI is bounded further: all `ui/` payload bytes total at most 64 MiB
+(67,108,864 bytes), and its loader-entry count is at most 4096. That count is every
+declared UI file plus each distinct directory prefix inferred under `ui/`, not
+counting `ui/` itself; `ui/index.html` and `ui/_app/a.js` count as three entries.
+Excess is refused before staging, publication, web allocation or preload. The pure
+`org-release` verifier owns and exports these constants; host and web receive the
+same validated contract, and the web loader also enforces actual byte and entry
+counts itself. A larger supported package needs a new profile.
 
-### Local directory and documented tar.gz inputs
+## Inputs: local directory and `tar.gz`
 
-Support a complete local directory bundle and the documented `setup --bundle release.tar.gz --offline` path with the SAME manifest/key/payload verification. Online acquisition is a transport feeding the same verifier; offline performs no network/provider/Git/model probes. This decision does not waive the full plan's setup/service/adoption/browser requirements or claim downloads/updaters implemented.
+A complete local directory and `setup --bundle release.tar.gz --offline` go
+through the same manifest, key and payload verification. Online acquisition is a
+transport feeding the same verifier; offline setup makes no network, provider, Git
+or model probe. Archive reading uses pinned `tar` and `flate2` (Rust backend) as
+entry readers only; there is no hand-written archive parser and no generic unpack.
 
-Use exact tar0.4.46 and flate2 1.1.11 with the Rust backend, plus existing ring0.17.14, serde/serde_json/sha2/libc. Pin/lock direct versions and report transitive changes. Source evidence: https://docs.rs/tar/0.4.46/tar/ (entry reader and documented unpack race limitation); locally installed flate2 1.1.11 source; https://docs.rs/ring/0.17.14/ring/signature/ . A bounded disposable build/read/signature probe precedes architecture READY. No handwritten compression/archive parser, app-to-app dependency or new service/crate is selected.
+**`tar.gz`.** The bounded compressed input is copied to an owner-only temporary file
+through no-follow verified descriptors and read from that held descriptor. A first
+pass reads bounded metadata and the entry inventory without creating any path.
+Links, devices, FIFOs, sparse files, duplicate members, aliases and unsupported
+extension records are refused; only deterministic USTAR regular entries with exact
+normalized UTF-8 names are accepted. Compressed bytes (2 GiB), decompressed bytes,
+entry count and metadata are bounded. After verifying manifest, signature and the
+complete inventory, the same held input is reparsed for the payload copy.
+Truncated or corrupt gzip, extra gzip members, non-padding trailing data and hidden
+entries after the tar end are refused; the reader accounts for the whole physical
+container.
 
-For tar.gz, copy the bounded compressed input to an owner-only temporary file through no-follow verified descriptors, then read its immutable held descriptor. First pass reads bounded metadata and entry inventory without creating archive paths. Reject nonregular entries (links, devices, FIFOs, sparse files), duplicate members, aliases and unsupported extension records; accept only the profile's deterministic USTAR regular-entry archive representation, with unambiguous exact normalized UTF-8 names. Bound compressed bytes (2GiB), decompressed bytes (payload cap plus bounded headers/control), entry count and metadata. Verify manifest/signature and the complete entry inventory, then rewind/reparse the SAME held private input for payload copy. Reject truncated/corrupt gzip checksums, extra gzip members, nonpadding trailing data and hidden entries after tar end. Readers must account for the complete physical container, including end markers, rather than accepting only a valid prefix. Parser strictness/feasibility must be proven; do not silently enable permissive PAX/GNU extensions or delegate arbitrary extraction to a command.
+**Directory.** The walk uses no-follow directory handles and refuses symlinks,
+non-regular payloads, hard links (`nlink != 1`), files that are unowned or group- or
+world-writable, and unsafe parents. Each copied file's size and hash are verified,
+and the opened descriptor's identity and metadata are compared before and after the
+read. Input that changes is refused. No input path becomes a custody, instance or
+organization path.
 
-For directory input, walk using no-follow directory handles, reject symlinks, nonregular payloads, hardlinks (nlink!=1), unowned/group/world-writable files and unsafe parents. Verify each copied file's exact signed size/hash; compare opened descriptor identity/metadata before and after read. Treat input mutation as refusal/retry before provisioning. The copied signed bytes, rather than a successful pre-copy path check, establish the staged payload. No input path becomes a custody, instance or organization path.
+## Publication, pinning and crashes
 
-### Publication, pinning and crash behavior
+`crates/org-release` holds the public manifest, signature and inventory policy. It
+depends only on `ring`, `serde`, `serde_json`, `sha2` and the standard library,
+with no internal outgoing edges; `org-host` and `agentic-org-web` consume it. Archive
+staging, pinning and process admission stay in `org-host`; `tar` and `flate2` are
+its private dependencies. Publisher trust is not in `org-pki`: the organization CA
+is a different authority.
 
-Put the small public exact manifest/signature/inventory verification policy in `crates/org-release`, consumed by org-host and agentic-org-web. It owns its required release contracts, depends on existing ring0.17.14/serde/serde_json/sha2 and standard-library ports, and has zero internal outgoing crate edges. Its new incoming internal edges are host and web; no reverse edge or app-to-app dependency. This intentional shared capability prevents the web process importing privileged host/SQLCipher/custody code or duplicating its own signature policy. Keep platform process admission and archive staging/pinning in org-host; tar/flate2 are private host lifecycle dependencies. The host/web composition crates are already broad; the bounded new contract edge is justified by the shared publisher trust requirement and requires focused architecture review. No generic updater/service or organization-CA trust is introduced. Agentic-org remains a thin composition root. Do not put publisher trust in org-pki: tenant CA custody is a different authority.
+Staging is a new owner-only tree in the release store, written through held
+no-follow directory handles with create-new, holding only manifest-authorized
+regular files. Archive ownership, modes, extended attributes and timestamps are not
+restored. Executables are read and execute, data is read-only, and the completed
+tree is immutable. Written bytes are hashed and counted, file data and directory
+entries are flushed (with `F_FULLFSYNC` on macOS and a parent-directory flush), and
+platform image and architecture checks run on the staged bytes. Staging and the
+final release are on the same filesystem. The tree is published by a no-replace
+atomic directory rename, then a parent flush. A collision accepts only an identical,
+fully re-verified release; the same `release_id` with different bytes is refused.
+An installed release is never replaced in place.
 
-Create a new owner-only staging tree under the release store through held no-follow directory handles. Write only manifest-authorized regular files with create-new; do not restore archive ownership, modes, xattrs or timestamps. Final modes are read/execute for executables and read-only for data; parent directories remain traversable and nonwritable in the completed immutable tree. Hash/count the written bytes, flush file data and directory entries through a bounded host adapter using the same verified fsync/macOS file F_FULLFSYNC plus parent-directory fsync behavior (existing libc), reusing the host directory-handle/no-replace primitives where suitable; do not add a host-to-office implementation dependency, then validate all required platform image/architecture constraints on the staged bytes. Keep staging and final release on the same filesystem. Publish the complete tree by no-replace atomic directory rename, followed by parent flush. A collision accepts only a fully reverified identical manifest/payload; same release_id with different bytes is refused. Never replace an installed release in place.
+Only after complete durable publication does the protected release-pin journal
+select the exact `release_id`, manifest SHA-256 and sequence. A per-release-store
+lock serializes publication and pin updates. A durable intent makes crashes before
+or after the rename or pin recoverable: startup reconciles to the previous verified
+pin or the exact new verified release. Missing or corrupt material refuses; there is
+no mixed-version fallback and no activation of an orphan. Setup binds bootstrap and
+resume to the pin and refuses an unexpected release change before touching
+credentials or state. Garbage collection and automatic rollback are not part of this
+decision.
 
-Only after durable complete publication may the protected release-pin journal select its exact release_id+manifest SHA256+sequence. A private per-release-store lock serializes publication/pin updates. Durable intent makes crashes before/after rename/pin recoverable; startup reconciles to either the previous verified complete pin or the exact new verified complete release. Missing/corrupt material refuses; no mixed-version fallback or arbitrary orphan activation. Keep previous release/data recovery state; do not implement garbage collection or automatic update rollback in this prerequisite. Setup binds bootstrap/resume to that pin and refuses an unexpected release change before touching credentials/state.
+## Runtime binding, including the static UI
 
-### Runtime binding, including static UI
+Before setup or serve opens custody, the current release is verified against the
+pinned manifest, and the loaded `agentic-org` image is bound to its signed entry.
 
-Installer verification alone does not authorize mutable sibling files forever. Before setup/serve opens custody, verify the current complete release against the selected durable manifest pin. Bind the actual loaded agentic-org image to its signed file entry. Every admitted worker/web remains subject to the existing exact audit-token/reader and Developer ID/team/identifier/hardening/entitlement checks; additionally compare its kernel-reported CodeDirectory unique hash with the publisher-signed `macos_cdhash` in the selected manifest before secrets/rights. A different signed version from the same publisher is not interchangeable. This avoids deriving the expected loaded identity from a path that can be swapped between checks. Read-only Darwin `csops(CS_OPS_CDHASH)` supplies the kernel-loaded self-image hash; remote queries use `csops_audittoken` with the exact authenticated peer audit token, refusing stale process incarnations and avoiding unchecked PID reuse. Static signature information from SecCodeCopySigningInformation/kSecCodeInfoUnique is disk-derived and cannot substitute for loaded identity. Root generated-image probes establish a stable original loaded hash after exact pathname replacement, a distinct newly executed replacement hash, and rejection of forged/stale-after-exec/exited audit tokens. Evidence: release-verification-design/kernel-image-probe/receipt.json and audit-token-receipt.json. These metadata queries fit the existing libc-only org-socket leaf and do not own trust/admission policy. Generated ad-hoc images do not prove Developer ID production admission.
+- **macOS.** Every admitted worker and web process keeps the audit-token, Developer
+  ID, team, identifier, hardening and entitlement checks, and its kernel-reported
+  CodeDirectory hash must equal the signed `macos_cdhash` before any secret or
+  right. The self-image hash comes from `csops(CS_OPS_CDHASH)`; a peer's from
+  `csops_audittoken` with its authenticated audit token, refusing stale process
+  incarnations. Disk-derived signing information never substitutes for the loaded
+  identity. Another signed version from the same publisher is not interchangeable.
+- **Linux.** The loaded image is bound through the kernel-held executable
+  descriptor and its content digest from the manifest, never a mutable sibling path
+  (ADR-0017).
 
-The web process independently verifies the build-pinned signed manifest/pin profile and binds its own loaded image before preloading. Preload every allowed static asset into memory with its signed expected size/SHA256 and exact UI inventory; compute CSP from those authenticated in-memory bytes. Preserve ADR0008 sole-thread/presecret confinement order and no filesystem access afterward. Tampered assets, manifest, web image or mixed release refuse before secret handoff/listener readiness. The web process imports only org-release public verification, never host custody or archive code. Existing debug fixture exemptions must remain named/debug-only; real release builds cannot opt out. Linux loaded-image binding uses the kernel-held executable descriptor/content rather than a mutable sibling pathname and remains subject to its existing unresolved platform enforcement prerequisites; this decision does not establish Linux runtime readiness.
+The web process independently verifies the build-pinned manifest and pin and binds
+its own loaded image before preloading. It preloads every allowed static asset into
+memory against its signed size and SHA-256 and the exact UI inventory, computes the
+content security policy from those bytes, and touches no filesystem after
+confinement. A tampered asset, manifest or web image or a mixed release is refused
+before secret handoff and listener readiness. The web process imports only the
+`org-release` verifier. Debug fixture exemptions are named and debug-only; release
+builds cannot opt out.
 
-### Trusted keys and rotation
+## Trusted keys and rotation
 
-Release builds receive a versioned STRICT public-key registry from a build-time/package input selected by the trusted build, not runtime CLI/env/bundle. Registry version1 entries bind key_id/public_key32bytes and an inclusive allowed sequence interval; duplicate IDs/key bytes, malformed values and empty invalid intervals fail the build. A compiled minimum release sequence is the freshness floor. An absent production registry can compile a development source build but release activation refuses before provisioning; it must never substitute a generated key or treat test success as production-key provisioning.
+Release builds receive a strict, versioned public-key registry as a build input,
+never from a runtime flag, the environment or the bundle. Version 1 entries bind
+`key_id`, the 32-byte public key and an inclusive allowed sequence interval;
+duplicate IDs or keys, malformed values and empty intervals fail the build. A
+compiled minimum release sequence is the freshness floor. A development build
+without a production registry compiles, but release activation refuses before
+provisioning; it never generates a substitute key.
 
-Initial publisher provisioning happens in release infrastructure: generate/retain a signing private key outside this repo/application, provide only its public key and policy interval to the trusted build, and publish an installer through the existing authenticated platform/distribution route. This task must not generate, read or rotate a real private release key. Test keys are generated in disposable roots and accepted only through test-only or explicitly debug-only verifier configuration; release builds contain no runtime trust override. Production and debug evidence/status are distinct.
+The publisher generates and keeps the signing key in release infrastructure and
+gives the trusted build only the public key and its interval. Test keys are
+generated in disposable roots and accepted only by test or debug verifier
+configuration; release builds have no runtime trust override.
 
-Rotate through a new trusted installer build: include the successor key and sequence interval before switching the publisher, then remove/restrict the retired key in a later trusted build. A manifest cannot add/remove keys or authorize its own signer. Emergency revocation requires distribution of a new trusted installer/registry; old offline installers cannot learn future revocations and this profile makes no such claim. Persist the highest newly activated sequence per protected release store and never activate a lower new release. Exact same ID/digest retry remains idempotent. A previously installed known release retained for explicit data-compatible rollback is separate from accepting a lower new input and cannot silently authorize downgrade. Fresh offline installations enforce only their compiled floor/key intervals; without external freshness evidence they cannot know a later publication exists. This is the selected bounded offline trust policy, not a transparency/update service.
+Rotation goes through a new trusted installer build: add the successor key and
+interval before switching, then remove or restrict the retired key in a later
+build. A manifest cannot add or remove keys or authorize its own signer. Emergency
+revocation needs a new trusted installer; an old offline installer cannot learn of
+later revocations. The highest activated sequence is stored per release store and a
+lower new release is never activated. Retrying the exact same ID and digest is
+idempotent. An offline installation enforces only its compiled floor and key
+intervals.
 
-## Alternatives and limits
+## Rejected alternatives
 
-Unauthenticated hashes do not meet RLS-P1. Platform executable signatures alone omit static assets. Reusing the organization CA would conflate publisher and tenant custody. A new updater service, TUF framework or online transparency service adds scope unnecessary for a bounded local bundle and does not remove the offline root-distribution problem. A directory-only verifier would leave the documented archive command unsupported; both inputs share one verification/publication boundary. Generic archive unpack is rejected because it gives attacker-controlled paths/metadata more authority than needed. Existing keys/real signed artifacts have not been inspected.
+Unauthenticated hashes; platform executable signatures alone, which omit static
+assets; reusing the organization CA; an updater service, TUF or a transparency
+service, which add scope without solving offline root distribution; a
+directory-only verifier, which would leave the documented archive command
+unsupported; generic archive unpack, which gives attacker-controlled paths and
+metadata too much authority.
 
-## Falsification and acceptance evidence
+## Acceptance
 
-Before READY: disposable exact-version ring sign/verify/tamper and tar/gzip regular-entry read/complete-container behavior evidence; source-bound assessment of no-follow staging and existing durability/platform adapters. Missing essential parser feasibility returns INCOMPLETE, not a claim the format is safe.
-
-Implementation tests must cover valid exact bundle, forged/unknown/self-provided key, altered manifest and asset, duplicate/escaped duplicate/unknown fields, bad size/hash/role/CPU/platform, missing/extra/case-colliding files, hostile archive links/traversal/extensions/duplicates/trailing members/zip bombs, mutable input and symlink race refusal. Faults before/after file flush, final rename and pin publication must retain a previous complete pin or the exact recoverable new complete release, with no protected provisioning before verification. Include actual documented offline directory/archive setup and temporary service registration plus real built static UI/browser journey. Preserve original full contract and review gates; architecture READY and generated-key fixtures do not prove real publisher signing/configuration or full feature readiness.
-
-## Architecture review and activation
-
-Revision1 exact candidate SHA2564990ada5f50dd14058e339e7b3ebe9b39ff9cbef115b4f707f9822fddae5d142 received fresh read-only ARCHITECTURE READY with no findings from session01a1e173-62bb-7e01-a2fb-f01c02dc80ba. Required assignment was gpt-6.1-sol/xhigh; its environment did not independently expose actual model/effort. Lead verified exact candidate hash, ordered guidance read ACK/current hashes, DECLARED_READY preflight and terminal0 result. Evidence: .agent-kit/logs/v1-assignment-integration/release-verification-design/review-r1/result.json and feasibility receipts. Lead activated the reviewed body unchanged except status and this activation record on2026-11-15. Detailed implementation may proceed against ready current capability packets; production keys, actual parser/runtime/durability checks, Linux prerequisites and the original full acceptance remain open.
-
-## Revision 2 challenge and focused validation
-
-Original author source evidence `author/release-ui-profile-alignment-1.json` identified RLS-P7 while wiring actual release consumers. Revision1 omitted the smaller aggregate UI execution profile; its publisher authentication, exact inventory, whole-release limits, durability, platform admission, custody and all original RLS-P1–P6 remain valid. Select the existing measured-in-code loader bounds as a shared nested subprofile; do not increase memory without sizing evidence or publish an unloadable release. Preserve the predecessor and its review record; revision2 is not active until independently READY and lead activation. The kernel paragraph corrects feasibility evidence for the unchanged requirement to bind the actual loaded image.
-
-Architecture checks: verify the existing loader constants/ordering and exact kernel probe receipts; no new hardware/performance claim is required to retain the already enforced budget. Implementation acceptance must prove exact-limit and one-over UI byte/count cases, including nested directory prefixes shared by multiple files, directories at multiple depths, and a 4096-file UI whose inferred directories push the loader count over4096 (manifest fixtures may declare sizes without allocating huge payloads), unchanged whole-release/per-file failures, host refusal before publication/pin/custody and independent web refusal before allocation/secrets, exact current static build loading, and actual kernel API negative cases. Pure verification and consumer tests must stay distinct from real production signing/service/full-feature acceptance.
-
-Focused revision2 correction: fresh architecture reviewer session01a1e1d3-8491-70b0-b43b-9ec7a98e4971 returned CHANGES_REQUIRED for candidate35d3d01f2a917609ef5fda6a852eb05e38ae63df41735306500853d0fccc9f94 because assets.rs counts both files and directory entries. Lead confirmed the source at assets.rs65–83. This candidate preserves that bounded loader behavior through an explicitly matching inferred-directory count and adds nested boundary acceptance cases. No larger resource budget, alternate loader, prerequisite waiver or trust change is selected. Same-session focused recheck pending; revision1 remains active.
-
-Revision2 activated2026-11-16 after the single focused same-session recheck returned READY on candidate a9b9979c5d8d36ca21ac749bb9002db1e07d9e283e6bad330f48a102f15df773. Lead verified terminal0, unchanged guidance hashes and the corrected loader count. Session01a1e1d3-8491-70b0-b43b-9ec7a98e4971; assigned Sol/xhigh, actual metadata unexposed. Full record: .agent-kit/logs/v1-assignment-integration/release-verification-design/activation-r2.json. Code/production acceptance remains open.
+- A valid exact bundle installs. A forged, unknown or self-provided key, an altered
+  manifest or asset, duplicate, escaped-duplicate or unknown fields, a bad size,
+  hash, role, CPU or platform, missing, extra or case-colliding files, hostile
+  archive links, traversal, extensions, duplicates, trailing members and
+  decompression bombs, and changing input or symlink races are each refused.
+- UI limits at exactly the bound and one over, for bytes and for loader entries,
+  including directory prefixes shared by several files, directories at several
+  depths, and a 4096-file UI whose inferred directories exceed 4096. The host
+  refuses before publication, pin or custody; the web process refuses before
+  allocation or secrets. Whole-release and per-file limits fail as before.
+- Faults before and after file flush, rename and pin publication leave either the
+  previous complete pin or the exact recoverable new release, with no protected
+  provisioning before verification.
+- Kernel image-binding negative cases on each platform.
+- The documented offline directory and archive setup, temporary service
+  registration and the real built static UI in a browser.
+- Generated-key fixtures prove verifier behaviour only, not real publisher signing.
