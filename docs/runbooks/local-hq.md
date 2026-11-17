@@ -9,13 +9,13 @@ reference for what each executable does now.
 
 | Step | Today |
 | --- | --- |
-| Build the four executables | macOS: CI builds the whole workspace there. Linux: all four build. The host refuses to start an office worker there: the check that a started worker is the intended program exists only for macOS, and the Linux version refuses rather than use a weaker check (`crates/org-host/src/supervisor/channels.rs`, `crates/org-host/src/spawn.rs`). Increment X1 brings the host to Linux. |
+| Build the four executables | macOS: CI builds the whole workspace there. Linux: all four build. The host refuses to start an office worker there: the check that a started worker is the intended program exists only for macOS, and the Linux version refuses rather than use a weaker check (`crates/org-host/src/supervisor/channels.rs`, `crates/org-host/src/spawn.rs`). Increment X2 brings the host to Linux. |
 | `--help` and `--version` of each executable | Work. |
 | `agentic-org serve` (debug build) against a disposable home | macOS: starts the host in the foreground (from the source; not run for this runbook). Its socket answers only `hello` and `instance.status`, and refuses every call while no instance is registered. |
 | `agentic-org setup` | Refuses and changes nothing. Increment A2 makes it work. |
 | `agentic-org-web` | Refuses to open a listener. Increment A3 makes it work. |
 | Create an organization, sign in, open the browser application against a server | Not possible yet (increments A3 and A4). |
-| The host starting an office worker | macOS only today (`crates/org-host/src/spawn.rs`); increment X1 adds Linux. |
+| The host starting an office worker | macOS only today (`crates/org-host/src/spawn.rs`); increment X2 adds Linux. |
 | The browser application on its own | `bun run dev` in `apps/agentic-org-ui`; areas without a server adapter show as unavailable. |
 
 ## 1. A disposable home

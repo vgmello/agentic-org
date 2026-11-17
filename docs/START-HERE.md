@@ -79,8 +79,8 @@ design; it is not a requirement.
   `durable/` and `runtime/<office-id>/` only.
 - **The goal.** The two engineers and their agents are to work inside this product as
   early as it can carry them. Milestone one is one office on a Mac: getting in, the
-  organization, agents hired through HR, messages, tasks. Linux and a second office
-  follow.
+  organization, agents hired through HR, messages, tasks. Linux, including a
+  container, is built at the same time as Track X; a second office follows.
 
 ## When a requirement is unclear or missing
 

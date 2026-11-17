@@ -2,7 +2,9 @@
 
 Status: **accepted by the owner 2026-11-17** (conflict plan entry B-09): "we need both;
 I need to be able to host the office inside a Docker container; we need to abstract what
-we need properly." Implementation pending. Amends the platform statements of
+we need properly." Linux is built now, as its own track alongside milestone one
+(owner decision 2026-11-17); the design is [Linux host](../design/linux-host.md) and the
+increments are X1 to X6 of the implementation plan. Implementation pending. Amends the platform statements of
 [standalone-server.md](../design/standalone-server.md),
 [office-host-boundary.md](../design/office-host-boundary.md),
 [ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only, and
@@ -15,18 +17,25 @@ we need properly." Implementation pending. Amends the platform statements of
   (`crates/org-host/src/spawn.rs`).
 - Worker admission on macOS checks the child's code signature through its audit token.
   Linux has no equivalent in the code.
-- The web process confines itself with a macOS Seatbelt profile. The Linux confinement
-  is a contract with no adapter, so it fails closed.
-- The host's secrets use the macOS keychain. The Linux provider was undecided.
-- Service registration assumes launchd or a systemd user unit. A container has neither.
+- The web process confines itself with a macOS Seatbelt profile. On every other system
+  a refusing adapter reports that confinement is unavailable.
+- The host's secrets use the macOS keychain; a Linux release build has no store.
+- No service is registered on any system yet. A container has neither launchd nor a
+  user's systemd.
 
 ## Decision
 
 1. **Both platforms are v1.** macOS and GNU/Linux are supported hosts, and a Linux
    instance may run as the main process of a container image.
 2. **Platform differences sit behind five small contracts.** Each has a macOS and a
-   Linux implementation, chosen at composition. Nothing outside these adapters branches
-   on the operating system.
+   Linux implementation and a refusing adapter for every other system, chosen at
+   composition. The five are not the only differences: the
+   [design](../design/linux-host.md#4-the-other-platform-capabilities) names five
+   further capabilities (`fs`, `dirs`, `process`, `socket`, `presence`), which follow
+   the same rule, and the
+   [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)
+   governs any difference found later. Nothing outside these adapters branches on the
+   operating system.
    | Contract | Question it answers | macOS | Linux and containers |
    | --- | --- | --- | --- |
    | Process admission | Is the child the program we meant to start? | Code signature through the audit token | The verified release image: the pinned path, its content digest from the release manifest, and the child's identity from the kernel |
@@ -34,8 +43,8 @@ we need properly." Implementation pending. Amends the platform statements of
    | Confinement | What may the web process touch? | Seatbelt (ADR-0008) | Landlock and seccomp; the adapter must exist, and a container's own restrictions do not replace it |
    | Service lifecycle | Who starts and restarts the host? | launchd | A systemd user unit, or the container runtime running `agentic-org serve` in the foreground |
    | Agent isolation | How is an agent kept from the data? | The modes of ADR-0015 | The same modes; `dedicated-user` uses an account created in the image or by setup |
-3. **No platform fails open.** Where an adapter is missing or a kernel feature is
-   unavailable, the affected function refuses to start and says why. A container
+3. **No platform fails open.** On a system with only a refusing adapter, or where a
+   kernel feature is unavailable, the affected function refuses to start and says why. A container
    without the kernel features confinement needs is reported, not silently accepted.
 4. **A container is a normal instance.** The container holds the whole instance: the host, the web process and the office. A satellite office in a container is the same image enrolled as a satellite. `agentic-org serve` runs in the foreground and
    stops cleanly on the runtime's stop signal. The organization data root is a mounted
@@ -51,15 +60,53 @@ we need properly." Implementation pending. Amends the platform statements of
 | --- | --- |
 | LNX-1 | On Linux, the host starts an office worker, the worker serves the local socket, and `agent-os` completes a send and a read. |
 | LNX-2 | The same in a container built from the repository's container file, with only mounted volumes for data and secrets, and again after the container is replaced. |
-| LNX-3 | With the Linux confinement adapter removed or its kernel feature unavailable, the web process refuses to start and reports the reason. |
+| LNX-3 | With the Linux kernel feature unavailable, the web process refuses to start and reports the reason. |
 | LNX-4 | Host secrets on Linux are readable only by the service account; none is in the data volume. |
-| LNX-5 | No source file outside the five adapters contains a platform conditional for these concerns. |
+| LNX-5 | No `.rs` file outside `crates/org-platform` contains `target_os`, `target_vendor` or `target_family`; a CI check enforces it. |
 | LNX-6 | The CI matrix runs the workspace checks on macOS and Linux. |
+
+## Decisions on Linux (2026-11-17)
+
+These settle what the decisions above left open. The detail is in the
+[Linux host design](../design/linux-host.md).
+
+6. **One crate holds every platform difference.** `crates/org-platform` owns the five
+   contracts and the five further capabilities, with macOS, Linux and refusing adapters
+   and one non-conditional constructor each. Consumers keep their policy (which image,
+   which secret names) and pass it as data. It depends on no workspace crate.
+7. **Linux process admission executes verified bytes.** The host copies the pinned
+   executable into a sealed, execute-only memory file, compares its SHA-256 with the
+   signed release manifest (in a development build, with the bytes read at host start),
+   and starts the child from that file with `execveat`, holding a pidfd. The rendezvous
+   peer must match by `SO_PEERCRED`. There is no start-suspended step: the bytes are
+   fixed before `exec`, and the execute-only image starts the child non-dumpable. A
+   release build without a runtime release pin refuses.
+8. **The Linux credential store is an owner-only directory outside the data root.**
+   `${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials/<instance-id>/`, or a
+   mounted secrets volume in a container, recorded at setup. Mode `0700`, items `0600`,
+   owned by the service user, not on a memory filesystem, disjoint from the data root;
+   anything else refuses. The same engine is every development build's store.
+9. **The web process confines itself with Landlock and seccomp.** It connects to the
+   rendezvous, sets no-new-privileges, applies Landlock (ABI 3 or higher, every
+   filesystem right handled, no rule) and a seccomp allowlist that kills on any other
+   call, then reports ready. The host checks seccomp and no-new-privileges in
+   `/proc/<pid>/status`. Linux hosts need kernel 6.2 or later with Landlock enabled.
+10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
+    serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
+    `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
+    directory; nothing detects a container. The host refuses to run as root.
+11. **Recovery and reset on Linux.** The recovery code's confirmation is the
+    administrator's browser approval of the run (ADR-0011); the local context is a
+    controlling terminal in the foreground. `admin reset` is authorized by root through
+    `sudo` (SIGN-33).
+12. **Same-user agents.** Nothing new on Linux. An agent whose vendor sandbox is
+    unavailable, as in a container that refuses user namespaces, is not started.
 
 ## Consequences
 
-- Linux stops being a later port. Its admission, credential and confinement adapters
-  are v1 work, and each needs a short design before code.
+- Linux stops being a later port. Its adapters are v1 work, built as Track X in
+  parallel with milestone one.
 - macOS code-signature admission has no direct Linux equivalent. The Linux check is
-  weaker against a local attacker who can replace files as the service user, and the
-  design must say so.
+  weaker against a local attacker who runs as the service user: such a process can
+  read the credential store and replace the host's own executable before its next
+  start. The design's section 5 lists what such an attacker can still do.
