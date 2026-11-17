@@ -1,78 +1,238 @@
-# Candidate ADR-0011: Protected recovery delivery (REC-DEL-1), revision 1
+# ADR-0011 · Protected recovery delivery (REC-DEL-1)
 
-> Amended 2026-11-17 by [ADR-0017](0017-linux-and-container-hosting.md): Linux is v1. Where this ADR says a Linux release remains unavailable until its own platform policy exists, that policy is now required work, not a deferral.
+Status: accepted. Implementation pending. Builds on
+[ADR-0007](0007-hq-creation-escrow.md), whose code, KDF, envelope, CA identity,
+worker-only key custody, public and private exclusions and retry rules are
+unchanged. This is not full recovery after losing HQ (REC-1).
 
-Status: ACTIVE for implementation architecture following independent READY review; not implementation or production acceptance. Owner: local Codex lead. Canonical path: docs/adr/0011-protected-recovery-delivery.md.
+## Requirement
 
-## Scope and retained rationale
-
-Implement the planned missing delivery/ACK/public-package prerequisites identified by the original fullstack author in author/recovery-delivery-intake-1.json. ADR0007 REC-ESC-1 E1/E2/E3 and its exact code/KDF/envelope, immutable CA identity, worker-only key custody, public/private exclusions and retry rules remain unchanged. ADR0006 acceptance and ADR0008/0009 platform/release requirements remain unchanged. This is neither a replacement cryptosystem nor full REC-1 HQ-loss recovery. Waiting/Shown do not block otherwise-ready HQ; acknowledged material cannot be redisplayed or implicitly regenerated. Preserve all production tests and independent review gates.
-
-## Premises, sources and evidence (2026-11-16)
-
-D1 REQUIRED/VERIFIED: docs/design/standalone-server.md CA escrow and explicit recovery gate; docs/specs/server-installation-and-access-ux.md RCV-15/19/20/21/22/25/26/27/28; ADR0007 E1-E3. Signed native CLI, live instance administrator, selected local HQ, OS user presence at this Mac, TTY-only secret output, one confirmation covers showing and recording in the same invocation, a fresh confirmation for every redelivery, durable code-free audit and erasure after off-HQ acknowledgement. A macOS SSH/noninteractive invocation receives no code. No browser/web recovery-secret surface.
-D2 OBSERVED/VERIFIED at intake: RecoveryRelease/RecoveryAcknowledge DTOs exist but dispatch and delivery ledger do not; pending code is private HostSecrets custody bound to selected_provisioning Reservation. Office::hq_creation_public_record verifies the exact committed/public-copy package, but no host transport exists. Existing native signed-image policy is not OS presence. Recheck affected source before implementation.
-D3 FEASIBILITY/SCOPED: actual installed macOS SDK compile/runtime query under recovery-presence-scope/platform-query-receipt-2.json and platform-query-pty-receipt-1.json. Foundation/LocalAuthentication/Security/SystemConfiguration APIs compile with ARC/blocks/Werror; task audit token ASID matches SessionGetInfo query; console UID and exact proc_bsdinfo read work. Actual background Codex context has graphic flag but no controlling TTY; owned script PTY yields foreground/TTY flags. No evaluatePolicy invocation, credential read or human authentication occurred. PTY is necessary context, NEVER sufficient physical presence. Actual positive/cancelled authentication and signed-client behavior remain production integration gates. SDK headers copied with hashes there. Query failure or remote/root/no-graphic/no-console/nonforeground means denial, not an environment fallback.
-D4 OBSERVED: cc1.11.1 is already locked. org-host has an existing build.rs and Security-framework boundary. A private SDK Objective-C bridge introduces macOS framework/build edges; no objc2/block2, shell authorization helper or homegrown Rust Objective-C/block ABI is required. The selected new direct build edge is cc =1.11.1; no existing dependency version/checksum may change. Recheck actual Cargo lock before adding it; an unavailable exact pin returns to lead.
-D5 OBSERVED: existing launch-v3 transfer header is capped at 1KiB with exact fd count, and org-office-launch::writer frames are 16KiB with worker-initiated requests to host. Reusing the writer stream in the reverse direction would conflict with its current request ordering. New recovery exchange therefore uses a separate dedicated one-shot descriptor on the authenticated supervisor transfer, not an enlarged transfer header or ordinary human/agent channel. Org-host never imports org-office/org-pki or reads office DB/key material.
+From the [standalone design](../design/standalone-server.md) and the
+[installation UX](../specs/server-installation-and-access-ux.md) (RCV-15, 19, 21,
+22 and 25 to 27): the recovery code is released only to the signed native CLI, run
+by the instance's administrator for the local HQ, signed in by approving the run in
+a browser (no password in the terminal), with the OS user present at the
+machine, and shown only on a terminal. One confirmation covers showing and
+recording in the same invocation; every redelivery needs a fresh confirmation. The
+audit is durable and code-free, and the code is erased after the owner acknowledges
+keeping it off HQ. A non-interactive invocation or an SSH session on macOS receives
+no code. There is no browser or web surface for the recovery secret. A waiting or
+shown code does not block an otherwise ready HQ; acknowledged material is never
+redisplayed or regenerated.
 
 ## Presence adapter and connection authority
 
-Keep existing recovery.release parameters (including redeliver) and recovery.acknowledge shapes. Dispatch only through the existing native host.sock service to the verified signed agentic-org client. Strict raw request decoding, peer kernel identity and loaded-image revalidation apply before and after asynchronous OS confirmation and immediately before response/deletion authorization. No caller-supplied presence flag, SSH environment variable, terminal string, PID alone or account cookie proves presence. Web/agent peers cannot invoke these methods, including package export.
+`recovery.release` (with its `redeliver` parameter) and `recovery.acknowledge` are
+dispatched only through the native `host.sock` service to the verified signed
+`agentic-org` client. Strict raw request decoding, the peer's kernel identity and
+loaded-image revalidation apply before and after the asynchronous OS confirmation
+and again immediately before the response and before deletion is authorized. No
+caller-supplied presence flag, SSH environment variable, terminal string, bare PID
+or account cookie proves presence. Web and agent peers cannot invoke these methods,
+including package export.
 
-Implement private org-host macOS adapter backed by a small Objective-C ARC/blocks SDK translation unit compiled by cc only under target_os=macos. Link Foundation, LocalAuthentication, Security and SystemConfiguration. Use Security SessionGetInfo with the ASID from the existing kernel-authenticated peer audit token, current SCDynamicStore console UID, and exact-size proc_pidinfo(PROC_PIDTBSDINFO) for that still-live peer. Require non-root same effective UID as host and current console user; graphic session, not remote/root; exact token PID/UID identity and existing exec-swap fencing; controlling terminal e_tdev != NODEV and foreground group pbi_pgid == e_tpgid. Query failures fail closed. CLI additionally checks actual stdin/stdout TTY and its local screen/Enter preflight before sign-in. Host verifies its own local console session and peer belongs to that same audit session, preventing a remote session from borrowing the console UID. Recheck these contextual facts after OS reply and before secret release. A user switch, session end, peer exit/exec, revoked account or disconnected channel invalidates the request.
+**macOS.** A private `org-host` adapter, backed by a small Objective-C (ARC, blocks)
+translation unit compiled by `cc` only on macOS, links Foundation,
+LocalAuthentication, Security, SystemConfiguration and the system `libbsm` (for
+`audit_token_to_asid`, `audit_token_to_pid` and `audit_token_to_euid`). It uses
+`SessionGetInfo` with the ASID from the peer's kernel-authenticated audit token, the
+current console UID from `SCDynamicStore`, and exact-size
+`proc_pidinfo(PROC_PIDTBSDINFO)` for the still-live peer. It requires a non-root
+peer with the same effective UID as the host and the current console user, a
+graphic, non-remote session, exact token PID and UID identity with exec-swap
+fencing, a controlling terminal (`e_tdev != NODEV`) and the foreground process group
+(`pbi_pgid == e_tpgid`). The host verifies that it and the peer belong to the same
+local console audit session, so a remote session cannot borrow the console UID. Any
+query failure denies. The CLI also checks that stdin and stdout are a terminal and
+runs its local screen and Enter preflight before sign-in. These facts are rechecked
+after the OS reply and before release. A user switch, session end, peer exit or
+exec, revoked account or disconnected channel invalidates the request.
 
-For each release/redelivery invocation allocate a fresh LAContext, touchIDAuthenticationAllowableReuseDuration=0, invoke LAPolicyDeviceOwnerAuthentication once with a fixed bounded sanitized reason naming both showing the recovery code and recording it as stored. Do not interpolate untrusted organization/account strings. Success requires the SDK completion success=YES with no error, a still-active request and all postchecks. canEvaluatePolicy alone is never success. Cancellation, inability, any error, timeout, nil context, late/duplicate callback all deny without code, audit-show mutation or ACK authority. A policy success is OS device-owner authentication, not biometric-only identity; accepted password/Watch behavior follows the maintained platform policy.
+**Linux, including a container** (ADR-0017). There is no OS presence dialog. The
+signed-in administrator's approval of this run in the browser counts as the
+confirmation: it is the run's one confirmation, bound to this connection and run
+like the macOS confirmation, and it never carries over to another run. The terminal
+and local-context checks still apply; a non-interactive run receives no code.
 
-Bound one in-flight presence operation per host, with a monotonic 90-second OS-response deadline; concurrent requests fail busy/unavailable rather than queue unbounded prompts. Do not hold controller, DB, writer, session-map or custody locks while waiting for the OS/UI. Use a short reservation under lock, release locks, evaluate outside locks, then reacquire and recheck the frozen account/session/org/HQ/delivery ordinal/public-package identity. Reserving does not mark Shown. Shutdown/EOF invalidates the OS context and reservation. The bridge owns asynchronous callback lifetime using ARC heap state/block capture; no Rust stack references escape. Terminal state is synchronized and single-assignment; a late callback cannot release a code or access freed memory. Invalidate and release the fresh context after completion or timeout. No C ABI exception or NSError/user-input text crosses into Rust logs; return fixed status categories only.
+Each release or redelivery allocates a fresh `LAContext` with
+`touchIDAuthenticationAllowableReuseDuration = 0` and evaluates
+`LAPolicyDeviceOwnerAuthentication` once, with a fixed sanitized reason that names
+both showing the code and recording it as stored. Untrusted organization or account
+strings are never interpolated. Success requires `success == YES` with no error, a
+still-active request and every postcheck. `canEvaluatePolicy` alone is never
+success. Cancellation, inability, any error, a timeout, a nil context and a late or
+duplicate callback all deny, with no code, no change to the shown state and no
+acknowledgement authority. Success is OS device-owner authentication, not
+biometric-only identity.
 
-A successful release creates one private nonserializable ACK permission tied to the exact native connection, current session/account, instance/org, escrow/provisioning identity and committed delivery ordinal. It is never returned to caller/storage. It expires with the existing live session/connection and is discarded on EOF, session end/revocation, another release on that connection or ACK attempt. A different connection or fresh CLI run must release/redeliver and authenticate again. ACK of a currently delivered code requires that same permission plus live authorization and all binding checks. There is no second OS dialog within that invocation. A lost ACK response after durable completion may be retried as an already-acknowledged nonsecret result under live native administrator authority; this cannot redisplay code or recreate an ACK permission.
+One presence operation is in flight per host, with a monotonic 90-second deadline;
+a concurrent request fails as busy rather than queueing prompts. No controller,
+database, writer, session-map or custody lock is held while waiting: a short
+reservation is taken under lock, the lock is released, the evaluation runs, and the
+frozen account, session, organization, HQ, delivery ordinal and public-package
+identity are rechecked after reacquiring. A reservation does not mark the code
+shown. Shutdown or EOF invalidates the OS context and the reservation. The bridge
+owns the callback's lifetime through ARC heap state; no Rust stack reference
+escapes. The terminal state is synchronized and assigned once, so a late callback
+cannot release a code or touch freed memory. No C exception, `NSError` or user text
+crosses into Rust logs; only fixed status categories do.
+
+A successful release creates one private, non-serializable acknowledgement
+permission tied to the exact native connection, current session and account,
+instance and organization, escrow and provisioning identity and the committed
+delivery ordinal. It is never returned to the caller or stored. It ends with the
+session or connection and is discarded on EOF, session end or revocation, another
+release on that connection, or an acknowledgement attempt. A different connection or
+a fresh CLI run must release again and authenticate again. Acknowledging the
+delivered code needs that permission plus live authorization and every binding
+check, with no second OS dialog in the same invocation. A lost acknowledgement
+response after durable completion may be retried as an already-acknowledged,
+non-secret result under live native administrator authority; it cannot redisplay
+the code or create a new permission.
 
 ## Durable state, audit and custody cleanup
 
-Add an executable versioned protected HostDb migration bound to existing immutable selected_provisioning identity/opaque custody handle. Do not create a public/replicated recovery-code table or duplicate the pending secret in SQL. Store version, instance/org/creation operation/HQ office, public escrow digest/public key identity, pending/delivered/ack_pending/acknowledged state, monotonic delivery ordinal, first shown time, last redelivery time/count and acknowledgement time/account. Audit records contain action/actor/time/org/ordinal/result, never code/key/handle/raw requests. Audit/status use observed persisted dates/counts, never inferred successful terminal output. Validate source/identity/version consistency on open and before mutations; partial/missing/mismatched committed identity requires forward repair, never reset/rotate.
+A protected, versioned table in the host database is bound to the immutable
+provisioning identity and the opaque custody handle. There is no public or
+replicated recovery-code table, and the pending secret is never copied into SQL. The
+record holds version, instance, organization, creation operation and HQ office,
+public escrow digest and public-key identity, state (`pending`, `delivered`,
+`ack_pending`, `acknowledged`), a monotonic delivery ordinal, first shown time, last
+redelivery time and count, and acknowledgement time and account. Audit entries hold
+action, actor, time, organization, ordinal and result, never code, key, handle or
+raw request. Audit and status report stored dates and counts, never an inferred
+terminal outcome. Source, identity and version consistency is validated on open and
+before each change; a partial, missing or mismatched identity needs forward repair,
+never a reset or rotation.
 
-Import an existing pending provisioning handle only by verifying exact frozen completed provisioning/public identity. A healthy previously acknowledged record needs no pending code. Do not infer acknowledgement from arbitrary missing custody. Pending before completed HQ stays preparation-incomplete, not publicly ready. Waiting/Shown with a valid pending handle permits otherwise-ready HQ.
+The delivery record is created only for a completed provisioning whose frozen
+public identity verifies. A healthy acknowledged record needs no pending code, and
+acknowledgement is never inferred from missing custody. A pending code before HQ is
+complete stays "preparation incomplete", not ready.
 
-Release: reserve -> verify native/admin/HQ/public source/state -> OS presence outside locks -> revalidate -> read the same pending custody code into existing non-Clone/zeroizing secret wrapper -> atomically commit delivered state, delivery ordinal and code-free audit -> install exact connection ACK permission -> send through existing secret response path. A failure after durable commit but before complete response leaves Shown and requires explicit redeliver on a new invocation. redeliver=true on Pending records the first showing; delivered without redeliver refuses and reports persisted dates without returning a code. Delivered+redeliver reuses the SAME code/package and records exactly one new redelivery entry only after successful presence. No ordinary retry rotation. On integer exhaustion fail closed. Cancellation before commit changes no showing state.
+**Release:** reserve → verify native peer, administrator, HQ, public source and state
+→ OS presence outside locks → revalidate → read the same pending code into the
+existing non-`Clone`, zeroizing secret wrapper → atomically commit `delivered`, the
+ordinal and a code-free audit entry → install the connection's acknowledgement
+permission → send through the secret response path. A failure after the commit but
+before a complete response leaves the code shown and requires an explicit
+redelivery in a new invocation. `redeliver=true` on a pending code records the first
+showing. A delivered code without `redeliver` is refused, reporting the stored dates
+without a code. Redelivery reuses the same code and package and records exactly one
+new redelivery after successful presence. An ordinary retry never rotates.
+Exhausting the ordinal fails closed. Cancellation before the commit changes nothing.
 
-ACK: verify live same-run permission/binding and current delivery ordinal, then atomically commit ack_pending with original account/time/audit identity. Consume permission. Only after this durable deletion intent remove the existing pending-code custody item idempotently. Verify absent, then atomically mark acknowledged and emit existing code-free organization.changed recovery state. Never clear/rewrite other provisioning custody or writer/database keys. A failed deletion leaves ack_pending, no secret response/redisplay, and resumable explicit failure. Startup finishes frozen ack_pending deletion idempotently before affected HQ readiness; a crash at every deletion boundary cannot resurrect code or manufacture a new acknowledgement actor/time. An exact ACK retry completes the same intent without new presence because it can no longer expose a secret or initiate a new deletion intent. Already acknowledged retries return idempotent success, no extra audit, generation or key rotation. Missing custody before ack_pending is a recovery error, except evidence-backed already-acknowledged records.
+**Acknowledge:** verify the live same-run permission and binding and the current
+ordinal, then atomically commit `ack_pending` with the account, time and audit
+identity, and consume the permission. Only after that durable intent is the pending
+custody item removed, idempotently. Its absence is verified, then the record is
+atomically marked `acknowledged` and the code-free `organization.changed` recovery
+state is emitted. No other custody, writer or key is touched. A failed deletion
+leaves `ack_pending`, with no secret response or redisplay and a resumable explicit
+failure. Startup finishes a frozen `ack_pending` deletion idempotently before HQ is
+ready; a crash at any deletion boundary cannot resurrect the code or invent a new
+acknowledging actor or time. An exact acknowledgement retry completes the same
+intent without new presence. An already-acknowledged retry returns success with no
+extra audit, generation or rotation. Missing custody before `ack_pending` is a
+recovery error, except for an evidence-backed acknowledged record.
 
 ## Public escrow source and package export
 
-Add a dedicated TransferRecord::RecoveryPublicRead {version:1,office_id,channel_id} carrying EXACTLY one host-created connected UnixStream descriptor via the existing authenticated launch-v3 transfer. It is a new mandatory-known record for matching bundled host/worker; older strict peers reject it, no fallback. Header stays <=1KiB and existing normal/grant frames remain unchanged. The host-owned supervisor creates/transfers only after authenticated worker identity and frozen office/instance binding checks; close/restart/revocation invalidates it. Handle once with bounded read/write deadlines and close. Worker transfer plumbing passes actual Office and immutable instance/office binding; callers cannot supply a different DB/path. Do not multiplex this exchange into selected writer-control ordering.
+A dedicated transfer record, `RecoveryPublicRead { version: 1, office_id, channel_id }`,
+carries exactly one host-created connected Unix stream descriptor over the
+authenticated launch rendezvous. The transfer header stays ≤ 1 KiB and the normal and
+grant frames are unchanged. The host's supervisor creates and transfers it only
+after authenticating the worker and checking the frozen office and instance binding;
+close, restart or revocation invalidates it. It is handled once with bounded read and
+write deadlines and then closed. The worker passes its actual office and immutable
+instance and office binding; a caller cannot supply another database or path. This
+exchange is not multiplexed into writer-control ordering.
 
-Define small strict version1 public DTOs in org-office-launch::recovery, with no domain/PKI implementation import. Request binds instance_id, office_id, organization_id and creation operation_id. Response repeats those bindings, exact escrow version/public key and package_sha256, plus bounded package_hex containing the original encrypted bytes (ASCII lowercase hex; <=8950 chars for <=4475 bytes). Hex encoding is mechanical maintained standard formatting/parsing, not cryptography. Use a fixed 16KiB newline JSON frame cap for this private exchange, strict deny_unknown_fields and exact EOF/newline rules. The cap suffices for bounded identities+8950 package hex; validate identity lengths before serialization/allocation. Reject unsupported version, unknown fields, duplicate keys, oversized/truncated/trailing/extra-frame responses and mismatched bindings/digest/public header/key before exposing/exporting bytes. Package must be 1..4475 bytes and retain ADR0007 exact public envelope structure/profile/org/key. Host may parse bounded public envelope/header for equality/hash; no KDF/private decrypt or org-pki dependency.
+Strict version-1 public DTOs live in `org-office-launch::recovery`, with no domain
+or PKI import. The request binds `instance_id`, `office_id`, `organization_id` and
+the creation `operation_id`. The response repeats them and adds the escrow version,
+public key, `package_sha256` and `package_hex`, the original encrypted bytes as
+lowercase hex (≤ 8950 characters for ≤ 4475 bytes). Frames are newline JSON capped at
+16 KiB with `deny_unknown_fields` and exact EOF and newline rules. An unsupported
+version, unknown or duplicate keys, an oversized, truncated, trailing or extra frame,
+and any mismatch of binding, digest, public header or key are refused before bytes
+are exposed or exported. The package is 1 to 4475 bytes and keeps ADR-0007's exact
+envelope structure, profile, organization and key. The host may parse the bounded
+public header for equality and hashing; it never derives a key or decrypts, and
+does not depend on `org-pki`.
 
-The worker response source is EXCLUSIVELY Office::hq_creation_public_record(), which verifies the committed public record and exact copied projection. It never serializes LocalRecord or reads local_der into a response. Validate actual local HQ role and matching creation operation. Host compares against frozen protected completed provisioning identity, actual live worker admission and delivery ledger. A stale/missing/conflicting copied package is an explicit recovery failure, never reconstructed from untrusted caller bytes or a public path hint.
+The worker's only response source is `Office::hq_creation_public_record()`, which
+verifies the committed public record and its copied projection. It never
+serializes the local record or reads the private DER into a response. The worker
+checks its HQ role and the matching creation operation; the host compares against
+the frozen provisioning identity, the live worker admission and the delivery
+ledger. A stale, missing or conflicting copied package is a recovery failure and is
+never rebuilt from caller bytes or a path hint.
 
-Add native-only typed recovery.package export operation if absent: session/org only, no server filename or arbitrary office selector. Result is the same strict public record, no code/handle/key. Require live signed native instance-admin/local HQ and the local console/TTY context; export alone does not confer ACK permission. It does not need a separate OS authentication dialog because it reveals only the already-public encrypted package; actual secret release still always prompts once. Browser/web/agent transport refuses it. CLI writes exact package bytes to an explicitly chosen new local file, O_CREAT|O_EXCL|O_NOFOLLOW, mode0600, no overwrite, flush file/parent as applicable; report export failure before final retention acknowledgement. Never silently write to a user organization directory. Public package export state does not claim an off-HQ backup. Fixed-size response secret wrappers remain private to recovery.release.
+`recovery.package` is a native-only typed export: session and organization only, no
+server filename, no office selector. It returns the same public record, with no
+code, handle or key. It requires a live signed native instance administrator on the
+local HQ with the local console and terminal context; it does not grant
+acknowledgement permission and needs no separate OS dialog, because it reveals only
+the already-public encrypted package. Browser, web and agent transports refuse it.
+The CLI writes the exact bytes to an explicitly chosen new local file
+(`O_CREAT | O_EXCL | O_NOFOLLOW`, mode `0600`, no overwrite, file and parent flushed)
+and reports an export failure before the final acknowledgement. It never writes into
+an organization directory. Export does not claim an off-HQ backup.
 
-## CLI/setup, compatibility and dependency boundaries
+## CLI
 
-Implement recovery release/status and explicit local package destination in existing agentic-org CLI library composition. Check actual terminal/local context before collecting credentials. Use selected saved instance context or explicit instance, live native sign-in, exact org, current recovery state, Enter, one OS confirmation, TTY-only code, package export, final code group and typed yes that covers BOTH code and package retained off HQ. Never put code in command arguments, stdout JSON, logs, error strings, screenshots/history or package. Secret display uses actual terminal only; no redirected output. No optional force/noninteractive override. Wrong group/cancel/no leaves Shown, not confirmed. Status is nonsecret and always says REC-1 HQ-loss recovery unsupported. Interactive setup uses this same flow after protected HQ creation and before registered service startup; defer/noninteractive/macOS SSH legitimately starts otherwise-ready HQ with Waiting and an exact later collect command. Keep selected normal setup/retry service boundaries and actual production release pins. Linux release remains unavailable until its own reviewed OS-presence/platform policy; bounded Linux web probes do not authorize secret delivery or a new platform claim.
+`agentic-org recovery` release and status, with an explicit local package
+destination, are implemented in the `agentic-org` CLI library. It checks the
+terminal and local context before collecting credentials, then uses the saved
+instance context or an explicit instance, the administrator's sign-in approved in
+a signed-in browser, the exact
+organization, the current recovery state, Enter, one OS confirmation, the code on
+the terminal only, package export, the code's final group and a typed `yes` that
+covers both code and package kept off HQ. The code never appears in arguments,
+standard output JSON, logs, error strings, screenshots, history or the package, and
+never goes to redirected output. There is no force or non-interactive override. A
+wrong group, cancel or `no` leaves the code shown and unconfirmed. Status is
+non-secret and states that recovery after losing HQ (REC-1) is not supported.
+Setup creates no organization and runs no part of this flow. An organization is
+created in the browser; its code starts Waiting, its HQ is ready without it, and the
+browser shows the exact command to run on the HQ machine.
 
-Only selected new direct edge: host build->cc1.11.1 plus listed macOS SDK frameworks. Existing host->office-launch/proto/host-control, worker composition->office/office-launch, CLI->host-control remain acyclic. No host->office/pki; no web->host; no crypto format/key namespace broadening. Update owning standalone/UX protocol docs before dependent implementation, exact manifests/lock/catalog/preflight required. Keep root sole architecture owner, same persistent fullstack author and disjoint browser worker; no third source writer.
+## Dependencies
 
-## Acceptance, falsification and rollback
+The only new direct edge is `org-host` build → `cc`, plus the listed macOS SDK
+frameworks and `libbsm`. Existing edges stay acyclic: no host → office or host → pki,
+and no web → host.
 
-1. Strict DTO/version/size/duplicate/trailing/unknown checks, 4475-byte exact/one-over package, digest/org/office/instance/operation/key mismatch and ordinary/web/agent/unsigned peer refusal before secret/custody use. Actual authenticated supervisor public-record exchange sources exact committed bytes; local private DER cannot serialize into it.
-2. Temporary protected DB/custody tests for first show, redeliver including Pending+flag, cancellation/timeout/query failure, absent/changed console/TTY, wrong PID/token/exec, account revoke during prompt, EOF, stale generation and concurrent requests. Confirm no held global locks/deadlock while blocked and bounded one prompt; no caller-provided presence input. Private test adapter under cfg(test) only, production never selects it.
-3. Objective-C lifetime/late callback/timeout/cancel and FFI status tests without real credentials where possible. Actual signed-native positive/cancelled OS authentication, local-console and remote/noTTY denial are required separate platform evidence, not claimed by compile/SDK/PTY metadata probes. No automated prompt in current development environment without owner authorization.
-4. SIGKILL/reopen/faults before/after delivery commit/send and ACK intent/delete/ack commit, exact audit ordinal/count/actor/time/code reuse, absent/corrupt handle, deletion error, no redisplay ack_pending/acknowledged, no secret in status/audit/export. Existing instance/user keys never touched. Generated fixtures only.
-5. Actual CLI protected setup collect/defer/redelivery/package+off-HQ acknowledgement, normal pinned production setup/service path and browser/UI integration statuses. Full recovery of same CA public identity using exported package+code; wrong code/package fail. REC-1 unsupported remains explicit.
-6. Full current fmt/locked Clippy/workspace tests, UI/type/tests/build/browser/schema/CSP/kit checks, fresh initial SolHigh review/bounded repairs, same original author intent validation and separate fresh final SolXhigh exact-commit review before merge--no-ff/push v1-integration. Architecture READY is not code/test/production acceptance.
+## Acceptance
 
-Rollback: before delivery ledger migration disable unfinished secret release, preserve all existing code/CA/provisioning and Waiting readiness. After durable delivered/ack_pending/acknowledged, forward repair only; old binaries must not resurrect/rotate/delete evidence or reinterpret missing custody. Incompatible migration/version fails affected operation explicitly. No reset of an organization or rollback of accepted task work.
+1. Strict DTO version, size, duplicate, trailing and unknown checks; a 4475-byte
+   package and one over; digest, organization, office, instance, operation and key
+   mismatches; and ordinary, web, agent and unsigned peers refused before any
+   secret or custody use. The authenticated supervisor exchange returns the exact
+   committed bytes, and the private DER cannot be serialized into it.
+2. With a temporary protected database and custody: first show, redelivery
+   (including a pending code with the flag), cancellation, timeout, query failure,
+   an absent or changed console or terminal, wrong PID, token or exec, account
+   revocation during the prompt, EOF, a stale generation and concurrent requests.
+   No global lock is held while blocked, at most one prompt is pending, and no
+   caller input stands in for presence. A test adapter exists only under
+   `cfg(test)`.
+3. Objective-C lifetime, late callback, timeout, cancellation and FFI status tests
+   without real credentials. A signed native client's real positive and cancelled OS
+   authentication, local-console acceptance and remote or no-terminal denial are
+   separate platform evidence.
+4. SIGKILL and reopen, and faults before and after the delivery commit and send and
+   around the acknowledgement intent, deletion and commit: exact audit ordinal,
+   count, actor and time, code reuse, an absent or corrupt handle, a deletion
+   error, no redisplay in `ack_pending` or `acknowledged`, and no secret in status,
+   audit or export. Other instance or user keys are never touched.
+5. The real CLI against an organization created through the browser on the normal
+   pinned service: collect, defer, redelivery, package export and off-HQ
+   acknowledgement. The
+   same CA public identity is recovered from the exported package and the code; a
+   wrong code or package fails. REC-1 is reported unsupported.
 
-## Review history
-
-r1 lead proposal answers concrete missing platform/security/storage/transport machinery. D1 remains required; D2/D5 describe planned missing ports, not failed domain premise; D3 scoped feasibility not human-presence proof. Independent architecture verdict pending. No canonical activation or dependent implementation authorized by this candidate.
-
-Independent fresh read-only ARCHITECTURE review returned **READY**, no findings, for candidate revision1 SHA256 `0632ef4695f6c9311d18169c114fb673495f440baa44eb044fb141712cf97f88`. Reviewer session `01a1e263-3a66-7d21-9f93-0814c1b4240c`; assigned Sol/Xhigh, actual effective model/effort unexposed. Actual ordered seven-source read ACK and current preflight0 root-verified; reviewer process exit0. Evidence `.agent-kit/logs/v1-assignment-integration/recovery-delivery-review/{candidate.md,result.json,read-ack.json,preflight-receipt.json}`. Lead accepted the mechanism on 2026-11-16. Canonical materialization is handed to the preserved original implementation writer to maintain the maximum-two-writer boundary. No mechanism changed during activation; actual physical authentication, implementation/current checks/original-author/final exact-commit review remain required.
-
-### Mechanical SDK linkage clarification, 2026-11-16
-
-The original author found that supported `audit_token_to_asid`, `audit_token_to_pid` and `audit_token_to_euid` SDK accessors are exported by the macOS system `libbsm`. The lead approved one fixed `cargo::rustc-link-lib=bsm` in the same target-gated pinned bridge build script. This is an OS SDK link, with no Cargo/registry version, runtime lookup, private token decoding or new authorization/crypto mechanism. The four selected framework links and cc1.11.1 edge remain. Existing exact build-script/native-source pins include this literal system link.
-
-Actual bounded no-prompt compile/query passed with ARC/blocks/Werror and `-lbsm`; SDK PID/effective-UID/ASID accessors matched the kernel token/current process. Source and receipt: `.agent-kit/logs/v1-assignment-integration/recovery-presence-scope/platform-query-bsm{.m,-receipt-2.json}`. Initial signed-ASID/unsigned-session comparison warning was preserved and corrected by checking positive ASID before conversion; no warning flag or identity guard was relaxed. `evaluatePolicy` was never invoked. This is mechanical compatibility evidence, not physical authentication or production code acceptance. The lead retains revision1's independently reviewed presence, callback, durable ACK and public-source mechanisms; current source/skill preflight and all original/final review gates still apply.
+Before the delivery ledger exists, secret release is disabled and the code, CA,
+provisioning and Waiting readiness are preserved. After `delivered`, `ack_pending`
+or `acknowledged` is stored, repair only moves forward.

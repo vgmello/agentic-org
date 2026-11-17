@@ -1,6 +1,6 @@
 # Project structure
 
-Status: **selected** data contract, revision 2.8. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
+Status: **selected** data contract, revision 2.9. Projects belong to the [organization](01-organization-structure.md); their work is defined in [document 03](03-features-and-work.md).
 
 ## Relationships
 
@@ -119,6 +119,10 @@ erDiagram
 
 HQ creates projects, releases and milestones. Other offices can request their creation and replicate the resulting records; replication is not a new creation. This restriction does not make HQ the owner of project data or its tasks. See [creation and registration](06-identity-and-numbering.md).
 
+### Creating a project
+
+A project brings its own team (owner, 2026-11-17). By default, creating a project also creates its owning team, in the same accepted transaction: a new team named after the project, placed under the organization's top-level team ([document 01](01-organization-structure.md#creating-an-organization)). The request may instead name an existing active team as the owner, and then no team is created. Either way `owner_team_id` is set when the project is created; there is no project without an owning team. People and agents join the project team by being moved there or added there, like any team.
+
 Each project has exactly one owning team and optional contributing teams. Its organization-wide readable reference is `P-<number>`. It also requires an organization-unique `slug`, such as `reservations`, assigned and registered by HQ when the project is created. Every project task stores that same accountable owning team in required `team_id`; a composite foreign key enforces the match. The task's optional `assigned_team_id` identifies the team currently responsible for doing the work, and `assignee_id` identifies its current individual assignee. Either can be outside the owning team. Reassigning work changes neither project ownership nor task ownership. Reassigning project ownership updates its tasks' `team_id` and records those ownership changes in the same recoverable transaction; existing team/individual assignments stay unchanged. See [task assignment and history](12-task-assignment-and-history.md).
 
 A project may use several repositories, including shared infrastructure or libraries. `integration_branch` is required on each project/repository association; the same repository can use different integration branches for different projects. A contributing-team registration and a task assignment express different facts: assigning a task does not rewrite the project's contributing-team list or grant repository access.
@@ -129,13 +133,13 @@ Project investment/token totals are derived from [usage records](10-usage-and-co
 
 ## Completion of milestones and releases
 
-Milestones and releases store no status of their own (owner decision 2026-11-17). Whether one is done is derived from task status ([document 03](03-features-and-work.md)):
+Milestones and releases store no status of their own. Whether one is done is derived from task status ([document 03](03-features-and-work.md)):
 
 - A milestone is done when it has at least one task and every task assigned to it is finished.
 - A release that has milestones is done when every one of its milestones is done.
 - A release that has no milestones is done when its content manifest lists at least one task and every listed task is finished.
 
-A task is finished when its status is `done` or `cancelled`; a cancelled task counts as done (owner, 2026-11-17). An empty milestone or release is not done, and a release with a milestone that has no tasks is not done either (confirmed by the owner, 2026-11-17). A task that was deleted but is still listed in a release's manifest is ignored. The views `milestone_progress` and `release_progress` compute this and return task counts and finished counts for showing progress. The counts follow what completion follows: for a release with milestones they are the tasks of its milestones, and for a release without milestones they are its manifest tasks. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
+A task is finished when its status is `done` or `cancelled`; a cancelled task counts as done. An empty milestone or release is not done, and a release with a milestone that has no tasks is not done either. A task that was deleted but is still listed in a release's manifest is ignored. The views `milestone_progress` and `release_progress` compute this and return task counts and finished counts for showing progress. The counts follow what completion follows: for a release with milestones they are the tasks of its milestones, and for a release without milestones they are its manifest tasks. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
 
 ## Durable project files
 
@@ -230,7 +234,7 @@ Concurrent requests must not both reserve the same table and time range.
 This design covers individual tables; combining tables needs a separate design.
 ```
 
-Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id`, `release_id` and `deployment_id` all null and lives in the project-level folder. Path, `kind` and scope IDs must agree; the importer rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
+Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md`. A project document has the same metadata with `feature_id`, `release_id` and `deployment_id` all null and lives in the project-level folder. Path, `kind` and scope IDs must agree; validation rejects mismatches. To associate existing supporting knowledge with a feature, preserve the document ID, set `feature_id`, and move its file to that feature's appropriate folder. Do not retain a duplicate canonical copy.
 
 ## File to SQL mapping
 
@@ -265,10 +269,10 @@ slug TEXT NOT NULL CHECK (
   owner_team_id TEXT NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, number),
@@ -317,10 +321,10 @@ project_id TEXT NOT NULL,
   version_label TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, project_id, number),
@@ -358,10 +362,10 @@ project_id TEXT NOT NULL,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, release_id, number),
@@ -431,10 +435,10 @@ CREATE TABLE documents (
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   FOREIGN KEY (organization_id, owner_employee_id) REFERENCES employees(organization_id, id)
@@ -459,4 +463,4 @@ CREATE TABLE documents (
 ) STRICT;
 ```
 
-Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; import validates recorded historical provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.
+Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; projection validates recorded provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.

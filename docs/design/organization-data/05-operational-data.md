@@ -1,6 +1,6 @@
 # Operational data structure
 
-Status: **selected** data contract, revision 2.7. Shared comments, checklist entries, watchers, owner questions, waiting spans, task activity history and private task notes are selected for implementation. This document owns their data models, relationships and storage boundaries; application authorization, notification delivery and process execution remain implementation work. It extends [typed tasks](03-features-and-work.md).
+Status: **selected** data contract, revision 2.8. Shared comments, checklist entries, watchers, owner questions, waiting spans, task activity history and private task notes are selected for implementation. This document owns their data models, relationships and storage boundaries; application authorization, notification delivery and process execution remain implementation work. It extends [typed tasks](03-features-and-work.md).
 
 ## Scope and related data
 
@@ -42,11 +42,11 @@ erDiagram
         TEXT target_id PK, FK "required"
         TEXT id PK "required"
         INTEGER position "required"
-        TEXT author_kind "required"
-        TEXT author_id "optional"
+        TEXT author_id FK "required"
         TEXT created_at "required"
         TEXT body_markdown "required"
     }
+    employees ||--o{ comments : author_id
     record_refs ||--o{ watchers : observed_record
     employees o|--o{ watchers : employee_watcher
     comments ||--o| owner_questions : question_comment
@@ -89,9 +89,9 @@ erDiagram
     }
 ```
 
-Each shared record in the diagram above belongs to exactly one task through `target_kind: task` and its stable task ID, irrespective of whether the task type is task, bug or request. A watcher can be an employee or the organization owner. An owner question references its question comment and optional answer comment instead of duplicating the text. A waiting span records who is awaited, why, and its start/end timestamps; a null end marks an open span.
+Each shared record in the diagram above belongs to exactly one task through `target_kind: task` and its stable task ID, irrespective of whether the task type is task, bug or request. A comment's author is always an employee: a person or an agent. A watcher can be an employee or the organization owner. An owner question references its question comment and optional answer comment instead of duplicating the text. A waiting span records who is awaited, why, and its start/end timestamps; a null end marks an open span.
 
-For shared operational metadata, the owner is a special recipient/actor designation, not a new employee folder or an authentication record. Owner rows use kind `owner` and a null employee ID. This metadata grants no owner authority; authentication and permissions remain separate.
+**Who did it, and who is addressed.** Every column that records who did something (an author, a creator, an actor) names an employee or the system; a person who signs in acts as their own person record ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The organization owner is never recorded as a separate kind of actor. A column that *addresses* someone (`watcher_kind`, `waiting_on_kind`, and a budget notice's `recipient_kind` in document 17) may instead name `owner`, with a null employee ID. That designation means the person whose account owns the organization at the time the record is read, so a question to the owner reaches the current owner. It grants no authority.
 
 ## Shared metadata file location
 
@@ -128,14 +128,14 @@ The parent work file must contain the referenced comment, and the asking employe
 | Table | Source |
 | --- | --- |
 | `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
-| `comments` | `comments[]`: `id`, `author_kind`, optional `author_id`, `created_at`, `body_markdown`; position is array order. Owner authors have `author_kind: owner` and null `author_id`; actual login identity remains in the separate authentication/audit subsystem. |
-| `watchers` | `operations.watchers[]`: `id`, `watcher_kind`, `watcher_id`; owner type/ID and organization come from the containing work record. |
+| `comments` | `comments[]`: `id`, `author_id`, `created_at`, `body_markdown`; position is array order. `author_id` is the employee who wrote it. |
+| `watchers` | `operations.watchers[]`: `id`, `watcher_kind`, `watcher_id`; target type/ID and organization come from the containing work record. |
 | `owner_questions` | `operations.owner_questions[]`: every same-named question field; target type/ID and organization come from the containing work record. Question and answer comment references must resolve inside that same work record. |
 | `waiting_spans` | `operations.waiting_spans[]`: every same-named span field; target type/ID and organization come from the containing work record. A non-null `question_id` must belong to that same record. |
 
-Closing a record must not discard an unresolved question/span silently. The eventual lifecycle contract must choose its explicit disposition. Deriving durations from saved timestamps is possible without old runtime logs. Task activity retention is defined below; organization-wide analytics and retention of unrelated operational streams remain separate decisions.
+Closing a record must not discard an unresolved question/span silently. The lifecycle contract chooses its explicit disposition. Durations derive from saved timestamps. Task activity retention is defined below; organization-wide analytics and retention of unrelated operational streams remain separate decisions.
 
-Changes to a task's shared comments, checklist, watchers, questions and waiting spans also append its [task activity history](#task-activity-history) in the same recoverable write. This retains the facts without selecting the old process engine, all analytics or Undo behavior.
+Changes to a task's shared comments, checklist, watchers, questions and waiting spans also append its [task activity history](#task-activity-history) in the same recoverable write.
 
 ## Shared SQLite tables
 
@@ -167,14 +167,14 @@ CREATE TABLE comments (
   target_id TEXT NOT NULL,
   id TEXT NOT NULL,
   position INTEGER NOT NULL CHECK (position >= 0),
-  author_kind TEXT NOT NULL CHECK (author_kind IN ('employee', 'owner')),
-  author_id TEXT,
+  author_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   body_markdown TEXT NOT NULL,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   UNIQUE (organization_id, target_kind, target_id, position),
-  CHECK ((author_kind = 'employee' AND author_id IS NOT NULL) OR (author_kind = 'owner' AND author_id IS NULL)),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, author_id) REFERENCES employees(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -249,7 +249,7 @@ The event's stable identity is `(organization_id, task_id, revision)`. It has no
 
 The service commits the resulting task snapshot, its event(s), and the command's idempotency result as one recoverable operation before acknowledging. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) comments, checklist ticks and watching are acknowledged at that commit, with the flush to the drive following within a bounded interval; every other task change waits for the flush. The durable local journal must retain everything needed to finish materializing these files after a crash, using the platform durability guarantees in [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Hourly Git publication includes the task and its events together; it is not the acknowledgement boundary. A machine restore requires unpublished journal records as well as the published organization state. Rebuilding SQLite projects the same event identities; it creates no new history.
 
-**Why history is published to Git, and when to revisit (owner decision 2026-11-17).** One file per accepted change is kept as specified. It is what lets an office database be rebuilt with the same history and what answers who changed what after a task closes. Revisit the shape if the organization repository holds more than 100,000 history files, or a single task more than 1,000. The fallback is one append-only file per task, or keeping events only under `durable/` and publishing a summary when a task closes.
+**Why history is published to Git, and when to revisit.** One file per accepted change is kept as specified. It is what lets an office database be rebuilt with the same history and what answers who changed what after a task closes. Revisit the shape if the organization repository holds more than 100,000 history files, or a single task more than 1,000. The fallback is one append-only file per task, or keeping events only under `durable/` and publishing a summary when a task closes.
 
 Task commands have one accepting writer and use expected revisions; raw replicated files do not become an independent mutation authority. A newly created offline task may have a local history before readable-number registration. Concurrent edits to an already shared task must stay pending or conflict until its accepting writer resolves them; never publish two different accepted events for the same task/revision or silently choose the last file. Writer handover/fencing and remote delivery remain part of the mutation/replication implementation contract, not permission to bypass it. Work assignment does not by itself transfer write authority.
 
@@ -367,7 +367,7 @@ CREATE TABLE task_events (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   schema_version INTEGER NOT NULL CHECK (schema_version = 2),
   occurred_at TEXT,
-  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'owner', 'system', 'unknown')),
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee', 'system', 'unknown')),
   actor_id TEXT,
   operation_id TEXT,
   change_json TEXT NOT NULL CHECK (
@@ -394,17 +394,15 @@ CREATE TABLE task_events (
 ) STRICT;
 ```
 
-`schema.sql` adds immutable-event triggers, including protection against `INSERT OR REPLACE`, and an assigned-team/status index on tasks. Existing task/revision primary-key ordering serves per-task activity reads. Run the executable draft checks with `python3 docs/design/organization-data/test_schema.py`; these checks do not claim to implement the future command or import service.
+`schema.sql` adds immutable-event triggers, including protection against `INSERT OR REPLACE`, and an assigned-team/status index on tasks. Existing task/revision primary-key ordering serves per-task activity reads. Run the executable draft checks with `python3 docs/design/organization-data/test_schema.py`; these checks do not implement the command service.
 
 ## Private notes attached to tasks
 
 **Required capability: a person or agent can create, read, edit and delete their own private notes attached to a task.** This is part of the selected requirements. Its absence from v1 is an implementation gap. The data structure and private storage contract follow below.
 
-Private task notes are **not implemented in the inspected v1 source**. Its [`CommentKind::Note`](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L287) is an ordinary shared comment. [`work.comment` parameters](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-proto/src/work.rs#L1514) have no note visibility or private owner field. The [comment handler](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/items.rs#L25) stores its body in a regular `WorkEventKind::Comment`; the [change feed](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/feed.rs#L15) emits that event. The [activity read contract](https://github.com/vgmello/agentic-org/blob/ee84e7ba231fbef79373f641c3d24fd26a248be5/crates/org-work/src/ports.rs#L177) has no per-note reader restriction.
+Code today: private task notes do not exist. `CommentKind::Note` in `crates/org-proto/src/work.rs` is an ordinary shared comment, so it must never be presented as private, and hiding it in the UI would not provide privacy.
 
-Consequently `note` must never be presented as private, and hiding it in the UI would not provide privacy.
-
-Each private note must have stable identity, organization/task references, an immutable author/owner derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. The author is the default exclusive reader/editor; task ownership, assignment, team leadership and organization-owner/admin roles do not implicitly grant access. Any exceptional administrative access requires an explicit policy decision before implementation, rather than inheriting ordinary task permissions.
+Each private note must have stable identity, organization/task references, an immutable author derived from the authenticated actor, body, creation/update timestamps and a revision for conflicting edits. A task can have multiple notes from multiple authors. The author is the default exclusive reader/editor; task ownership, assignment, team leadership and organization-owner/admin roles do not implicitly grant access. Any exceptional administrative access requires an explicit policy decision before implementation, rather than inheriting ordinary task permissions.
 
 Enforce privacy on reads, writes, search, feeds, notifications and exports. Store and back up notes outside the shared task-history/Git path. Private note bodies and identifying metadata must not leak into shared activity, indexes or provenance. Reassignment must not expose another author's notes or transfer their ownership. Explicitly publishing a note creates a shared comment after the author confirms the intended audience; it does not silently change the private original's visibility.
 
@@ -421,7 +419,7 @@ Acceptance criteria for the required capability:
 | PN-05 | Only an explicit author action publishes a shared comment; ordinary note saves never publish, and the private original retains its visibility. |
 | PN-06 | Note deletion and task deletion follow the documented private retention/backup policy without exposing note content through shared history. |
 
-The [private schema](private-notes-schema.sql) now defines its data structure. Completion still requires the private store, authorization/API and UI implementation and these acceptance checks. Draft-schema tests check structural constraints, not end-to-end privacy. V1's shared `note` comments alone cannot count as satisfying it.
+The [private schema](private-notes-schema.sql) defines its data structure. Completion requires the private store, authorization/API and UI implementation and these acceptance checks. Draft-schema tests check structural constraints, not end-to-end privacy. Shared `note` comments do not satisfy it.
 
 
 ### Records and relationships
@@ -430,12 +428,12 @@ The executable definition is [private-notes-schema.sql](private-notes-schema.sql
 
 | Record | Key and relationship | Purpose |
 | --- | --- | --- |
-| `private_note_authors` | `(organization_id, author_kind, author_id)` | Private identity mirror populated from the trusted employee/authentication directory; never from an unverified client claim |
+| `private_note_authors` | `(organization_id, author_id)` | Private identity mirror populated from the trusted employee/authentication directory; never from an unverified client claim |
 | `private_note_tasks` | `(organization_id, task_id)` | Private mirror of shared `record_refs` with `kind = task`, including tombstones; `is_deleted` mirrors task deletion |
 | `private_task_notes` | `(organization_id, id)`; same-organization foreign keys to both mirrors | One author's private note attached to one task; many authors and many notes per task are allowed |
-| `private_note_command_receipts` | `(organization_id, author_kind, author_id, operation_id)`; references note and author | Durable request digest, command, accepted note revision, state, publication comment ID, error code and start/finish times; no body copies |
+| `private_note_command_receipts` | `(organization_id, author_id, operation_id)`; references note and author | Durable request digest, command, accepted note revision, state, publication comment ID, error code and start/finish times; no body copies |
 
-An `employee` author uses the immutable employee ID for either a person or an agent. An `owner` author uses the stable authenticated subject ID from the authentication subsystem, **not** the literal role name `owner`. Two people with an owner/admin role do not thereby share notes. The service derives this tuple from the authenticated actor. The mirrors contain no credentials and are not authorization grants. Their public-source relationships are validated by the service because SQLite cannot enforce a foreign key into a different database. Retain referenced mirror identities after employee deactivation/task deletion; names, home teams and assignments are not note ownership.
+`author_id` is the immutable employee ID of a person or an agent. A person who signs in writes notes as their own person record, the organization owner included; two people never share notes because they share a role. The service derives the author from the authenticated actor. The mirrors contain no credentials and are not authorization grants. Their public-source relationships are validated by the service because SQLite cannot enforce a foreign key into a different database. Retain referenced mirror identities after employee deactivation/task deletion; names, home teams and assignments are not note ownership.
 
 ```mermaid
 erDiagram
@@ -449,7 +447,6 @@ erDiagram
         INTEGER schema_version
         INTEGER revision
         TEXT task_id FK
-        TEXT author_kind FK
         TEXT author_id FK
         TEXT body_markdown "null only after deletion"
         TEXT created_at
@@ -462,13 +459,13 @@ erDiagram
 | --- | --- |
 | `id` | Stable UUIDv7 for new notes; no readable number; retained after deletion |
 | `organization_id`, `task_id` | Immutable attachment; an existing task of any type, including projectless tasks |
-| `author_kind`, `author_id` | Immutable original author and exclusive default reader/editor; derived from the bound actor |
+| `author_id` | Immutable original author and exclusive default reader/editor; derived from the bound actor |
 | `schema_version`, `revision` | Format 1; revision starts at 1 and advances by exactly one on each edit/deletion |
 | `body_markdown` | Nonempty current Markdown text; null on a deletion tombstone |
 | `created_at`, `updated_at` | Server-generated canonical UTC timestamps using fixed precision; creation is immutable, update time never decreases |
 | `deleted_at` | Null while active; equals update time on deletion; deletion cannot be reversed under the same ID |
 
-Example decrypted record (an API shape, **not a shared file**):
+Example record (an API shape, **not a shared file**):
 
 ```json
 {
@@ -477,7 +474,6 @@ Example decrypted record (an API shape, **not a shared file**):
   "schema_version": 1,
   "revision": 1,
   "task_id": "existing-task-id",
-  "author_kind": "employee",
   "author_id": "existing-employee-id",
   "body_markdown": "Check my reproduction before posting a shared update.",
   "created_at": "2026-11-15T12:00:00.000Z",
@@ -490,7 +486,7 @@ Example decrypted record (an API shape, **not a shared file**):
 
 HQ hosts the single accepting private-note service. Its authoritative database is `<data-root>/<organization-id>/durable/private/task-notes.db`, a SQLite database under the single-writer and durable-write rules of [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) it is not encrypted by the application and has no database key; author-only access is enforced by the service and by file permissions. It is not a disposable office cache. Its files, WAL and backups remain service-private; SQLite access is server-only. Other offices call this service as the note's bound author. They do not replicate private notes through organization Git or shared event delivery. If HQ is unavailable, edits are not acknowledged as accepted. Fenced service recovery is required before another host accepts writes.
 
-Creation validates that the authenticated actor can access the referenced task, installs trusted identity mirrors and inserts the note in one private transaction. Each read/list/search/edit/delete scopes by **organization AND bound author kind/ID**, as well as note/task ID where applicable. Task membership or role alone is insufficient. Authorized authors can retain access to their existing notes after task archival/deletion; deactivated credentials still fail authentication. Unauthorized and missing IDs return the same not-found response. SQL foreign keys protect structure; **they do not implement these access checks**.
+Creation validates that the authenticated actor can access the referenced task, installs trusted identity mirrors and inserts the note in one private transaction. Each read/list/search/edit/delete scopes by **organization AND bound author ID**, as well as note/task ID where applicable. Task membership or role alone is insufficient. Authorized authors can retain access to their existing notes after task archival/deletion; deactivated credentials still fail authentication. Unauthorized and missing IDs return the same not-found response. SQL foreign keys protect structure; **they do not implement these access checks**.
 
 Edits and deletion use an expected revision in the update predicate and check that exactly one row changed. The transaction supplies the new revision/time. Every mutation has an operation ID and canonical request SHA-256, scoped to the bound author. Persist `private_note_command_receipts` atomically with successful create/edit/delete writes. Check the receipt before current revision checks: the same operation/digest returns the original note ID/revision even after later edits; different payload reuse conflicts. Rejected create/edit/delete requests have no accepted write or receipt. Receipt responses contain metadata only; a subsequent authorized get retrieves the current body. Creation uses a stable note ID as well as the operation ID; another operation cannot overwrite that ID. The schema triggers prevent identity/author/task changes, skipped revisions, replacement and resurrection. No editable `visibility` flag can turn a private row into a shared comment.
 
@@ -500,13 +496,13 @@ Publishing is a separate explicit author command: validate access, persist a `pu
 
 Task closure, reassignment, ownership changes or archival do not delete notes or transfer their authors. Task tombstones retain the private attachment through `private_note_tasks`; no cascade removes note content. Deleting a note atomically clears its body and leaves only the private identity/revision/timestamps as a tombstone. There is no note-body version archive in this model. The author can create a new note, but cannot resurrect a deleted ID.
 
-Back up the private database consistently, with backups encrypted at their destination and kept separate from shared organization backups. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) there is no database key and so no key recovery. Rebuilding `schema.sql` or restoring organization Git cannot reconstruct private notes. A restore must reconcile deletions accepted after the backup before serving reads; retain those tombstones through the backup retention window. If that deletion evidence or the key is unavailable, recovery blocks rather than exposing an older deleted body. Deployment must define and enforce a maximum private-backup retention period before enabling this feature. Logical deletion does not promise immediate physical erasure from WAL, storage media or older encrypted backups.
+Back up the private database consistently, with backups encrypted at their destination and kept separate from shared organization backups. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) there is no database key and so no key recovery. Rebuilding `schema.sql` or restoring organization Git cannot reconstruct private notes. A restore must reconcile deletions accepted after the backup before serving reads; retain those tombstones through the backup retention window. If that deletion evidence is unavailable, recovery blocks rather than exposing an older deleted body. Deployment must define and enforce a maximum private-backup retention period before enabling this feature. Logical deletion does not promise immediate physical erasure from WAL, storage media or older encrypted backups.
 
-Run `python3 docs/design/organization-data/test_schema.py` for structural checks of private-note references, immutable ownership, revisions, tombstones and separation from shared SQL. These tests use in-memory SQLite and do not prove encryption, authenticated access, publication idempotency or backup recovery; PN-01–06 require those application tests before the feature is complete.
+Run `python3 docs/design/organization-data/test_schema.py` for structural checks of private-note references, immutable ownership, revisions, tombstones and separation from shared SQL. These tests use in-memory SQLite and do not prove authenticated access, publication idempotency or backup recovery; PN-01–06 require those application tests before the feature is complete.
 
-## Retained checklist evidence
+## Checklist evidence
 
-Checklist step front matter additionally carries `linked_task_id`, `checked_by_employee_id`, `checked_at` and `revision` (default 1). These project directly into `checklist_steps`. `linked_task_id` names another task the step points to; the parent task is the enclosing record. Checker and time are recorded when a step is checked; absence never fabricates an actor. Task closure/tombstones retain checklist evidence with the final record. This adds data preservation only: promotion, automatic ticking/cascades and Undo remain unselected.
+Checklist step front matter additionally carries `linked_task_id`, `checked_by_employee_id`, `checked_at` and `revision` (default 1). These project directly into `checklist_steps`. `linked_task_id` names another task the step points to; the parent task is the enclosing record. Checker and time are recorded when a step is checked; absence never fabricates an actor. Task closure/tombstones retain checklist evidence with the final record. Promotion, automatic ticking/cascades and Undo are not part of this contract.
 
 [Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
 

@@ -1,6 +1,6 @@
 # Tooling and verification capsule
 
-Owner: codex-dev for adoption tooling; ada retains standards/merge ownership. Reviewed at b1256c97 on 2026-11-15.
+Reviewed at b1256c97 on 2026-11-15.
 
 The target is the whole monorepo. WORKFLOW.md adds task/review gates. Root AGENTS.md retains team rules and the managed pointer; scoped UI guidance still applies. .codex/config.toml and five native roles select Sol and a two-child limit. Roles inherit host permissions; the review wrapper explicitly launches read-only review processes.
 
@@ -10,4 +10,4 @@ Repowise uses isolated Python 3.12 and checkout-local caches. Its structural ret
 
 Hindsight uses Docker/Linux containers, embedded pg0, a persistent volume and local CPU models. Committed accepted Git knowledge is authoritative. Preserve unrelated containers/volumes and Podman. Private receipts/logs are ignored and checkout-bound. Saved Codex login does not prove allowance; native hooks/MCP need actual client trust/restart verification.
 
-See reference/ADOPT.md for setup, ADOPTION.md for results and tasks/adoption-state.md for pending work. Reassess stack/runtime/ownership changes; never copy successful receipts between checkouts.
+See reference/ADOPT.md for setup, ADOPTION.md for results and tasks/v1-state.md for current work. Reassess stack/runtime/ownership changes; never copy successful receipts between checkouts.

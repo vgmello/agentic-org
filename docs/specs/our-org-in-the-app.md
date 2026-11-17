@@ -1,131 +1,85 @@
 ---
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
-status: for-review
-revision: 25
+status: current
 owner: lead
 created: "2026-11-08"
-updated: "2026-11-15"
+updated: "2026-11-17"
 requested_by: owner
-reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy, codex-dev]
 builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
-**Revision 25 (2026-11-15):** separates colleague profiles from Agent setup, integrates Home/Inbox/Activity navigation and truthful presence, and keeps future memory reads confined and security-gated.
-
-**Revision 24 (2026-11-15): selected employee/team/project model.** Home team is required for every employee, including HR and any owner employee; projects have one accountable owner plus contributors. Execution profile/model/connections and office placement are separate from identity. Task ownership and assignment stay independent through moves/offboarding. Roles reference stable IDs. Process/autonomy/scheduling/approval engines remain earlier UX requirements, not services selected by these data records.
-
-Selected sources: [organization](../design/organization-data/01-organization-structure.md), [employees](../design/organization-data/04-agent-structure.md), [execution](../design/organization-data/11-model-profiles-and-agent-execution.md), [assignment/history](../design/organization-data/12-task-assignment-and-history.md), [messaging](../design/organization-data/15-messaging-and-chat.md) and [budgets](../design/organization-data/17-budgets-and-controls.md). See [authority map](../design/documentation-authority.md). These are documentation targets, not an enacted schema/contract migration. Hiring/approval/provisioning flows remain detailed UX requirements pending services; CLI examples below are earlier proposed surfaces unless verified separately.
-
-### Historical revision notes
-
-Full revision history is preserved in [revision 23 at the pre-reconciliation commit](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/specs/our-org-in-the-app.md). Compatible requirements from those revisions remain in the substantive flows/criteria below:
-
-- Revisions 22–23 (2026-11-13): Cost tab, owner-only agent budgets and project-manager cost scope; the absent costs-and-budgets-v1 PRD is historical context only, not operative authority.
-- Revisions 20–21 (2026-11-10): manual proposal fallback when HR cannot run; existing-role selection; partial-hire idempotent recovery; approver unavailability; missing runtime/readiness feedback. Pending approval API enforcement remains A96, and partial-hire visibility/readiness remain A97/A98.
-- Revision 18 (2026-11-09): fresh standalone setup retires existing-team onboarding import and IMP-1–11.
-- Revisions 16–17 (2026-11-09): role/process approval, overrides and autonomy UX remain earlier proposals beyond selected structural data. They are not implemented authority fields.
-- Revision 12 (2026-11-08): live-update loss has persistent freshness copy and Retry, retaining user input.
-- Revisions 1–15 (2026-11-08): initial roster survey, runtime visibility, atomic legacy move, offboarding state and HR drafting/approval requests. Department/team-hints import defaults and older task-reference examples are superseded, not repeated as active guidance. Remy/Riley status notes are survey evidence, not launch authority.
+The data contract owns the records: [organization](../design/organization-data/01-organization-structure.md), [employees](../design/organization-data/04-agent-structure.md), [execution](../design/organization-data/11-model-profiles-and-agent-execution.md), [assignment and history](../design/organization-data/12-task-assignment-and-history.md), [messaging](../design/organization-data/15-messaging-and-chat.md) and [budgets](../design/organization-data/17-budgets-and-controls.md). This spec owns what people see when they run their own team in the product.
 
 ## The goal (the user, 2026-11-08)
 
 > All of us (ada, Eden, the reviewer, codex-dev and the other devs) are registered as an organization in the application. From it you can see everything that's happening, add agents, hire more, deallocate agents, assign agents and change teams, with a great user experience.
 
 **Success test (the dogfood run).** In the real HQ browser application, with no mock data:
-1. The owner creates a fresh organization and provisions members through supported organization/hiring operations. Each agent appears under the right team and manager with its runtime; nothing is imported.
-2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other (like ada's phase-1 push), tasks and bugs moving, and merges into `v1`.
+1. The owner creates a fresh organization, adds the people and invites them to sign in, and hires the agents through HR. Each agent appears under the right team and manager with its runtime; nothing is imported.
+2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other, tasks and bugs moving, and merges into the integration branch.
 3. The owner hires a new agent, chooses its required home team and assigns project or team work independently, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
 
 The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2 in §3b, and item 3 in §3a.
 
-## Where we are (survey of `origin/v1` at 0f7df26, 2026-11-08)
+## 1. What the product must respect
 
-*Since this survey, v1 gained agents as members (`Member.agent: AgentProfile`, `86a6a9f`), `member.set_agent_status` and run modes, and `member.offboard` (A37, `2911ffc`). G1 and G2 below track the rest.*
+- An organization is **mixed-runtime**. The app shows and respects each agent's runtime and never assumes Claude Code.
+- **Every agent is hired through HR and started by its office.** There is no agent outside the product: nobody starts an agent by hand, brings in one that runs elsewhere, or binds one the office didn't start. A person may run commands from a terminal under their own name; that never makes them an agent.
+- Employment, observed presence and readiness, and authority are distinct facts. A snapshot of one never proves another.
 
-- **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
-- **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
-- **Hiring has no design and no contract.** The teams design says agents "join through hiring (the HR flow, its own design)", and that design was never written. This spec writes the UX.
-- **Nothing imports an existing team.** The earlier coordination tool's messages, profiles and statuses are not imported either (owner decision 2026-11-17); retired IMP criteria do not authorize team import.
-- **An app `Member` can't describe our agents.** It has no role, title, focus, runtime, model, home folder or messaging id.
-- **Our roster is split across three sources** (below), and they disagree.
-
-## 1. Our team today
-
-Historical dogfood roster captured 2026-11-08; runtime/account availability and ownership below are survey evidence, not current live status or selected employee fields.
-
-| Agent | In HR (agents repo) | On messaging (`agent-os`) | Runtime | Role / owns (AGENTS.md) | Reports to |
-| --- | --- | --- | --- | --- | --- |
-| ada (`ac-staff-engineer-ada`) | active | yes | Claude Code | Staff Engineer: leads; contracts (org-proto) | the owner |
-| Eden (`ac-product-designer-eden`) | active (title says Principal; the user says **Senior**) | yes | Claude Code | Product Designer | the owner |
-| River (`ac-software-engineer-river`) | active | yes | Claude Code | Senior Backend: office host, sync, PKI, git and GitHub (`org-git`, `org-github`) | ada |
-| server-dev | **no** | yes | Codex | office server, storage | ada |
-| app-frontend-dev | **no** | yes | ? (A14) | the desktop app | ada |
-| agy-senior-dev | **no** | yes | Antigravity | owned messaging (agent-os CLI, spool, mailbox) until it ran out of runtime credits | ada |
-| codex-dev | **no** | yes | Codex | inbox adapters; the work-items library (W7) | ada |
-| reviewer | **no** | yes | ? (A14) | independent reviews ("ready" verdicts) | ada |
-| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `agent-os`, spool and the messaging library (AGENTS.md on v1), and the chat extension (plan row W19) | ada |
-| Riley (`ac-software-engineer-riley`) | active | **no** | Claude Code | Senior Frontend (the old prototype) | ada |
-
-**What the historical survey established:**
-- An organization is **mixed-runtime**. The app must show and respect each agent's runtime, and never assume Claude Code.
-- Some historical agents were started manually. Fresh standalone v1 uses **Add agent record** through approved provisioning; it does not import an external home or assume launch authority from that history.
-- Records **drift**. Employment, observed presence/readiness and authority are distinct; historical snapshots cannot prove a process can start.
-
-## 2. The shape of our organization (approved, U11)
+## 2. The shape of an organization
 
 ```text
-Owner account: Vitor (you)                 # authenticated principal, outside team graph
-Agentic Consulting
+Agentic Consulting                         top-level team, made with the organization
+│                                          lead: Alex (you, the owner); HR lead
 ├─ Engineering                            lead: ada; ada is a direct employee
-│  ├─ App                                  lead: app-frontend-dev; Riley (offline)
+│  ├─ App                                  lead: app-frontend-dev; Riley
 │  ├─ Office                               lead: server-dev; River
 │  ├─ Agent tooling                        lead: Remy; codex-dev, agy-senior-dev
 │  └─ Quality                              lead: reviewer
 └─ Design                                 lead: Eden; Eden is a direct employee
 Project P-8 Agentic Org: owner Engineering; contributor Design
-Explicit reporting: ada/Eden have no employee manager recorded; other engineering employees → ada
-HR lead: required home team must be chosen during bootstrap, not inferred from this example
+Explicit reporting: ada and Eden have no employee manager recorded; other engineering employees → ada
 ```
 
-These are illustrative retained names and a chosen example project reference, not permission to renumber existing data. Every employee appears at exactly one home team. Engineering's lead manages its subtree, including child leads; explicit reporting remains a separate graph. A linked owner employee would need a valid chosen home team as well. Areas from the earlier organization example remain unselected and are omitted from the active model; they require a separate scope decision. The organization is **Agentic Consulting**, distinct from the product **Agentic Org**.
+Sample names. Every employee appears at exactly one home team. Creating the organization made its top-level team, with the owner as a person and its lead, and the built-in HR lead as its other member; the other teams came later, a project's team by default with the project. Engineering's lead manages its subtree, including child leads; explicit reporting is a separate graph. The organization (**Agentic Consulting** here) is distinct from the product, **Agentic Org**.
 
-## 2a. The HR lead, a built-in agent (rev 7, the user)
+## 2a. The HR lead, a built-in agent
 
-The earlier built-in-HR workflow remains the requested experience: draft hire proposals/new roles, without approving hires, managing work queues or doing provisioning cleanup. The owning office performs approved provisioning and offboarding cleanup; neither waits for an HR model response. The selected employee model introduces no teamless built-in kind.
+The HR lead drafts hire proposals, without approving hires, managing work queues or doing provisioning cleanup. The owning office performs approved provisioning and offboarding cleanup; neither waits for an HR model response. HR is never teamless.
 
-- **Bootstrap:** before admitting HR's employee, organization creation must supply or explicitly create a valid home team and persist its `home_team_id` and stable-ID profile path. The owner chooses the team through a supported bootstrap flow; its name, hierarchy and lead are not selected here. HR is an agent employee with the same required home team, optional role/reporting fields and separate execution configuration as other agents. The protected built-in handle `hr` and inability to offboard/rename it remain earlier UX protections pending a supported authority contract; no YAML flag grants them automatically.
-- **Execution:** a runnable HR needs `execution.md`, an ordered model profile, chosen canonical model, eligible provider connections, office-local credentials, valid placement generation/fencing and readiness. “On call by default” is the earlier run-mode proposal, not a scheduling service selected by these records. Do not claim HR is asleep and wakeable when execution is unavailable.
+- **Built in:** the HR lead is part of the product. Creating an organization creates it as an agent employee in the top-level team, with nobody asked to choose anything; it is the only agent that isn't hired. It has the same required home team, optional role/reporting fields and separate execution configuration as other agents. The built-in handle `hr` is reserved, and HR cannot be offboarded or renamed; no field on the record grants these protections, the service enforces them.
+- **Runs only when called:** the HR lead appears and is addressed as an agent, but it is not kept running. A message to it, an `@hr` mention or a hire request starts one turn, and it stops when the turn ends (`agent-run-modes-ux.md`). It drafts proposals as an agent would; onboarding a new agent is the product's own code, which runs after approval. A runnable HR needs `execution.md`, an ordered model profile, a chosen canonical model, eligible provider connections, office-local credentials, a valid placement generation and fencing, and readiness.
 - **Where it shows:** shortcut beside the owner bar, Built-in roster group and participant in Chat, plus one counted employee at its home-team card and recorded reporting position. Lead/manager pickers apply supported active/direct-membership policy; being a built-in neither removes a home team nor creates leadership.
-- **When HR cannot run:** chip/row says **Not running · hires are filled in by hand** (server lacks execution) or **Can't start · hires are filled in by hand** (failed readiness/start). Quick view names why and any known fix: “Codex isn't signed in on <instance>.” **Run now** appears only if supported; otherwise explain the unavailable action. Never show “Asleep · wakes when called” without readiness evidence.
-- **Nothing waits for HR:** Hire allows **Fill in the details yourself**; Add agent record always uses the submitted proposal. Approved provisioning/offboarding can finish independently. HR DMs/mentions retain the message with “HR lead can't run right now, so it won't answer yet. To hire, use Hire or Add agent record.” Earlier `hire request` sketches must not claim an unsupported command creates a proposal.
-- **Approval:** every non-bootstrap hire still needs an approved proposal under §7.1; drafting alone does not authorize creation. HR never approves. The old toolkit HR file is historical provenance, not a source of employee identity, home team or launch authority.
+- **When HR cannot run:** chip/row says **Not running · hires are filled in by hand** (server lacks execution) or **Can't start · hires are filled in by hand** (failed readiness/start). Quick view names why and any known fix: “Codex isn't signed in on <instance>.” **Run now** appears when it can work; otherwise the unavailable action is explained.
+- **Nothing waits for HR:** Hire allows **Fill in the details yourself**, the manual form, whenever HR can't run. Approved provisioning/offboarding can finish independently. HR DMs and mentions keep the message with “HR lead can't run right now, so it won't answer yet. To hire, use Hire and fill in the details yourself.”
+- **Approval:** every hire needs an approved proposal under §7.1; drafting alone does not authorize creation. HR never approves.
 
 ## 3. Decisions
 
-1. **Start with a fresh organization.** Setup and the authorized browser provision members through normal domain operations. There is no v1 scanner, import wizard or old-team migration.
+1. **Start with a fresh organization.** The browser provisions members through normal domain operations: people are added in People and invited to sign in there, and agents are hired through HR. Nothing is imported.
 2. **Employee identity is portable.** It holds name/handle, required home team, optional role/reporting, title/focus/contact and lifecycle. Separate execution configuration selects model profile/model/prompt/tools; provider connections select runtime driver. Office placement and server-managed home are operational state, never user-chosen identity paths. The profile brings these facts together with their provenance and freshness.
-3. **Runtime is visible but quiet:** show the runtime on profiles/quick views. Browser session inspection uses HQ APIs; interactive takeover is an explicitly authorized CLI operation on the office machine unless a separate browser-terminal capability is implemented. No native embedded session window is required for v1.
+3. **Runtime is visible but quiet:** the runtime shows on profiles and quick views. The browser shows a session as a read-only view through HQ APIs. Taking over an agent is a local `agentic-org` command on the office machine; there is no terminal in the browser ([ADR-0004](../adr/0004-headless-agent-sessions.md)).
 4. **Actions are named by their effect:**
    - **Move home team:** replace the required home team atomically, resolving departed leadership; current task assignment and project participation remain unchanged.
    - **Pause:** retain employment, home team and assignments while requesting an execution hold. HQ acceptance and office process-stop confirmation differ. Independent budget/security holds can still prevent execution after manual Resume.
    - **Offboard:** mark employment inactive, retain profile/home team/handle/history and resolve leadership, reporting and assignment explicitly. Never delete worktrees merely because a handoff occurred.
    - **Unassign task:** atomically replace the complete desired `(assigned_team_id, assignee_id)` pair with expected task revision. Either may remain populated independently; clearing an individual does not change accountable team or automatically reset status.
-5. **A home-team move is one action**, never remove-then-add or a teamless intermediate. It preserves employee identity, explicit reporting and history, updating canonical path/home-team field coherently. Undo is deferred; a reverse move requires a fresh authorized revision-checked operation.
+5. **A home-team move is one action**, never remove-then-add or a teamless intermediate. It preserves employee identity, explicit reporting and history, updating canonical path/home-team field coherently. A reverse move is a fresh authorized revision-checked operation.
 6. **Assign work independently of membership.** Required project owner team remains accountable; optional contributors describe participation. Tasks may assign another active team and/or active employee without changing home team, project contribution membership or permissions. **Move home team…**, **Make lead** and **Assign task** are distinct actions.
 7. **Everything happening is one feed, Activity,** with Home showing its top. Sources: sessions and status, messages between members, tasks and bugs, team and member changes, and git merges into the integration branch. Filters by team, member, project and kind. The owner sees authorized message visibility and replies only where a participant (§6).
 8. **Live everywhere:** status dots on chart cards and lists come from presence, and changes made by agents (a task moved, a message sent) appear in under 2 seconds without a reload.
-9. **Hire is the HR flow on the office.** The v1 §3.6 steps (Describe → Suggestion → Review → Hiring → Done) stay, and the review requires **Home team** and separates **Execution profile/model** and **Office placement**. The HR lead proposes (or, when it can't run, the requester fills in the proposal; Add agent record's fields are always its proposal, §7) *(rev 21)*, and the approver (the owner, or a manager with Can approve hires, §7.1) sees exactly what will be created before anything is.
+9. **Hire is the HR flow on the office.** The v1 §3.6 steps (Describe → Suggestion → Review → Hiring → Done) stay, and the review requires **Home team** and separates **Execution profile/model** and **Office placement**. The HR lead proposes (or, when it can't run, the requester fills in the proposal, §7), and the approver (the owner, or a person in the lead chain of the new agent's home team, §7.1) sees exactly what will be created before anything is.
 
-## 4. Existing-team import (retired from v1)
+## 4. Agent homes and paths
 
-Remove the Bring in entry points, HR/spool scanner, team-hints file picker and
-import-only state. Agent homes/configuration are provisioned under the selected
-server instance. Paths may be shown read-only to authorized users; a browser path
-is not a path on the office machine. The roster and HR/hiring flows below remain.
-The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
+Agent homes and configuration are provisioned under the server instance. Paths may
+be shown read-only to authorized users; a browser path is not a path on the office
+machine. There is no import of an existing team. The [dogfood run](dogfood-run.md)
+starts with fresh disposable instances.
 
 ## 5. Flow 2 · The agent record (profile, quick view, card)
 
@@ -138,30 +92,26 @@ The [dogfood run](dogfood-run.md) starts with fresh disposable instances.
 
 Stable IDs are UUIDv7. `role_text` and `role_id` remain distinct, and a missing normalized role is valid. People have no execution configuration. No employee field marks the owner or grants account privileges. A home-team change does not update immutable reporter/history or historical usage attribution.
 
-The colleague page `/members/:memberId` uses the same layout for people and agents. Its header shows name/role/handle, Agent or Person in words, one Home team and explicit Reports to; an agent has one truthful presence signal and one context line. Message is primary and Assign task outline when supported for that employee. More contains Pause/Resume, Edit, Offboard for agents and Edit for people, with their existing authorization and lifecycle constraints. An owner security account alone cannot be assigned employee work. A 40 px avatar and 16 px name/role use the shared typography rules.
+The colleague page `/members/:memberId` uses the same layout for people and agents. Its header shows name/role/handle, Agent or Person in words, one Home team and explicit Reports to; an agent has one truthful presence signal and one context line. Message is primary and Assign task outline when supported for that employee. More contains Pause/Resume, Edit, Offboard for agents and Edit for people, with their existing authorization and lifecycle constraints. An account alone cannot be assigned work; the person it's tied to can. A 40 px avatar and 16 px name/role use the shared typography rules.
 
-Profile tabs are Overview, Work, Conversations, Activity; agents also have Notes and memory. Overview with no current task says Not working on anything right now. Names in the directory and Org chart open this profile. Agent Setup summary shows selected execution profile/model, observed driver/runtime, how it runs when supported, office and managed home with provenance/freshness, and Open in Agent setup. Paths wrap at narrow widths. Role/process/execution editing lives in Agent setup; structural content does not enable its deferred resolver. The separately authorized Cost tab is additional to these colleague tabs.
+Profile tabs are Overview, Work, Conversations, Activity; agents also have Notes and memory. Overview with no current task says Not working on anything right now. Names in the directory and Org chart open this profile. Agent Setup summary shows selected execution profile/model, observed driver/runtime, how it runs when supported, office and managed home with provenance/freshness, and Open in Agent setup. Paths wrap at narrow widths. Role, process and execution editing lives in Agent setup. The separately authorized Cost tab is additional to these colleague tabs.
 
-`/settings/agents` shows configured runtime/model/profile, supported run mode, office and Health. Below 640 px render divided rows. `/settings/agents/:memberId` contains supported configuration, How it runs, Edit, Pause, Offboard and View profile, preserving the separate execution/employee revisions. Hire an agent opens the existing reviewed Home-team-required hiring flow. Health uses Ready, Needs setup: {reason}, Paused only from actual readiness/configuration facts; Needs setup takes precedence over Paused, while runtime readiness unavailable is explicitly unknown. Missing model uses the strict predicate in Inbox; lack of a selection alone is not missing model. Health is not presence and cannot grant execution.
+`/settings/agents` shows configured runtime/model/profile, office and Health. Below 640 px render divided rows. `/settings/agents/:memberId` contains supported configuration, Edit, Pause, Offboard and View profile, preserving the separate execution/employee revisions. Hire an agent opens the existing reviewed Home-team-required hiring flow. Health uses Ready, Needs setup: {reason}, Paused only from actual readiness/configuration facts; Needs setup takes precedence over Paused, while runtime readiness unavailable is explicitly unknown. Missing model uses the strict predicate in Inbox; lack of a selection alone is not missing model. Health is not presence and cannot grant execution.
 
-All member surfaces share one presence vocabulary, in priority order: Needs you, With you, Working, Paused, Available, Asleep, Offline, Status unknown. Each signal has an icon and word, with a matching accessible name/tooltip in dense avatar-only views. Needs you requires an open owner-waiting item; Working/Available/Asleep/With you require live runtime evidence. Before that evidence, show known Paused or Needs you and the independently known current-task line; omit unknown pills in lists, show Status unknown once in an agent's profile header. People have no speculative presence in this release. Paused does not claim who paused the agent. Runtime observation remains separate from employment, manual/security/budget holds and placement admission.
+All member surfaces share one presence vocabulary, in priority order: Needs you, With you, Working, Waiting for an answer, Paused, Available, Offline, Status unknown. Each signal has an icon and word, with a matching accessible name and tooltip in dense avatar-only views. Needs you requires an open owner-waiting item; Working, Waiting for an answer (an agent suspended on a required ask, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), Available and With you require live runtime evidence. Before that evidence, show known Paused or Needs you and the independently known current-task line; omit unknown pills in lists, show Status unknown once in an agent's profile header. People have no speculative presence in this release. Paused does not claim who paused the agent. Runtime observation remains separate from employment, manual/security/budget holds and placement admission.
 
-Quick views preserve name/title/focus, copyable `@handle`, role, Home team, explicit Reports to and any lead subtree responsibility, current task/last activity and separately sourced execution/office freshness. Supported actions include Message, Assign task, Move home team, Pause/Resume and Offboard with their existing authorization and reasons. View session opens authorized HQ inspection; interactive takeover requires the supported office-local CLI, never a native embedded terminal.
+Quick views preserve name/title/focus, copyable `@handle`, role, Home team, explicit Reports to and any lead subtree responsibility, current task/last activity and separately sourced execution/office freshness. Supported actions include Message, Assign task, Move home team, Pause/Resume and Offboard with their existing authorization and reasons. View session opens the read-only session view; takeover is the office-local command (ADR-0004).
 
-Notes and memory initially says “Not available yet: notes and memory arrive in a later release.” Its future read API is human-principal-only, read-only, confined to journal/ and memory/MEMORY.md, text-only with entry/size caps, no symlinks, and an explicit security review. It cannot read author-only task notes or expose them to the owner by treating all notes as profile memory. No automatic memory engine is selected.
+Notes and memory initially says “Not available yet: notes and memory arrive in a later release.” When built, its read API is for people only, read-only, confined to `journal/` and `memory/MEMORY.md`, text-only with entry and size caps, with no symlinks, and needs a security review. It never reads author-only task notes.
 
 - AC-IA06-1–5: profile header/actions/tabs, setup summary and reciprocal links, empty current-work copy, and directory/tree profile links behave as above.
 - AC-IA07-1–3: configuration lives under settings, responsive Health rows use real fields, View profile returns to the colleague face, and Hire preserves the existing flow.
 - AC-IA08-1–3: one truthful vocabulary/component is used by profile, directory, team and chat; unknown is omitted in rows and shown once in an agent header.
 - AC-IA14-1–2: the future confined reader must satisfy its security constraints; absent it, only the honest placeholder is served.
 
-- **Cost:** actual consumption comes from durable usage records. Owner sees agent daily/monthly budgets and costs; project managers see cost for their projects only, labelled **in your projects**; others lack this tab. Preserve the own-agent CLI budget/cost access exception, without letting it query other agents. Policy data is selected; evaluators/pause services remain unimplemented. Incomplete usage is labelled incomplete, never zero. Compatible cost and budget requirements are governed by the integrated [cost UX](costs-and-insights-ux.md), [accounting contract](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md).
-- **Agent setup fields:** identity edits use employee revision; execution edits use execution revision and affect future admissions under document 11. Model/driver are never independently written onto `profile.md`. Managed home is read-only from the same office resolver used by launch, with no picker or `home/clear_home` inputs. Local credential changes stay private to that office.
+- **Cost:** actual consumption comes from durable usage records. The owner sees agent daily and monthly budgets and costs; project managers see cost for their projects only, labelled **in your projects**; others don't have this tab. The own-agent CLI exception lets an agent read only its own budget and cost. Incomplete usage is labelled incomplete, never zero. Compatible cost and budget requirements are governed by the integrated [cost UX](costs-and-insights-ux.md), [accounting contract](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md).
+- **Agent setup fields:** identity edits use employee revision; execution edits use execution revision and affect future admissions under document 11. Model/driver are never independently written onto `profile.md`. Managed home is read-only from the same office resolver used by launch, with no picker or path input. Local credential changes stay private to that office.
 - **Missing data:** “No role on record”, “Execution not configured”, “Runtime readiness unknown” or “Unplaced”, naming the appropriate fix if supported. Missing home team is an invalid record, never a valid “No team” state. A configured agent can be hired while readiness is unavailable; show why it cannot start.
-
-### Current-contract mapping (c6e520a, before target migration)
-
-Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships and `expected_version` wire calls are the API the code has today, at [this base](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/crates/org-proto/src/org.rs). They are replaced by employee handle, one chosen home team, independent execution/placement and revisions. Existing `member.move` consumes a membership ID/version; it does not already implement an employee home-team transaction. `member.offboard` currently removes membership links; target offboarding retains required home team. No new replacement command is claimed here.
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
 
@@ -180,12 +130,12 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
         ── Earlier: 14 more · [Show]
 ```
 
-- **Kinds**: All · Work · Conversations · Decisions · Runs · Org changes, with team/member/project filters. Work includes typed tasks and Git merges; Org changes includes team/member changes. Noisy Status rows and separately deferred Decision auditing remain governed by the grouping/privacy rules below.
+- **Kinds**: All · Work · Conversations · Decisions · Runs · Org changes, with team, member and project filters. Work includes typed tasks and Git merges; Org changes includes team and member changes.
 - **Authorized messages** are shown as one line with **Open thread**. Authenticated-owner read access follows the existing explicit chat policy; no employee field grants it. Threads open in a side panel with per-message authorization, read-only unless the owner is a participant allowed to reply. Shared activity never contains author-only private task notes, IDs or author associations. Broadcasts are one row ("ada → 7 members").
-- **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy (they live as dots on the cards), and Decisions, which are for auditing (shown with the Decisions filter, and never on Home) *(rev 16)*.
+- **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy (they live as dots on the cards), and Decisions, which are for auditing (shown with the Decisions filter, and never on Home).
 - **Home** follows the section order and Inbox summary below; it retains the Activity live-scroll/freshness rules.
 - **Live:** new rows slide in at the top with a 2-second highlight. When the owner has scrolled down, a pill shows "3 new · Jump to latest" and the list doesn't move.
-- **Live updates paused** *(rev 12)*: when the app isn't getting live changes from the office (the connection to the office ended or couldn't be made, for example while the office restarts, or listening failed), a line shows at the top of every screen, under the title: ⚠ "Live updates paused. Showing what was loaded at 21:51." (the time the organization was last loaded, in the app's 24-hour format; if nothing has loaded yet, the line reads "Live updates paused." alone) with **Retry**, which reconnects now and reads "Retrying…" while it works. The line clears by itself once live changes are back and the latest has loaded. It stays while the owner moves between screens. Word plus icon, never color alone; screen readers announce it once when it appears, not on every retry.
+- **Live updates paused**: when the app isn't getting live changes from the office (the connection to the office ended or couldn't be made, for example while the office restarts, or listening failed), a line shows at the top of every screen, under the title: ⚠ "Live updates paused. Showing what was loaded at 21:51." (the time the organization was last loaded, in the app's 24-hour format; if nothing has loaded yet, the line reads "Live updates paused." alone) with **Retry**, which reconnects now and reads "Retrying…" while it works. The line clears by itself once live changes are back and the latest has loaded. It stays while the owner moves between screens. Word plus icon, never color alone; screen readers announce it once when it appears, not on every retry.
 - **States:**
   - Loading (skeleton rows).
   - Empty organization: "When your agents start working, everything they do shows up here."
@@ -194,7 +144,7 @@ Current `Member.agent: AgentProfile`, `messaging_name`, `office_id`, memberships
 
 ### 6.1 Home and the unified Inbox
 
-Home sections are Needs you (the first five open Inbox items and Open Inbox (N)), Projects, Happening now, Recent activity, in that order. The Following card joins between Needs you and Projects when Following ships, hidden when empty. A separately selected away-digest card may precede Needs you without replacing it. Each section has an honest empty state, skeleton and one-line error with Retry. Use Nothing needs you, No projects yet with Create project, Live status isn't available yet when live presence is unavailable, and No activity yet. An observed empty working set may say No one is working right now.
+Home sections are Needs you (the first five open Inbox items and Open Inbox (N)), Projects, Happening now, Recent activity, in that order. The Following card joins between Needs you and Projects when Following ships, hidden when empty. Each section has an honest empty state, skeleton and one-line error with Retry. Use Nothing needs you, No projects yet with Create project, Live status isn't available yet when live presence is unavailable, and No activity yet. An observed empty working set may say No one is working right now.
 
 Project cards show real done/total progress, open/blocked counts and members; show lead, health and due date only when those fields exist. Use the same progress definition as the project/work specification. Never infer a project lead from every contributor team's lead. Home has no page primary; its card actions are outline. Happening now has one current-task line per observed working agent without a redundant Working pill.
 
@@ -209,14 +159,14 @@ Each source yields one item of one kind. Clear it when its owning source resolve
 | Unaccepted hand-off addressed to the owner | Approvals, Accept | Owning hand-off resolved |
 | Explicit review request | Approvals | Owning review or tied review ask resolved |
 | Escalation or proposed decision with choices | Decisions | Authorized decision recorded |
-| Work blocked on the owner / goal paused | Problems | Unblocked / resumed |
+| Work blocked on the owner | Problems | Unblocked |
 | Run error / crash | Problems | Resolved, or explicitly dismissed |
 | Critical bug | Problems, Assign… | Assigned or closed; triage alone does not clear |
 | Unplaced agent / exact configured model unavailable | Problems | Source problem resolved |
 
 Show only supported source kinds. A missing model item requires an exact selected model known absent from the runtime's reported list. An unset model, unreadable model list, missing runtime or unreachable office does not establish that predicate. Clearing/changing the selection or the runtime acquiring it clears the item. A configured fallback is not evidence of a missing selection.
 
-Where structured owner blocking is supported, a blocked task has its open Approval/Question, otherwise one Blocked on you Problem. Refusal leaves the work blocked and the Problem replaces the refused ask. When a new Approval/Question opens, withdraw the derived Problem without a Handled entry. A budget-caused block uses its Budget reached item alone; an independent owner block predating the budget stop retains its own item. This does not select the deferred decision-blocking or budget evaluator engines. Routine Problems remain deferred with routines; Retro ready is not an Inbox item.
+Where structured owner blocking is supported, a blocked task has its open Approval/Question, otherwise one Blocked on you Problem. Refusal leaves the work blocked and the Problem replaces the refused ask. When a new Approval/Question opens, withdraw the derived Problem without a Handled entry. A budget-caused block uses its Budget reached item alone; an independent owner block predating the budget stop retains its own item. Retro ready is not an Inbox item.
 
 Activity uses All, Work, Conversations, Decisions, Runs, Org changes filters, with team/member/project scopes. Merge organization and work events newest first; profiles/team/project tabs reuse the filtered feed. A recorded run expands in place to its trigger, duration, outcome and supported log summary. No fabricated run or presence entries appear before runtime evidence exists. Keep the existing private-note, default noisy-status/decision filtering and live-scroll protections.
 
@@ -230,69 +180,49 @@ Activity uses All, Work, Conversations, Decisions, Runs, Org changes filters, wi
 
 v1 §3.6 holds, with these changes for the office model:
 
-- **Describe:** “What do you need?” plus required **Home team**, prefilled from the launching team. Create/select a valid team before submission; HR does not infer an owner/HR team. Project ownership and work assignment are separate later choices.
-- **Suggestion (the HR lead's proposal):** role, title (with level), name, focus, required **home team**, optional **reports to** (a suggestion must be confirmed), and **execution profile/model** (selected separately from identity, with observed driver/readiness). *(rev 21)* While the HR lead drafts, the screen says "HR lead is reading…". A wake taking over 60 s shows "HR lead is still starting…" with **Details** and **Fill in the details yourself** (`agent-run-modes-ux.md` §3).
-- **When the HR lead can't run** *(rev 21, §2a)*: Describe's "What do you need?" field is disabled with the reason ("The HR lead can't run on this server yet." or "The HR lead can't start: Codex isn't signed in on <instance>."), and the primary action is **Fill in the details yourself**. It opens Suggestion as a form: name and handle are empty and marked **Your choice needed**; optional role, title and focus are available without being required, and home team (from Describe), optional explicit reports to and separately chosen execution settings are shown without fabricated defaults. There's no "HR's reason" line. **Next** stays disabled until required fields are valid and names what is missing ("Choose a home team and handle to continue"); optional role, focus and reporting can remain unset. If the HR lead's run stops while drafting, the screen says "The HR lead stopped: <reason>." with **Fill in the details yourself** and **Try again**, and what was typed in Describe stays above the form as a note. Review, approval, Hiring and Done are the same as when the HR lead drafts. Role association is optional and references an existing stable role ID; retained free text stays `role_text`. When drafting new roles is supported, a new-role request needs the HR drafting workflow: "New roles need the HR lead. Pick an existing role, or try again once it's running."
-- **Review:** what will be created, as a dry run: the employee (name, handle `ac-qa-engineer-cameron`), required home team, optional explicit reports to, separate execution profile/model and readiness, any separately selected autonomy setting (the earlier Asks first/Full autonomy proposal is deferred; no default comes from the selected role record), office (its service machine/instance), home folder, the role file if it's new (a hire that needs a new role goes to the owner, even when an agent approves hires, `roles-ux.md` §0 deferred approval proposal *(rev 17)*), and "Cameron can be reached by everyone in <org>". *(rev 21)* Rows for features that don't exist yet are left out, never shown empty or with a made-up value: autonomy until its own policy is selected/implemented, without manufacturing an identity field or default, the role file until role files exist, How it runs until the office runs agents (`agent-run-modes-ux.md` §2), and the estimated cost per month (§7.1) until cost estimates exist.
-- **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). *(rev 21)* Provisioning preserves running work. Any affected process change requires the safe lifecycle, permit/fencing and cleanup checks in document 11; do not automatically restart unrelated sessions. **Done:** “Cameron is hired and in App.” **View profile** is primary; Assign a task and View session appear when those supported operations are available. Hired does not mean runnable or started.
-- **Hiring stops partway** *(rev 21)*: "Couldn't finish hiring Cameron: <step that failed>. Already done: <steps done>." with **Try again**, which finishes the hire without a new approval. Cameron isn't shown as a member (chart, roster, pickers) until the hire completes, and the request shows **Approved, not hired** (§7.1, A97).
+- **Describe:** “What do you need?” plus required **Home team**, prefilled from the launching team, otherwise the top-level team. Project ownership and work assignment are separate later choices.
+- **Suggestion (the HR lead's proposal):** role, title (with level), name, focus, required **home team**, optional **reports to** (a suggestion must be confirmed), and **execution profile/model** (selected separately from identity, with observed driver and readiness). While the HR lead drafts, the screen says "HR lead is reading…". A start taking over 60 s shows "HR lead is still starting…" with **Details** and **Fill in the details yourself**.
+- **When the HR lead can't run** (§2a): Describe's "What do you need?" field is disabled with the reason ("The HR lead can't run on this server yet." or "The HR lead can't start: Codex isn't signed in on <instance>."), and the primary action is **Fill in the details yourself**. It opens Suggestion as a form: name and handle are empty and marked **Your choice needed**; optional role, title and focus are available without being required, and home team (from Describe), optional explicit reports to and separately chosen execution settings are shown without fabricated defaults. There's no "HR's reason" line. **Next** stays disabled until required fields are valid and names what is missing ("Choose a home team and handle to continue"); optional role, focus and reporting can remain unset. If the HR lead's run stops while drafting, the screen says "The HR lead stopped: <reason>." with **Fill in the details yourself** and **Try again**, and what was typed in Describe stays above the form as a note. Review, approval, Hiring and Done are the same as when the HR lead drafts. Role association is optional and references an existing stable role ID; retained free text stays `role_text`. When drafting new roles is supported, a new-role request needs the HR drafting workflow: "New roles need the HR lead. Pick an existing role, or try again once it's running."
+- **Review:** what will be created, as a dry run: the employee (name, handle `ac-qa-engineer-cameron`), required home team, optional explicit reports to, separate execution profile/model and readiness, office (its service machine or instance), home folder, and "Cameron can be reached by everyone in <org>". Rows for features that don't exist yet are left out, never shown empty or with a made-up value: the estimated cost per month (§7.1) until cost estimates exist, and How it runs until the office runs agents.
+- **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). Provisioning preserves running work. Any affected process change requires the safe lifecycle, permit/fencing and cleanup checks in document 11; do not automatically restart unrelated sessions. **Done:** “Cameron is hired and in App.” **View profile** is primary; Assign a task and View session appear when those supported operations are available. Hired does not mean runnable or started.
+- **Hiring stops partway**: "Couldn't finish hiring Cameron: <step that failed>. Already done: <steps done>." with **Try again**, which finishes the hire without a new approval. Cameron isn't shown as a member (chart, roster, pickers) until the hire completes, and the request shows **Approved, not hired** (§7.1, A97).
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on <office machine / instance>. Cameron is hired, but can't start until its administrator completes runtime setup there." **Hire anyway** works.
-- **The office can't check the runtime** *(rev 21)* on that instance: the Review says "Can't check whether Codex is installed and signed in on <instance>. Cameron will be hired; check the runtime setup there before Cameron starts." **Hire anyway** works.
-- **Add agent record** (the standalone-v1 label for **Add an existing agent**) submits
-  the same proposal and approval workflow as Hire. *(rev 21)* Its fields are the
-  proposal: the HR lead never drafts or changes it, even when it can run, so it
-  works the same whether or not the HR lead can run. It captures name,
-  handle, required home team, optional role/title/reports-to and separate execution/office choices as proposal data.
-  Nothing is provisioned until an authorized manager with Can approve hires or the
-  owner approves under §7.1. Only then does the office materialize the member, managed
-  home/configuration and messaging binding. Direct HTTP/member-creation calls must
-  enforce that approved proposal; authorization alone is not a bypass. Initial
-  built-in HR/owner bootstrap during organization creation is the explicit exception to hire approval only; any employee created there still needs a valid chosen home team.
-  No external home path, old-team import or runtime takeover is accepted.
-  *(rev 21)* Once role files exist, Add agent record uses existing roles only:
-  its optional role field lists stable-ID role records by name/key. Under it: "No role fits? Use Hire to request a new
-  one.", where Hire links to Hire. Any supplied role_id must reference an existing role; leaving role_id unset is valid. It cannot submit an invented role_id that
-  is not in the list, so it never needs a new role and never goes to the owner as
-  "Waiting for you: new role" (§7.1). A new role goes through Hire.
+- **The office can't check the runtime** on that instance: the Review says "Can't check whether Codex is installed and signed in on <instance>. Cameron will be hired; check the runtime setup there before Cameron starts." **Hire anyway** works.
+- **Agents come only from this flow.** Hire is the only way an agent comes to exist: nothing brings in an agent that runs elsewhere, starts one by hand, or binds one the office didn't start. Nothing is provisioned until the owner or a person in the lead chain of the new agent's home team approves it under §7.1. Only then does the office materialize the member, managed home/configuration and messaging binding, by the product's own code. Direct HTTP/member-creation calls must enforce that approved proposal; authorization alone is not a bypass. No external home path or runtime takeover is accepted. The built-in HR lead, made with the organization (§2a), is the only agent that isn't hired.
 
-### 7.1 Who approves a hire (rev 8, the user)
+### 7.1 Who approves a hire
 
-This preserves the earlier hire-approval workflow requirement; the selected structural data does not implement approval flags, routing, role drafting or CLI endpoints. Any implementation needs a versioned contract and cannot derive authority from a role, team name or YAML marker. Team-lead subtree responsibility remains distinct from this explicit-reporting approval proposal.
+A hire is approved by a person: the organization's owner, or a person in the lead chain of the team the new agent joins (that team's lead, or a lead of a team above it). No agent approves a hire, and no flag, role, team name or other field on a record grants the right; the service derives it from the person's position when the approval is submitted ([employee structure](../design/organization-data/04-agent-structure.md)).
 
-**The flag.** **Can approve hires** is a flag on an **agent** (not on its role), set by the owner in the agent's Settings, at hire or later. It's typical for managers and senior managers. The roster and quick view show it as a badge, "Approves hires". Only the owner can set or clear it. An agent can't give it to itself or to the agents it hires.
+**The route.** A hire request (from an agent or a person, through `@hr`, `agent-os hire request` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Fill in the details yourself, §7): optional role, title and reporting, required home team, separate execution profile/model and office choices, and the cost estimate once it exists (§7 Review). The proposal then goes to its **approver**:
 
-**The route.** A hire request (from an agent or a person, through `@hr`, `agent-os hire request` or the app's Hire) becomes a **hire proposal**, drafted by the HR lead, or built from the fields the requester filled in (Add agent record, or Hire when the HR lead can't run, §7) *(rev 21)*: optional role/title/reporting, required home team, separate execution profile/model and office choices, and any later selected run-mode/cost estimate (how it runs and the cost once those features exist, §7 Review). The proposal then goes to its **approver**:
+1. The nearest person in the lead chain of the new agent's home team: that team's lead if it is a person, otherwise the nearest person leading a team above it.
+2. Otherwise **the owner**.
 
-1. The requester's **manager**, if that manager has Can approve hires.
-2. Otherwise up the **reporting line** to the nearest manager with the flag.
-3. Otherwise **the owner**.
+The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up the lead chain. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
 
-*(rev 17)* A proposal that needs a **new role** (no role file fits) goes straight to the owner, skipping the steps above, since a new role is the owner's to approve (`roles-ux.md` §0 deferred approval proposal). It's one approval: the owner approves the role and the hire together. Its state reads "Waiting for you: new role". *(rev 20)* This route needs a role-drafting/approval service beyond selected stable-ID role records. Until it exists, preserve role_text separately, accept optional existing role_id, and do not promise a new-role combined approval workflow.
+**Approving.** The approver sees the proposal in Needs you and on the Requests tab, with the same facts as the Hire review, and approves or rejects it with a reason. Approved means the office provisions the hire at once, whether or not the HR lead can run. The approval is recorded on the new agent ("Hired 8 Nov · requested by codex-dev · approved by Sam Ortiz") and in Activity. The owner sees it on Home ("Sam Ortiz approved hiring Cameron, QA engineer, for Office · ≈ $40/month"; until cost estimates exist, Home leaves out the cost, as the Review does (STAFF-7): "Sam Ortiz approved hiring Cameron, QA engineer, for Office"), with **Open** and, from the agent's profile, the usual **Offboard…** if they disagree.
 
-The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
+**An approver who doesn't answer**: a proposal waiting on a lead for more than a day is also shown to the owner, who can approve it directly; the first answer decides, and a later answer is refused with "Already approved by <name>." (or "Already rejected by <name>."). When the approver is deactivated, the proposal moves to the next person up the lead chain, or to the owner, and says "Was waiting for Sam Ortiz, who left. Now waiting for you."
 
-**An agent approver** gets the proposal in its inbox (woken if on call), with the same facts as the Hire review. It answers `agent-os hire approve <id> --reason "…"` or `hire reject <id> --reason "…"`. Approved means the office provisions the hire at once, with no human needed, whether or not the HR lead can run *(rev 21)*. The approval is recorded on the new agent ("Hired 8 Nov · requested by codex-dev · approved by ada") and in Activity. The owner sees it on Home ("ada approved hiring Cameron, QA engineer, for Office · ≈ $40/month"; *(rev 21)* until cost estimates exist, Home leaves out the cost, as the Review does (STAFF-7): "ada approved hiring Cameron, QA engineer, for Office"), with **Open** and, from the agent's profile, the usual **Offboard…** if they disagree.
-
-**An approver who can't act** *(rev 21)*: when a proposal's agent approver can't run (the server doesn't run agents yet, or its runtime is missing or signed out), is Paused, or is at an offline office, the proposal shows to the owner at once, not after a day, with the reason: "Waiting for ada · ada can't run right now, so you can approve it." (or "ada is paused", "ada's office is offline"). It stays waiting for ada too, and the first answer decides; a later answer is refused with "Already approved by <name>." (or "Already rejected by <name>.") When the approver is offboarded, the proposal moves to the next approver up the line (steps 2–3) and says "Was waiting for Remy, who left. Now waiting for ada."
-
-**Hire requests** (Agents › Requests tab): each proposal with its requester, approver, state (**Waiting for ada** · **Waiting for you** · **Waiting for you: new role** *(rev 17)* · **Approved by ada** · **Hiring…** · **Approved, not hired** *(rev 21)* · **Rejected** · **Hired**) and age. A request waiting on an agent approver for more than a day is also shown to the owner, who can approve it directly.
-- **Empty:** *(rev 21)* "No hire requests. Hires and agent records sent for approval show here."
-- **Approved, not hired** *(rev 21)*: "Approved, not hired: couldn't register with messaging" with **Try again** for the owner, and a Needs you item: "Hiring Cameron stopped: couldn't register with messaging. **Try again**". The row names what was already done. Try again finishes the hire without a new approval, and Cameron isn't shown as a member until it completes (A97).
+**Hire requests** (Agents › Requests tab): each proposal with its requester, approver, state (**Waiting for Sam Ortiz** · **Waiting for you** · **Approved by Sam Ortiz** · **Hiring…** · **Approved, not hired** · **Rejected** · **Hired**) and age. A request waiting on a lead for more than a day is also shown to the owner, who can approve it directly.
+- **Empty:** "No hire requests. Hires sent for approval show here."
+- **Approved, not hired**: "Approved, not hired: couldn't register with messaging" with **Try again** for the owner, and a Needs you item: "Hiring Cameron stopped: couldn't register with messaging. **Try again**". The row names what was already done. Try again finishes the hire without a new approval, and Cameron isn't shown as a member until it completes (A97).
 - **Loading:** skeleton rows.
 - **Error:** "Can't load hire requests" with **Retry**.
 
-**Optional guardrail** (Settings › Hiring): "Hires approved by agents: no limit" (default), or "at most [n] per week", or "only up to ≈ $[amount] per month each". Above the limit the request goes to the owner, and the proposal says why ("Above ada's weekly limit, so it comes to you").
+**Optional guardrail** (Settings › Hiring): "Hires approved by leads: no limit" (default), or "at most [n] per week", or "only up to ≈ $[amount] per month each". Above the limit the request goes to the owner, and the proposal says why ("Above Sam Ortiz's weekly limit, so it comes to you").
 
 ## 8. Flow 5 · Assign and change teams
 
-- **Move home team…** (profile, quick view, team menu or drag shortcut) opens a required single destination and optional appointment title. Preview source/destination, any departed lead appointment, canonical path move and whether explicit workspace migration is required. “Riley moves from App to Office. Current project/task assignments stay as recorded.” One recoverable expected-revision operation; no teamless intermediate or eight-second Undo engine.
+- **Move home team…** (profile, quick view, team menu or drag shortcut) opens a required single destination and optional appointment title. Preview source/destination, any departed lead appointment, canonical path move and whether explicit workspace migration is required. “Riley moves from App to Office. Current project/task assignments stay as recorded.” One recoverable expected-revision operation; no teamless intermediate.
 - **Make lead** accepts a direct home-team employee only. “app-frontend-dev now leads App and manages its subtree.” Resolve an invalid old-team appointment during a home move. Do not infer project co-leads or rewrite explicit reporting.
 - **Project participation** edits owner/contributor teams through project settings, not employee memberships. Assigning a cross-team task does not require a home-team move or contributor registration and does not grant repository/tool permissions.
 - **Assign task** shows accountable team, optional project, optional assigned team and optional individual separately. Show active employees' readiness/paused status; a paused assignee can be recorded with a warning, without claiming execution will resume. Replace the complete desired assignment pair, including nulls, with expected task revision; record immutable history. Team-only, individual-only, both and neither are valid. Reporter is the immutable creator, never the latest assignee.
 
 ## 9. Flow 6 · Deallocate: remove from team, pause, offboard
 
-The historical heading is retained for links. **Remove from team** is replaced by **Move home team…**: no action clears the employee's required home team. Pausing and offboarding have different lifecycle consequences.
+There is no **Remove from team**: **Move home team…** replaces it, and no action clears the employee's required home team. Pausing and offboarding have different lifecycle consequences.
 
 - **Pause:** “Pause Remy? HQ will record the request. Remy stays in Agent tooling; new admissions stop when the authoritative control is applied.” Show **stop pending** until the owning office confirms actual process quiescence; an offline office supplies only last-observed state/freshness. Stop pending is not held. Manual, security and budget holds are independent; Resume clears only the authorized manual hold and must name any remaining block. Requests are revision-checked/deduplicated, and a later Resume must not let stale control delivery restart or stop the wrong placement generation. Existing UI Show paused can hide cards while control status remains inspectable.
 - **Offboard…:** preview employment becoming inactive, retained home team/profile/handle/history, leadership replacement/clear, explicit reporting resolution and assignment changes. “Remy's profile and home-team history stay in organization data. The handle stays reserved. Choose how to resolve 1 current assignment.” Clear/reassign the individual with expected task revision and history, retaining an independently assigned team if selected; do not automatically change task accountability, reporter or status. Preserve task worktrees until closure or explicit safe migration. Former members shows retained identity/date, not a fabricated offboard timestamp.
@@ -310,112 +240,88 @@ Task references are the same everywhere, for example T-A15. All task types use T
 ## 11. UX acceptance criteria
 
 **Import (IMP)**
-- IMP-1 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-2 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-3 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-4 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-5 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-6 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-7 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-8 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-9 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-10 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
-- IMP-11 · Retired in rev 18: fresh standalone-v1 setup has no existing-team import. This ID is not reused.
+- IMP-1 · Withdrawn: there is no import of an existing team.
+- IMP-2 · Withdrawn: there is no import of an existing team.
+- IMP-3 · Withdrawn: there is no import of an existing team.
+- IMP-4 · Withdrawn: there is no import of an existing team.
+- IMP-5 · Withdrawn: there is no import of an existing team.
+- IMP-6 · Withdrawn: there is no import of an existing team.
+- IMP-7 · Withdrawn: there is no import of an existing team.
+- IMP-8 · Withdrawn: there is no import of an existing team.
+- IMP-9 · Withdrawn: there is no import of an existing team.
+- IMP-10 · Withdrawn: there is no import of an existing team.
+- IMP-11 · Withdrawn: there is no import of an existing team.
 
 **Agent record (PROF)**
-- PROF-1 · *(rev 24)* Profile/quick view distinguish employee identity/home team/optional role from execution profile/model/driver and office/readiness/freshness. Missing optional data is named; missing home team blocks admission.
-- PROF-2 · *(rev 18)* View session opens authorized browser status/log inspection through HQ. Interactive takeover requires an explicit supported action on the owning office machine; v1 requires no native embedded terminal or runtime deep link.
+- PROF-1 · Profile/quick view distinguish employee identity/home team/optional role from execution profile/model/driver and office/readiness/freshness. Missing optional data is named; missing home team blocks admission.
+- PROF-2 · View session opens the authorized read-only session view through HQ. Takeover is a local command on the owning office machine; there is no terminal in the browser.
 - PROF-3 · Directory/tree rows use one truthful shared presence signal, omit unknown pills in lists, and link to the colleague profile. Agent configuration lives in Agent setup.
-- PROF-4 · *(rev 24)* Identity settings use employee revision; profile/model/prompt/tools use separate execution revision. Model/driver are not identity fields. Managed home stays read-only through the owning office resolver; home/clear_home and path pickers are unavailable.
+- PROF-4 · Identity settings use employee revision; profile/model/prompt/tools use separate execution revision. Model/driver are not identity fields. Managed home stays read-only through the owning office resolver; there is no path picker or path input.
 
 **Activity (LIVE)**
-- LIVE-1 · *(rev 24)* Activity lists authorized messages, status, typed tasks (including bugs/requests), team changes, git merges and sessions, newest first, filterable by team/member/project/kind. Decision auditing is deferred with its engine; when available its rows and noisy Status rows stay hidden by default. Cross-scope task references include their project/team scope.
+- LIVE-1 · Activity lists authorized messages, status, typed tasks (including bugs/requests), team changes, git merges and sessions, newest first, filterable by team/member/project/kind. Decision rows and noisy Status rows are hidden by default. Task references are complete on their own.
 - LIVE-2 · An authorized visible message appears in Activity within 2 seconds; Open thread, previews and counts follow message visibility and the explicit authenticated-owner policy. Shared activity never contains private task-note bodies, IDs or author associations.
 - LIVE-3 · The owner can reply only as an authorized participant/recipient. Otherwise the thread is read-only and says “Reading as the owner. To weigh in, message {agent}”. Reading never grants answer/accept authority.
-- LIVE-4 · Home shows Needs you (first five Inbox items and the common count), Projects, Happening now and Recent activity, with conditional Following/away cards only when separately supported (§6.1). Each section has its own empty/loading/error state.
+- LIVE-4 · Home shows Needs you (first five Inbox items and the common count), Projects, Happening now and Recent activity, with the Following card only when Following ships (§6.1). Each section has its own empty/loading/error state.
 - LIVE-5 · New rows never move the list while the owner is scrolled down. A "n new · Jump to latest" pill appears instead.
 - LIVE-6 · A status change shows on the agent's card within 2 seconds, and Status rows are hidden from Activity by default.
 - LIVE-7 · When messaging isn't connected, Activity says so with How to connect instead of looking empty.
-- LIVE-8 · *(new, rev 12)* When live changes from the office stop (the connection ended or couldn't be made, or listening failed), every screen shows "Live updates paused. Showing what was loaded at <HH:MM>." (24-hour, the organization's last load; "Live updates paused." alone if nothing has loaded yet) with Retry ("Retrying…" while it works). The line clears once live changes resume, and it persists across screens until then.
+- LIVE-8 · When live changes from the office stop (the connection ended or couldn't be made, or listening failed), every screen shows "Live updates paused. Showing what was loaded at <HH:MM>." (24-hour, the organization's last load; "Live updates paused." alone if nothing has loaded yet) with Retry ("Retrying…" while it works). The line clears once live changes resume, and it persists across screens until then.
 
 **Hire and add (STAFF)**
-- STAFF-1 · *(rev 24)* Hire Review shows name/handle, required home team, optional role/reporting/title/focus, separate execution profile/model, office/readiness and managed path before provisioning. Bootstrap employees also require a valid chosen team.
+- STAFF-1 · Hire Review shows name/handle, required home team, optional role/reporting/title/focus, separate execution profile/model, office/readiness and managed path before provisioning.
 - STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
 - STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
-- STAFF-4 · *(rev 24)* Add agent record always builds its proposal from submitted fields, independent of HR readiness. Require valid home team/handle; optional role_id must reference a selected stable role, retaining role_text separately. Approved proposals are required before non-bootstrap provisioning, including direct API callers. Unsupported approval handlers remain an implementation gap, never a bypass.
-- STAFF-5 · *(rev 24)* When HR cannot run or drafting stalls, Fill in the details yourself preserves the description and opens a proposal form without invented HR reasoning/defaults. Require valid name/handle/home team and any enabled execution fields; optional role/focus/reporting may stay unset. Review and approval remain unchanged.
-- STAFF-6 · *(new, rev 21)* When the office can't check whether the chosen runtime is installed and signed in on the instance, Review says so and Hire anyway still hires.
-- STAFF-7 · *(new, rev 21)* Hire's Review leaves out rows for features that don't exist yet (autonomy, the role file, How it runs, the estimated cost) rather than showing them empty or estimated, and Done makes View profile primary, with no View session, until the office runs agent sessions.
-- STAFF-8 · *(rev 24)* Provisioning a new hire preserves running work. Only explicitly affected office processes may transition through safe turn/attempt/process lifecycle, valid permits/placement fencing and cleanup; do not claim automatic scheduling or unrelated session restarts.
+- STAFF-4 · A hire is the only way an agent comes to exist; the built-in HR lead, made with the organization, is the only agent that isn't hired. The proposal requires a valid home team and handle; an optional role_id must reference an existing role, with role_text kept separately. An approved proposal is required before provisioning, including for direct API callers; a missing approval check is never a bypass, and no call brings in, starts or binds an agent the office didn't provision.
+- STAFF-5 · When HR cannot run or drafting stalls, Fill in the details yourself preserves the description and opens a proposal form without invented HR reasoning/defaults. Require valid name/handle/home team and any enabled execution fields; optional role/focus/reporting may stay unset. Review and approval remain unchanged.
+- STAFF-6 · When the office can't check whether the chosen runtime is installed and signed in on the instance, Review says so and Hire anyway still hires.
+- STAFF-7 · Hire's Review leaves out rows for features that don't exist yet (How it runs, the estimated cost) rather than showing them empty or estimated, and Done makes View profile primary, with no View session, until the office runs agent sessions.
+- STAFF-8 · Provisioning a new hire preserves running work. Only explicitly affected office processes may transition, through the safe turn, attempt and process lifecycle with valid permits, placement fencing and cleanup; unrelated sessions are not restarted.
 
 **Assign and move (MOVE)**
-- MOVE-1 · *(rev 24)* Move home team is one revision-checked recoverable operation updating home_team_id/canonical path, with no teamless intermediate. Undo is deferred.
-- MOVE-2 · *(rev 24)* Move dialog identifies source/destination, departed lead appointment and explicit workspace migration needs; current task assignments, reporter, history and project participation remain unchanged.
-- MOVE-3 · *(rev 24)* Working on a project does not require joining a team. Project owner/contributor participation and task assigned team/individual are separate actions; assignment grants no permissions.
-- MOVE-4 · *(rev 24)* Assignment shows accountable team, project, independent nullable assigned team/individual and readiness. A paused assignee warns; the complete desired pair writes atomically with expected revision and immutable history.
-- MOVE-5 · *(rev 24)* Make lead accepts only a direct home-team employee and shows management of its whole subtree. It does not infer project co-leads or rewrite explicit reporting.
+- MOVE-1 · Move home team is one revision-checked recoverable operation updating home_team_id/canonical path, with no teamless intermediate.
+- MOVE-2 · Move dialog identifies source/destination, departed lead appointment and explicit workspace migration needs; current task assignments, reporter, history and project participation remain unchanged.
+- MOVE-3 · Working on a project does not require joining a team. Project owner/contributor participation and task assigned team/individual are separate actions; assignment grants no permissions.
+- MOVE-4 · Assignment shows accountable team, project, independent nullable assigned team/individual and readiness. A paused assignee warns; the complete desired pair writes atomically with expected revision and immutable history.
+- MOVE-5 · Make lead accepts only a direct home-team employee and shows management of its whole subtree. It does not infer project co-leads or rewrite explicit reporting.
 
-**Hire approval (APPR), earlier UX requirements pending services**
-
-The selected data contracts do not yet implement proposal routing/approval flags or the CLI sketches below. Preserve these acceptance requirements for that future capability; role inheritance/autonomy and optional hiring limits are not selected budget or scheduling engines.
-- APPR-1 · *(rev 17)* Only the owner can set or clear an agent's Can approve hires flag, at hire or in the agent's Settings, and the roster and quick view show "Approves hires". The same holds for Can approve processes (`processes-ux.md` decision 8), shown as "Approves processes".
-- APPR-2 · *(rev 21)* A hire proposal goes to the requester's manager if that manager has the flag, else up the reporting line to the nearest manager with it, else to the owner. The proposal shows who it's waiting for. Once role files exist (`roles-ux.md`), a proposal that needs a new role goes straight to the owner ("Waiting for you: new role"); until then no proposal is classed as needing one (§7.1).
-- APPR-3 · *(rev 9)* The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner. The HR lead never approves.
-- APPR-4 · *(rev 21)* An approval by a manager with the flag is enough: the office provisions the hire at once, with no human step, whether or not the HR lead can run. The exception, once role files exist, is a proposal that needs a new role, which only the owner approves (APPR-2).
+**Hire approval (APPR)**
+- APPR-1 · Hire approval is a person's right, derived by the service from the organization's ownership or from the person's place in the lead chain of the new agent's home team. No agent can approve a hire, and no flag or other field grants the right.
+- APPR-2 · A hire proposal goes to the nearest person in the lead chain of the new agent's home team, else to the owner. The proposal shows who it's waiting for.
+- APPR-3 · The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner. The HR lead never approves.
+- APPR-4 · An approval by an authorized person is enough: the office provisions the hire at once, whether or not the HR lead can run.
 - APPR-5 · Every approved hire records who requested and who approved it, on the new agent's profile and in Activity, and the owner sees it on Home.
-- APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on an agent for over a day is shown to the owner.
+- APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on a lead for over a day is shown to the owner.
 - APPR-7 · Above the optional weekly or cost limit, a proposal goes to the owner and says why.
-- APPR-8 · *(rev 21)* `agent-os hire request|approve|reject` work with the same words as the app, and approve and reject need a reason. When the HR lead can't run, `hire request` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire or Add agent record."
-- APPR-9 · *(new, rev 21)* A proposal whose agent approver can't run, is Paused or is at an offline office shows to the owner at once with the reason ("Waiting for ada · ada can't run right now, so you can approve it."), and the first answer decides. A proposal whose approver is offboarded moves to the next approver up the line and says so.
-- APPR-10 · *(new, rev 21)* After approval a request shows Hiring…, then Hired. If hiring stops partway, it shows "Approved, not hired: <failed step>" with Try again, the owner gets a Needs you item, the steps already done are named, finishing needs no new approval, and the agent is shown in no chart, roster or picker until the hire completes.
+- APPR-8 · `agent-os hire request` works with the same words as the app; approving and rejecting are done by a person and need a reason. When the HR lead can't run, `hire request` creates nothing and says "The HR lead can't run right now, so it can't draft hire requests. Ask the owner to use Hire."
+- APPR-9 · A proposal waiting on a lead for over a day also shows to the owner, and the first answer decides. A proposal whose approver is deactivated moves to the next person up the lead chain, or to the owner, and says so.
+- APPR-10 · After approval a request shows Hiring…, then Hired. If hiring stops partway, it shows "Approved, not hired: <failed step>" with Try again, the owner gets a Needs you item, the steps already done are named, finishing needs no new approval, and the agent is shown in no chart, roster or picker until the hire completes.
 
 **HR lead (HRL)**
-- HRL-1 · *(rev 24)* HR is an agent employee with one required valid home team selected through bootstrap, stable handle/identity and separate execution settings. Protected built-in lifecycle/handle rules are earlier UX requirements, not a teamless employee exception or authority granted by YAML.
-- HRL-2 · *(rev 24)* HR appears as a shortcut beside the owner bar, Built-in roster row and Chat participant, and once at its actual home-team card/reporting position. It is counted as an employee; pickers apply supported active/direct-membership rules.
-- HRL-3 · *(rev 24)* When a separately supported execution/drafting workflow is available, Hire asks HR to draft; no default scheduling engine is selected. Otherwise the requester fills in the proposal (STAFF-5). Add agent record (formerly Add an existing agent) always builds its proposal from its fields (STAFF-4). Either way, nothing is provisioned before the proposal is approved by the owner or a manager with Can approve hires (§7.1). The creation endpoint checks the approval record, including for direct API callers.
-- HRL-4 · *(rev 8)* An agent's request to the HR lead becomes a hire proposal routed to its approver (§7.1), never an automatic hire.
-- HRL-5 · *(rev 24)* HR uses separate execution profile/model and local provider/credential bindings. Its usage is attributed to its stable employee ID under HR lead; earlier run-mode scheduling/defaults require a separately selected service.
-- HRL-6 · *(new, rev 21)* When the HR lead can't run, its chip, Built-in group row and quick view say "Not running" (the server doesn't run it yet) or "Can't start" (its run failed to start) with "hires are filled in by hand", and the quick view gives the reason and, for a failed start, the fix and Run now. It never shows "Asleep · wakes when called" while it can't run.
-- HRL-7 · *(new, rev 21)* Nothing waits on the HR lead: when it can't run, approved hires are provisioned and Offboard completes its cleanup as usual (APPR-4, DEAL-4).
-- HRL-8 · *(new, rev 21)* When the HR lead can't run, a DM to it or an `@hr` mention says "HR lead can't run right now, so it won't answer yet. To hire, use Hire or Add agent record." The message is kept for when it can run (`chat-ux.md` §7).
+- HRL-1 · HR is a built-in agent employee, created with the organization in its top-level team, with a stable handle and identity and separate execution settings. It is not kept running: it runs only when called. Its reserved handle and protection from offboarding and renaming are enforced by the service, never granted by a field.
+- HRL-2 · HR appears as a shortcut beside the owner bar, Built-in roster row and Chat participant, and once at its actual home-team card/reporting position. It is counted as an employee; pickers apply supported active/direct-membership rules.
+- HRL-3 · When HR can run, Hire asks HR to draft. Otherwise the requester fills in the proposal (STAFF-5). Either way, nothing is provisioned before the proposal is approved by an authorized person (§7.1) (§7.1), and provisioning is the product's own code. The creation endpoint checks the approval record, including for direct API callers.
+- HRL-4 · An agent's request to the HR lead becomes a hire proposal routed to its approver (§7.1), never an automatic hire.
+- HRL-5 · HR uses separate execution profile/model and local provider/credential bindings. Its usage is attributed to its stable employee ID under HR lead.
+- HRL-6 · When the HR lead can't run, its chip, Built-in group row and quick view say "Not running" (the server doesn't run it yet) or "Can't start" (its run failed to start) with "hires are filled in by hand", and the quick view gives the reason and, for a failed start, the fix and Run now.
+- HRL-7 · Nothing waits on the HR lead: when it can't run, approved hires are provisioned and Offboard completes its cleanup as usual (APPR-4, DEAL-4).
+- HRL-8 · When the HR lead can't run, a DM to it or an `@hr` mention says "HR lead can't run right now, so it won't answer yet. To hire, use Hire and fill in the details yourself." The message is kept for when it can run (`chat-ux.md` §6).
 
 **Deallocate (DEAL)**
-- DEAL-1 · *(rev 24)* The UI names Move home team, Pause, Offboard and Unassign explicitly. Remove from team cannot clear the required home team; each action previews its independent effects.
-- DEAL-2 · *(rev 24)* No employee can be left teamless. Moves require a valid destination and resolve old-team lead appointments while preserving identity, explicit reporting and current task assignments.
-- DEAL-3 · *(rev 24)* HQ acceptance shows stop pending until process quiescence is confirmed; offline observations remain labelled stale. Stop pending is distinct from held. Manual Resume does not clear independent budget/security holds or bypass permits, cleanup or placement fencing.
-- DEAL-4 · *(rev 24)* Offboard retains inactive employee/profile/home team/handle/history and resolves live leadership/reporting/assignment explicitly. Assignment pairs/history use expected task revisions; accountability/reporter/status never change merely from offboarding. Task worktrees survive handoff until closure or explicit safe migration.
+- DEAL-1 · The UI names Move home team, Pause, Offboard and Unassign explicitly. Remove from team cannot clear the required home team; each action previews its independent effects.
+- DEAL-2 · No employee can be left teamless. Moves require a valid destination and resolve old-team lead appointments while preserving identity, explicit reporting and current task assignments.
+- DEAL-3 · HQ acceptance shows stop pending until process quiescence is confirmed; offline observations remain labelled stale. Stop pending is distinct from held. Manual Resume does not clear independent budget/security holds or bypass permits, cleanup or placement fencing.
+- DEAL-4 · Offboard retains inactive employee/profile/home team/handle/history and resolves live leadership/reporting/assignment explicitly. Assignment pairs/history use expected task revisions; accountability/reporter/status never change merely from offboarding. Task worktrees survive handoff until closure or explicit safe migration.
 - DEAL-5 · Show paused in the chart toolbar hides or shows paused agents, and is remembered.
 
-## 12. Gaps to close, and who I think owns them (for ada to confirm in the phase-1 plan)
+## 12. Not in v1
 
-| # | Gap | Proposed owner | Plan row |
-| --- | --- | --- | --- |
-| G1 | Replace the current Member/AgentProfile with employee home-team identity, separate execution/placement and lifecycle | ada (contract) + server-dev (store) | W3 / W10 |
-| G2 | The code's member commands follow the earlier contract; the home-team/required-owner transaction and retained-home offboarding remain implementation work | ada + server-dev | W3 |
-| G3 | Retired: no old-team import or migration in standalone v1 | — | rev 18 |
-| G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
-| G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
-| G6 | Hire on the office: the HR lead's proposal and provisioning as an office call (the HR toolkit's `hr.py` logic ported) | codex-dev (ada) | W12 |
-| G7 | Browser screens: the agent record, Activity, Home, Hire and Add agent, Move, Pause and Offboard | app-frontend-dev (ada; Riley stays offline) | W9 / W12 |
-| G8 | Authenticated browser session inspection and explicitly authorized local CLI takeover on the office machine | runtime owners + app-frontend-dev | standalone v1 |
+- Undo of a home-team move.
+- Notes and memory in the profile.
+- Cost estimates for a hire.
 
 ## 13. Open questions
 
-**For the user — historical approvals, onboarding-import portions superseded**
-- ~~U10~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* **Agentic Consulting**, the workspace's name, distinct from the app. Use another name if you prefer.
-- ~~U11~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* the shape in §2: Remy leads Agent tooling, and Riley shows Offline in App.
-- ~~U12~~ · *Historical approval (2026-11-08):* manage the team through the app. The later fresh-setup decision retires the proposed HR/team import, while selected canonical profiles/history live in organization data.
-- ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada). *Update (later the same day): the user started Remy, who now owns messaging (AGENTS.md). Riley stays Offline.*
-
-**For ada**
-
-Historical resolved wire decisions below remain current-contract evidence only, as scoped in §5. They do not supersede selected home-team/execution fields.
-- A97 · *(rev 21)* When hiring an approved proposal stops partway (the record made, the home or messaging binding not), can HQ keep the partial member out of the chart, roster and pickers until it completes, and can Try again finish it without a new approval and without repeating what's done? Which states does a proposal expose (hiring, stopped at a named step)? APPR-10 and §7 Hiring need them.
-- A98 · *(rev 21)* How does the app learn that an agent can't run, and why: the server doesn't run agents yet, its runtime is missing or signed out, its start failed, it's Paused, or its office is offline? HRL-6 and STAFF-5 need it for the HR lead, and APPR-9 for an agent approver. Can the office tell whether a runtime is installed and signed in on an instance? STAFF-6 covers when it can't.
-- A96 · *(rev 20)* SRV-30 and STAFF-4 require HQ to refuse member creation without an authorized approval, including direct API callers, but `member.add_agent` (`crates/org-proto/src/org.rs`) has no approval reference and no approval error today. Which field carries the approval, and which error code does a call without one return? `dogfood-run.md` 3a.8 checks it.
-- ~~A47~~ · *Resolved (ada):* `can_approve_hires` (owner-set only), `HireProposal` with routing up the reporting line, and `hire.request|approve|reject` (server-dev the contract, codex-dev the flow). In our team, ada has the flag.
-- ~~A46~~ · *Resolved (ada):* server-dev adds a built-in `hr_lead` agent with the reserved handle `hr`, created with the organization; codex-dev builds the HR lead's runs. Note: `member.add_agent` is app-only today (`teams-and-org-chart.md`), so provisioning approved by an agent needs an exception for the HR lead's run (ada). *Superseded by rev 21:* the office provisions an approved hire, not the HR lead's run, so no exception for it is needed (§2a, §7.1, A96).
-- ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. The selected target now retains required home team through offboarding; the membership-cascade behavior is what the code does today.
-- ~~A15~~ · *Resolved (ada):* `Member.agent: Option<AgentProfile>` (one entity, one version) with role, title, focus, runtime (claude_code | codex | antigravity | other), home, messaging_name, status (active | paused). Commands: `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`.
-- ~~A14~~ · *Partly resolved (ada):* codex-dev and server-dev run on Codex, agy-senior-dev on Antigravity. app-frontend-dev and the reviewer: ada is asking the user.
-- ~~A16~~ · *Resolved:* `member.move { membership_id, to_team_id, title_in_team? }`, atomic. ~~A17~~ · *Historical resolution:* office-wide app reads were the original rule; message visibility and protected sources now follow document 15.
+- A97 · When hiring an approved proposal stops partway (the record made, the home or messaging binding not), HQ keeps the partial member out of the chart, roster and pickers until it completes, and Try again finishes it without a new approval and without repeating what's done. Which states a proposal exposes (hiring, stopped at a named step) is still to be designed. APPR-10 and §7 Hiring need them.
+- A98 · How the app learns that an agent can't run, and why (its runtime is missing or signed out, its start failed, it's Paused, or its office is offline), and whether the office can tell that a runtime is installed and signed in on an instance, is still to be designed. HRL-6, STAFF-5, STAFF-6 and APPR-9 need it.
+- A96 · SRV-30 and STAFF-4 require HQ to refuse employee creation without an authorized approval, including from direct API callers. Which field carries the approval, and which error code a call without one returns, is still to be designed. `dogfood-run.md` 3a.8 checks it.

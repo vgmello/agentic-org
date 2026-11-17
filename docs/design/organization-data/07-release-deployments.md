@@ -1,6 +1,6 @@
 # Release deployment records
 
-Status: **selected** data contract, revision 2.6. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
+Status: **selected** data contract, revision 2.7. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
 
 ## Relationships
 
@@ -48,7 +48,7 @@ A release has zero or many deployment records. Each record belongs to exactly on
 
 Each record captures `operation: deploy | rollback`, `status: queued | running | succeeded | failed | cancelled`, actual start/end timestamps when known, an optional external job URL, common creator/update attribution, and a Markdown outcome. These are data values, not a process engine. Optional `baseline_deployment_id` identifies a recorded baseline in the same project/environment/target for the technical delta; null records an unknown baseline. A rollback is a new attempt against the release being restored, with `rollback_of_id` pointing to the attempt being undone in the same project/environment/target. Preserve all earlier attempts; never rewrite a prior successful deployment into a rollback.
 
-`repository_commits` snapshots the exact commit intended for each targeted project repository. Once execution starts, preserve its release, environment, target and commit snapshot, even if the release manifest later changes. It is a commit map, not a build-artifact model. Import/publication validates that every started attempt has at least one commit entry. A successful attempt means the listed target changes completed; a failed attempt may have partial effects, so deployment history alone must not claim a failed attempt established the environment's current state. Outcomes can explain partial results.
+`repository_commits` snapshots the exact commit intended for each targeted project repository. Once execution starts, preserve its release, environment, target and commit snapshot, even if the release manifest later changes. It is a commit map, not a build-artifact model. Projection and publication validate that every started attempt has at least one commit entry. A successful attempt means the listed target changes completed; a failed attempt may have partial effects, so deployment history alone must not claim a failed attempt established the environment's current state. Outcomes can explain partial results.
 
 ## Durable files and example
 
@@ -124,10 +124,10 @@ CREATE TABLE deployments (
   external_url TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   created_at TEXT,
-  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
   updated_at TEXT,
-  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'owner', 'system', 'unknown')),
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee', 'system', 'unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id, id),
   UNIQUE (organization_id, id, project_id),
@@ -168,4 +168,4 @@ CREATE TABLE deployment_repository_commits (
 ) STRICT;
 ```
 
-Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; import validates recorded historical provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.
+Repository commit snapshots reference stable repository identity, independent of current project membership. New snapshot capture validates current project/repository eligibility in the accepting service; projection validates recorded provenance. Later detachment from `project_repositories` must not delete or invalidate release/deployment snapshots. Referenced repository identities remain retained.

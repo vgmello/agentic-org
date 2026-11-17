@@ -7,8 +7,8 @@ Read apps/agentic-org-ui/AGENTS.md and components.json. package.json pins Svelte
 
 For .svelte and .svelte.ts/.svelte.js work use available svelte-code-writer/core-bestpractices skills and official Svelte MCP: list-sections, relevant get-documentation, and autofixer until clean. Report unavailable essential capabilities. Static indexes do not replace them.
 
-Keep static adapter and authoritative Rust transport. No Node backend or production mock fallback. Preserve pending/unknown/unavailable outcomes, accessibility and Tailwind Plus's product-only boundary.
+Keep the static adapter; the Rust web API is the only backend. No Node backend and no test fake in a production build. Keep pending/unknown/unavailable outcomes, accessibility, and Tailwind Plus inside apps/agentic-org-ui.
 
-Within apps/agentic-org-ui use bun install --frozen-lockfile, bun run check, bun run test, bun run build, bun run lint and bun run format:check. format writes; format:check does not. Changed flows need relevant Playwright, CSP/gateway and WebKit journey commands from CI; full suites exceed the fast gate. Tests use temporary data; UI changes provide scoped screenshots/output evidence.
+Within apps/agentic-org-ui use bun install --frozen-lockfile, bun run check, bun run test, bun run build, bun run lint and bun run format:check. format writes; format:check does not. Changed flows need the relevant Playwright, CSP (interactive and against the web server) and WebKit journey commands from CI; e2e/README-gate.md selects them; full suites exceed the fast gate. Tests use temporary data; UI changes provide scoped screenshots/output evidence.
 
 Consult official version-relevant docs through Svelte MCP or https://svelte.dev/docs and https://shadcn-svelte.com/docs as needed. Reassess framework, transport or ownership changes.

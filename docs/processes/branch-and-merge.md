@@ -3,67 +3,65 @@ process: branch-and-merge
 name: Branch, review and integration
 kind: process
 level: organization
-version: 2
-owner: Codex lead
+version: 3
+owner: lead
 status: active
-summary: Implement, verify and review locally, then integrate all v1 features into v1-integration.
+summary: Branch from origin/v1-integration, verify and review locally, then merge into v1-integration.
 applies_to: every agent that changes this repository
 overridable: true
 ---
 
 # Branch, review and integration
 
-The owner selected solo Codex development with local subagents. Codex is the lead
-and owns implementation and integration across all repository areas. Named team
-ownership, external messaging, external reviewer waits and Ada approval are
-superseded for current work. Follow [AGENTS.md](../../AGENTS.md) and the installed
-[kit workflow](../../.agent-kit/WORKFLOW.md); no PR is required.
+Two engineers build v1, each with a lead agent. A lead takes an increment from the
+[implementation plan](../implementation-plan.md) and owns it end to end: UI, backend,
+database, shared contracts, documentation and integration. This page is how that work
+reaches the shared branch. [AGENTS.md](../../AGENTS.md) and the
+[kit workflow](../../.agent-kit/WORKFLOW.md) apply alongside it. No pull request and
+no outside reviewer is required.
 
-These are software-repository contributor instructions; their legacy seed front
-matter is not an accepted organization-data payload. Materialized process records
-use the selected stable-ID path, key, schema_version, revision, kind, title, scope,
-lifecycle and attribution fields and preserve the explicit overridable value.
-Selected organization process records remain governed by [organization structure](../design/organization-data/01-organization-structure.md)
-and [Processes UX](../specs/processes-ux.md); changing this workflow does not
-activate a product process engine or migrate organization data.
+## 1. Branch and plan
 
-## 1. Branch and scope
-
-Start a small feature branch from `origin/v1-integration`. Keep one active
-implementation branch; preserve blocked branches and their checkpoints, then move
-to independent work. Use separate worktrees for concurrent writers. Never delete
-unmerged work or overwrite another local worker's changes.
+- Start each increment's branch from `origin/v1-integration`.
+- Before code, write the increment's short plan: the outcome, the files you own, what
+  you will delete, and the decisions you take where the documents are silent.
+- One writer per file at a time. A file that two increments need is handed over
+  explicitly. Concurrent writers use separate worktrees.
+- Each lead keeps one active implementation branch at a time. If it is blocked,
+  preserve the branch and its checkpoint and continue independent work.
+- Never delete unmerged work or overwrite another writer's changes.
 
 ## 2. Implement and verify
 
-The lead owns the complete vertical feature, including applicable UI, backend,
-database, contracts and integration. Use kit task-routing and skill-routing;
-delegate bounded implementation work when useful within the kit's writer limit.
-Keep shared interfaces explicit and update affected implementations together.
-
-Run current source-bound kit checks and the affected repository checks from
-AGENTS.md. Rust changes require formatting, workspace Clippy and workspace tests;
-app changes require type checks, tests, build and relevant browser verification.
-Documentation-only changes require relevant instruction/catalog checks and review.
-Tests use disposable roots, never user organization workspaces.
+- Use the kit's task-routing and skill-routing. Delegate bounded pieces to local
+  subagents when useful, within the writer limit.
+- Agree a shared interface before another increment depends on it, and update every
+  affected implementation together.
+- Run the checks before review:
+  - Rust: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo test --workspace`.
+  - UI: type check, tests, build and the relevant browser checks, with screenshots
+    where the change is visible.
+  - Data contract changes: `python3 docs/design/organization-data/test_schema.py`.
+  - Documentation or workflow only: the relevant kit and catalog checks, and a review
+    of the changed instructions.
+- Tests use temporary directories, never a real organization's data.
+- Update the [feature checklist](../FEATURES.md) row with evidence.
 
 ## 3. Review locally
 
-Use the kit review-cycle: fresh independent local review, confirmed fixes and
-rechecks, original-author intent validation, then the separate fresh final local
-review. Keep the author context and provide the exact branch, base, commit,
-contract and relevant UI evidence. A later source change needs current review and
-check evidence. Diagnose failed tools or repeated findings locally; do not wait
-for offline developers or send them coordination messages.
+Use the kit review cycle on the exact commit: a fresh independent local review,
+fixes for confirmed findings with checks rerun, validation by the original author that
+the result still meets the intent, then a separate fresh final review. A later source
+change needs current checks and review again.
 
-## 4. Integrate and continue
+## 4. Integrate
 
-After local acceptance and required checks, the Codex lead merges with
-`git merge --no-ff` into `v1-integration` and pushes that branch. No external
-reviewer READY or Ada go is required. Verify the remote commit and integrated
-source. `v1-integration` is the shared branch for all v1 features; release `v1`
-and `main` are not integration targets without an explicit release instruction.
+After the checks and the final review pass, the lead merges with
+`git merge --no-ff` into `v1-integration` and pushes that branch. Verify the pushed
+commit. Then start the next increment from the updated `origin/v1-integration`.
 
-Verify a completed branch is fully integrated before cleanup; preserve blocked
-and unmerged work. Continue the next feature from the updated integration branch.
-A partial feature or successful merge does not establish that v1 is complete.
+- `v1-integration` is the integration branch for all v1 work.
+- Never push to `main` or merge into the release branch `v1` without an explicit
+  release instruction.
+- Clean up a branch or worktree only after confirming it is fully merged.

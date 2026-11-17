@@ -1,183 +1,149 @@
-# ADR-0012: bounded office channel ownership and closure
+# ADR-0012 · Bounded office channel ownership and closure (CH-LIFE-1)
 
-Status: ACTIVE, CH-LIFE-1 revision2, 2026-11-16. Owner: Codex lead/root.
-Independent focused architecture recheck READY; scoped dependent implementation authorized by root.
-This narrowly completes ADR0006 protected sessions and ADR0011 public recovery;
-it does not replace their authority, custody, revocation or production gates.
+Status: accepted. Implementation pending. Completes the protected sessions of
+[ADR-0006](0006-selected-task-acceptance.md) and the public recovery read of
+[ADR-0011](0011-protected-recovery-delivery.md) without changing their authority,
+custody or revocation rules.
 
-## Requirements and observations
+## Requirements
 
-- P1 REQUIRED: ordinary authenticated client capacity exhaustion must not terminate
-  an office or disconnect unrelated clients. Preserve bounded descriptors/threads
-  and one local slot beyond the web process allowance. Existing worker policy is
-  eight physical channels total and seven web channels; writer-control is a
-  distinct single stream, not one of these eight. Recovery public reads consume
-  the ordinary local/total budget. Authority: active assignment contract and
-  current worker transfer/channels.rs register. Verified source at c3ada005.
-- P2 DISPROVED implementation assumption: host MAX_CHANNELS64 matches worker
-  admission. Actual host Endpoint::open allows 63 web channels, worker rejects eighth (observed at the commit reviewed; since fixed: the host registry enforces seven);
-  transfer::run treats register error as fatal _exit(1). This is a defect in the
-  implementation, not permission to enlarge worker budgets.
-- P3 DISPROVED implementation assumption: Session ChannelSlot lifetime represents
-  physical socket lifetime. Session retains slots while Endpoint exists even
-  after browser/native peer FD closes. Endpoint count therefore leaks until
-  session end. Dropping a permission witness also cannot safely claim a still
-  open physical socket was closed. Verified host channels.rs and authentication.rs.
-- P4 REQUIRED: authenticated rendezvous remains the only worker lifecycle source;
-  stdout is untrusted, descriptor receipt ownership and malformed-rights fatal
-  handling remain. Existing bounded startup::write_event uses serialized writer,
-  five-second whole-frame deadline and shuts down on I/O failure. Verified source.
-- P5 REQUIRED: no host duplicates of client endpoints for liveness monitoring;
-  such duplicates can suppress EOF. Worker already owns registration/shutdown FD
-  and serving thread; it can report actual serving-channel disposal. No new
-  dependency, signing authority, browser secret or host-control command.
-- P6 UNVERIFIED until implementation checks: concurrent open, EOF, ACK/refusal,
-  endpoint failure and recovery are bounded and deadlock-free. Tests below must
-  falsify accounting/ordering errors. Recheck whenever these paths change.
+1. **Running out of channels is ordinary.** When authenticated client channels are
+   exhausted, the office keeps running and unrelated clients stay connected.
+   Descriptors and threads stay bounded. An office has eight physical channels in
+   total, of which at most seven are web channels, so one local slot is always
+   left. The writer-control stream is a separate single stream and not one of the
+   eight. A recovery public read uses the ordinary local and total budget.
+2. **Host and worker count the same thing.** Both enforce the same budget. The host
+   refuses the eighth web channel itself; a capacity refusal from the worker is never
+   fatal to the office.
+3. **A permission is not a socket.** A session's channel permission does not
+   represent the physical socket's lifetime. A client may still hold a native
+   descriptor after its session ends, and a closed browser or native peer must free
+   its slot even while its session lives.
+4. **The rendezvous is the only lifecycle source.** The worker's standard output is
+   untrusted. Descriptor receipt ownership and fatal handling of malformed rights
+   stay as they are. Lifecycle events go through the existing serialized writer with
+   its five-second whole-frame deadline, and the worker shuts down on an I/O failure.
+5. **No duplicate descriptors for liveness.** The host never keeps a copy of a client
+   endpoint to watch it, because a copy suppresses EOF. The worker owns registration,
+   the shutdown descriptor and the serving thread, and reports when a serving channel
+   is actually disposed of. No new dependency, signing authority, browser secret or
+   host-control command is added.
 
-## Selected candidate mechanism
+## Mechanism
 
-Put physical budget constants8 total/7 web and a fixed channel profile name
-in org-office-launch::v3, consumed by both endpoints. Add mandatory-known
-channel_profile=office-channels/1 to ReadyForSecrets. Keep v3 framing, strict
-unknown-field validation and existing identity checks. A missing/different profile
-is refused BEFORE keys/descriptors are sent. Old strict hosts likewise refuse the
-new readiness field. This deliberately refuses mixed old/new channel builds;
-matched complete signed releases are the supported production composition.
-No inference that arbitrary v3 peers implement lifecycle notifications. No v2 or
-legacy task data migration. Reviewer must assess this compatibility choice.
+**Shared profile.** The budget constants (8 total, 7 web) and a fixed channel
+profile name live in the launch contract in `org-office-launch`, used by both ends.
+The worker's ready-for-secrets message carries the mandatory field
+`channel_profile = office-channels/1`. A missing or different profile is refused
+before keys or descriptors are sent. Host and worker come from one signed release.
 
-Add two strictly decoded rendezvous events, bounded by existing frame limits:
-channel_closed {of:channel_id} and fds_refused {of:channel_id,reason:capacity}.
-Only capacity is an ordinary refusal, after identity/descriptor shape/type checks;
-wrong office/duplicate or invalid ID/invalid stream/ancillary truncation/count/
-rights/corruption/unknown refusal reason still fail closed. Worker closes its
-rejected descriptor and then sends refusal; no thread/registration or positive
-receipt for that transfer. Host drops its pending FD copy only on this explicit
-negative ownership receipt, releases the reservation, returns ordinary unavailable
-and keeps office/other channels alive. Transfer uncertainty/timeouts still fail
-Endpoint and supervisor lifecycle as before.
+**Two lifecycle events** on the rendezvous, strictly decoded and within the existing
+frame limits: `channel_closed { of: channel_id }` and
+`fds_refused { of: channel_id, reason: capacity }`. Capacity is the only ordinary
+refusal, and only after the identity, descriptor shape and type checks. A wrong
+office, a duplicate or invalid ID, an invalid stream, truncated ancillary data, a
+wrong count or rights, corruption or an unknown reason still fail closed. On a
+capacity refusal the worker closes the rejected descriptor and then sends the
+refusal, with no thread, registration or positive receipt. The host drops its
+pending descriptor copy only on that explicit negative receipt, releases the
+reservation, returns an ordinary unavailable result and keeps the office and its
+other channels alive. Transfer uncertainty and timeouts still fail the endpoint and
+its supervisor as before.
 
-Host reserves a per-ID physical entry with kind and liveness witness BEFORE send,
-under one short accounting lock, including pending reservations in both budgets.
-No occupancy lock is held during send, ACK wait, event write or RPC. Pending rights
-ownership remains separately bounded by16 and exact correlation. Roll back failures
-before transfer; uncertain transfer invalidates Endpoint. Positive FdsReceived is
-exactly once for pending ID and releases sender's FD copy. A refused transfer gets
-exactly one negative receipt instead. Writer-control receipts remain supported
-but never consume ordinary capacity. Duplicate/unknown/misordered lifecycle
-receipts fail Endpoint instead of granting capacity or permissions.
+**Host accounting.** The host reserves a per-ID physical entry, with its kind and a
+liveness witness, before sending, under one short accounting lock that counts
+pending reservations in both budgets. No occupancy lock is held during the send, the
+acknowledgement wait, an event write or an RPC. Pending rights ownership is bounded
+separately by 16, with exact correlation. A failure before transfer is rolled back;
+an uncertain transfer invalidates the endpoint. A positive `FdsReceived` comes
+exactly once for a pending ID and releases the sender's copy; a refused transfer
+gets exactly one negative receipt instead. Writer-control receipts never consume
+ordinary capacity. A duplicate, unknown or misordered lifecycle receipt fails the
+endpoint rather than granting capacity or permission.
 
-Worker arranges positive FdsReceived BEFORE serving/disposal can publish
-channel_closed: after successful registration and thread creation, serving waits
-on a small start gate until receipt succeeds. A spawn/ACK failure cannot emit a
-normal close event for an unacknowledged channel. After a successful start,
-serving drops its descriptors/registration before exactly one close notification,
-including immediate EOF and one-shot public recovery. No registry lock is held
-while writing lifecycle events. On event-write failure shut down the rendezvous;
-normal transfer supervision makes uncertain lifecycle fatal rather than leaking
-capacity silently. Keep joining/shutdown of actual threads, not only registry IDs.
+**Worker ordering.** The worker sends the positive `FdsReceived` before serving or
+disposal can publish `channel_closed`: after registration and thread creation, the
+serving thread waits on a small start gate until the receipt succeeds. A spawn or
+acknowledgement failure never emits a normal close for an unacknowledged channel.
+After a successful start, serving drops its descriptors and registration before
+exactly one close notification, including immediate EOF and the one-shot recovery
+read. No registry lock is held while writing a lifecycle event. If an event write
+fails, the worker shuts down the rendezvous, and transfer supervision treats the
+uncertainty as fatal rather than leaking capacity. Shutdown joins the actual
+threads, not only registry IDs.
 
-Host closes liveness witness/removes physical entry only on matching authenticated
-channel_closed, explicit capacity refusal, pretransfer rollback or Endpoint failure.
-It does NOT release physical occupancy merely when a session or ChannelSlot drops:
-a client may still hold the native descriptor. Dropped session still revokes its
-grants using the existing Revoked mechanism; physical peer closure then frees its
-slot. This keeps worker/host actual live occupancy consistent. Unique generated
-IDs are not reused by the host; no growing closed-ID tombstone set is necessary.
-Close may arrive immediately after ACK before caller stores its permission witness;
-that witness is already dead and cannot mint grants. Recheck live witness when
-opening/binding and granting, alongside all current connection/session/org checks.
+**Release of a slot.** The host closes the liveness witness and removes the physical
+entry only on a matching authenticated `channel_closed`, an explicit capacity
+refusal, a rollback before transfer, or endpoint failure. It does not release
+occupancy when a session or its channel permission is dropped. A dropped session
+still revokes its grants through the existing revocation mechanism, and the peer's
+physical close then frees the slot. Host-generated channel IDs are unique and never
+reused, so no tombstone set is needed. A close that arrives right after the
+acknowledgement, before the caller stores its witness, finds the witness already
+dead, and it cannot mint grants. The witness is rechecked when opening, binding and
+granting, alongside every connection, session and organization check.
 
-Session.channels prunes truly closed/dead entries BEFORE the64entry session bound.
-Treat this64 as independent cross-office permission-record bound, not office
-physical capacity. Endpoint failure invalidates every physical witness and pending
-receipt waiter. Cross-office64/65 boundary tests must retain the original limit.
+**Session bound.** `Session.channels` prunes closed or dead entries before checking
+its 64-entry bound. That bound limits permission records across offices; it is not an
+office's physical capacity. Endpoint failure invalidates every physical witness and
+pending receipt waiter.
 
-The native and web control listener uses the SAME per-channel liveness witness
-for pending descriptor receipts and acknowledged channel IDs, replacing the
-unconditional received-ID set. This is an internal host interface change only:
-Authentication::open_channel returns a cloned witness alongside ID/socket for
-service/mod.rs to pass to Connection::send_descriptor. Session, listener and host
-physical accounting share liveness; dropping a witness never releases a still
-live physical channel. Keep connection-bound exact ownership ACK, not only worker
-acceptance, as a necessary grant condition. channel_received checks both completed
-ownership receipt and live witness; a closed channel cannot mint grants.
+**Control listener.** The native and web control listener uses the same per-channel
+liveness witness for pending descriptor receipts and acknowledged channel IDs.
+`Authentication::open_channel` returns a cloned witness with the ID and socket, which
+the service passes to `Connection::send_descriptor`. Session, listener and host
+physical accounting share liveness; dropping a witness never releases a live
+channel. A grant requires the connection-bound exact ownership acknowledgement and a
+live witness; a closed channel cannot mint grants. The listener prunes only closed
+or dead acknowledged entries before its 512 limit, and counts live acknowledged
+entries plus all pending receipt reservations atomically, in pending-then-acknowledged
+lock order, bounded at 512 combined and 16 pending. These locks are never held across
+a blocking enqueue, descriptor send or wait, and office occupancy locks are never
+taken under them. A matched delayed client receipt still resolves its pending
+ownership waiter even if the physical witness has died; it grants nothing new.
+Pending ownership receipts are not deleted merely on socket EOF. Unknown, duplicate,
+wrong-connection or timed-out receipts fail closed.
 
-Prune only closed/dead acknowledged entries before checking the512listener limit.
-Count live acknowledged entries PLUS ALL pending receipt reservations atomically
-under a consistent pending→acknowledged lock order, bounded512combined and16pending.
-Do not hold these locks across blocking enqueue/FDsend/wait or touch office
-occupancy locks under them. A matched delayed client receipt must still resolve
-the exact pending ownership waiter even if the physical witness has died; it need
-not retain a dead acknowledged record and cannot grant new permissions. Never
-silently delete pending ownership receipts merely on socket EOF. Unknown, duplicate,
-wrong-connection or timed-out receipts retain current failclosed handling.
+Reaching 16 pending or 512 combined is a typed capacity result. The handler returns
+the existing Unavailable response for that open request, drops the newly opened
+socket (the worker's close reclaims occupancy) and keeps the control connection and
+other sessions alive. Malformed protocol, uncertain descriptor ownership and writer
+or transport failures keep their fail-closed handling. There is no new external
+control method, wider limit, removed acknowledgement or runtime override.
 
-Genuine16pending/512combined capacity exhaustion is a distinct internal typed
-capacity result. The handler returns the existing Unavailable response for that
-open request, drops its newly opened socket (worker closure reclaims occupancy)
-and leaves control/other sessions alive. Malformed protocol, uncertain descriptor
-ownership or writer/transport failure retain existing close/failclosed handling.
-Do not convert every I/O error into ordinary capacity. There is no new external
-control method, wider numeric limit, removed ACK, or runtime override.
+## Rejected alternatives
 
-## Alternatives rejected
+Raising the worker budget, which hides a mismatch; duplicating descriptors to poll,
+which masks EOF; dropping slots when a session is removed, which counts revoked but
+open channels as absent; a new external close endpoint; notifications on standard
+output or accepting a missing profile; holding the count lock across the
+acknowledgement, which can deadlock the receiver that resolves the wait.
 
-Raising worker budget: hides mismatch and changes resource policy. Client/worker FD
-duplicates for polling: masks EOF. Dropping slots on Session removal alone: counts
-revoked but still physically open channels as absent. New external close endpoint:
-unnecessary authority/transport expansion. Unauthenticated stdout notifications or
-accepting missing profile: loses the trust/compatibility boundary. Holding count
-lock across ACK: can deadlock the lifecycle receiver needed to resolve the wait.
+## Acceptance
 
-## Validation and remaining limits
+Real host and worker tests, with no real user roots, physical authentication or
+live service:
 
-Required real host/worker tests:7live web + reserved local;8th web refusal
-BEFORE FD transfer; forced worker-side ordinary capacity refusal via actual transfer
-keeps office and existing hello/RPC alive; malformed descriptor/identity/receipt
-still fatal. Closing peer releases occupancy with control session alive, including
-more than512sequential native AND web control cycles, multiple sessions and concurrent closes/opens without
-underflow/overadmission. Immediate EOF preserves ACK→closed order. Pretransfer,
-spawn, ACK/write, endpoint-death paths dispose FD copies and cannot mask EOF or
-leave live grants. Recovery uses total/local slot and releases on EOF; writer
-control stays independent; logout/revoke retains denial while held FD occupancy
-is honest. Protocol strict decoding/profile-mismatch before secrets tests. Listener tests must cover concurrent pending+acknowledged512 boundary admission, typed ordinary capacity preserving control/other sessions, delayed physical-close-before-client-ACK and duplicate/wrong-connection ACK. No
-real user roots, physical authentication or live service use in tests.
+- Seven live web channels plus the reserved local one; the eighth web channel is
+  refused before descriptor transfer.
+- A forced worker-side capacity refusal through a real transfer keeps the office and
+  existing hello and RPC alive; malformed descriptors, identities and receipts are
+  still fatal.
+- Closing a peer releases occupancy with the control session alive, across more than
+  512 sequential native and web control cycles, several sessions, and concurrent
+  closes and opens, with no underflow or over-admission. Immediate EOF preserves the
+  acknowledged-then-closed order.
+- Failures before transfer, at spawn, at acknowledgement or write, and on endpoint
+  death dispose of descriptor copies and neither mask EOF nor leave live grants.
+- A recovery read uses the total and local slot and releases on EOF; writer control
+  stays independent; after logout or revocation, denial holds while a held
+  descriptor's occupancy is reported honestly.
+- Strict decoding and a profile mismatch are refused before secrets.
+- The listener admits correctly at the concurrent 512 boundary of pending plus
+  acknowledged, returns a typed capacity result that preserves control and other
+  sessions, and handles a physical close before the client acknowledgement and
+  duplicate or wrong-connection acknowledgements.
 
-Run targeted affected tests/fmt/Clippy, structural gate, then full current workspace,
-kit/UI and affected protected native/browser journey. Independent initial and
-fresh final code reviews plus original author validation remain distinct gates.
-Architecture READY does not establish implementation or production readiness.
-Authentic release/platform/existing-owner prerequisites are unchanged.
-
-No durable SQL/data schema is changed. Rollback requires a coherent matched bundle;
-old/new channel-profile peers refuse safely. Source dependency graph is unchanged:
-host and office apps depend on existing launch contract, never launch→host/app.
-Rough module coupling adds no source dependency edges. Runtime events extend the
-existing authenticated worker→host channel only. Root integrates disjoint worktrees
-and retains one overall plan and acceptance contract.
-
-
-## Review history
-
-Revision1 fresh independent architecture review session
-01a1e402-2351-7161-9aba-899c9b6b55bf returned CHANGES_REQUIRED. The candidate was
-otherwise feasible; it required resolving actual retained listener512IDs and
-shared-control failure, concurrent receipt accounting, native/web>512cycles,
-and exact ACK handling. Actual376.252s execution/result/ordered in-memory
-preflight are retained under channel-architecture-review-1. Filesystem read-only
-prevented reviewer artifact writes; source reading/hash checks and preflight
-actually ran. Repowise unavailable; actual Rust analyzer/targeted source used.
-
-Root revision2 resolves that concrete gap with a shared liveness witness, atomic
-pending+acknowledged bounded accounting and typed capacity result. Source
-requirements/trust/physical custody remain unchanged. Focused same-session
-ARCHITECTURE recheck pending; no dependent implementation authorized yet.
-
-Root activated revision2 after actual same-session independent SolXhigh recheck
-READY, no findings,67.891s, session01a1e402-2351-7161-9aba-899c9b6b55bf.
-Exact reviewed proposal SHA25606073c57959c1a1dae08f4a63f0d5178fe222fc4d6417275a2289e04829063aa
-is archived as channel-architecture-review-1/proposal-r2.md. Only status/history
-metadata changed upon activation. This permits planning/implementation, never
-code acceptance. All tests, original-author intent and fresh final gates remain.
+No durable schema changes. The source dependency graph is unchanged: host and office
+apps depend on the launch contract, never the reverse.

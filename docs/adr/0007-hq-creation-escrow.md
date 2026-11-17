@@ -1,85 +1,164 @@
-# ADR-0007: HQ creation escrow format (REC-ESC-1), revision 1
+# ADR-0007 · HQ creation escrow format (REC-ESC-1)
 
-Status: ACTIVE for implementation architecture, revision 1; not implementation acceptance. Owner: local Codex lead.
-Canonical path: docs/adr/0007-hq-creation-escrow.md.
+Status: accepted. Implementation exists in `crates/org-pki`; acceptance below is
+pending. Key protection follows
+[ADR-0016](0016-no-application-level-data-encryption.md); recovery-code delivery
+follows [ADR-0011](0011-protected-recovery-delivery.md).
 
-**Amended by [ADR-0016](0016-no-application-level-data-encryption.md) (2026-11-17).**
-SQLCipher is removed. The usable CA private key stays in the worker's local-only PKI
-record and is still committed in the one initial writer transaction, but its bytes are
-stored encrypted with the host-held office secrets key instead of relying on
-whole-database encryption. The host still never receives the CA key. Where the steps
-below say "SQLCipher storage" or "SQLCipher writer transaction", read "the office
-database, with the private key wrapped". The escrow envelope format and recovery code
-are unaffected.
+## Requirement
 
-## Why this decision is needed
+Creating HQ provisions an encrypted escrow of the organization CA signing key and
+a server-generated recovery code of at least 128 random bits, derived with
+Argon2id, delivered once through a protected path, with idempotent retries
+([standalone design](../design/standalone-server.md),
+[offices design](../design/offices-hq-and-satellites.md)).
 
-The original fullstack/architecture author (session 01a1dfb4-1d26-7100-9ea4-72b53756ef23) found a planned missing prerequisite while implementing ADR-0006 P6/P9 and plan section 4: authorities mandate Argon2id/encrypted CA escrow but no concrete envelope/KDF/code format exists. This is not evidence that task acceptance or its reviewed writer/journal architecture is invalid. Preserve ADR-0006 revision 4 and its other verified premises. Pause dependent escrow/setup completion only; authenticated selected transport and UI can continue. The original author remains implementation owner; this lead proposal answers its format question and requires independent architecture review before activation.
+- The pending code belongs to the host's credential provider; only an opaque handle
+  enters the creation journal. No usable CA key or code appears in replicated
+  organization data, the web process, the browser, status or logs.
+- Acknowledging delivery erases the pending code. There is no later redisplay and no
+  implicit rotation. A pending or shown code does not prevent HQ from being ready.
+- The host never receives the CA private key or an office TLS identity private key.
+  `org-pki` owns the PKI adapter; the `org-office` domain stays independent of
+  certificates and the network.
+- Manual replacement of a lost HQ (REC-1) and promotion are separate work.
 
-## Premises and authority (2026-11-15)
+## Chosen format, version 1
 
-E1 REQUIRED: new HQ creation provisions encrypted CA escrow plus a server-generated code of at least 128 random bits, Argon2id, protected one-time delivery and idempotent retries. Sources: docs/design/standalone-server.md, CA escrow and explicit recovery gate; docs/design/offices-hq-and-satellites.md, Losing HQ and Where code lives. Verified requirement, not implemented fact.
-E2 REQUIRED: pending delivery secret belongs to host credential provider; only opaque handle enters setup journal. No usable CA key/code in replicated organization data, web process/browser/status/logs. ACK erases pending code; no later redisplay or implicit rotation. Waiting/Shown need not prevent HQ readiness. Same authorities plus docs/specs/server-installation-and-access-ux.md recovery collection. Verified requirement.
-E3 REQUIRED: existing device-bound office database key custody and distinct principals remain unchanged. Setup/host never receive an office TLS identity private key. org-pki owns PKI adapter behavior; org-office domain remains certificate/network independent. REC-1 manual HQ-loss replacement and promotion remain separate release work. Same sources and ADR-0005. Verified requirement.
-E4 OBSERVED (at the time of writing; `crates/org-pki` has since been added and implements the envelope): crates/org-pki is absent; RecoveryCode is only a nonempty redacted secret wrapper, launch-v3 carries a code but worker has not created escrow. No current envelope format in inspected authorities. Targeted source evidence: crates/org-proto/src/recovery.rs, crates/org-office-launch/src/v3.rs, apps/agentic-org-office/src/launch.rs; docs/design/project-structure.md. Recheck before integration.
-E5 OBSERVED: maintained ring 0.17.14, argon2 0.5.3 and zeroize 1.9.1 are cached/pinned in the current workspace lock. Argon2's zeroize feature plus caller-owned Zeroizing<Vec<Block>> is necessary to wipe its large working allocation; alloc alone does not establish that. No custom cipher, KDF, elliptic-curve implementation or certificate encoder is authorized.
-E6 FEASIBILITY: ignored disposable probe at escrow-design/probe uses those exact versions. It generates/imports a P-256 PKCS#8 key, derives the fixed profile, encrypts/decrypts it, restores matching public identity and verifies a signature; wrong code, ciphertext corruption and wrong AAD fail. Probe log/receipt records actual completion. It does not prove production persistence, complete envelope parsing, X.509 issuance, protected delivery, platform custody or disaster recovery. ring's opaque internal private-key/document allocations are not claimed to be fully zeroized.
+One adapter crate, `org-pki`, called by the HQ worker, generates and seals the
+organization CA signing key and validates and recovers it. It does not orchestrate
+enrollment or promotion. The host handles the code through the launch contract and
+never receives CA PKCS#8 or office TLS private keys. Public wire crates carry
+bounded opaque escrow bytes and metadata only. No custom cipher, KDF, elliptic-curve
+implementation or certificate encoder is written; the maintained `ring`, `argon2`
+and `zeroize` crates are used at exact pinned versions.
 
-## Chosen format, exact version 1
+**CA signing-key profile 1** is ECDSA P-256 with SHA-256, generated or imported with
+`ring`. The encrypted payload is PKCS#8 DER. The public identity is exactly the
+65-byte uncompressed SEC1 P-256 key (first byte `0x04`). Certificates and enrollment
+may later bind this key through a maintained X.509 library; this decision does not
+ship a certificate authority service, TLS enrollment or promotion.
 
-Use one new cohesive org-pki adapter crate at the already planned boundary, called by the HQ worker. It exposes generation/sealing and validation/recovery of an organization CA signing key, not enrollment/promotion orchestration. Host handles the code and existing launch contract, never receives CA PKCS#8 or office TLS private keys. Public wire crates expose bounded opaque escrow bytes/metadata only, not crypto implementations.
+**Recovery code.** Exactly 20 bytes from the OS CSPRNG (160 random bits), displayed
+as uppercase hexadecimal in ten groups of four characters joined with ASCII hyphens.
+The final group is the terminal challenge. Parsing accepts only ASCII hex, `-` and
+ASCII whitespace, with an input cap of 128 bytes; it removes separators, folds case,
+requires exactly 40 hex digits and decodes exactly 20 bytes. Every other input is
+rejected without being echoed. The KDF password is the decoded 20 bytes, never the
+formatted string. No fast verifier or raw code goes into public metadata.
 
-CA signing-key profile 1 is ECDSA P-256 with SHA-256, generated/imported using ring. PKCS#8 DER is the encrypted payload; public identity is exactly ring's 65-byte uncompressed SEC1 P-256 key (first byte 0x04). Certificates/enrollment may later bind this same key through a maintained X.509 library; do not claim that this decision ships a certificate authority service, TLS enrollment or promotion.
+**KDF profile 1.** Argon2id version `0x13`; m = 65536 KiB, t = 3 passes, p = 4 lanes,
+16 random salt bytes, 32 output bytes; no optional secret or associated data. This
+is the second recommended profile of RFC 9106 section 7.4, chosen for bounded setup
+memory. The profile ID fixes the parameters; they are never taken from input.
+Caller-owned zeroizing blocks and key, code and plaintext buffers are wiped on every
+application-controlled exit.
 
-Recovery code: generate exactly 20 bytes with the OS CSPRNG, giving 160 random bits. Display their uppercase hexadecimal encoding as ten groups of four characters, joined with ASCII hyphens. The final group is the existing TTY challenge. Parsing accepts only ASCII hex, ASCII '-' and ASCII whitespace, with an input cap of 128 bytes; remove separators, fold ASCII case, require exactly 40 hex digits and decode exactly 20 bytes. Reject all other inputs without echoing them. KDF password bytes are the decoded 20 random bytes, never the formatted string. No fast verifier or raw code goes into persisted public metadata. This makes spelling/formatting changes independent of derived keys.
+**AEAD profile 1.** `ring` AES-256-GCM, 12 random nonce bytes, 16-byte tag appended.
+A fresh code, salt, nonce and key are used for each new organization. A retry reuses
+the exact committed envelope and never re-seals different plaintext under a kept
+nonce and key. Rotation is a separate operation, not a retry.
 
-KDF profile 1: Argon2id version 0x13; m=65536 KiB, t=3 passes, p=4 lanes, 16 random salt bytes, output 32 bytes; no optional secret or associated-data input to Argon2. This is RFC 9106 section 7.4's second recommended profile, selected for bounded setup memory. It is fixed by the profile ID, not attacker-chosen numeric parameters. Use caller-owned zeroizing blocks and key/code/plaintext buffers on all application-controlled exits. No claim about library-owned opaque key allocations or resistance to an already compromised HQ process.
+**Envelope**, in this order, with unsigned big-endian lengths:
 
-AEAD profile 1: ring AES-256-GCM, 12 random nonce bytes, 16-byte tag appended by the maintained API. A fresh code/salt/nonce/key is used for each new organization's initial generation. Persist and reuse the exact committed envelope on retries; never re-seal different plaintext under a retained nonce/key. Rotation is a separately reviewed operation, not an ordinary retry.
-
-Envelope, in this exact order, with unsigned big-endian lengths:
-- 8 bytes ASCII magic/version `AGORGCA1`.
-- u16 organization-ID byte length, then that many original UTF-8 bytes (1..255, no normalization; must equal the expected organization identity supplied by authorized context).
-- u8 suite/profile ID, exactly 1 (defines CA, KDF and AEAD profiles above).
+- 8 bytes ASCII magic and version `AGORGCA1`.
+- u16 organization-ID byte length, then that many UTF-8 bytes (1 to 255, no
+  normalization; must equal the organization identity supplied by authorized
+  context).
+- u8 suite/profile ID, exactly 1 (the CA, KDF and AEAD profiles above).
 - 16 salt bytes.
 - 12 nonce bytes.
 - 65 public SEC1 key bytes.
-- u32 ciphertext length, 17..4112 inclusive (up to 4096 PKCS#8 bytes plus 16 tag bytes).
-- ciphertext and appended tag, exact declared length; EOF immediately after.
+- u32 ciphertext length, 17 to 4112 inclusive (up to 4096 PKCS#8 bytes plus the
+  16-byte tag).
+- Ciphertext and appended tag, exactly the declared length, then end of input.
 
-AEAD associated data is the ASCII byte string `Agentic Org CA escrow v1` followed by one NUL byte followed by the entire serialized envelope header up to and including ciphertext length. Thus org identity, version, suite, salt, nonce, key identity and length are authenticated. Reject unknown magic/profile, bad UTF-8/identity/length, non-0x04 public key, trailing or truncated input and total package >4475 bytes BEFORE allocating KDF memory or deriving a key. After successful decrypt, import PKCS#8 using the expected P-256 signing algorithm and verify exact public-key equality before returning a secret holder. Wrong code/tamper/invalid private key yields one sanitized recovery failure. Public header fields alone are not trusted certificate or epoch authority.
+The AEAD associated data is the ASCII string `Agentic Org CA escrow v1`, one NUL
+byte, and the whole serialized header up to and including the ciphertext length. So
+organization identity, version, suite, salt, nonce, key identity and length are all
+authenticated. Unknown magic or profile, bad UTF-8, identity or length, a public key
+not starting with `0x04`, trailing or truncated input and a package over 4475 bytes
+are rejected before any KDF memory is allocated. After decryption the PKCS#8 is
+imported as P-256 signing and its public key must equal the header's before a
+secret holder is returned. A wrong code, tampering or an invalid private key gives
+one sanitized recovery failure. Header fields alone are never trusted as
+certificate or epoch authority.
 
 ## Provisioning, ownership, partial failure and retry
 
-1. Host's protected create operation freezes organization identity and idempotency context, generates/persists the pending code in the existing credential provider first, and records only its opaque handle. Resume recovers that same code; missing/wrong code or mismatched request fails without resetting committed organization identity.
-2. On HQ create only, worker receives the code via the existing protected launch-v3 handoff. org-pki generates the CA key and seals it in worker memory. Usable CA PKCS#8 is stored only in office-local encrypted SQLCipher storage, in a dedicated local-only PKI record explicitly excluded from replicated organization rows/events/export, together with the versioned public escrow record. No plaintext key files or new host key namespaces are introduced. A reviewed storage migration must mark that table local-only before replication/export consumers use it.
-3. The worker commits CA key, public envelope, org identity and provisioning-complete/version atomically in its initial SQLCipher writer transaction before create success, selected capability readiness or launch-ready ACK. The public envelope subsequently projects into the organization's copied data through its owning versioned record; the usable key never does. No callback regenerates material during transaction retry: freeze generated material once per uncommitted create attempt. Crash before commit may discard that uncommitted CA; retained host code is reused. Crash after commit/reply loss must recover the existing exact CA/envelope and completion version; no rotation/re-encryption.
-4. Existing committed provisioning state is verified against frozen org/request identity and the protected code, and returns its original public result. A missing side of the atomic record, unsupported version, mismatched public identity or decryption failure stops setup for forward repair. No deleting data, replacing missing custody, or accepting an escrow-free organization as complete. Never reset an existing CA to make a retry pass.
-5. Setup failures before escrow commit are resumable 'organization preparation incomplete'; do not publish HQ-ready or completed organization-create success. Failure after commit resumes that same record and code. This resolves UX A89 by separating incomplete preparation from complete creation rather than inventing a valid escrow-free HQ.
-6. The original worker code secret is dropped after provisioning; it must not be retained throughout serve. Pending owner delivery stays at host under its opaque handle. ACK removes it as existing authority requires. Already acknowledged organizations can restart without any recovery code, using their local CA record; absence of a pending code is not a reason to rotate or refuse a healthy existing HQ.
-7. Protected recovery release offers the existing collect/defer flow and an explicit encrypted-package export to a caller-selected new file (create-new, bounded bytes; no code in that file). It verifies package identity from the worker's committed public record. The TTY tells the owner to copy both package and code off HQ before the final-group + typed-yes ACK; it does not infer external retention from a local path. Noninteractive/macOS SSH still receives no code. Status may show version/public fingerprint/export availability but never code/key/secret handle. This resolves A90 without promising backup of office database keys or work records.
+1. The host's protected create operation freezes organization identity and the
+   idempotency context, generates and stores the pending code in its credential
+   provider first, and records only the opaque handle. A resume recovers the same
+   code; a missing or wrong code or a mismatched request fails without resetting
+   committed organization identity.
+2. On HQ creation only, the worker receives the code over the launch rendezvous.
+   `org-pki` generates the CA key and seals it in worker memory. The usable CA
+   PKCS#8 is stored only in the worker's local-only PKI record in the office
+   database, wrapped with the office secrets key (ADR-0016), and excluded from
+   replicated rows, events and exports. The versioned public escrow record sits
+   beside it. No plaintext key file and no new host key namespace exist.
+3. The worker commits the wrapped CA key, public envelope, organization identity and
+   provisioning-complete version in one initial transaction, before creation
+   success, capability readiness or the launch-ready acknowledgement. The public
+   envelope is then projected into the organization's data through its owning
+   record; the usable key never is. Generated material is frozen once per
+   uncommitted attempt and never regenerated inside a transaction retry. A crash
+   before commit may discard that CA, and the host's code is reused. A crash after
+   commit or a lost reply recovers the exact CA, envelope and version; nothing is
+   rotated or re-encrypted.
+4. Existing committed provisioning state is verified against the frozen organization
+   and request identity and the protected code, and returns its original public
+   result. A missing half of the record, an unsupported version, a mismatched public
+   identity or a decryption failure stops creation for forward repair. Data is never
+   deleted, missing custody is never replaced, an escrow-free organization is never
+   accepted as complete, and an existing CA is never reset to make a retry pass.
+5. A creation failure before the escrow commit is a resumable "organization preparation
+   incomplete"; HQ-ready and organization-created are not reported. A failure after
+   the commit resumes the same record and code.
+6. The worker drops its copy of the code after provisioning. The pending delivery
+   stays at the host under its handle until acknowledged. An acknowledged
+   organization restarts without any code, using its local CA record; the absence of
+   a pending code is not a reason to rotate or refuse a healthy HQ.
+7. Organization creation, in the browser, shows no code: the code starts Waiting.
+   Protected recovery release on the HQ machine offers collect, defer and an explicit export of the
+   encrypted package to a new file the caller chooses (create-new, bounded size; no
+   code in the file). It verifies package identity from the worker's committed
+   public record. The terminal tells the owner to copy both package and code off HQ
+   before the final-group and typed-yes acknowledgement. Non-interactive sessions
+   and macOS SSH receive no code. Status may show version, public fingerprint and
+   export availability, never the code, key or secret handle. Export is a local
+   protected-owner operation, not a browser surface.
 
-The host credential provider, native TTY confirmation, one-time release/ACK state machine and worker-to-host public metadata remain existing owning responsibilities. Any missing concrete operation/migration must be implemented and checked as a prerequisite; this proposal is not evidence they already exist. Export is a local protected-owner operation, not a new browser recovery surface.
+## Dependencies
 
-## Dependencies and alternatives
+`org-pki` depends directly on `ring`, `argon2` (with `zeroize` and `alloc`) and
+`zeroize`, at exact versions. The office worker composes `org-pki`. Host, domain and
+protocol crates do not depend on it. There is no source cycle.
 
-Direct org-pki dependencies: ring =0.17.14, argon2 =0.5.3 (zeroize/alloc), zeroize =1.9.1. Worker composition adds org-pki. Host/domain/protocol do not depend on org-pki. Package graph has a leaf crypto adapter with Ce=3 external library units, Ca=1 worker; no source cycle. Initial public key fixture is not a complete X.509 certificate implementation. Reassess actual manifests/lock/catalog before implementation dispatch; these are prospective edges.
+## Rejected alternatives
 
-Rejected: Docker/provider services (unnecessary); placeholder RecoveryCode/nonempty random string without escrow (violates E1); custom crypto or homegrown X.509 (maintenance/security); arbitrary mutable KDF parameters (resource risk); storing code alongside package/raw CA in copied rows (violates E2); changing to password-derived owner-selected code (violates E1); waiting for full multi-office recovery implementation (unnecessary for escrow creation, REC-1 remains open); assuming pending-code absence authorizes re-provisioning (violates retry/ACK).
+A placeholder code without escrow; custom cryptography or a home-grown X.509
+encoder; mutable KDF parameters; storing the code beside the package or the raw CA
+in copied rows; an owner-chosen password instead of a generated code; treating the
+absence of a pending code as permission to re-provision.
 
-## Required acceptance/falsification and rollback
+## Acceptance
 
-- Exact code format, parser normalization/rejection/size cap and deterministic KDF/envelope fixtures, profile/version rejection before KDF, strict length/EOF and public-key binding.
-- Round trip identical CA public identity plus signature verification; wrong code/org, changed header/key/salt/nonce/ciphertext/tag, malformed PKCS#8, truncation/oversize fail without leaking secret input.
-- Real worker initial SQLCipher create/reopen and injected before/after-commit/reply-loss paths prove one CA/package, retained host code and no ordinary retry rotation. Existing acknowledged HQ restarts without code. Dedicated local-only key never appears in copied state, history, Git, status, web, logs or export.
-- Production protected collect/defer/export/ACK/restart tests with temporary credential roots; ACK removes pending code and later release refuses redisplay, while Waiting/Shown do not block otherwise ready HQ.
-- Compile/workspace checks, actual setup/adoption/task/browser acceptance and complete local code/original-author/final review remain mandatory. Passing this probe/review proves none of those.
-- Before any committed creation, disable unfinished provisioning capability to roll back. After committed CA/package, preserve key/envelope/version and code handle, pause incompatible setup and forward-repair; no old executable allowed to rotate/discard them. REC-1 remains open.
-
-## Review and challenge history
-
-r1: proposed by lead in response to original author's concrete missing-format report. E1-E3 remain required/verified authorities. E4 is missing implementation, not an invalid requirement. E5/E6 are bounded API feasibility only. Independent ARCHITECTURE verdict pending. No claim of READY or ACTIVE.
-
-Primary external rationale: https://www.rfc-editor.org/rfc/rfc9106.html section 7.4. Pinned library source/API in local Cargo registry was inspected; docs.rs retrieval failed, not interpreted as proof of absence. Probe uses maintained primitive APIs.
-
-Independent ARCHITECTURE review returned **READY** on revision 1. Fresh read-only reviewer session `01a1e0c7-e87c-7f21-957e-ef51ab9c838d`; required assignment Sol/Xhigh, model/effort not independently attested by reviewer environment. Actual ordered read ACK and current preflight verified. Review findings preserve the listed production persistence, public-record/export exclusions and protected acknowledgement/deletion reconciliation obligations; none is waived. Lead activated this decision on 2026-11-15. Exact reviewed proposal SHA-256 `82add59e71e1b5b34ac06c68fbfc04e453ff4bdbbc634dfc1a0506444290e82e`; `.agent-kit/logs/v1-assignment-integration/escrow-design/proposal-r1.md` preserves its bytes. Probe/receipt and fresh result are in the same ignored evidence directory. The mechanism above is unchanged by this status/history update. REC-1, all full assignment acceptance and production tests remain open.
+- Exact code format, parser normalization, rejection and size cap; deterministic
+  KDF and envelope fixtures; profile and version rejection before the KDF; strict
+  length and end of input; public-key binding.
+- A round trip restores the identical CA public identity and verifies a signature.
+  A wrong code or organization, a changed header, key, salt, nonce, ciphertext or
+  tag, malformed PKCS#8, truncation and oversize all fail without leaking the input.
+- A real worker creates and reopens HQ, and injected failures before commit, after
+  commit and on reply loss prove one CA and package, the host's code kept, and no
+  rotation on an ordinary retry. An acknowledged HQ restarts without a code. The
+  local-only key never appears in copied state, history, Git, status, web, logs or
+  export, and a copy of the office database alone yields no usable key (ENC-5).
+- Protected collect, defer, export, acknowledge and restart run with temporary
+  credential roots. Acknowledgement removes the pending code and a later release
+  refuses redisplay; waiting or shown states do not block an otherwise ready HQ.
+- Before any committed creation, rollback disables provisioning. After a committed
+  CA and package, the key, envelope, version and code handle are preserved,
+  incompatible creation pauses, and repair moves forward; no executable may rotate or
+  discard them.

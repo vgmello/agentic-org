@@ -1,15 +1,11 @@
 # ADR-0020 · An ask waits with a timeout; a required ask suspends the agent until it is answered
 
-Status: **accepted by the owner 2026-11-17**. Implementation pending. The rule in
-decisions 1 to 8 is the owner's, stated when he answered the open point in
-[REQ-04](../specs/req-04-channel-messaging-and-question-components.md), and he confirmed
-the two default values. These details inside decisions 1 to 8 are the lead's: the
-configured maximum (1), false as the default (2), "ask someone else" (4), and
-withdrawal or cancellation of a required ask (7). Decisions 9 to 13 are the lead's
-design. Decision 14 is the lead's recommendation, which the owner accepted. Amends
-[ADR-0003](0003-agent-messaging-office-first.md) §2.5 and §3.3,
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9, the
-[session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md).
+Status: **accepted by the owner**. Implementation pending. Decisions 1 to 8 are the
+owner's rule for [REQ-04](../specs/req-04-channel-messaging-and-question-components.md);
+decisions 9 to 14 are its design. [ADR-0003](0003-agent-messaging-office-first.md)
+decision 9, [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9,
+the [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md)
+follow it.
 
 ## Context
 
@@ -27,8 +23,8 @@ arrives. For the person, the agent is simply idle until they reply.
 
 ## Decision
 
-1. **Every ask waits for a bounded time.** The default wait is a system setting for the
-   organization, 10 minutes unless changed. It is the same whether the recipient is a
+1. **Every ask waits for a bounded time.** The default wait is a system setting, 10
+   minutes unless changed. It is the same whether the recipient is a
    person or an agent. The asker may state how long it expects a reply to take, up to
    a configured maximum.
 2. **The asker says whether the answer is required.** `required: true` means: I cannot
@@ -48,7 +44,7 @@ arrives. For the person, the agent is simply idle until they reply.
    expire under its asker. It ends when it is answered, when the asker withdraws it,
    or when a person with authority over the work cancels it. A required ask therefore
    carries no `expires_at`, and an office that receives it late delivers it; the
-   expiry and skew rule of ADR-0003 §3.3 applies only to asks that are not required.
+   expiry and skew rule of ADR-0003 decision 9 applies only to asks that are not required.
 8. **The answer starts the agent again, in the same context.** When the answer arrives,
    the system starts the agent by resuming the same session and gives it the answer as
    its next input. To the agent it is as if it had been working all along; to the
@@ -65,7 +61,7 @@ The lead's design for the rule:
      so that an office restart neither loses the suspension nor misses the answer.
    - The agent decides honestly whether an answer is required and winds down when told.
 10. **Background work and the grace period.** After the notice of decision 5 the agent
-    has a grace period (an organization setting, 2 minutes unless changed) to end its turn.
+    has a grace period (a system setting, 2 minutes unless changed) to end its turn.
     When the turn ends, or the grace period passes, the office stops the process the
     normal way and then checks for processes the agent started that are still running.
     It stops those too, records which, and tells the agent on resume what was stopped.
@@ -87,26 +83,24 @@ The lead's design for the rule:
     continue with it; the card then shows that nobody answered and what the agent
     continued with. A person's later answer still arrives as a message.
 
-## How this changes the earlier rules
+## Rules that follow
 
-- ADR-0003 §2.5 set default deadlines by recipient kind (120 seconds for an agent, 24
-  hours for a person). The wait is now one organization setting for both. The 24 hours
-  remains the default life of a question that is **not** required: after the asker's
-  wait ends, the question stays answerable until it expires, and a late answer is
-  delivered as an ordinary message.
-- ADR-0014 decision 9 stands: the ask itself is acknowledged like a send, and only
-  waiting for the reply is slow. The wait is now bounded by this ADR.
-- ADR-0003 caps one held call at 60 seconds on an agent's connection. That cap stays.
-  The wait of this ADR spans as many held calls as it needs; `agent-os` renews the hold
-  and the office keeps one timer for the whole wait.
-- The session design lists what may start a turn. The answer to a required ask is
-  added as one of them.
+- A question that is **not** required stays answerable for 24 hours after it is sent,
+  even after the asker's wait has ended; a later answer is delivered as an ordinary
+  message.
+- The ask itself is acknowledged like a send (ADR-0014 decision 9); only waiting for
+  the reply is slow, and the wait is bounded by decision 1.
+- One held call on an agent's connection is capped at 60 seconds. The wait spans as
+  many held calls as it needs; `agent-os` renews the hold and the office keeps one
+  timer for the whole wait.
+- The answer to a required ask is one of the things that may start a turn (session
+  design).
 
 ## Acceptance criteria
 
 | ID | Passing evidence |
 | --- | --- |
-| ASK-1 | An ask with no stated wait uses the organization setting; a stated wait above the maximum is refused or capped as the setting says. |
+| ASK-1 | An ask with no stated wait uses the system setting; a stated wait above the maximum is refused or capped as the setting says. |
 | ASK-2 | A non-required ask that is not answered in time returns a timeout to the agent, which keeps running. A later answer arrives as a message. |
 | ASK-3 | A required ask that is not answered in time returns the notice of decision 5; the agent's process is not stopped before its turn ends or the grace period passes. |
 | ASK-4 | After suspension the agent holds no turn permit and no subscription slot, and its presence names whom it is waiting for. |
@@ -118,7 +112,7 @@ The lead's design for the rule:
 
 ## Open points
 
-- The owner confirmed 10 minutes for the wait and 2 minutes for the grace period on 2026-11-17. The maximum wait an asker may state is still to be set.
+- The maximum wait an asker may state is still to be set.
 - Whether each vendor tool reports its own background work, or the office can only see
   the processes it started. This is part of the first runtime adapter's spike.
 - An ask whose asker is a person is unchanged: a person is not suspended.

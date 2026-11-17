@@ -6,35 +6,35 @@
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
-      "sha256": "3dffb0f0f5049d132c93883a578474af1bdcc8cf29e7cea47083cddf2e63face"
+      "sha256": "3a1126e9d29b1fbbc526f5290e8133d666a7edc8ef763d11168be8c8851bfcc5"
     },
     {
       "path": ".agent-kit/project-roles/codebase-scout.md",
-      "sha256": "8496989201b03e7ae118b946cfeaf0b0a38e83cfa389a3e6814771490a109b5d"
+      "sha256": "eab077f845496d3a677536b44e31589728a8738f9f3cd650352a0eb0c7cbe640"
     },
     {
       "path": ".agent-kit/project-roles/fullstack-engineer.md",
-      "sha256": "c8b08462ddc1aa384be8b53b3060a526782195a05c05987fb83dffbb870b15d5"
+      "sha256": "de8c62418b8041c74fb9d5b330b108b3d394bf25ccf5bd73c467489bc6a3a7bc"
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "59e141eb8bf375f65217409398c7bba45b67f9f69fef2d2200b18ece81c973e1"
+      "sha256": "9df6019afd5837ba5e13c3658b47190f2edeb15701b29a2682a287b0794661ed"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "d64c7f7190fb9c24567d530475ea8ded4840d24159ee206ebbed2c416f3a0186"
+      "sha256": "c0343c5f725d6ea9ff0a75ad34003c14e3edd4bb0dcc1b1bc9ff53afe00ea2eb"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "81f015f00facd62575b961b5d0275d49d97e2f0e48dda11cbbd350a868d64a91"
+      "sha256": "af5efc05a1295d5284ed19b749987ca4aec0470dbf82958a0cef2c3a003d1426"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "3009b99ef0b5e6c29d1ce723e5496b69e70e103fe0a9d6a4064b17a7f3b22601"
+      "sha256": "2bb8b7c66b1f6d86e04ebbc65a46f5f32cbf1eac34206dd99bb90c4facb1f47a"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
-      "sha256": "5c9cdf68662568d41bf88b8a0f5ee87398394d6d76a14017da50c4e611aa2de1"
+      "sha256": "11d116e4c74230df0151bf8a3a7581f9884416d4cfdf4a80911c61c8477cae9b"
     },
     {
       "path": ".agents/skills/caveman/SKILL.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "b571de1490dca3db938b16ef697ce2bdcf0ad0583e8684dcdd9bcc8f2a1e8dbb"
+      "sha256": "a15b6116e8a91665610d61634b7e41a0127fc35f82d360344388e153f0da36fe"
     },
     {
       "path": "Cargo.lock",
@@ -118,23 +118,23 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "d63ae24c88dd8e9c4476376211cbedc17b26795c8b5b63b58da647ad86dfad46"
+      "sha256": "258d322d6ed3188b904f1cdd4aaea1adc2b72f3c08f68ea85fa9138f85c6e99d"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "437abd9be1721ca4e6f71aa54c675420ef162d9cd2e4da036335cd56f360ae2b"
+      "sha256": "46bca00bed148f5c823632a85e357ae5f723fe1decbff237f3403bc465f3f9a3"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "cec497fab9ea05352144376909601376b5366f0a5f0a14853584f5d96afef94f"
+      "sha256": "4d245c2cb68fe3242c46a11da40621ddc78d9d5aa1a6f476224a2cb27418f36e"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "f588cbddac60d2eec410a217a1b005288fd53483b95214c265fcc8636ba88f23"
+      "sha256": "3ea5bb50698ca19d8df4471a7ad4c2a47b289bf29355f49d95bffb8a1b2af756"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
-      "sha256": "aa43a5f046cc8992ec0ead5b66af8c094632dc21a63929e080124ce0409f0f51"
+      "sha256": "dcff88ed9584629b9bef05933c2014a900286b0bffbdf00a3b9150c2ed8d66e8"
     },
     {
       "path": "docs/adr/0010-legacy-task-adoption.md",
@@ -142,27 +142,27 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "07aea48691616c61dac62c0e28f83e993e896e74adf00ea36eef4f9c5f5a52e5"
+      "sha256": "4603e8f1856cff991f820a6a209c1c46feeb5e93d761ffc3969270fdb12fd15e"
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "ea6f7921ef3f5e88dd8f62feb658272d08ccfc618e97357055c3771229f64393"
+      "sha256": "b6dc265e2c54b4b2896235da47e32793671e7d437c19dfd28e1424c72c0395a6"
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "ffa565387332c099a0375448e92931d94d28516daf8e08839f9e6fc0d3c7ac5c"
+      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "2a6b19abd4e5e16bd744de911082e5a3f1294aa4f5fb5c83fe69dc08646d7871"
+      "sha256": "f077a1cdd3b4d9807fe04f09e1f922317fbb8739af1975ec3d8e9c7688e836d2"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "3714c3cbaf882ab138e14622434b3e104fd09c06d10b7d8f4c18f0567939b15b"
+      "sha256": "7d4aca69ed6594a9df1d474e0e2342d1ccf16d526d7b2645ebd14ef65c7d26ac"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "ff38b0feb582d04f94e059a703c1bf98855c8f65199da480690d20945cd6f6db"
+      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
     },
     {
       "path": "rust-toolchain.toml",
@@ -170,7 +170,7 @@
     },
     {
       "path": "docs/independent-delivery.md",
-      "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
+      "sha256": "5775049de3b761e08c41100c816f71156918ef6ded100d60f86590083de0bd67"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -178,23 +178,23 @@
     },
     {
       "path": ".agent-kit/tasks/v1-creation-admission-interface.md",
-      "sha256": "39c08afab75d48f478840f23682e52f88269234bf72c9ee855d691b15a442298"
+      "sha256": "a1781d7d7883f73bac20c1f1413ab7e9b76d175591baff0a73e3876cc4012781"
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "3a1b4f759245b360f9440186b2050f3064efa47e0023f18be0b65acffb4331b9"
+      "sha256": "ff142e6ac2bd9077ab02ef3fccf4eb8173ab22a50a506fd0b06fc2f88d532bf6"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "bd079b2bf0bf81fd7186c8a1ab55c4b64eb59d4e0d82237529b8a193e967f13a"
+      "sha256": "16875cf364b82ed80b18680cb9b482b8dc146a8ce05c25d69d5ecfa1fbc105d4"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "093f01ee6979ae90d5cc818a21cf9fc59caf97f18f9a82bceab017b0b7aea833"
+      "sha256": "554bb2c00ac92aeaec675a58e02f33c5a6fc1f5ad5a4f76f352f1fc80eb1b4b1"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
-      "sha256": "9624f8714b0c5ff44b7fbd43a7963588cf81c5596ca3130499a111284a1b3b9f"
+      "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
     }
   ],
   "roles": {
