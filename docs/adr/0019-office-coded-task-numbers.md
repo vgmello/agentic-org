@@ -6,8 +6,8 @@ The owner accepted three things: the office part of a task reference is a letter
 (`T-B37`); the scheme applies to tasks only; and an office counts all its tasks in one
 sequence ("let's just do it by office and keep it simple"). The details of the grammar
 (which letters, how many) and decisions 2 and 4 to 7 are the lead's design for that
-choice. One point is still open: whether creating a task may use the fast
-acknowledgement.
+choice. Creating a task uses the fast acknowledgement (owner, 2026-11-17;
+[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 3).
 
 The owner's requirement, in his words: tasks "happen inline and offline" and "have to
 happen incredibly fast"; going to HQ to create or manage a task is "too long of a round
@@ -77,14 +77,13 @@ as creating or listing tasks, take it from the agent's context (owner, 2026-11-1
 agent is assigned to. When the agent has no project, or means another one, the project
 is a required parameter.
 
-## Still open
+## Fast acknowledgement
 
-**Whether creating a task may use the fast acknowledgement** of
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md). Today creation waits
-for the drive, which is about 0.3 ms on the Linux machine measured and several
-milliseconds on a Mac. With office-minted numbers the fast class is safe for numbering,
-because the durable mark of decision 7 already prevents a number from being reused
-after a power cut. Recommended: yes.
+Settled by the owner on 2026-11-17: creating a task uses the committed class of
+[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md). The office answers
+once its database has the task, and the drive flush follows. With office-minted numbers
+this is safe for numbering, because the durable mark of decision 7 prevents a number
+from being reused after a power cut.
 
 ## Where it is applied
 

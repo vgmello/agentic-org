@@ -403,7 +403,7 @@ CREATE TABLE tasks (
   type TEXT NOT NULL DEFAULT 'task' CHECK (length(type) > 0),
   work_type TEXT CHECK (work_type IN ('build', 'run')),
   title TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('todo', 'in_progress', 'blocked', 'done')),
+  status TEXT NOT NULL CHECK (status IN ('todo', 'in_progress', 'blocked', 'cancelled', 'done')),
   assignee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
   feature_id TEXT,
@@ -2201,8 +2201,8 @@ BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
 CREATE VIEW milestone_progress AS
 SELECT m.organization_id, m.id AS milestone_id, m.release_id,
   COUNT(t.id) AS task_count,
-  COALESCE(SUM(t.status = 'done'), 0) AS done_task_count,
-  (COUNT(t.id) > 0 AND COUNT(t.id) = COALESCE(SUM(t.status = 'done'), 0)) AS is_done
+  COALESCE(SUM(t.status IN ('done', 'cancelled')), 0) AS done_task_count,
+  (COUNT(t.id) > 0 AND COUNT(t.id) = COALESCE(SUM(t.status IN ('done', 'cancelled')), 0)) AS is_done
 FROM milestones m
 LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = m.id
 GROUP BY m.organization_id, m.id;
@@ -2224,7 +2224,7 @@ SELECT r.organization_id, r.id AS release_id,
             WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
     ELSE (SELECT COUNT(*) FROM release_tasks rt
             JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status = 'done')
+          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status IN ('done', 'cancelled'))
   END AS done_task_count,
   CASE
     WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
@@ -2235,6 +2235,6 @@ SELECT r.organization_id, r.id AS release_id,
                  WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
       AND NOT EXISTS (SELECT 1 FROM release_tasks rt
                       JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status <> 'done')
+                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status NOT IN ('done', 'cancelled'))
   END AS is_done
 FROM releases r;

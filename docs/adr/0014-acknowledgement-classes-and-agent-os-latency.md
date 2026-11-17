@@ -51,8 +51,13 @@ and the acknowledgement sentence in
    - Committed, non-critical task activity: `work.comment`, `work.watch` and
      `checklist.check`. A comment that opens or answers an owner question is the
      exception: it starts or ends a waiting span, so it is durable.
+   - Committed, creating a task (owner decision 2026-11-17): `task.create` and the
+     typed creation calls such as `bug.report`. This is safe for numbering because the
+     creating office mints the number under a durable mark
+     ([ADR-0019](0019-office-coded-task-numbers.md) decision 7), so a power cut can
+     lose the newest task but can never cause a number to be given twice.
    - Reads involve no write, and presence is not persisted.
-   - Durable: everything else. That includes task creation, status and resolution
+   - Durable: everything else. That includes status and resolution
      changes, assignment, ownership and scope changes, links, every other `checklist.*`
      method, the bug lifecycle methods,
      organization commands, numbering, turn permits and placement, budget actions, HQ
@@ -110,7 +115,9 @@ and the acknowledgement sentence in
    `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
    the caller may state how long it expects a reply to take, otherwise the default
    for the recipient's kind applies (ADR-0003 §2.5: 120 seconds for an agent, 24 hours
-   for a person), and the wait ends at the deadline with a timeout result. The ask itself
+   for a person), and the wait ends at the deadline with a timeout result. [ADR-0020](0020-required-asks-suspend-and-resume.md)
+   replaces those two defaults with one organization setting for the wait, and adds the
+   required ask, which suspends the agent until it is answered. The ask itself
    is committed and acknowledged like a send; only waiting for the reply is slow.
 
 ## Acceptance criteria

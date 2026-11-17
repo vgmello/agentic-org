@@ -288,6 +288,8 @@ an aggregate process-lifetime cost counter as the source of truth.
 
 ## Sessions and triggers
 
+> **Added 2026-11-17 ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)).** The answer to a required ask is a trigger: an agent that was suspended because a required answer did not come in time is started again, in the same session, when the answer arrives. The office keeps a durable record of the suspension.
+
 The selected first release accepts explicit authorized turns only. Messages,
 assignments, schedules and goal reminders do not implicitly create model work.
 A caller resolves visible input and an approved workspace before `RunTurn`.

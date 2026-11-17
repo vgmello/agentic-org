@@ -29,11 +29,11 @@ Done reflects the linked source evidence, **not a fresh execution of all accepta
 | --- | ---: |
 | Done | 9 |
 | In progress | 60 |
-| Planned | 53 |
+| Planned | 54 |
 | Blocked | 2 |
 | Deferred | 41 |
 | Needs verification | 0 |
-| **Total** | **165** |
+| **Total** | **166** |
 
 ## Feature tables
 
@@ -181,12 +181,13 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 | [ ] | FC-076 | [Channels, group DMs and member read state](specs/chat-ux.md) | Planned | [Mailbox] and [agent CLI] do not implement selected channel/group commands; fake UI is narrower evidence. |
 | [ ] | FC-077 | [Mentions, search, attachments and reactions](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-077): Sample chat interactions exist; protected visibility-safe search/attachments/reactions and live adapters remain. |
 | [ ] | FC-078 | [Drafts, history bounds and conversation performance](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-078): Sample drafts/history and bounded UI behavior exist; durable retention/pagination and real conversation performance remain. |
-| [ ] | FC-079 | [Directed asks, answers and withdrawals](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-079): Phase A CLI asks/replies and sample cards exist; selected protected-source resolution/withdrawal integration remains. Owner requirement 2026-11-17: [REQ-04](specs/req-04-channel-messaging-and-question-components.md), the `ask_user` schema with choice, yes/no and free-text components; three points in it wait for the owner (external channels, web libraries, how long an ask to a person holds). |
+| [ ] | FC-079 | [Directed asks, answers and withdrawals](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-079): Phase A CLI asks/replies and sample cards exist; selected protected-source resolution/withdrawal integration remains. Owner requirement 2026-11-17: [REQ-04](specs/req-04-channel-messaging-and-question-components.md), the `ask_user` schema with choice, yes/no and free-text components; rendered with shadcn-svelte and Bits UI components in the product's own chat; no external channels. One point waits for the owner: what a default value does. |
+| [ ] | FC-166 | [Required asks: wait with a timeout, suspend the agent, resume on the answer](adr/0020-required-asks-suspend-and-resume.md) | Planned | Owner decision 2026-11-17. An ask has no `required` field, no office timer for a suspended asker and no resume on an answer today; criteria ASK-1 to ASK-9 are unmet. Needs the agent launch path (FC-101). |
 | [ ] | FC-080 | [Atomic task handoff and system notices](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-080): Sample recipient-only handoffs/notices exist; no atomic task/history/protected-message/receipt transaction. |
 | [ ] | FC-081 | [Uninterrupting delivery, pause and waiting](specs/chat-ux.md) | In progress | [Audit](verification/2026-11-16-remaining-feature-audit.md#fc-081): SQL-backed office mailbox send/inbox/read/held-wait is wired; execution-aware wake/holds/noninterrupting delivery remain. |
 | [ ] | FC-082 | [Live transport cutover with triage preservation](adr/0003-agent-messaging-office-first.md) | Planned | [Agent CLI] explicitly retains installed Phase A tooling/spool until verified replacement; no automatic switch. |
 | [ ] | FC-083 | [External chat bridges](specs/chat-ux.md) | Deferred | Optional bridge engines require separate selection and privacy/identity contracts. |
-| [ ] | FC-160 | [Acknowledgement classes and the agent-os session mode](adr/0014-acknowledgement-classes-and-agent-os-latency.md) | Planned | Owner decision 2026-11-17: messaging and non-critical task activity use the committed class, declared in the domain crates and honoured by the store adapter. Every write waits for a full flush and agent-os starts a process per call today; criteria ACK-1 to ACK-9 are unmet. Includes decision 9: a send relays after it answers and an ask always has a deadline. |
+| [ ] | FC-160 | [Acknowledgement classes and the agent-os session mode](adr/0014-acknowledgement-classes-and-agent-os-latency.md) | Planned | Owner decision 2026-11-17: messaging and non-critical task activity use the committed class, declared in the domain crates and honoured by the store adapter. Every write waits for a full flush and agent-os starts a process per call today; criteria ACK-1 to ACK-9 are unmet. Includes decision 9: a send relays after it answers and an ask always has a deadline. Creating a task is also in the committed class (owner, 2026-11-17). |
 
 ### Usage, costs and budgets
 
