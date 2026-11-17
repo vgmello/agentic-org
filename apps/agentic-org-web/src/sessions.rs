@@ -35,10 +35,11 @@ const IDLE: Duration = Duration::from_secs(30 * 60);
 /// The browser map holds at most the host's gateway budget, never more, so the
 /// host's local reserve stays free for local sign-in.
 const MAX_SESSIONS: usize = org_host_control::ops::GATEWAY_SESSIONS;
-/// When capacity probes may start during one sign-in. Expected worst case on a
-/// healthy host, against the default 10 s `backend_timeout`: account.verify
-/// (password hashing, under 1 s) + the new session's inspect (milliseconds) +
-/// probes started within these 2 s + the last probe (milliseconds) is about
+/// When expiry cleanup or capacity probes may start during a sign-in pass.
+/// Expected worst case on a healthy host, against the default 10 s
+/// `backend_timeout`: account.verify (password hashing, under 1 s) + the new
+/// session's inspect (milliseconds) + cleanup/probes started within these 2 s +
+/// the last call (milliseconds) is about
 /// 3 s, leaving over 6 s for pool queueing. A degraded host can still exceed it
 /// (each call keeps its 5 s deadline); the abandonment check before insertion
 /// then ends the new host session instead of binding it, and an abandonment
@@ -230,6 +231,10 @@ impl BrowserSessions {
         watch: &Watch<'_>,
         respond: impl FnOnce(Established) -> Result<R, ApiReply>,
     ) -> Result<R, ApiReply> {
+        // Browser expiry can precede native expiry (for example after a capacity
+        // inspection renewed only the host clock). Release those host slots
+        // before account.verify asks for another one on the same connection.
+        self.reap_before_sign_in(CAPACITY_RECHECK, watch)?;
         let result = self.host.verify(&login, &password).map_err(|e| {
             if e == control::Failure::Denied {
                 denied()
@@ -289,7 +294,6 @@ impl BrowserSessions {
             let (key, session, result) = self.prepare_established(session)?;
             // Build the reply before binding: a construction failure binds nothing.
             let reply = respond(result)?;
-            self.reap()?;
             self.reclaim_capacity()?;
             let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
             if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
@@ -321,6 +325,42 @@ impl BrowserSessions {
             let _ = self.host.end(&handle);
         }
         admission
+    }
+    /// Runs only on sign-in's blocking worker. End expired authority directly,
+    /// with a bounded window for starting calls and the full native deadline for
+    /// each call. Remove a binding only once the host confirms it ended: entries
+    /// beyond the window or a failed call remain available for the next pass,
+    /// rather than overflowing the asynchronous cleanup queue and losing slots.
+    fn reap_before_sign_in(&self, window: Duration, watch: &Watch<'_>) -> Result<(), ApiReply> {
+        let started = Instant::now();
+        for _ in 0..MAX_SESSIONS {
+            if started.elapsed() >= window {
+                break;
+            }
+            let expired = self
+                .sessions
+                .lock()
+                .map_err(|_| unavailable())?
+                .values()
+                .find(|session| !session.live())
+                .cloned();
+            let Some(session) = expired else {
+                break;
+            };
+            if watch.abandoned() {
+                return Err(unavailable());
+            }
+            match self.host.end(&session.handle) {
+                Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {
+                    self.sessions
+                        .lock()
+                        .map_err(|_| unavailable())?
+                        .retain(|_, current| !Arc::ptr_eq(&current.handle, &session.handle));
+                }
+                Err(control::Failure::Unavailable) => return Err(unavailable()),
+            }
+        }
+        Ok(())
     }
     fn reclaim_capacity(&self) -> Result<(), ApiReply> {
         self.reclaim_capacity_within(CAPACITY_RECHECK)

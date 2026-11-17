@@ -47,6 +47,7 @@ fn reply(
     request: &serde_json::Value,
     issued: &mut usize,
     end_delay: Duration,
+    at_capacity: bool,
 ) -> serde_json::Value {
     let id = request["id"].as_u64().unwrap();
     let method = request["method"].as_str().unwrap();
@@ -63,6 +64,9 @@ fn reply(
             let p = &request["params"];
             if p["login"] != LOGIN || p["password"] != PASSWORD {
                 return serde_json::json!({"id":id,"error":{"code":"not_authorized","message":"Sign-in failed."}});
+            }
+            if at_capacity {
+                return serde_json::json!({"id":id,"error":{"code":"unavailable","message":"Session capacity reached."}});
             }
             *issued += 1;
             serde_json::json!({"session":format!("synthetic native handle {issued}"),"account":"account","admin":true,"orgs":[]})
@@ -83,6 +87,9 @@ impl Fixture {
     }
     /// `end_delay` stalls every scripted `session.end` answer.
     fn scripted(secure: bool, end_delay: Duration) -> Self {
+        Self::scripted_with_capacity(secure, end_delay, None)
+    }
+    fn scripted_with_capacity(secure: bool, end_delay: Duration, capacity: Option<usize>) -> Self {
         let (gateway, host) = UnixStream::pair().unwrap();
         let stop = host.try_clone().unwrap();
         let (transfer, host_transfer) = UnixDatagram::pair().unwrap();
@@ -96,7 +103,7 @@ impl Fixture {
         let stall = Arc::clone(&inspect_delay);
         let thread = std::thread::spawn(move || {
             let mut host = BufReader::new(host);
-            let mut issued = 0;
+            let mut issued = 0usize;
             while let Ok(Some(request)) =
                 org_proto::frame::read_message::<serde_json::Value>(&mut host)
             {
@@ -122,7 +129,10 @@ impl Fixture {
                         serde_json::json!({"id":request["id"],"error":{"code":code,"message":"scripted host refusal"}})
                     }
                     None => {
-                        let answer = reply(&request, &mut issued, end_delay);
+                        let at_capacity = capacity.is_some_and(|limit| {
+                            issued.saturating_sub(ended_sessions.lock().unwrap().len()) >= limit
+                        });
+                        let answer = reply(&request, &mut issued, end_delay, at_capacity);
                         if request["method"] == "session.end" {
                             ended_sessions
                                 .lock()
@@ -584,6 +594,108 @@ fn a_failed_reply_construction_binds_nothing_and_keeps_the_old_pair() {
         .lock()
         .unwrap()
         .contains("synthetic native handle 1"));
+    assert!(f.sessions.host.live());
+}
+
+#[test]
+fn sign_in_reclaims_browser_expiry_before_requesting_a_host_slot() {
+    let f = Fixture::scripted_with_capacity(false, Duration::ZERO, Some(MAX_SESSIONS));
+    let expired = f.sign_in();
+    let live = f.sign_in();
+    for _ in 2..MAX_SESSIONS {
+        f.sign_in();
+    }
+    // Enforce the actual host budget: a new account.verify cannot issue a
+    // handle until an existing one ends.
+    assert_eq!(
+        f.sessions
+            .host
+            .verify(LOGIN, &Password::new(PASSWORD.into()).unwrap())
+            .unwrap_err(),
+        control::Failure::Unavailable
+    );
+    let key = ticket(&f.sessions, &expired).key;
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        // Capacity inspection can keep the host handle live after the browser
+        // idle clock expires. No protected request presents the expired pair.
+        f.sessions.host.inspect(&bindings[&key].handle).unwrap();
+        *bindings[&key].touched.lock().unwrap() = Instant::now()
+            .checked_sub(IDLE + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+    }
+    let replacement = f.sign_in();
+    assert_eq!(f.count("session.end"), 1);
+    assert!(f.refused(&expired.cookie, expired.proof.expose()));
+    assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), MAX_SESSIONS);
+    assert!(f.sessions.host.live());
+}
+
+#[test]
+fn sign_in_retains_expired_handles_after_a_bounded_or_failed_cleanup_pass() {
+    let f = Fixture::scripted_with_capacity(false, Duration::from_millis(10), Some(MAX_SESSIONS));
+    let live = f.sign_in();
+    for _ in 1..MAX_SESSIONS {
+        f.sign_in();
+    }
+    let live_key = ticket(&f.sessions, &live).key;
+    let expired_count = CLEANUP_QUEUE + 8;
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        let stale = Instant::now()
+            .checked_sub(IDLE + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+        for (_, session) in bindings
+            .iter()
+            .filter(|(key, _)| **key != live_key)
+            .take(expired_count)
+        {
+            *session.touched.lock().unwrap() = stale;
+        }
+    }
+    // At most one native end fits this window. All remaining expired handles,
+    // including those beyond the async queue's capacity, must remain retryable.
+    f.sessions
+        .reap_before_sign_in(Duration::from_millis(1), &Watch::never())
+        .unwrap_or_else(|_| panic!("bounded cleanup"));
+    let ended = f.count("session.end");
+    assert!(ended <= 1);
+    {
+        let bindings = f.sessions.sessions.lock().unwrap();
+        assert_eq!(bindings.len(), MAX_SESSIONS - ended);
+        assert_eq!(
+            bindings.values().filter(|session| !session.live()).count(),
+            expired_count - ended
+        );
+    }
+    // A transient end failure also preserves the handle and prevents another
+    // account.verify from racing the pending cleanup for the occupied slot.
+    f.errors
+        .lock()
+        .unwrap()
+        .insert("session.end", "unavailable");
+    let verifies = f.count("account.verify");
+    assert!(f
+        .sessions
+        .sign_in(LOGIN.into(), Password::new(PASSWORD.into()).unwrap())
+        .is_err());
+    assert_eq!(f.count("account.verify"), verifies);
+    assert_eq!(
+        f.sessions.sessions.lock().unwrap().len(),
+        MAX_SESSIONS - ended
+    );
+    assert_eq!(f.ended.lock().unwrap().len(), ended);
+
+    let replacement = f.sign_in();
+    assert_eq!(f.ended.lock().unwrap().len(), expired_count);
+    assert_eq!(
+        f.sessions.sessions.lock().unwrap().len(),
+        MAX_SESSIONS - expired_count + 1
+    );
+    assert!(f.sessions.get(ticket(&f.sessions, &replacement)).is_ok());
+    assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
     assert!(f.sessions.host.live());
 }
 
