@@ -3,6 +3,10 @@ use crate::host_secrets::{Name, Value};
 use crate::hostdb::{BootstrapRecord, FirstAccount, HostDbInit};
 use std::os::unix::fs::PermissionsExt;
 
+// These behavioral tests use production Argon2 parameters in a parallel debug
+// suite. This bounds a hung test; sign-in latency is not the assertion here.
+const SIGN_IN_WATCHDOG: Duration = Duration::from_secs(30);
+
 #[derive(Default)]
 struct TestCustody(Mutex<BTreeMap<Name, Vec<u8>>>);
 impl HostSecrets for TestCustody {
@@ -379,7 +383,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
         AccountVerify, AccountVerifyParams, SessionEnd, SessionParams, SessionRenew,
     };
     use org_proto::{frame, Call, Request, Response};
-    use std::{io::BufReader, os::unix::net::UnixStream, time::Duration};
+    use std::{io::BufReader, os::unix::net::UnixStream};
     let (_root, auth, _) = fixture();
     let sockets = tempfile::Builder::new()
         .prefix("o-auth")
@@ -402,9 +406,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
     )
     .unwrap();
     let stream = UnixStream::connect(socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(8)))
-        .unwrap();
+    stream.set_read_timeout(Some(SIGN_IN_WATCHDOG)).unwrap();
     let mut peer = BufReader::new(stream);
     fn exchange<C: Call>(
         peer: &mut BufReader<UnixStream>,
@@ -451,7 +453,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
 fn actual_host_connection_pair_signs_in_and_eof_invalidates_registry_session() {
     use org_host_control::ops::{AccountVerify, AccountVerifyParams, SessionParams, SessionRenew};
     use org_proto::{frame, Request, Response};
-    use std::{io::BufReader, os::unix::net::UnixStream, time::Duration};
+    use std::{io::BufReader, os::unix::net::UnixStream};
     let (root, auth, _) = fixture();
     let auth = Arc::new(auth);
     let mut service = super::super::tests::service(root.path());
@@ -459,7 +461,7 @@ fn actual_host_connection_pair_signs_in_and_eof_invalidates_registry_session() {
     service.authentication = Some(auth.clone());
     let offices = service.offices.clone();
     let (host, peer) = UnixStream::pair().unwrap();
-    peer.set_read_timeout(Some(Duration::from_secs(8))).unwrap();
+    peer.set_read_timeout(Some(SIGN_IN_WATCHDOG)).unwrap();
     let thread =
         std::thread::spawn(move || super::super::listener::serve_pair(host, Arc::new(service)));
     let mut peer = BufReader::new(peer);
