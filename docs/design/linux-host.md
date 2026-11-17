@@ -68,8 +68,9 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   predicate that names `target_os`, `target_vendor`, `target_env` or `target_family`.
   String literals and fixtures (for example the TOML and `syn` fixtures in
   `org-office/src/store/tests/opener_policy.rs`) are not predicates and do not
-  match. Its allowlist, `.github/platform-conditionals.allow`, starts in X1a with the
-  79 files that have such a predicate today; the script fails when a listed file no
+  match. Its allowlist, `.github/platform-conditionals.allow`, starts in X1a with every
+  file that has such a predicate today, as the script itself lists them (a text
+  search finds 79 files, a few of them only through fixtures); the script fails when a listed file no
   longer has one, so the list only shrinks. X1b to X1d remove the source files, X2
   and the `testing` module remove the test files, and the list is empty at X6.
   Outside the check, and harmless: `cfg(unix)`, because a non-Unix target cannot
@@ -114,7 +115,7 @@ and `org-host/src/signals.rs`, and the descriptor swap in
 `apps/agentic-org-office/src/fdswap.rs`. No executable's own source has a platform
 conditional outside its tests.
 
-Count today: 79 `.rs` files outside any adapter contain a platform predicate. 44 are
+Count today: 79 `.rs` files outside any adapter name a platform target in their text. 44 are
 source files: 29 in `org-host`, 6 in `org-socket`, 6 in `org-supervise`, and
 `org-office/src/store/acceptance/durable.rs`, `org-client/src/agent.rs` and
 `org-spool/src/safe_read.rs`; each is in a row above. 35 are test files. Milestone-one
@@ -704,7 +705,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 How the tracks avoid each other:
 
 - **Land the crate and the check on the first day.** X1a creates `org-platform`, the
-  CI check with today's 79 files as a shrinking allowlist, and the `service` contract,
+  CI check with today's files as a shrinking allowlist, and the `service` contract,
   agreed with the A2 lead, so that A2 writes launchd code behind it from the start.
   From then on the check refuses any new platform predicate outside `org-platform`.
 - **Then carve the seams in three merges.** X1b moves the capabilities no Track A
