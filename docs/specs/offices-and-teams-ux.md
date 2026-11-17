@@ -28,9 +28,9 @@ The data contract owns the records: [organization](../design/organization-data/0
 12. **Every edit has a non-drag path** (menu, dialog, keyboard). Drag-to-move and drag-to-change-manager are shortcuts, never the only way.
 13. **Office outboxes report Pending and Blocked.** HQ shows their known outcomes. A disconnected browser marks its view stale and its own unsubmitted text unsaved; it does not become a satellite outbox.
 14. **Agents and people never look alike**, and the difference is never color only (§7.0).
-15. **The owner account bar is above the chart.** A linked owner employee retains its required home team and is counted/displayed there; account authority is separate from employee identity.
+15. **The owner bar is above the chart.** The owner is a person: an ordinary employee with a home team, counted once there, whose account holds the organization's ownership. Account authority is separate from employee fields.
 16. **Reporting references and team hierarchy are distinct.** A lead manages the entire team subtree; an ordinary ancestor-team employee does not. Explicit reporting remains visible independently.
-17. **Accounts sign in; people don't.** An account belongs to the instance. Only an instance admin creates organizations, and whoever creates one owns it. People are records agents can reach, never sign-ins. Accounts are added and passwords reset only on the HQ machine (`server-installation-and-access-ux.md` §4a.1).
+17. **Accounts sign in, and every account is a person.** An account belongs to the instance; in each organization it opens, it is tied to one person. A person needs no account. Only the administrator creates organizations, and whoever creates one owns it. The administrator or the owner gives a person an account from People with a one-time link (`server-installation-and-access-ux.md` §4a.1).
 
 ## 1. Words (proposed additions to the design-system glossary)
 
@@ -46,9 +46,9 @@ The data contract owns the records: [organization](../design/organization-data/0
 | Member | An agent or a person in the organization | User, employee (in the UI) |
 | Agent | An AI employee. It's placed in an office. | Bot, assistant, subagent |
 | Person | A human added to the organization. Agents can reach them. | User, contact, human (in labels) |
-| Owner | You: the organization's special user, with full access | Admin, root, super user |
-| Account | What you sign in with: a username and a password on this HQ instance. It can own organizations. People and agents don't have one. | User, login, profile |
-| Instance admin | An account that can create organizations on this HQ instance, and add offices on it. Setup makes the first account one. It isn't the same as owning an organization. | Admin (alone), superuser, root, owner |
+| Owner | The person who holds the organization, with full access in it: whoever created it, or whoever it was handed to. Exactly one per organization. | Admin, root, super user |
+| Account | What a person signs in with: a username and a password on this HQ instance. In each organization it opens, it is tied to one person. Agents don't have one. | User, login, profile |
+| Administrator | The one account that administers this HQ instance: it creates organizations, adds offices on this instance and collects recovery codes. Setup's registration link creates it. It isn't the same as owning an organization. | Admin (alone), superuser, root, owner |
 | Recovery code | The code, collected on the HQ machine (shown once, and again only until it's confirmed as stored), that will let the owner recover an organization if HQ is lost. Never shown in the browser. | Backup code, recovery key, password |
 | Lead | Optional direct home-team employee appointed to manage its whole subtree | Inferred project co-lead |
 | Reports to / Manager | Explicit employee reporting reference, separate from subtree lead responsibility | Inferred ancestor-team manager |
@@ -58,14 +58,14 @@ The data contract owns the records: [organization](../design/organization-data/0
 
 "Department" (from the role catalog) is not a grouping in the app, and there are no labels.
 
-The owner and the instance admin are often the same account, but they are different words for different rights: the owner has full access to one organization; the instance admin can create organizations (§5b).
+The owner and the administrator are often the same person, but they are different words for different rights: the owner has full access to one organization; the administrator can create organizations (§5b).
 
 ## 2. Visual direction (Tailwind Plus application UI)
 
 Apply [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules)
 to these flows. Lists use flat divided rows; forms use the shared controls and
 right sheets, confirmations use dialogs, and switchers use modal menus. An owner
-account card uses a neutral white/3 surface and white/10 outline, not an indigo
+bar uses a neutral white/3 surface and white/10 outline, not an indigo
 fill. A selected chart/profile entity never gains authority from its styling.
 Navigation tabs use links/underline when they have distinct URLs.
 
@@ -208,10 +208,11 @@ See SRV-7 through SRV-12 for the network/authorization behavior.
 Signing in, the session and sign out are in
 [server-installation-and-access-ux.md §4a](server-installation-and-access-ux.md#4a-sign-in-first-access-and-recovery-code).
 
-### 5a. Create organization (instance admin only)
+### 5a. Create organization (administrator only)
 
-Only an account with the instance-admin grant can create an organization. Whoever
-creates it owns it. The mechanics are in `docs/design/create-organization.md`.
+Only the administrator creates an organization, in the browser; setup creates
+none. Whoever creates it owns it. The mechanics are in
+`docs/design/create-organization.md`.
 
 **Entry point: the organization switcher** (sidebar footer, §2):
 
@@ -222,16 +223,17 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
  │ [SP] Side Project                    │
  │      HQ · Starting                   │
  ├──────────────────────────────────────┤
- │ + Create organization                │  ← instance admins only
+ │ + Create organization                │  ← the administrator only
  └──────────────────────────────────────┘
  [LL] Lumen Labs · HQ  ▾                    ← sidebar footer button
 ```
 
-- An instance admin sees **+ Create organization** as the last item, after a divider.
+- The administrator sees **+ Create organization** as the last item, after a divider.
 - Any other account sees only its organizations: no divider, no item, no disabled
   item and no hint. Nothing suggests a right it doesn't have.
-- An instance admin with no organizations also gets **Create organization** on the
-  empty page after sign-in (`server-installation-and-access-ux.md` §4a.5).
+- The administrator with no organizations gets **Create organization** on the
+  empty page after sign-in, which is the first page it sees after registering
+  from setup's link (`server-installation-and-access-ux.md` §4a.5).
 
 **The form** (slide-over, as for other forms in §2):
 
@@ -241,13 +243,18 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
  Slug        [ side-project                        ]
  Org Git     [ https://example.com/org/state.git   ] remote repository
  State branch[ main                                ]
- Bootstrap   [ Choose valid home team(s)…          ] owner/HR employees if created
  ┃ ⓘ It will be stored on HQ instance default (hq-mac), and you'll own it.
  ┃   Its recovery code is then collected on that machine.
                                     [Cancel]  [Create organization]
 ```
 
-- **Name:** required, trimmed. No browser-machine folder picker is offered. Creation also requires an explicit organization slug, a remote organization repository registration, state branch and valid chosen home teams for any owner/HR employees created during bootstrap. These may be separate setup steps, but are resolved before admitting those records; a team name is never guessed and no employee is teamless. Code repositories may be local; organization Git cannot.
+- The form asks for the name, slug, remote organization repository and state
+  branch, and nothing else: no team. Creation makes one top-level team named after
+  the organization, with you, as a person, as its lead and the built-in HR lead as
+  its other member. Projects bring their own teams later (§7.9).
+- **Name:** required, trimmed. No browser-machine folder picker is offered. Slug,
+  remote organization repository and state branch are required too. Code
+  repositories may be local; organization Git cannot.
   - Empty: "Give the organization a name."
   - Too long: "Use 64 characters or fewer."
   - Control characters: "The name can't contain control characters."
@@ -268,7 +275,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 | --- | --- |
 | Waiting for running agents | “Waiting for 3 agents to stop: Kai, Remy, Riley. Their active work and process cleanup must finish first.” Spinner, authorized agent list with supported **Pause** control (below), then “Side Project is created once the instance confirms it is safe. No agent is automatically stopped or restarted for this.” **Cancel** remains available and fields are read-only. One agent: “Waiting for 1 agent to stop: Remy.” No run-mode badges or sleep prediction. See **Waiting for running agents** below. Cancel cancels this operation: “Side Project wasn't created”, returning to the retained form. If creation already began, show “Too late to cancel: Side Project is being created now” and Creating…. Closing the panel does not cancel it. |
 | Creating | **Creating…**, disabled. Name is read-only. **Cancel** becomes **Close**, with "Closing this panel doesn't stop it." A second click sends nothing. |
-| Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". |
+| Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". Teams shows the Side Project team, with you as its lead and the HR lead in it. |
 | Ready | The organization's pages load as usual. The recovery-code notice shows for its owner once the code is waiting to be collected (a new organization starts as Being prepared, `server-installation-and-access-ux.md` §4a.6). |
 | Created, then stopped | The organization exists: its HQ shows **Stopped** with §3.3's reason. This is not a failed create. |
 | Failed | A red alert in the panel, with the reason, **Try again** and **Copy details**. Name keeps its text. Try again is a new attempt. |
@@ -308,7 +315,7 @@ is **Created, then stopped** (above), never a failure, so Try again can't hit
 | `storage_error` | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
 | `not_ready` | "HQ is still starting. Try again in a moment." **Try again** |
 | `unavailable` | "Several organizations are being created right now. Try again in a moment." **Try again** |
-| Not an instance admin (refused by the web process) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
+| Not the administrator (refused by the web process) | "Only this HQ's administrator can create organizations." No Try again. The switcher item goes away. |
 | Any other error | "Side Project wasn't created. Try again." |
 
 A recovery package that can't be created fails the create, with the copy "Side
@@ -349,40 +356,41 @@ switcher, ↑/↓ reach **Create organization**, Enter opens it and Esc closes t
 
 ### 5b. Who can do what
 
-People records and agents never sign in.
+Agents never sign in, and neither does a person without an account.
 
 | Action | Who | Where |
 | --- | --- | --- |
 | Sign in | Any account | Browser |
-| Create an organization | An instance admin only. Setup creates the first one. | Browser (§5a), or `agentic-org setup` |
-| Open an organization and act in it (teams, people, approvals, and inviting, approving and removing satellite offices) | Its owner: any account linked to it. The admin grant alone doesn't open it | Browser |
-| Add an office on this instance | An owner who is also an instance admin | Browser (§6.2) |
+| Create an organization | The administrator only. Setup creates none | Browser (§5a) |
+| Open an organization | Any account tied to a person in it. The administrator flag alone doesn't open it | Browser |
+| Act in it as its owner (teams, people, approvals, and inviting, approving and removing satellite offices) | Its owner | Browser |
+| Give a person an account (Invite to sign in), a new sign-in link, or remove their access | The administrator or the organization's owner | Browser, People (§7.4) |
+| Hand ownership to another person who has an account | The owner | Browser (§7.1) |
+| Hand the administrator role to another account | The administrator | Browser (`server-installation-and-access-ux.md` §4a.2) |
+| Add an office on this instance | The owner, when also the administrator | Browser (§6.2) |
 | See the recovery-code state | The organization's owner | Browser (state only, never the code) |
-| Show a recovery code and confirm it's stored | An instance admin, signed in on the HQ machine, who confirms it's them there | HQ machine only (`agentic-org recovery release`, `server-installation-and-access-ux.md` §4a.6) |
-| Add an account | An instance admin, signed in on the HQ machine, who confirms it's them there | HQ machine only (`agentic-org account create`, `server-installation-and-access-ux.md` §4a.2) |
-| Link an account to any organization on the instance, unlink it, or revoke an account | An instance admin, signed in on the HQ machine, who confirms it's them there. The instance always keeps an instance admin, and each organization a linked account | HQ machine only (`agentic-org account link`, `unlink`, `revoke`, `server-installation-and-access-ux.md` §4a.2) |
-| Change your own password | Any account, signed in with its current password | HQ machine only (`agentic-org account set-password`) |
-| Reset a forgotten password | Anyone at the HQ machine who confirms it's them there (Mac), or root (Linux, `sudo`). No sign-in | HQ machine only (`agentic-org account reset-password <username>`) |
+| Show a recovery code and confirm it's stored | The administrator, signed in on the HQ machine by approving in the browser, who confirms it's them there | HQ machine only (`agentic-org recovery release`, `server-installation-and-access-ux.md` §4a.6) |
+| Change your own password | Any account, signed in, with its current password | Browser (account menu) |
+| Reset the administrator's forgotten password | Anyone at the HQ machine who confirms it's them there (Mac), or root (Linux, `sudo`). No sign-in | HQ machine only (`agentic-org admin reset`) |
 | Start, stop or repair the instance | Whoever can run `agentic-org` as the instance's user on the HQ machine | HQ machine only |
 
-- In v1, the browser actions that need the instance-admin grant are creating
-  an organization (SRV-24) and adding an office on this instance (OFC-7)
- . On the HQ machine, the CLI commands that need it are `account
-  create`, `link`, `unlink` and `revoke`, and `recovery release` and `recovery
-  status` (the account table in `server-installation-and-access-ux.md` §4a.2).
-  An owner without the grant can do none of these, and neither can an employee
-  or an office.
+- In v1, the browser actions only the administrator can take are creating an
+  organization (SRV-24), adding an office on this instance (OFC-7) and handing
+  over the administrator role. On the HQ machine, the commands that need the
+  administrator are `recovery release` and `recovery status`. An owner who isn't
+  the administrator can do none of these, and neither can an employee or an
+  office. There is no `agentic-org account` command.
 - `agentic-org office remove-pending` runs on the joining machine, not the HQ
-  machine. It needs that instance's admin only when the instance has accounts
+  machine. It needs that instance's administrator only when the instance has one
   (§5c).
-- The account menu says "Instance admin" for an account with the grant
+- The account menu says "Administrator" for the administrator
   (`server-installation-and-access-ux.md` §4a.4).
-- **No browser screen lists, invites or adds accounts in v1.** Add person (§7.4)
-  adds a record agents can reach; it has no invite, password or sign-in option.
+- **No browser screen lists all accounts of the instance.** Accounts are given
+  person by person, from People (§7.4).
 
 ### 5c. Joining from setup: waiting, errors and repair
 
-"Setup" in this section means the destination flow started from HQ's Add office UI or an HQ-issued command, not `agentic-org setup`, which creates HQ only. It reuses the installation and service internals.
+"Setup" in this section means the destination flow started from HQ's Add office UI or an HQ-issued command, not `agentic-org setup`, which creates the instance only. It reuses the installation and service internals.
 
 The HQ-issued onboarding flow on the joining machine hands the invitation to its instance, then watches
 the join until it ends (`offices-hq-and-satellites.md`, "Provisioning a
@@ -390,16 +398,16 @@ satellite"). The examples use instance `default`; for another instance every
 command shown includes `--name <instance>`. `0196f3a2-7c41…` stands for the office's
 full ID, which setup always prints in full.
 
-**Signing in first**. On an instance that already has accounts (for
-example a satellite office joining on the HQ instance), `office.join` needs an
-instance admin's session (`offices-hq-and-satellites.md`, "Provisioning a
-satellite", step 3). Setup asks for an instance admin's username and
-password before it hands over the invitation, with the sign-in failures of the
-account table in `server-installation-and-access-ux.md` §4a.2. An account
-without the grant is refused: "sam isn't an instance admin, so it can't join
-offices on this instance. Sign in as an instance admin of instance default." and
-nothing is sent to HQ. On an instance with no accounts yet (a new satellite
-machine), setup asks for no sign-in here.
+**Signing in first**. On an instance that has an administrator (for
+example a satellite office joining on the HQ instance), `office.join` needs the
+administrator's session (`offices-hq-and-satellites.md`, "Provisioning a
+satellite", step 3). Setup prints an approval link before it hands over the
+invitation, and the administrator approves it in a browser where they're signed
+in (`server-installation-and-access-ux.md` §4a.2); no password is typed in the
+terminal. Approved by another account, it's refused: "sam isn't this instance's
+administrator, so it can't join offices on this instance." and nothing is sent to
+HQ. On an instance with no administrator yet (a new satellite machine), setup
+asks for no sign-in here.
 
 **While the join waits** (the host reports `join_pending`), setup shows its state,
 the check code and the last error, if any:
@@ -438,7 +446,7 @@ Status: waiting for approval at HQ · checked 14:05
 - `agentic-org service status` shows the same Check code, Status and Last error lines for
   a pending join.
 
-**Waiting for running agents**. Joining this instance changes its process layout/access context, so the join waits for the same verified turn/process drain and cleanup boundary as §5a. A warm idle process or unresolved cleanup can block; a Paused/Offline label alone cannot clear it. No mode engine, automatic sleep or automatic restart is assumed. With an instance-admin session (alex owns Lumen Labs but not Other Org):
+**Waiting for running agents**. Joining this instance changes its process layout/access context, so the join waits for the same verified turn/process drain and cleanup boundary as §5a. A warm idle process or unresolved cleanup can block; a Paused/Offline label alone cannot clear it. No mode engine, automatic sleep or automatic restart is assumed. With the administrator's session (alex owns Lumen Labs but not Other Org):
 
 ```text
 Joining Lumen Labs as "Studio Mac" (instance default)
@@ -526,10 +534,10 @@ show only what they decide or see:
   `agentic-org service status`.
 
 **Removing a join** (on the joining machine, through its instance): `agentic-org
-office remove-pending <office id>`. On an instance that has accounts, it asks an
-instance admin to sign in first, as setup does when it joins ("Signing in first", above). Its sign-in failures use
-the account commands' words (`server-installation-and-access-ux.md` §4a.2,
-SIGN-30), in the table below.
+office remove-pending <office id>`. On an instance that has an administrator, it
+asks the administrator to sign in first, by approving in the browser, as setup
+does when it joins ("Signing in first", above). Its approval failures use the
+words of `server-installation-and-access-ux.md` §4a.2, in the table below.
 
 ```
 $ agentic-org office remove-pending 0196f3a2-7c41…
@@ -567,8 +575,8 @@ HQ-issued onboarding command with the invitation.
 | Waiting for running agents, but the agents stopped and the join reached HQ before y | "Not cancelled: the agents stopped and the join was sent to HQ. Studio Mac is now waiting for approval. Run this again to remove it." Nothing removed. | Error |
 | The office has joined | "Studio Mac has joined Lumen Labs, so there's no pending join to remove. To remove the office, use Offices › Remove office at HQ." Nothing removed. | Error |
 | Unknown ID | "There's no join request 0196f3a2-7c41… on instance default. agentic-org service status lists them." | Error |
-| Wrong username or password at sign-in (an instance with accounts) | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." Nothing removed. | — / Error |
-| The account that signed in isn't an instance admin | "sam isn't an instance admin, so it can't remove join requests. Sign in as an instance admin of instance default." Nothing removed. | Error |
+| The approval was declined, or not given within 10 minutes (an instance with an administrator) | "Declined in the browser. Nothing changed." or "Not approved in time. Nothing changed. Run the command again." Nothing removed. | Error |
+| Approved by an account that isn't the administrator | "sam isn't this instance's administrator, so it can't remove join requests." Nothing removed. | Error |
 | Instance not running | "Instance default isn't running. Start it with agentic-org service start, then run this command again." | Error |
 
 ## 6. Flow 3 · Offices and Add office
@@ -601,23 +609,23 @@ HQ-issued onboarding command with the invitation.
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
 - **Row label for screen readers** (OFC-13): "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown shows the remaining time rounded down to a 10 s step and updates on those boundaries, with "Restarting shortly" under 10 s (§3.3). A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online"). The label doesn't claim "(you're here)" unless the host says so.
 - **Footer** (OFC-48): "Shown from HQ. Statuses include last-seen information."
-- **HQ-only actions:** Add office, Review and approve and Remove office are available to an authorized owner through HQ from any browser. Add office › **On this instance** is offered only to an owner who is also an instance admin (§6.2). Unauthorized sessions cannot invoke or discover privileged operations.
+- **HQ-only actions:** Add office, Review and approve and Remove office are available to an authorized owner through HQ from any browser. Add office › **On this instance** is offered only to an owner who is also the administrator (§6.2). Unauthorized sessions cannot invoke or discover privileged operations.
 
-### 6.2 Add office (authorized HQ owner; on this instance, an instance admin)
+### 6.2 Add office (authorized HQ owner; on this instance, the administrator)
 
 Enter a unique office name and choose **On this instance** or **On another
 machine/instance**. The first uses authenticated local provisioning and records
 office identity. Show Creating, Synchronizing and Ready separately; a failure is
 visible with its specific reason and an idempotent retry.
 
-**On this instance needs the instance admin**, because it provisions a
+**On this instance needs the administrator**, because it provisions a
 key and a worker on HQ's instance (`standalone-server.md`, "Create organization").
-- An owner who isn't an instance admin isn't offered the choice: Add office opens
+- An owner who isn't the administrator isn't offered the choice: Add office opens
   straight on the invitation for another machine, titled "Add an office on another
   machine", with no disabled option and no hint, as for Create organization (OFC-14).
-- If HQ refuses it anyway (for example, the grant was removed meanwhile): "Only an
-  instance admin can add an office on this instance. You can still invite another
-  machine." with **Invite another machine**, which keeps the name. No Try again.
+- If HQ refuses it anyway (for example, the administrator role was handed over
+  meanwhile): "Only this HQ's administrator can add an office on this instance.
+  You can still invite another machine." with **Invite another machine**, which keeps the name. No Try again.
 - Inviting, approving and removing a satellite stay open to any authorized owner
   (OFC-7).
 
@@ -719,27 +727,28 @@ not inferred from a robot glyph, color or avatar shape:
 
 Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employee `status` (`active | paused | inactive`) and observed process status are separate.
 
-### 7.1 The owner account and linked employee
+### 7.1 The owner
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ (AK) Alex Kim (you) · Owner of Lumen Labs                                 │
-│ Account authority: full access to this organization. [Employee profile]  │
+│ Full access to this organization.   [Profile]  [Hand over ownership…]     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Nothing on the employee record marks it as the owner, grants authentication or waives required membership.
-- A linked owner employee can be shown on its home-team card and in eligible member/lead pickers subject to ordinary direct-membership rules. Account-removal protections are separate from employee editing. Changing an employee name, handle, home team or reporting line cannot transfer ownership of the account.
-- **Message/Ask** reaches the owner through the owner recipient route. Task assignment stores an employee ID: a linked active owner employee is listed if present; none is manufactured from a sign-in account.
-- The built-in HR shortcut may sit beside the bar. Its employee also has a valid home team and appears in the team and reporting views; the shortcut does not hide it from employee counts. Home membership never appoints HR as a lead or manager.
+- The owner is a person: an ordinary employee with one home team, counted once there, whose account holds the organization's ownership. At creation that is the top-level team, which the owner leads. Nothing on the employee record grants ownership or sign-in, and every organization has exactly one owner.
+- The owner's person appears on its home-team card and in eligible member/lead pickers under ordinary direct-membership rules. Changing its name, handle, home team or reporting line changes nothing about ownership.
+- **Hand over ownership…** (owner only) lists active people in the organization who have an account. The dialog reads "Make Sam Ortiz the owner of Lumen Labs? You'll stay in Lumen Labs as a person, without the owner's access." and asks for the owner's password. Ownership moves in one operation, never leaving two owners or none; both people's open pages show the change without a reload. The owner can't remove their own access or be deactivated without handing over first.
+- **Message/Ask** reaches the owner as the person they are. Task assignment and managers use employee IDs, and the owner's person is listed like anyone else.
+- The built-in HR shortcut may sit beside the bar. Its employee is a member of the top-level team from creation and appears in the team and reporting views; the shortcut does not hide it from employee counts. Home membership never appoints HR as a lead or manager.
 
 ### 7.2 Teams index, Members directory and team pages
 
 Teams is an indented divided-row index of the recursive team tree, showing TEAM- reference/name, optional direct lead, direct people/agent counts and active projects with accountable Owner/Contributor roles. Keep New team, Move team, home-team moves, Change manager and project owner/contributor editing under their existing revision/authorization/safety rules. Project owner cannot be removed without a replacement.
 
-Members is the mixed directory, filtered All · People · Agents. Each divided row shows avatar/name/handle/role, kind in words, truthful presence where available and Working on {task} when known. People means human employees. Show the authenticated owner account as an account card, not a manufactured employee. If an owner has a linked employee, that employee remains a normal member in its required home team and appears/counts once. HR's employee obeys the same home-team/count rule.
+Members is the mixed directory, filtered All · People · Agents. Each divided row shows avatar/name/handle/role, kind in words, truthful presence where available and Working on {task} when known. People means human employees. The owner appears once, as the person they are, with an **Owner** badge. A person with an account shows **Can sign in**. HR's employee obeys the same home-team/count rule.
 
-Org chart is one vertical reporting tree, with no zoom or chart-specific search. Put the owner account card above the tree as presentation; records without an explicit employee manager are grouped there as No explicit manager without inventing a manager ID. A linked owner employee keeps its actual reporting position. Team hierarchy lives in Teams rows and employee discovery in Members/top-bar search. Preserve keyboard tree navigation, collapse/expand, employee menus, Change manager and a profile link on every employee node. Reporting and subtree-lead authority remain separate and must not silently rewrite one another.
+Org chart is one vertical reporting tree, with no zoom or chart-specific search. Put the owner bar above the tree as presentation; records without an explicit employee manager are grouped there as No explicit manager without inventing a manager ID. The owner's person keeps its actual reporting position. Team hierarchy lives in Teams rows and employee discovery in Members/top-bar search. Preserve keyboard tree navigation, collapse/expand, employee menus, Change manager and a profile link on every employee node. Reporting and subtree-lead authority remain separate and must not silently rewrite one another.
 
 A team page `/teams/:teamId` shows name/reference, optional lead, real counts, purpose and Hire or add (Hire an agent / Add a person). Above its tabs show at most six member rows and All N members. Tabs are Work, Projects, Activity, Conversations; Work is default. Work rows show reference/title, project · assignee · priority metadata and one trailing work-state pill. Team members do not repeat their team in each row. Missing tab data uses honest empty states. There is no Routines tab.
 
@@ -763,9 +772,24 @@ Once added, agents in Lumen Labs can reach Sam as a participant.
 ```
 
 - Name is trimmed, required and has no control characters. Display-name duplicates are allowed. Handle is a separate explicit lowercase identifier using permitted letters/digits/dots/underscores/hyphens; check uniqueness across people and agents, not by renaming a display name. Keep the reserved recipient addresses and ID disambiguation. Inline errors name the unavailable handle and suggest another; do not silently overwrite it when the name changes.
-- Contact remains optional free text (trimmed); clearing it is allowed. Home team cannot be cleared. If none exists, **Create team…** returns to this form with the chosen valid team before submission.
+- Contact remains optional free text (trimmed); clearing it is allowed. Home team cannot be cleared. From the toolbar it starts as the top-level team; the person can be moved to any team later like anyone else (§7.6).
 - Added: show once at the home team, highlight for two seconds and focus it. Toast “Added Sam Ortiz. Agents can now reach Sam.” Pending on the receiving office's outbox is distinct from an accepted committed record.
-- Quick view: name/handle, Person, contact, Home team, Reports to and reports. Actions: Edit · Move home team… · Change manager… · Deactivate…. Employment and account access remain separate.
+- Quick view: name/handle, Person, contact, Home team, Reports to and reports, and **Can sign in** when the person has an account. Actions: Edit · Move home team… · Change manager… · Deactivate…, and, for the administrator or the owner, **Invite to sign in** (no account yet) or **New sign-in link** and **Remove access…** (has an account). Deactivating a person also removes their access.
+- **Invite to sign in** makes a one-time registration link for this person and shows it once:
+
+  ```text
+  Invite Sam Ortiz to sign in
+  Send this link to Sam. It works once and expires in 24 hours (at 14:02 tomorrow).
+  Sam opens it and chooses a username and password.
+  [ http://127.0.0.1:7420/register#p9Lc…        ]  [Copy link]
+  It's shown only now. If it's lost, invite Sam again.
+                                                       [Done]
+  ```
+
+  The product sends no email. Inviting again cancels the previous link. The account Sam creates is tied to Sam in this organization (`server-installation-and-access-ux.md` §4a.2).
+- **New sign-in link**, for a person who forgot their password, shows a one-time set-new-password link the same way. Setting the password signs that account out everywhere.
+- **Remove access…** asks "Remove Sam's access to Lumen Labs? Sam is signed out everywhere and can't open Lumen Labs. Sam stays a person here." with **Remove access**. Unavailable for the owner, with "Hand over ownership first."
+- Agents have none of these actions: an account is never tied to an agent.
 - Deactivation preserves profile, ID, home team and handle. Explain affected lead appointments, reports and current assignments and require their explicit resolution in the supported operation. Clear or reassign the individual assignment without changing task accountable team or status merely because the person leaves. Report histories remain immutable. Destructive deletion is only available for an unreferenced mistake with no history, after backend validation; do not promise a cascading delete.
 - Unknown/removed messaging participants show a plain failure with **Add a person…** where appropriate; task assignment validates active employees independently. Existing queued-message delivery/dead-letter behavior is governed by the messaging contract, not by the chart mutation.
 
@@ -781,7 +805,7 @@ Lead        [No lead                    ] optional, direct member only
 
 - A new empty team needs no lead. To appoint one, explicitly select/create an employee whose home team is this team; moving an existing employee requires the same reviewed home-team move as §7.6. Never silently add another membership. Explain that the lead manages the whole subtree, including child-team leads.
 - New team numbers come from HQ's organization-wide allocation, never depth or name. Client-side name checks follow the length and control-character rules and show the backend's conflict feedback.
-- Created: card appears under its parent, highlights for two seconds and receives focus. Show Pending/Blocked accurately. Empty organization: “Teams group your agents and people. A team can contain other teams.” **Create your first team**. Create a valid team before any employee or owned project can be accepted, including owner/HR employee bootstrap.
+- Created: card appears under its parent, highlights for two seconds and receives focus. Show Pending/Blocked accurately. An organization always has its top-level team, made when the organization was created, so there is always a team to choose; creating a team here is for teams that aren't a project's.
 
 ### 7.6 Move an employee’s home team
 
@@ -808,7 +832,7 @@ The move uses the expected employee revision and updates profile `home_team_id` 
 
 ### 7.8 Org chart
 
-Draw `reports_to_employee_id` separately from team hierarchy. The owner bar can act as a visual grouping root for records with no explicit employee manager; label that absence **No explicit manager**, not an inferred foreign key to the owner. A linked owner employee appears exactly once in its recorded reporting position, retaining its home team. Built-in HR is an employee in this view too.
+Draw `reports_to_employee_id` separately from team hierarchy. The owner bar can act as a visual grouping root for records with no explicit employee manager; label that absence **No explicit manager**, not an inferred foreign key to the owner. The owner's person appears exactly once in its recorded reporting position, retaining its home team. Built-in HR is an employee in this view too.
 
 Nodes show shape/name/handle, Agent or Person, one Home team and number of explicit reports; agents show office/Unplaced and freshness. Always explain: “Reporting lines are explicit. Team leads also manage their team's subtree; ordinary ancestor-team members do not.”
 
@@ -817,7 +841,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 ### 7.9 Give a project to a team, or share it
 
 - Project settings: **Accountable owner team** (required single combobox), **Contributing teams** (optional multiple choice). A team menu can open the project with the intended owner/contributor action made explicit. Show reference and full path for every team.
-- New project requires an owner before submission, prefilled from the launching team when applicable. No unassigned project is created and no follow-up dialog repairs a deliberately omitted owner.
+- **New project creates its team by default.** The accountable team field starts as "New team: <project name>", a team named after the project, under the top-level team, made with the project in one operation. Choosing an existing team instead stays possible, prefilled from the launching team when applicable. No unassigned project is created and no follow-up dialog repairs a deliberately omitted owner.
 - Adding/removing a contributor does not change accountability or current assignments. Each participating card links to the project's owner. Do not label every participating lead as the project's lead.
 - Changing owner previews affected tasks. The service updates required project owner and all project tasks' accountable `team_id` with durable history in the same recoverable operation. Assigned teams/individuals remain unchanged, even if outside the new owner team.
 - Owner cannot be removed/cleared. Pick a replacement; its availability and revision are checked at admission. Project records retain required integration branches per repository association, independent of team participation and the office's shared repository cache.
@@ -859,10 +883,10 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - JOIN-14 · When HQ doesn't support the joining instance's version, the join stays pending and setup shows "This instance needs an update to join this HQ. Update it, then setup continues." until the invitation expires.
 - JOIN-15 · A join waits for verified affected turn/process drain and cleanup. Setup tracks the operation and updates its counts as blockers clear; Ctrl-C cancels the same join. Stale/unknown evidence cannot prove readiness, and no agent is automatically stopped or relaunched.
 - JOIN-16 · Ctrl-C while a join waits for running agents cancels the join: setup prints "Cancelled. <office> wasn't added to instance <name>…", and the instance has no office or pending join for it.
-- JOIN-17 · Each row of §5c's `office remove-pending` table shows its copy and exit status and removes nothing; signed in as an account without the instance-admin grant it's refused with "<username> isn't an instance admin, so it can't remove join requests…".
-- JOIN-18 · With an authorized instance-admin session, setup names only agents in organizations that account owns, with observed lifecycle state and supported Pause/safe-stop guidance. Other organizations and unauthenticated/noninteractive outputs show counts only. No run-mode labels, automatic-sleep or automatic-restart promises appear. Noninteractive waiting_for_idle output names pending verification, service status and the exact remove-pending command/office ID; status/doctor preserve supported counts and privacy.
+- JOIN-17 · Each row of §5c's `office remove-pending` table shows its copy and exit status and removes nothing; approved by an account that isn't the administrator it's refused with "<username> isn't this instance's administrator, so it can't remove join requests."
+- JOIN-18 · With the administrator's session, setup names only agents in organizations that account owns, with observed lifecycle state and supported Pause/safe-stop guidance. Other organizations and unauthenticated/noninteractive outputs show counts only. No run-mode labels, automatic-sleep or automatic-restart promises appear. Noninteractive waiting_for_idle output names pending verification, service status and the exact remove-pending command/office ID; status/doctor preserve supported counts and privacy.
 - JOIN-19 · `agentic-org office remove-pending <office id>` on a join waiting for running agents asks "Cancel joining <organization> as <office>? The join hasn't reached HQ yet. [y/N]", with no mention of HQ approval, and after y in a terminal prints "Cancelled. <office> wasn't added to instance <name>…", leaving the instance with no office or pending join for it. Any other answer, no terminal, or a join that reached HQ before y cancels nothing, with §5c's copy and exit status Error.
-- JOIN-20 · On an instance that has accounts, setup asks for an instance admin's sign-in before joining; an account without the instance-admin grant is refused with "<username> isn't an instance admin, so it can't join offices on this instance…" and no join request reaches HQ. On an instance with no accounts, setup asks for no sign-in.
+- JOIN-20 · On an instance that has an administrator, setup asks the administrator to approve its sign-in in the browser before joining, and asks for no password; approved by another account it's refused with "<username> isn't this instance's administrator, so it can't join offices on this instance." and no join request reaches HQ. On an instance with no administrator, setup asks for no sign-in.
 
 **Offices (OFC)**
 - OFC-1 · HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.
@@ -871,7 +895,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - OFC-4 · New invitation cancels the previous invitation after confirmation. Approval requires the matching check code observed on the destination terminal or through a trusted authenticated session to that machine; an unsolicited relayed code is insufficient.
 - OFC-5 · A pending join appears in HQ Needs you and the Offices list and opens the approval dialog.
 - OFC-6 · Approve is enabled only when the typed code has 8 characters; case, spaces and dashes are ignored, and O, I and L are read as 0, 1 and 1; a wrong code shows the mismatch message with the tries left, and the third wrong code cancels the invitation.
-- OFC-7 · Add office › On this instance is offered only to an owner who is also an instance admin; any other owner's Add office opens on another machine, with no disabled option or hint. Any authorized owner may invite, approve or remove a satellite through HQ from any browser. Unauthorized clients cannot discover or invoke those actions.
+- OFC-7 · Add office › On this instance is offered only to an owner who is also the administrator; any other owner's Add office opens on another machine, with no disabled option or hint. Any authorized owner may invite, approve or remove a satellite through HQ from any browser. Unauthorized clients cannot discover or invoke those actions.
 - OFC-8 · Remove office names the office, its agents (which become unplaced), their tasks and the offline case before removing.
 - OFC-9 · HQ shows an unreachable satellite with last-seen/sync state. A browser disconnected from HQ shows stale data and Live updates paused; it does not become an offline satellite or claim drafts are saved. Office outbox outcomes are shown when HQ has them.
 - OFC-10 · After an office is removed, its agents show as Unplaced (Offices list, org chart tag, office filter), with Place… and Offboard… for each, and a needs-you item until every one is handled.
@@ -880,18 +904,18 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - OFC-13 · Each status has an icon and text, with office name, role, location, reason and agent count available to assistive technology. Countdown announcements do not tick, and changes use a polite live region.
 
 **Create organization and who can do what (OFC)** (§5a, §5b)
-- OFC-14 · For an instance admin, the organization switcher ends with a divider and **+ Create organization**. For any other account it has no divider, no Create organization item (enabled or disabled) and no hint.
-- OFC-15 · Organization creation resolves name, explicit slug, remote organization repository and state branch and valid chosen bootstrap employee home teams before admission, with no browser folder picker. These may be separate setup steps. The note names the HQ instance/machine and creator ownership.
+- OFC-14 · For the administrator, the organization switcher ends with a divider and **+ Create organization**. For any other account it has no divider, no Create organization item (enabled or disabled) and no hint.
+- OFC-15 · Create organization asks for name, explicit slug, remote organization repository and state branch, and for no team, with no browser folder picker. The note names the HQ instance/machine and creator ownership.
 - OFC-16 · An empty or too long name, or one with control, invisible or direction-changing characters, shows its inline message and sends no request.
 - OFC-17 · A name HQ refuses as already used shows "There's already an organization called <name> on this HQ. Choose another name." and no organization is created.
 - OFC-18 · While creating, the button reads **Creating…** and is disabled; double-clicking sends one request.
-- OFC-19 · A created organization opens showing Starting, with the toast "Created <name>. You own it.", and then loads normally. Its owner is the account that created it.
+- OFC-19 · A created organization opens showing Starting, with the toast "Created <name>. You own it.", and then loads normally. Its owner is the creator's person, the lead of a top-level team named after the organization, whose other member is the built-in HR lead.
 - OFC-20 · A confirmed failure shows its reason's copy, keeps the name, and offers Try again and Copy details. Copy details contains no key, token or recovery code.
 - OFC-21 · When the create response is lost, the panel shows "Checking whether <name> was created…" and looks up the same attempt. Each lookup outcome shows its copy (including "still being created", which keeps checking), and repeating the check never creates a second organization.
-- OFC-22 · HQ's refusal for a missing instance-admin grant shows "Only an instance admin can create organizations." with no Try again.
+- OFC-22 · HQ's refusal of Create organization for an account that isn't the administrator shows "Only this HQ's administrator can create organizations." with no Try again.
 - OFC-23 · Closing the panel while creating doesn't stop it: the new organization then appears in the switcher with "HQ · Starting".
 - OFC-24 · The form meets §5a's accessibility: labelled fields with linked rules/errors, `aria-invalid` on an invalid name, announced failures with focus on the alert, polite announcements of progress, focus on the new organization's heading, and focus returned to the switcher on close.
-- OFC-25 · Add person and the person quick view offer no invite, password or sign-in option.
+- OFC-25 · Add person offers no password field. The person quick view offers Invite to sign in (no account yet), or New sign-in link and Remove access (has an account), only to the administrator and the organization's owner; each link is shown once with Copy, and the product sends no email.
 
 **Joins that end, waiting for running agents, and offices on this instance (OFC)** (§3.3, §5a, §6.2)
 - OFC-26 · In the joining instance's own view (its status and, if it has one, its local status page), a satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office. HQ's Offices list never shows this row: after 3 wrong check codes, a decline or an expired invitation it shows §6.3's row with New invitation and Remove.
@@ -899,7 +923,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - OFC-28 · Create organization waits for verified affected turns/processes to finish and cleanup to complete; a live idle process or unresolved cleanup blocks, and Paused/Offline/presence alone cannot clear it. Keep Cancel, authorized profile links and supported Pause controls. Show stop pending until confirmed cleanup; name only owned-organization agents, count others. Unknown evidence keeps waiting. No mode engine or automatic stop/restart is assumed.
 - OFC-29 · Add office on this instance uses the same verified turn/process/drain boundary and controls/privacy/freshness as OFC-28, with spinner, retained read-only fields and Cancel. Readiness is never inferred from a zero count or an agent status label.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
-- OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
+- OFC-31 · HQ's refusal of Add office › On this instance for an account that isn't the administrator shows "Only this HQ's administrator can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
 - OFC-32 · In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval while its `join_phase` is `awaiting_approval`, then Starting · copying records while it's `initial_sync`, and never Online before its first copy of records completes. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
 - OFC-33 · A warm idle process holding the affected layout context, open turn or unresolved cleanup keeps create/Add office/join waiting. Only verified quiescence clears the blocker; a Paused or Offline label is not proof.
 - OFC-34 · Waiting counts update without reload as verified blockers clear; unavailable counts or evidence show explicit waiting/verification copy rather than fabricated zero or readiness.
@@ -923,12 +947,12 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 **Org chart: Teams (TEAM)**
 - TEAM-1 · Teams index uses indented divided rows for the recursive parent_team_id tree, showing TEAM- reference/name, optional direct lead, direct People/Agents counts and projects marked Owner or Contributor.
 - TEAM-2 · Every employee is counted once at the required home team and listed once in Members. No multiple-membership badge or checklist is offered; name, handle and home-team appointment title remain distinct.
-- TEAM-3 · Required home-team failures appear as validation errors, never an ordinary Not in a team tray. Owner and HR employee records obey the same constraint.
+- TEAM-3 · Required home-team failures appear as validation errors, never an ordinary Not in a team tray. The owner's and HR's employee records obey the same constraint; both start in the top-level team made with the organization.
 - TEAM-4 · Agent rows may show the real executing office or Unplaced with freshness; office placement neither owns teams or projects nor changes directory membership.
-- TEAM-5 · New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Create a valid team before employee/bootstrap admission.
+- TEAM-5 · New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Every organization has its top-level team from creation, and a new project creates its own team by default (TEAM-8).
 - TEAM-6 · Move home team is one employee-revision-checked recoverable operation updating field/path and resolving departed leadership; preserve ID, handle, reporting, history and current task assignments. Stale state keeps input and explains the conflict.
 - TEAM-7 · Team move works by drag and Move to…, excludes self/descendants, previews subtree effects and preserves identity. A concurrent cycle or revision failure refreshes current state without applying the edit.
-- TEAM-8 · Projects have a required single accountable owner and optional contributors, editable from project/team entry points. Owner removal requires a replacement; changing owner updates task accountability/history together and leaves assignments unchanged.
+- TEAM-8 · Projects have a required single accountable owner team and optional contributors, editable from project/team entry points. A new project creates a team named after it, under the top-level team, as its accountable team unless an existing team is chosen. Owner removal requires a replacement; changing owner updates task accountability/history together and leaves assignments unchanged.
 - TEAM-9 · Team deletion is blocked by child teams, home employees, owned projects/tasks and durable references, listing repair actions. Archival preserves historical identity. No cascade produces teamless employees or ownerless projects.
 - TEAM-10 · Teams, Members and Org chart are fully usable from the keyboard, including view-switch heading focus, tree navigation/expand/collapse, menus, Move to… and Change manager…. Removing a row/control focuses a surviving neighbor or stable heading.
 - TEAM-11 · Teams · Members · Org chart switch between the index, mixed directory and one vertical reporting tree, with no zoom or chart search; editing is in index, directory and tree menus.
@@ -939,7 +963,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 
 **Org chart: People (PEOPLE)**
 - PEOPLE-1 · Members lists people and agents as divided rows, filtered All · People · Agents, with name/handle/role, kind in words, real presence when available and current task when known.
-- PEOPLE-2 · The directory explains that agents can reach people registered in the organization, with Add a person; registration does not grant sign-in or authority.
+- PEOPLE-2 · The directory explains that agents can reach people registered in the organization, with Add a person; registration alone grants no sign-in or authority. A person gets an account only through Invite to sign in.
 - PEOPLE-3 · Add person requires name, independent handle and one valid home team, with optional contact and explicit employee manager. Team entry points prefill the home team; accepted people appear once there.
 - PEOPLE-4 · Duplicate display names are allowed; handles are explicit lowercase identifiers unique across agents/people. Invalid or unavailable handles show inline errors/suggestions and block submission; reserved routing/ID namespaces stay reserved.
 - PEOPLE-5 · Deactivation preserves ID, profile, required home team and handle; preview/resolve live leadership, reporting and assignments. History is retained; hard delete requires backend proof of no history/references. Assignment cleanup never erases accountability or automatically changes task status.
@@ -948,16 +972,16 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - PEOPLE-8 · Renaming a person does not change their handle. Explicit handle changes require separate uniqueness/compatibility validation and show the new address before acceptance.
 
 **Org chart: Reporting lines (REPORT)**
-- REPORT-1 · Reporting view draws explicit reports_to_employee_id; group absent managers under the owner presentation labelled No explicit manager. Every employee, including HR and linked owner employees, appears once without inventing a manager foreign key.
+- REPORT-1 · Reporting view draws explicit reports_to_employee_id; group absent managers under the owner bar labelled No explicit manager. Every employee, including HR and the owner's person, appears once without inventing a manager foreign key.
 - REPORT-2 · Nodes show name/handle, Agent or Person shape/words, one Home team and explicit-report count; placement/freshness is agent-only.
-- REPORT-3 · Change manager and drag offer eligible employees plus No explicit manager, omit self and disable reporting descendants with a reason. A security owner account is not fabricated as an employee reference.
+- REPORT-3 · Change manager and drag offer eligible employees plus No explicit manager, omit self and disable reporting descendants with a reason. An account is never offered as a manager; only employee records are.
 - REPORT-4 · A changed manager keeps focus and shows a toast; conflict and cycle failures retain input and refresh current lines.
 - REPORT-5 · The view distinguishes explicit reporting from subtree lead responsibility; changing either graph does not silently rewrite the other. Ordinary ancestor-team membership grants no management authority.
 
 **The owner (OWNER)**
-- OWNER-1 · The owner account bar presents organization access above each chart. A linked owner employee has a required home team and is counted/displayed there; a security account without a profile is not an employee.
-- OWNER-2 · Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from any employee field. No owner employee is teamless.
-- OWNER-3 · Messaging retains the authenticated owner routing contract. Task assignees and employee managers use eligible employee IDs, including a linked owner employee where valid; a sign-in account alone supplies neither reference.
+- OWNER-1 · The owner bar above each chart names the owner, a person with one home team who is counted and displayed there, with Hand over ownership… for the owner. Every organization has exactly one owner.
+- OWNER-2 · The owner's home-team and lead eligibility follow ordinary employee constraints; profile edits cannot transfer ownership or derive privileges from any employee field. Hand over ownership… moves ownership to an active person with an account, after the owner's password, in one operation; the owner can't remove their own access or be deactivated before handing over.
+- OWNER-3 · Messages reach the owner as the person they are. Task assignees and employee managers use employee IDs, including the owner's person; an account alone supplies neither reference.
 
 **Withdrawn:** GUILD-1, GUILD-2 and MENU-1 to MENU-6. IDs are not reused.
 
@@ -967,7 +991,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - A8 · Whether there is a limit on how many people an organization can add, or on a person's name length (the team-name rules, 1 to 64 characters, are assumed).
 - A9 · Whether the agent's `delivery_failed` notice carries the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person.
 - A91 · Whether the duplicate organization-name check is per HQ instance or per account. The name rules follow `org-proto`: trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively.
-- A95 · Which error the web process returns when an account without the admin grant calls Create organization.
+- A95 · Which error the web process returns when an account that isn't the administrator calls Create organization.
 - A92 · How long a create attempt can be looked up after a lost response, and what HQ answers once it's too old.
 - A105 · A decline at HQ and an HQ identity mismatch both end as `join_rejected`. Until the instance's status says which, setup, `status` and the §3.3 row show one combined row.
 - A106 · Whether a read made with a session can give each affected agent's employee ID, name, organization and lifecycle state while a create, Add office or join waits, so the wait can name agents. Until then it shows counts.

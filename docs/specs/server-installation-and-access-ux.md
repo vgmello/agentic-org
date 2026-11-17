@@ -66,7 +66,7 @@ For a new instance the wizard establishes, in order:
    No create-or-join selector, invitation input, satellite role or --hq join
    option is present; later HQ-issued enrollment is separate. An organization is
    created in the browser by the signed-in administrator
-   ([offices §5a](offices-and-teams-ux.md#5a-create-organization-instance-admin-only)).
+   ([offices §5a](offices-and-teams-ux.md#5a-create-organization-administrator-only)).
 3. The administrator's registration link (§4a.2). Setup asks for no username and
    no password, creates no account and offers no recovery code.
 4. Agent isolation ([ADR-0015](../adr/0015-agent-isolation-modes.md)): setup offers
@@ -220,7 +220,7 @@ shows `--name <instance>` as text to replace (§4a.3).
 - The administrator's account has no person until it creates an organization.
   Whoever creates an organization is its **owner**: the creator becomes a person
   in its top-level team and that team's lead
-  ([offices §5a](offices-and-teams-ux.md#5a-create-organization-instance-admin-only)).
+  ([offices §5a](offices-and-teams-ux.md#5a-create-organization-administrator-only)).
   Every organization has exactly one owner. The owner can hand ownership to
   another person in the organization who has an account (offices §7.1).
 - **Everyone else gets an account from the browser.** In an organization's
