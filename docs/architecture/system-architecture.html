@@ -489,10 +489,10 @@ offices/
   <h3>Can the storage engine be replaced?</h3>
   <ul>
     <li>SQL exists in two crates: <code>org-office</code> and <code>org-host</code>. The domain crates define storage ports and contain no SQL.</li>
-    <li>In <code>org-office</code>, 23 of 26 files that use SQLite are under the private <code>store</code> folder. It is split by area: engine and single writer (1,900 lines), organization with replication and snapshots (6,400), accepted-write journal (2,700), work (1,500), messages (800), other (1,400). Three files outside it also use SQL: <code>messaging.rs</code>, <code>organization/bootstrap.rs</code>, <code>organization/admission.rs</code>.</li>
+    <li>In <code>org-office</code>, 23 of 26 files that use SQLite are under the private <code>store</code> folder. It is split by area: engine and single writer (1,900 lines), organization with replication and snapshots (6,400), accepted-write journal (2,700), work (1,500), messages (800), other (1,400). Two files outside it also use SQL: <code>organization/bootstrap.rs</code> and <code>organization/admission.rs</code>; <code>messaging.rs</code> uses it only in tests.</li>
     <li>Domain crates reach storage through <code>WorkStore</code>, <code>MessageStore</code> and <code>OrgStore</code>, and replication has an engine-independent conformance suite. A second engine means a second implementation per area and making the store selectable at start-up.</li>
     <li>The single writer does two jobs: it fits SQLite's one-writer engine, and it keeps sequence allocation, deduplication and outbox writes atomic. Only the second must survive a move to another database.</li>
-    <li>What ties the design to SQLite today: those three files, contract text that names <code>BEGIN IMMEDIATE</code>, and SQLCipher key custody. Register entry B-13.</li>
+    <li>What ties the design to SQLite today: those two files and SQLCipher key custody; the contract text that named <code>BEGIN IMMEDIATE</code> was reworded in this review. Register entry B-13.</li>
   </ul>
 
   <h3>Database rules that hold in both shapes</h3>
@@ -527,7 +527,7 @@ offices/
     <li>Outside a selected scope, references are qualified: <code>P-8/T-42</code>, <code>TEAM-12/T-42</code>, <code>P-8/R-3/M-2</code>.</li>
     <li><code>schema_version</code> is the file format. <code>revision</code> is the record's concurrency revision. A task event is identified by organization, task and revision.</li>
     <li>There are no old references to map. Nothing has shipped, so bugs and requests are typed tasks from the start (owner decision 2026-11-17).</li>
-    <li><strong>Proposed, waiting for the owner (ADR-0019):</strong> tasks and features get a reference minted by the office that creates them, such as <code>T-B37</code>, so creating one never waits for HQ. Until confirmed, the rules above stand.</li>
+    <li><strong>Changing for tasks (ADR-0019, accepted in part on 2026-11-17):</strong> a task gets a reference minted by the office that creates it, with a letter for the office, such as <code>T-B37</code>, so creating one never waits for HQ. Tasks only. How an office counts (one sequence, or one per project) is still open, so the task rules above are not yet rewritten.</li>
   </ul>
   <p>Today the code uses ULIDs and per-kind number scopes with <code>task.assign</code>. The typed-task identity is pending.</p>
   <h3>Offline offices</h3>
@@ -838,7 +838,7 @@ offices/
       <tr><td>GitHub and other hosting providers</td><td><span class="st defer">Deferred</span></td><td>Nothing</td><td>v2</td></tr>
       <tr><td>Process and standard resolution</td><td><span class="st target">Designed</span></td><td><code>org-process</code> has an earlier, multi-chain rule and no caller</td><td>Simplify to one chain; call it at agent launch</td></tr>
       <tr><td>Linux and containers</td><td><span class="st target">Designed</span></td><td>Workers start only on macOS</td><td>Five platform contracts with Linux implementations (ADR-0017)</td></tr>
-      <tr><td>Replaceable storage engine</td><td><span class="st target">Designed</span></td><td>SQL mostly inside the store folder; three files outside</td><td>One selection point and engine-independent suites (ADR-0018)</td></tr>
+      <tr><td>Replaceable storage engine</td><td><span class="st target">Designed</span></td><td>SQL mostly inside the store folder; two files outside</td><td>One selection point and engine-independent suites (ADR-0018)</td></tr>
       <tr><td>Private task notes</td><td><span class="st target">Designed</span></td><td>Draft schema, acceptance criteria PN-01 to PN-06</td><td>Store, access control, API, UI</td></tr>
       <tr><td>Satellite offices</td><td><span class="st target">Designed</span></td><td>The worker refuses non-HQ roles</td><td>Everything in section 12</td></tr>
       <tr><td>Process enforcement, Undo, retrospectives, scheduling, memory</td><td><span class="st defer">Deferred</span></td><td>Nothing</td><td>A selection decision first</td></tr>
@@ -876,7 +876,7 @@ offices/
     <thead><tr><th>Topic</th><th>Decided</th><th>What is open</th><th>Recorded in</th></tr></thead>
     <tbody>
       <tr><td>Task numbers</td><td>Creating a task never waits for HQ. Accepted: references minted by the creating office with a letter for the office (<code>T-A1</code>, <code>T-B37</code>), for tasks only.</td><td>Still open: one count per office, or one per office per project.</td><td class="k">C-12, ADR-0019 (accepted in part)</td></tr>
-      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components (REQ-04).</td><td>Still open: external channels in v1 or v2; own components instead of the React libraries named; an ask to a person must not hold a turn for hours.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components (REQ-04).</td><td>Still open: external channels in v1 or v2; own components instead of the React libraries named; an ask to a person must not hold a turn for hours; what a default value does.</td><td class="k">A-07, REQ-04</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>
