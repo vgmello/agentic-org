@@ -97,7 +97,9 @@ distinct from `host.sock`: only it can fetch the per-bind listener snapshot.
 Gateway office channels travel as `ChannelKind::Gateway` records on its admitted
 datagram transfer socket; native channels retain the existing stream-marker
 delivery and `ChannelKind::Local`. Both retain descriptors until their correlated
-receipt; sessions/grants remain connection-bound and end at control EOF.
+receipt; sessions/grants remain connection-bound and end at control EOF. (Amended by
+[ADR-0013](../adr/0013-stored-browser-sessions.md): browser sessions are stored at the
+host and no longer end at control EOF; native sessions stay connection-bound.)
 
 The private version-1 instance configuration has an optional `browser` listener
 snapshot, absent for existing native-only installations. Protected setup writes

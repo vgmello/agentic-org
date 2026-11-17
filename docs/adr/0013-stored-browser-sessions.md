@@ -18,24 +18,35 @@ gateway.
   So a crash, a restart or an update of either process signs every person out.
 - Updates will be routine. Signing everyone out on each one is not acceptable.
 - The reasons for the in-memory design were sound and are kept: the web process faces
-  the network, so it holds no key and opens no database, and ending a session must be
-  immediate.
+  the network, so it holds no database key and no session-signing key, persists
+  nothing and opens no database, and ending a session must be immediate. (It does
+  hold, in memory, the TLS private key the host supplies.)
+- This ADR is about browser sessions. Native sessions of the local CLI on
+  `host.sock` share the same in-memory list today and are not changed by it.
 - Signed tokens were considered. They remove server-side session state, but a signed
   token cannot be withdrawn before it expires without adding state back. They are
   deferred to v2 (decision 7).
 
 ## Decision
 
-1. **A session is a durable record in the host database.** It holds a session ID, the
-   account, creation, last-renewal and expiry times, the instance binding, and SHA-256
-   digests of the cookie value and of the proof value. The raw cookie and proof values
-   are never stored.
+1. **A browser session is a durable record in the host database.** It holds a session
+   ID, the account, creation, last-activity and expiry times, the instance binding,
+   the origin binding (scheme, host and port), and SHA-256 digests of the cookie value
+   and of the proof value. The raw cookie and proof values are never stored and never
+   reach the host.
 2. **The browser contract does not change.** The instance-named HttpOnly cookie and
    the `X-Org-Session-Proof` header keep their current form, binding and rules.
-3. **The web process keeps a cache in memory.** For a request whose cookie it has not
-   seen, including the first request after a restart, it asks the host once over the
-   control connection. On success it caches the result, and every later request is
-   answered from memory. It does not call the host per request.
+3. **The web process keeps a cache in memory.** It creates the cookie and proof
+   values at sign-in, as it does today, and sends the host only their digests with the
+   origin binding. For a request whose cookie it has not seen, including the first
+   request after a restart, it sends the same digests and binding to the host once
+   over the control connection. On success it caches the result, and every later
+   request is answered from memory. It does not call the host per request.
+   **Expiry.** The idle and absolute limits keep their current values (30 minutes and
+   12 hours) unless changed separately. The web process tracks activity in memory and
+   reports it to the host at a bounded interval while a session is active (at most
+   every 5 minutes), so the stored last-activity time is never staler than that. After
+   a restart, idleness is judged from the stored value.
 4. **Restarts do not end sessions.** A restart of the web process, a restart of the
    host, an update, or a lost control connection leaves stored sessions valid. A cache
    entry is trusted only while the control connection that validated it is alive;
@@ -44,7 +55,8 @@ gateway.
    unlink or revoke, the host deletes the record first and then tells the web process
    to drop its cache entry and close that session's stream. A deleted record can never
    be validated again.
-6. **The host owns sessions, and the web process still holds no secret.** Accounts,
+6. **The host owns sessions, and the web process still stores nothing and signs
+   nothing.** Accounts,
    password verification, lockout and revocation are the host's, per instance. The
    web process only relays a sign-in to the host and caches the answer. If it held a
    signing key or session store, a compromise of the network-facing process would let
@@ -56,7 +68,12 @@ gateway.
    process verifies with the public key, tokens are short-lived, and a per-account
    marker in the host database makes password change and sign-out-everywhere immediate.
 8. **Limits stay bounded.** Keep a total session cap and add a per-account cap. The
-   per-connection cap no longer limits sessions, because sessions outlive connections.
+   per-connection cap no longer limits browser sessions, because they outlive
+   connections.
+9. **Native sessions stay connection-bound.** A session of the local CLI on
+   `host.sock` still ends with its connection. In particular the recovery
+   acknowledgement permission of ADR-0011, which must expire with the live session and
+   connection, is unchanged.
 
 ## Testing
 
@@ -77,7 +94,9 @@ gateway.
 | SES-2 | After the host is restarted, the same holds once the service is ready. |
 | SES-3 | Sign-out, expiry, password change and unlink each make the next request fail with `not_authorized`, including when the web process has the session cached. |
 | SES-4 | The host database contains no raw cookie or proof value; a copy of it cannot be used to act as a signed-in person. |
-| SES-5 | The web process opens no database and holds no private key; it validates an unknown cookie with exactly one host call and then serves from memory. |
+| SES-5 | The web process opens no database, persists nothing and holds no session-signing key; it validates an unknown cookie with exactly one host call and then serves from memory. |
+| SES-7 | Idle and absolute expiry still end a session, including across a restart, with stored last-activity never more than the reporting interval behind. |
+| SES-8 | A native CLI session on `host.sock` still ends when its connection closes. |
 | SES-6 | Session and per-account caps are enforced and reported without revealing whether an account exists. |
 
 ## Consequences
@@ -85,5 +104,6 @@ gateway.
 - People stay signed in across updates and crashes.
 - Session records are on the host's disk, which the earlier design avoided. They hold
   only digests, so reading the file does not yield a usable session.
-- The host gains one table and one validation operation. The earlier work that binds
-  a session's life to the control connection must be changed, not extended.
+- The host gains one table and one validation operation. For browser sessions, the
+  earlier work that binds a session's life to the control connection must be changed,
+  not extended.

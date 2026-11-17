@@ -211,7 +211,7 @@ The shapes below preserve the earlier adapter design for compatibility review. T
 3. Commits: **your name and no-reply email as author, the agent as co-author**.
 4. Install scope: **all repositories** (revised; scoping now happens per token).
 5. ~~Each office signs in to GitHub itself.~~ Replaced by decision 1: only HQ talks to GitHub as the app.
-6. Running agents as a separate macOS user (or sandboxed): **v2**.
+6. Running agents as a separate macOS user (or sandboxed): **v2**. *(Changed by [ADR-0015](../adr/0015-agent-isolation-modes.md), 2026-11-17: a dedicated OS user is a v1 isolation mode that setup provisions.)*
 
 ## Open questions for the user
 1. **CI files:** may agents change GitHub Actions workflows (`.github/workflows/`)? That needs the **Workflows** permission, which is left off by default.
