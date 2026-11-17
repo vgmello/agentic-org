@@ -176,7 +176,7 @@ Reject overlapping reservations for the same table. Include concurrent requests 
 
 The readable reference is derived as `T-42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
 
-Tasks and features may be created in any office. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
+Tasks and features may be created in any office. (For tasks the numbering described here is under revision: the creating office mints the reference, see the note in [document 06](06-identity-and-numbering.md#multiple-offices).) Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
 
 ```yaml
 schema_version: 1

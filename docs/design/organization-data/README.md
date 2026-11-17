@@ -38,7 +38,7 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Agent or person | `handle`, displayed as `@ana` | Organization, shared across both employee kinds; no counter |
 | Team | `TEAM-12` | Team counter within organization |
 | Project | `P-8` and `slug`, e.g. `reservations` | Project counter and slug uniqueness within organization |
-| Task of any type | `T-42` | Task counter within project, or within team when projectless |
+| Task of any type | `T-42` | Counter within project, or team when projectless. Changing to office-minted `T-B37` ([ADR-0019](../../adr/0019-office-coded-task-numbers.md)) |
 | Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |

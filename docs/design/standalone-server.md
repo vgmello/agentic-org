@@ -714,10 +714,12 @@ verification has passed.
 
 ### Selected provisioning adapter persistence (implementation in progress)
 
-The additive `organization.provision.v1` operation preserves the legacy name-only
-contract. Protected host-registry schema 2 adds a separate selected provisioning
+The `organization.provision.v1` operation in the code keeps a name-only request beside
+it; under the owner's decision of 2026-11-17 the create request is changed in place to
+the [selected payload](web-api-v1.md#selected-create-organization-payload) and the
+name-only form is removed. Protected host-registry schema 2 adds a separate selected provisioning
 reservation: account/fingerprint, normalized name and explicit slug, exact prepared
-ULID plan, owner security member, opaque recovery handle, nullable office-key
+ID plan (UUIDv7 in the code today, ULIDs under FC-142), owner security member, opaque recovery handle, nullable office-key
 fingerprint, and linked/completion status. Its replay window uses operation ULID
 time plus 30 days; unfinished reservations and their custody are never pruned as
 completed receipts. Schema-1 rows retain their identities and semantics.

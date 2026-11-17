@@ -139,7 +139,8 @@ connection available.
 > `selected_v1` profile with UUIDv7 organization and office IDs and `office.json`
 > version 2. With one ID format there is no second profile to tell apart, so the
 > profile, the version-2 marker and the union path validator are removed with the
-> change (FC-142).
+> change (FC-142). The profile also switches on the check that an HQ create carries its
+> creation context; that check stays and applies to every create.
 
 New selected organization and office entities use canonical lowercase UUIDv7
 text, including hyphens. Existing IDs retain their exact spelling. Launch-v3

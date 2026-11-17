@@ -3,8 +3,11 @@
 Status: **accepted in part by the owner 2026-11-17** (conflict plan entry C-12).
 Accepted: the office part of a task reference is a letter code (`T-B37`), and the
 scheme applies to tasks only. Features and every other numbered record keep their
-HQ-allocated numbers. One point is still open: whether an office counts all its tasks
-in one sequence or per project (see "Still open"). The data contract is rewritten when
+HQ-allocated numbers. Two points are still open (see "Still open"): whether an office
+counts all its tasks in one sequence or per project, and whether creating a task may
+use the fast acknowledgement. Decisions 2 and 4 to 7 below, and the details of the
+grammar (which letters, how many), are the lead's design for the accepted form; the
+owner accepted the letter and the tasks-only scope. The data contract is rewritten when
 that is settled; until then document 06 carries a note and must not be built as written
 for tasks.
 
@@ -39,7 +42,7 @@ final the moment it is created.
 
 ## Decision
 
-1. **Grammar (accepted).** `T-<CODE><N>` for tasks. `CODE` is one
+1. **Grammar (letter form accepted by the owner; details are the lead's).** `T-<CODE><N>` for tasks. `CODE` is one
    or two uppercase letters from A to Z without I and O. `N` is a positive integer with
    no leading zeros. Examples: HQ is `A`, so its first task is `T-A1`; the second
    office is `B`, giving `T-B37`; the twelfth is `M`; the twenty-fifth is `AA`. Input
@@ -80,8 +83,9 @@ With an office letter there are two ways to count.
 | Size of the numbers | Larger: an office's thousandth task is `T-B1000`. | Smaller inside each project. |
 | What each office must keep | One counter. | One counter per project, created when it first makes a task there. |
 
-The owner's own example (`T-11` for the first office, `T-21` for the second) had no
-project in front, which is option A. Option A is recommended: an agent can quote a task
+The owner's first example (`T-11` for the first office, `T-21` for the second) was
+written without a project in front. He has since said the question was not clear to
+him, so that example is not taken as a choice. Option A is recommended: an agent can quote a task
 in a message, a branch name or a commit with nothing else, and it always resolves.
 
 **Whether creating a task may use the fast acknowledgement** of

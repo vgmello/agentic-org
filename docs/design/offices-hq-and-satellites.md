@@ -387,10 +387,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **`org-office-launch`** (new contract crate): the pipe protocol between the host and an office server it starts, and the `office.json` file the server writes and the host reads. The host and the office server use it, and `agent-os` reads `office.json` through it (ADR-0003 §2.1). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`agentic-org-office` and `agentic-org`** stay thin; `crates/org-host` owns reusable host lifecycle. `agentic-org-web` parses browser HTTP without key custody.
-- **Owners (AGENTS.md):**
-  - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki` (this design's crates); AGENTS.md is the full ownership list.
-  - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `agentic-org-office`.
-  - `org-sync-proto` and `org-office-launch` are contracts, so the lead owns them, like `org-proto`. River writes `org-office-launch`'s first version.
+- **Owners:** the lead owns all of these crates under the current solo workflow (`AGENTS.md`). `org-sync-proto` and `org-office-launch` are contracts and change with the same care as `org-proto`.
 
 ## Implementation scope after the standalone-v1 pivot
 

@@ -4,8 +4,9 @@ Status: **accepted by the owner 2026-11-17** (conflict plan entry B-09): "we nee
 I need to be able to host the office inside a Docker container; we need to abstract what
 we need properly." Implementation pending. Amends the platform statements of
 [standalone-server.md](../design/standalone-server.md),
-[office-host-boundary.md](../design/office-host-boundary.md) and
-[ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only.
+[office-host-boundary.md](../design/office-host-boundary.md),
+[ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only, and
+[ADR-0011](0011-protected-recovery-delivery.md), which deferred a Linux release.
 
 ## Context
 

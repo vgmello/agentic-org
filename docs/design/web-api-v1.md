@@ -187,13 +187,13 @@ name-only organization create and multi-membership operations. Nothing has shipp
 ([no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships)),
 so they are evidence of the code, not a published contract to preserve. They do not implement the later selected
 [organization-data model](organization-data/README.md). No route below becomes
-available merely because its codec exists. A selected-target adapter needs
-reviewed version/capability negotiation and conformance vectors before enablement;
-never reinterpret an existing command as a different mutation behind the same DTO.
+available merely because its codec exists. Because nothing has shipped, a route is changed in place to the selected shape when
+its target is built; no adapter, version negotiation or second DTO is kept. A changed
+route still needs its conformance vectors updated in the same change.
 
 | Published v1 revision 2 surface | Selected target and required adaptation |
 | --- | --- |
-| `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. Publish a validated extended/versioned provisioning contract; offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
+| `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. The request is changed in place to the [selected payload](#selected-create-organization-payload); offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
 | OrganizationView / OrgSnapshot / `member_id` | Map retained stable member IDs to employee IDs without changing wire spelling. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. Old snapshots must not imply those target fields already exist. |
 | `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Current multi-membership rules remain current wire semantics. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. Preserve unmapped memberships in controlled import staging. |
 | `project.add_team`, `project.remove_team` | Target project requires `owner_team_id` plus optional contributors. Publish a mutation distinguishing transfer of accountability from contributor editing; an old linked-team list does not select an owner or require an Area. Areas remain unselected. |

@@ -775,6 +775,8 @@ class GapPreservationTests(unittest.TestCase):
         self.assertEqual(done("release_progress", "release_id", "empty"), 0)
         counts = self.db.execute("SELECT task_count, done_task_count FROM release_progress WHERE release_id='plain'").fetchone()
         self.assertEqual(tuple(counts), (1, 1))
+        counts = self.db.execute("SELECT task_count, done_task_count FROM release_progress WHERE release_id='with-milestone'").fetchone()
+        self.assertEqual(tuple(counts), (1, 1))  # counted from its milestones, not from a manifest
         # a second milestone with no tasks keeps its release open
         insert(self.db, "milestones", **common, id="m2", project_id="project", release_id="with-milestone", title="Empty")
         self.db.commit()

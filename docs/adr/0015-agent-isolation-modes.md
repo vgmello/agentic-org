@@ -39,8 +39,9 @@ section 8.
    - `same-user`: today's behaviour. The agent runs as the service's own OS user,
      protected by the vendor tool sandbox and the office's permission policy.
    - `dedicated-user`: the agent runs as a dedicated OS account, one per instance in
-     v1, that owns only agent workspaces. Ordinary file permissions close `durable/`,
-     the office database and the host's files to that account. Its workspaces stay
+     v1, that owns only agent workspaces and the agents' private homes (decision 10).
+     Ordinary file permissions close the rest of `durable/`, the office database and the
+     host's files to that account. Its workspaces stay
      where the storage contract puts them, reached through parent directories it may
      traverse and not list. Because all agents share the one account, separation
      between agents remains the vendor sandbox and the office's rules; an account per
@@ -92,7 +93,13 @@ section 8.
     office places a copy of that sign-in in the agent's private home for the run, and
     takes back any refreshed token when the run ends. An agent can therefore read the
     sign-in it is running with, in either mode; that cannot be avoided, because the
-    vendor tool runs as the agent and needs it. It cannot read any other. Switching an agent to another connection is a
+    vendor tool runs as the agent and needs it. Keeping an agent away from other
+    sign-ins is not something the operating system does in v1: in `same-user` the agent
+    runs as the service user, and in `dedicated-user` all agents share one account and
+    could read each other's homes. As for everything between agents (decision 2), that
+    barrier is the vendor tool's sandbox and the office's rules. The spike of decision 7
+    also covers two agents on one connection each refreshing a copied token, and office
+    settings kept in a home the agent can write. Switching an agent to another connection is a
     controlled relaunch with the other sign-in. Two agents on one subscription use
     the same connection state through the office, never through each other's homes.
     How each vendor runtime is pointed at a relocated sign-in (an environment variable
@@ -117,7 +124,7 @@ section 8.
 
 | ID | Passing evidence |
 | --- | --- |
-| ISO-1 | In `dedicated-user`, a command run by an agent cannot read or list `durable/`, the office database or the host's files; the attempt fails with a permission error from the operating system. It can read and write its own workspace. |
+| ISO-1 | In `dedicated-user`, a command run by an agent cannot read or list `durable/` outside the agents' private homes, the office database or the host's files; the attempt fails with a permission error from the operating system. It can read and write its own workspace. |
 | ISO-7 | In `dedicated-user`, `agent-os` run by the agent account is admitted by the office socket and still needs its session binding; any other OS user is refused. |
 | ISO-2 | Start, stop, cleanup after a crash and orphan recovery all work for an agent owned by the dedicated account. |
 | ISO-3 | Setup without administrator rights completes in `same-user` and reports the reduced isolation; nothing is half-provisioned. |

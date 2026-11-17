@@ -2187,12 +2187,22 @@ GROUP BY m.organization_id, m.id;
 CREATE VIEW release_progress AS
 SELECT r.organization_id, r.id AS release_id,
   (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
-  (SELECT COUNT(*) FROM release_tasks rt
-     JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-   WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id) AS task_count,
-  (SELECT COUNT(*) FROM release_tasks rt
-     JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-   WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status = 'done') AS done_task_count,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
+      THEN (SELECT COALESCE(SUM(p.task_count), 0) FROM milestone_progress p
+            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
+    ELSE (SELECT COUNT(*) FROM release_tasks rt
+            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
+  END AS task_count,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
+      THEN (SELECT COALESCE(SUM(p.done_task_count), 0) FROM milestone_progress p
+            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
+    ELSE (SELECT COUNT(*) FROM release_tasks rt
+            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
+          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status = 'done')
+  END AS done_task_count,
   CASE
     WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
       THEN NOT EXISTS (SELECT 1 FROM milestone_progress p

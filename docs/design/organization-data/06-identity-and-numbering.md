@@ -24,7 +24,7 @@ Task `assigned_team_id` and `assignee_id` never participate in identity, numberi
 
 ## Multiple offices
 
-> **Under revision for tasks (owner decisions 2026-11-17, conflict plan entry C-12, [ADR-0019](../../adr/0019-office-coded-task-numbers.md)).** The owner decided that creating a task must never wait for HQ, and accepted task references that carry a letter code for the creating office, such as `T-B37`, minted by that office. Do not build HQ allocation or the pending-number state for tasks as this section describes them. Features and every other numbered record are unchanged. The one point still open is whether an office counts all its tasks in one sequence or per project; this section is rewritten when that is settled.
+> **Under revision for tasks (owner decisions 2026-11-17, conflict plan entry C-12, [ADR-0019](../../adr/0019-office-coded-task-numbers.md)).** The owner decided that creating a task must never wait for HQ, and accepted task references that carry a letter code for the creating office, such as `T-B37`, minted by that office. Do not build HQ allocation or the pending-number state for tasks as this section describes them. Features and every other numbered record are unchanged. Two points are still open: whether an office counts all its tasks in one sequence or per project, and whether creating a task may use the fast acknowledgement. This section is rewritten when the first is settled.
 
 Teams, projects and their counters belong to organization data. Offices host agent execution and local replicas.
 

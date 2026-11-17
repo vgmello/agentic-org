@@ -38,11 +38,11 @@ Written by the lead on 2026-11-17. It adds no requirement; it places the owner's
 
 **Where the conversation files are.** Each agent has a private home that the office controls ([ADR-0015](../adr/0015-agent-isolation-modes.md), decision 10), and the vendor tool writes its conversation files there. So the office always knows where they are and can read them, in both isolation modes. The browser never reads a file: the office parses and serves the entries through the web API, to people authorized to inspect that agent (checklist row FC-150).
 
-**One event model, two parsers.** A Claude parser and a Codex parser each turn their format into the same list of entries: message, tool call, tool result, file reference or change, usage, and notice. The view and its toggles work on that list and do not know the format. The runtime contract already defines a normalized session event for the live stream (`org-runtime`); the parsers produce the same shape, so the view can later show a running session and a finished one the same way.
+**One event model, two parsers.** A Claude parser and a Codex parser each turn their format into the same list of entries: message, tool call, tool result, file reference or change, usage, and notice. The view and its toggles work on that list and do not know the format. The runtime contract has a normalized session event for the live stream (`SessionEvent` in `org-runtime`), but it is narrower than this list: it has no entry for a person's message, the content of a tool result or a file. So the viewer's entry model is defined here, and the live event type is extended to match it when running sessions are shown, so that one view serves a running session and a finished one.
 
 **Toggles.** Tool calls: show or hide the tool call and result entries. File-based visualizations: show or hide what is derived from files the conversation read or changed, such as the list of touched files and the change to each.
 
-**Proof of concept.** It can be built in the UI application alone, against sample Claude and Codex conversation files kept as test fixtures, with no server work. That proves the parsers and the view before the office serves real sessions.
+**Proof of concept.** It can be built in the UI application alone, against sample Claude and Codex conversation files kept as test fixtures, with no server work. That proves the two formats, the entry model and the view. Its parsers are for the proof only: in the product the parsing and the redaction happen in the office, because the browser never reads a conversation file, so the parsers are rewritten there against the same fixtures and the view is kept.
 
 **Things to settle while building.**
 

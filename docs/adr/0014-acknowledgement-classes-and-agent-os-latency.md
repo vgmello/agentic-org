@@ -109,7 +109,7 @@ and the acknowledgement sentence in
    the message expires; a failure becomes a delivery notice, never a slower send.
    `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
    the caller may state how long it expects a reply to take, otherwise the default
-   for the recipient's kind applies (ADR-0003 §2.4: 120 seconds for an agent, 24 hours
+   for the recipient's kind applies (ADR-0003 §2.5: 120 seconds for an agent, 24 hours
    for a person), and the wait ends at the deadline with a timeout result. The ask itself
    is committed and acknowledged like a send; only waiting for the reply is slow.
 
@@ -121,9 +121,9 @@ and the acknowledgement sentence in
 | ACK-2 | A committed-class write is present after the office process is killed immediately after the acknowledgement. |
 | ACK-3 | A durable-class operation is never acknowledged before its full flush; a fault injected between commit and flush yields no acknowledgement. |
 | ACK-4 | The class of every operation is declared in one place in its domain crate and matches decision 3; no operation's class depends on load. |
+| ACK-5 | The bounded flush interval is enforced under continuous committed-class load. |
 | ACK-6 | No domain crate refers to an engine-specific durability mechanism; the store adapter alone maps the two classes, and the engine-independent suite passes against it. |
 | ACK-7 | A committed-class task change killed mid-write is either fully present or fully absent after restart, with its event and idempotency result consistent. |
-| ACK-5 | The bounded flush interval is enforced under continuous committed-class load. |
 | ACK-8 | With the recipient in another office and HQ unreachable, `msg.send` still returns within the session-mode target of decision 1, and the message is delivered after HQ returns. |
 | ACK-9 | An ask with no stated deadline uses the default for the recipient's kind; an ask whose deadline passes returns a timeout to the caller, and a late reply is handled as the messaging contract states. |
 
