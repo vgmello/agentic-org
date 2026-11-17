@@ -113,7 +113,16 @@ impl Fixture {
                     Some(code) => {
                         serde_json::json!({"id":request["id"],"error":{"code":code,"message":"scripted host refusal"}})
                     }
-                    None => reply(&request, &mut issued, end_delay),
+                    None => {
+                        let answer = reply(&request, &mut issued, end_delay);
+                        if request["method"] == "session.end" {
+                            ended_sessions
+                                .lock()
+                                .unwrap()
+                                .insert(request["params"]["session"].as_str().unwrap().to_owned());
+                        }
+                        answer
+                    }
                 };
                 if org_proto::frame::write_message(host.get_mut(), &answer).is_err() {
                     break;
@@ -318,6 +327,36 @@ fn sign_out_ends_the_host_session_and_clears_the_pair() {
     assert!(clear.starts_with(&format!("{}=;", f.sessions.cookie_name)));
     assert!(clear.contains("Max-Age=0"));
     assert!(f.sessions.get(ticket(&f.sessions, &other)).is_ok());
+}
+
+#[test]
+fn failed_sign_in_preparation_ends_only_the_new_host_session() {
+    let f = Fixture::new();
+    let live = f.sign_in();
+    for (n, code) in ["unavailable", "storage_error", "not_found"]
+        .into_iter()
+        .enumerate()
+    {
+        f.errors.lock().unwrap().insert("session.inspect", code);
+        let error = f
+            .sessions
+            .sign_in(LOGIN.into(), Password::new(PASSWORD.into()).unwrap())
+            .err()
+            .expect("inspection failure must refuse sign-in");
+        assert_eq!(error.inspected().0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(f.count("session.end"), n + 1);
+        {
+            let ended = f.ended.lock().unwrap();
+            assert_eq!(ended.len(), n + 1);
+            assert!(ended.contains(&format!("synthetic native handle {}", n + 2)));
+        }
+        assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+        assert!(f.sessions.host.live());
+        assert!(f.sessions.get(ticket(&f.sessions, &live)).is_ok());
+    }
+    let recovered = f.sign_in();
+    assert!(f.sessions.get(ticket(&f.sessions, &recovered)).is_ok());
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 2);
 }
 
 #[test]

@@ -210,23 +210,24 @@ impl BrowserSessions {
         Ok((key, session, result))
     }
     fn establish(&self, session: Session) -> Result<Established, ApiReply> {
-        let (key, session, result) = self.prepare_established(session)?;
-        let session = Arc::new(session);
+        // Keep cleanup ownership until the newly issued host session has a
+        // browser binding, including when preparation's inspection fails.
+        let handle = Arc::clone(&session.handle);
         let admission = (|| {
+            let (key, session, result) = self.prepare_established(session)?;
             self.reap()?;
             self.reclaim_capacity()?;
             let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
             if sessions.len() >= MAX_SESSIONS || sessions.contains_key(&key) {
                 return Err(unavailable());
             }
-            sessions.insert(key, Arc::clone(&session));
-            Ok(())
+            sessions.insert(key, Arc::new(session));
+            Ok(result)
         })();
-        if let Err(error) = admission {
-            let _ = self.host.end(&session.handle);
-            return Err(error);
+        if admission.is_err() {
+            let _ = self.host.end(&handle);
         }
-        Ok(result)
+        admission
     }
     fn reclaim_capacity(&self) -> Result<(), ApiReply> {
         let candidates: Vec<_> = {
