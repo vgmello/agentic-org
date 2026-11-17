@@ -492,6 +492,58 @@ fn a_stable_run_resets_failures_accumulated_before_it() {
 }
 
 #[test]
+fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let starts = std::sync::atomic::AtomicUsize::new(0);
+    let eligible = AtomicBool::new(true);
+    let timing = Timing {
+        serving: SERVING_DEADLINE,
+        stable: Duration::from_millis(100),
+        backoff: Duration::from_millis(1),
+    };
+    // MAX_STARTS - 1 failed starts, one run that stays Running past `stable`
+    // and is then stopped because the host is no longer eligible, then
+    // MAX_STARTS - 1 more failed starts (still restarting), then the limit.
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            let until = Instant::now() + Duration::from_secs(20);
+            while starts.load(Ordering::SeqCst) < MAX_STARTS {
+                assert!(
+                    Instant::now() < until,
+                    "timed out waiting for the stable run"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            thread::sleep(Duration::from_millis(300)); // past `stable`
+            eligible.store(false, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(200));
+            eligible.store(true, Ordering::SeqCst);
+        });
+        supervise(
+            &stopping,
+            &state,
+            &|| eligible.load(Ordering::SeqCst),
+            timing,
+            &quiet,
+            || {
+                let n = starts.fetch_add(1, Ordering::SeqCst) + 1;
+                assert!(n <= 2 * MAX_STARTS, "restarted past the limit");
+                if n == MAX_STARTS {
+                    Ok(Brief {
+                        until: Instant::now() + Duration::from_secs(30),
+                    })
+                } else {
+                    Err(io::Error::other("scripted failed start"))
+                }
+            },
+        );
+    });
+    assert_eq!(starts.load(Ordering::SeqCst), 2 * MAX_STARTS);
+    assert_eq!(*lock(&state), GatewayState::Failed);
+}
+
+#[test]
 fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
     let stopping = AtomicBool::new(false);
     let state = Mutex::new(GatewayState::NotConfigured);
