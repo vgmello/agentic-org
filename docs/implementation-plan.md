@@ -50,7 +50,7 @@ working end to end for the first time (step 1), the store rebuilt so that files 
 the source (B1), and starting and supervising an agent process (C3).
 
 Track A is the way in: host, setup, web, sign-in. Track B is the organization's data:
-the office's storage and the domain on it. Track C is agents. A and B start on the same
+the office's storage and the domain on it. Track C is agents. Track X is Linux and containers, built alongside the other three. A and B start on the same
 day. C starts when step 2 is usable; its spike (C1) and the proof of concept of the
 session view (C4) can start at once.
 
