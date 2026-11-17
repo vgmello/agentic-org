@@ -24,7 +24,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [A-04](#a-04) | Moving an agent between machines: supported in one contract, unsupported in another | Before building the area | S | Fixed in documents | `4b7e893` |
 | [A-05](#a-05) | Three hash canonicalizations with no registry | Before building the area | S | Fixed in documents | `c71e33b` |
 | [A-06](#a-06) | Messaging has a data model and no named runtime owner | Before building the area | S | Fixed in documents | `7a552bf` |
-| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `5b92fb4` |
+| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `e2ad9ec` |
 | [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Decided; code pending | `cb49e54` |
 | [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Decided; code pending | `cb49e54` |
 | [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Fixed in documents | `817c4c2` |
@@ -58,7 +58,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `5b92fb4` |
 | [C-13](#c-13) | Task history is published to Git as one file per change | Before building the area | S to keep, L to change | Fixed in documents | `17c3964` |
 | [C-14](#c-14) | Process and standard inheritance is stored but not applied in v1 | Before building the area | M | Fixed in documents | `11464ce` |
-| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `e840ea3` |
+| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `e2ad9ec` |
 | [D-02](#d-02) | Named owners and approval gates that no longer exist | Cleanup | S | Fixed in documents | `e840ea3` |
 | [D-03](#d-03) | Crates described as absent that exist | Cleanup | S | Fixed in documents | `11464ce` |
 | [D-04](#d-04) | ADR-0004 is referenced and does not exist | Cleanup | S | Fixed in documents | `11464ce` |
@@ -82,6 +82,7 @@ Implementation was paused on 2026-11-17 while the architecture was reviewed. Bef
 - Nothing has shipped. Do not write migrations, compatibility shims, version negotiation for old clients or legacy import code. Replace, do not adapt ([pre-release rule](organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
 - Names: the browser-facing process is "web", the agent command line is `agent-os`, the office worker is `agentic-org-office`. Code identifiers that still say `gateway` are to be renamed (D-07).
 - Paths: `durable/` and `runtime/<office-id>/` only.
+- Nothing from before is carried over, including the former development team's earlier command-line tool and its message queue.
 
 **Decisions in force.** Each is a requirement, with acceptance criteria where an ADR is named.
 
@@ -113,13 +114,13 @@ Implementation was paused on 2026-11-17 while the architecture was reviewed. Bef
 
 ## Questions still with the owner
 
-1. REQ-04: is a default value preselected, taken when nobody answers by the deadline, or both?
-2. Is the development team's previously installed command-line tool and its message queue carried over (AGENTS.md, ADR-0003 cutover), or dropped under the pre-release rule? Recommended: drop.
-3. The setting values proposed in ADR-0020 (wait 10 minutes, grace 2 minutes).
+None. The owner answered every question raised in the review on 2026-11-17. Open design points that need a spike or a short design, not an owner decision, are listed in each ADR and under the order of work.
 
 ## Order of work
 
-1. **Before code.** The owner's remaining questions above. Short designs: Linux admission, credential provider and confinement (B-09); the vendor sign-in spike for the private agent home (A-08); the open questions in the Git design (A-11); the envelope flush discipline (ADR-0014).
+**The aim behind the order.** The owner's goal is to get the two engineers and their agents working inside the product as early as it can carry them. Creating an organization, signing in, people and teams, tasks and chat are what onboarding needs, so within each step below they come first.
+
+1. **Before code.** Short designs: Linux admission, credential provider and confinement (B-09); the vendor sign-in spike for the private agent home (A-08); the open questions in the Git design (A-11); the envelope flush discipline (ADR-0014).
 2. **Storage rebuild.** B-01 with B-13: rebuild the office store against the selected files and tables, behind engine-independent contracts. This is the largest piece and needs its own plan. B-02, B-03 and B-05 land with it, since they remove shapes the rebuild would otherwise carry.
 3. **Host increment.** B-06 (one launch contract), then B-07 (grants), B-08 (channel limit), B-10 (work reads) and F-01 (stored sessions). This opens the web process.
 4. **Setup.** A-09 (create payload), E-01 (no database encryption, wrapped keys), then `agentic-org setup` on macOS and Linux (B-09).
@@ -248,8 +249,7 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** No in-browser takeover in v1; a person takes over an agent from a local terminal.
 - **Impact of applying it:** Move the PTY-attach section of the session design under a post-v1 heading. No code exists for it.
 - **Owner note:** "there is not browser terminal that is just read only, but I will send you two documents on how you that i visualized, the agent interaction is via chat"
-- **Applied in `5b92fb4`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components, built with shadcn-svelte and Bits UI (both already in the UI) in the product's own chat. No external channels and no React libraries, as you said. How long an agent waits is its own record, ADR-0020: an ask waits a bounded time; a required ask left unanswered stops the agent after telling it, and the answer starts it again in the same session.
-- **Still to do:** One point in REQ-04 needs your answer: is a default value preselected, taken when nobody answers by the deadline, or both?
+- **Applied in `e2ad9ec`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components, built with shadcn-svelte and Bits UI (both already in the UI) in the product's own chat. No external channels and no React libraries, as you said. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one. How long an agent waits is its own record, ADR-0020: an ask waits 10 minutes by default; a required ask left unanswered stops the agent after telling it, and the answer starts it again in the same session.
 
 ### A-08
 
@@ -853,8 +853,7 @@ Priority: Cleanup · Size: S · State: Fixed in documents
 - **What we lose:** Nothing.
 - **Impact of applying it:** Text sweep. Keep `org-agent` only where it means the installed Phase A tool.
 - **Owner note:** "There is no such thing called org agent, it's org or is agent OS for everything. Start doing the replacements on the on the names. Just get it replaced. There's no more let's remove the old names all like everywhere."
-- **Applied in `e840ea3`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. Research notes and dated verification records were left as written, since they are records of what was observed.
-- **Still to do:** One decision for you, with my suggestion. Before this product existed in its current form, the development team's agents talked to each other through an earlier command-line tool installed on the development machine, which keeps its messages in a folder there. AGENTS.md still tells agents not to touch that tool or folder, and ADR-0003 has a procedure for carrying those old messages into the new product. That team is offline and those messages are only old coordination chatter. My suggestion: drop the carry-over. I would remove the rule from AGENTS.md, the procedure from ADR-0003 and three structures in the draft schema that exist only for it. The files on that machine are not touched either way. Say yes and I do it.
+- **Applied in `e2ad9ec`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. As you decided, nothing from before is carried over: the procedure for carrying the former development team's message queue into the product is withdrawn, its checklist row is closed, and AGENTS.md and the agent guidance no longer protect the earlier tool or its queue. AGENTS.md now states the goal instead: onboard the two engineers and their agents onto the product as early as it can carry them. Research notes and dated verification records were left as written.
 
 ### D-02
 

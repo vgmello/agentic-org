@@ -696,7 +696,6 @@ offices/
   </div>
   <div class="note"><p><b>Send and ask (ADR-0014, decided 2026-11-17).</b> A plain send answers once the sender's office has saved it locally, in single-digit milliseconds in every topology; relaying to another office happens afterwards and is retried. An ask holds its caller, always has a deadline, and returns a timeout when it passes. Each messaging file has one writing office: a message is written once by the sender's office, and each employee's read state, reactions and preferences live in that employee's own files.</p></div>
   <div class="note"><p><b>Asking and waiting (ADR-0020, decided 2026-11-17).</b> An ask waits for a bounded time, an organization setting that is the same for a person or an agent, and carries <code>required</code>. Not required and unanswered: the ask returns a timeout and the agent decides. Required and unanswered: the office tells the agent to wind down its background work, gives it a grace period, stops its process and releases its turn permit and subscription slot; the question stays open. When the answer is committed, the office resumes the same session with the answer as the next input, through the normal start checks. The office keeps a durable record of each suspended agent, so a restart loses nothing.</p></div>
-  <div class="note warn"><p><b>One instruction still stands in the repository.</b> <code>AGENTS.md</code> tells agents not to overwrite a previously installed command-line tool or move its message queue while <code>agent-os</code> is built. It was written for the development team's own machine. It has not been changed in this review.</p></div>
 </section>
 
 <section id="git">
@@ -852,7 +851,7 @@ offices/
 
 <section id="conflicts">
   <h2><span class="num">16</span>Decisions from the architecture review</h2>
-  <p class="sec-lede">This part used to list every place where two documents, or a document and the code, disagreed. The owner has now reviewed all 52. 34 are fixed in the documents and 18 are decided and recorded as requirements with code still to change. A few questions remain with the owner. The <a href="../design/conflict-resolution-plan.md">conflict register</a> has every entry with what was applied.</p>
+  <p class="sec-lede">This part used to list every place where two documents, or a document and the code, disagreed. The owner has now reviewed all 52. 34 are fixed in the documents and 18 are decided and recorded as requirements with code still to change. The owner has answered every question raised; what is left is code. The <a href="../design/conflict-resolution-plan.md">conflict register</a> has every entry with what was applied.</p>
   <div class="note"><p><b>The rule above the rest.</b> Nothing has shipped. Until the owner declares v1 shipped there are no versions to keep side by side, no migrations and no old shapes to preserve. Where a rebuild gives the cleaner architecture, rebuild.</p></div>
   <h3>Decided, with code still to change</h3>
   <div class="tbl wide"><table>
@@ -876,12 +875,13 @@ offices/
       <tr><td>Names in code</td><td>"web", not "gateway".</td><td>83 source files use the old word.</td><td class="k">D-07</td></tr>
     </tbody>
   </table></div>
-  <h3>Waiting for the owner</h3>
+  <h3>Answered by the owner on 2026-11-17, nothing left open</h3>
   <div class="tbl wide"><table>
-    <thead><tr><th>Topic</th><th>Decided</th><th>What is open</th><th>Recorded in</th></tr></thead>
+    <thead><tr><th>Topic</th><th>Decision</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat (REQ-04). No external channels.</td><td>Still open: whether a default value is preselected, used when nobody answers, or both.</td><td class="k">A-07, REQ-04</td></tr>
-      <tr><td>The old message queue</td><td>Nothing old is kept before v1 ships.</td><td>Still open: whether the development team's earlier command-line tool and its message queue are dropped. Recommended: drop.</td><td class="k">D-01</td></tr>
+      <tr><td>Questions to people</td><td>One structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat. No external channels. A default value is preselected; it is handed to the agent with the timeout of a non-required ask and never answers a required one.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>Asking and waiting</td><td>10 minutes wait, 2 minutes grace. A required ask left unanswered suspends the agent; the answer resumes it.</td><td class="k">ADR-0020</td></tr>
+      <tr><td>Anything from before</td><td>Dropped. The former development team's earlier command-line tool and its message queue are not carried over, and no rule protects them. The goal is to onboard the two engineers and their agents onto the product as early as it can carry them.</td><td class="k">D-01, AGENTS.md</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>

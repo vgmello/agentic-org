@@ -2,7 +2,7 @@
   "version": 1,
   "status": "ready",
   "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os. Skills carry matching guardrails; no new tool, role or stack. Code unchanged.",
+  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; earlier coordination tool and queue dropped. No new tool, role or stack. Code unchanged.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -18,7 +18,7 @@
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "29b7e909566da850e33b49d55eb567373ffdb65480144abee8459ccb5d032c29"
+      "sha256": "59e141eb8bf375f65217409398c7bba45b67f9f69fef2d2200b18ece81c973e1"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "d11dc7cc8775bf671e9a166a568da91c463fbadbd4b6622a339baf6a11b885b6"
+      "sha256": "3009b99ef0b5e6c29d1ce723e5496b69e70e103fe0a9d6a4064b17a7f3b22601"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
+      "sha256": "0bd901dcfeb1e3d5350aeca3b5ba3fa18d4f36975fdcd400b21eababaaf82289"
     },
     {
       "path": "Cargo.lock",
@@ -150,11 +150,11 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "92db36e3eed628abb0622725aafb4fa20f0d82672f815b8e878e4b84ce7906b2"
+      "sha256": "d0e452743cb5f9aba88241773f5a889700b9440860e395b289841818f0f3828b"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "832fea316d7e170bec44debed206976d59a3579c2522e8c22e0760db05f4c659"
+      "sha256": "fab2b1d93bceed71c334223569b6171931aeb771d1f0525e65e51b19c060c150"
     },
     {
       "path": "docs/design/project-structure.md",
