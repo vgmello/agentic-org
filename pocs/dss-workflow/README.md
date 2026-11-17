@@ -1,87 +1,132 @@
-# POC: DSS process as a Markdown + JSON workflow
+# POC: DSS process as a workflow
 
 ## Question
 
-Can the **Desired State Specification (DSS) process** (REQ-06) be expressed with the
-workflow model from **REQ-01** (Markdown action blocks wired by JSON, triggered by agent
-commands) and **REQ-02** (a status change such as *In Review* hands the next block to a
-different agent)? What would it look like in a Svelte UI using
-[Svelte Flow](https://svelteflow.dev/)?
+1. Can the **Desired State Specification (DSS) process** (REQ-06) be expressed with the
+   workflow model from **REQ-01** (Markdown action blocks wired by a definition file,
+   triggered by agent commands) and **REQ-02** (*In Review* hands the next block to a
+   different agent)? What does it look like in [Svelte Flow](https://svelteflow.dev/)?
+2. In a real application, **why would events fire, how does an event find its run, how do
+   we know the next step actually ran, and who is responsible?** Can conditions like
+   `task.status == 'in_review'` be written in the flow while keeping the product
+   integration optional?
+
+[DESIGN.md](DESIGN.md) answers question 2 in depth, including how it fits the overall
+design and whether the product should add a workflow feature at all.
 
 ## What it does
 
 ```
 workflow/
-  dss.flow.json      ← REQ-01 wiring: agents, command triggers, blocks, transitions
-  blocks/*.md        ← REQ-01 blocks: the instructions an agent executes
-src/lib/engine.ts    ← pure engine: validate wiring, run command, fire event
-scripts/flow.ts      ← agent-side CLI: command/event in → next block's Markdown out
-src/App.svelte       ← Svelte Flow canvas + simulator panel
+  dss.flow.yaml        ← flow: agents, triggers, blocks, transitions with CEL conditions
+  blocks/*.md          ← blocks: the instructions an agent executes
+src/lib/engine.ts      ← pure: validate wiring, type-check CEL, resolve capabilities/fallbacks
+src/lib/runtime.ts     ← runner: run/step state, correlation, one-commit moves, reconcile loop
+src/lib/host.ts        ← fake host integrations: task board (`task`), project facts (`project`)
+scripts/flow.ts        ← CLI over a persisted runner (each call = a fresh process)
+src/App.svelte         ← Svelte Flow canvas + simulator (integrations, task board, failures)
 ```
 
 **Flow** (12 blocks, 7 agent personas):
 
 1. `/project-setup` → *Brand-new project checks* (REQ-01's example) → DSS dialogue.
-2. `/dss` → *Product DSS dialogue* (product owner talks to the user) → *Publish Product DSS*
-   into the domain hierarchy. Publishing **starts the factory**.
-3. Guard `standards.defined` (standards *or* an existing Technical DSS) picks **autonomous**
-   (no user questions) or **interactive** (architect asks the user only open decisions)
-   *Technical DSS* derivation. Autonomous mode escalates with `decision.open`.
-4. Guard `standards.changed` optionally routes through *Version architecture standards*
-   (the byproduct artifact).
-5. *Implementation planning* (staff engineer) breaks both DSS artifacts into tasks.
-6. *Execute tasks* (execution agent) ↔ *Architecture consultation* on
-   `question.architecture` — agents ask the architect persona, not the user.
-7. `status:in_review` → *Review* is **handed to the reviewer agent** (REQ-02);
-   `status:changes_requested` returns it; `status:approved` goes to the next task when the
-   reviewer passes `tasks.remaining`, otherwise to reconcile.
-8. *Reconcile* compares trace links against the published DSS: `drift.detected` → plan
-   again; `converged` → done. `product-dss.new-version` loops back to the dialogue.
+2. `/dss` → *Product DSS dialogue* → *Publish Product DSS*. Publishing **starts the factory**.
+3. `project.standards_defined` (a fact) picks **autonomous** or **interactive** *Technical
+   DSS*; autonomous escalates with `decision_open`. Without the `project` integration the
+   product owner passes flag `standards_defined` instead.
+4. Flag `standards_changed` (a judgment) optionally routes through *Version architecture
+   standards*.
+5. *Implementation planning* → *Execute task* ↔ *Architecture consultation*.
+6. **Level rule** `task.status == 'in_review'` hands the task to the **reviewer** (REQ-02),
+   however the task got there. Moving it back to `in_progress` (edge rule with
+   `where: event.to == 'in_progress'`) returns it; `approved` needs `task.status == 'done'`.
+7. *Reconcile*: `drift_detected` → plan again; `converged` → done; `new_version` loops back.
 
-Transitions are `{ from, on, to, when? }`. `on` is an event or a `status:<name>`
-transition; `when` is a context flag guard (`flag` / `!flag`).
+**Transitions** have `on` (agent outcome or host event), `where` (CEL over the event
+payload), `when` (CEL over facts — without `on` it is level-triggered) and an optional
+`fallback` used when the host lacks a capability the rule needs.
+
+**Runner**: steps go `ready → dispatched → running → done`. A move and the next step's
+creation are one commit; dispatch happens in the reconcile loop, retried after a failure
+(backoff) or an expired lease, and escalated after 3 attempts.
 
 ## Run it
 
 ```sh
 bun install
-bun run dev        # UI: pick /dss, toggle context flags, click events; click a block to preview it
-bun run test       # engine tests (command, guards, REQ-02 handoff, broken wiring)
-bun run flow command project-setup
-bun run flow fire publish-product-dss product-dss.published standards.defined
-bun run flow fire execute-tasks status:in_review    # prints reviewer block with a HANDOFF line
+bun run dev        # UI: toggle integrations, start /dss, act as agents, move the task,
+                   # lose a dispatch, tick, restart the runner from its snapshot
+bun run test       # engine, runner and CLI tests (crash recovery, fallbacks, CEL checks)
+
+# CLI: every call is a new process over the saved state (a restart between each step)
+bun run flow --state /tmp/s.json --caps task,project start dss --task T-1
+bun run flow --state /tmp/s.json begin R1.1
+bun run flow --state /tmp/s.json report R1.1 context_sufficient
+bun run flow --state /tmp/s.json status
+bun run flow --state /tmp/s.json task T-1 in_review   # host move → reviewer dispatched
 ```
 
 ## Outcome
 
-- **Yes, it fits.** The whole DSS process is 12 Markdown blocks + 20 JSON transitions.
-  REQ-06's branching (autonomous vs interactive, optional standards) needs only
-  **guards on context flags**; no code per step.
-- **REQ-02 handoff falls out of the model**: each block names its agent, so a status
-  event that crosses to a block owned by another agent *is* the handoff. No special
-  handoff construct is needed.
-- **Agent contract is tiny**: the agent sends a command or event and gets back Markdown
-  plus the events it may emit next (`scripts/flow.ts`). That is the shape for an
-  `agent-os` / MCP tool later.
-- **Svelte Flow works well** for read-and-simulate: custom nodes, live edge state
-  (open / blocked by guard / last traversed), drag to rearrange. Layout is hand-placed;
-  back-edges (review → execute, reconcile → planning) overlap labels — a real version
-  should use auto-layout (e.g. ELK/dagre) and dedicated back-edge routing.
+**Round 1 (definition):**
+
+- The whole DSS process fits as Markdown blocks plus a declarative flow; branching needs only
+  conditions, no code per step.
+- REQ-02 handoff falls out of the model: each block names its agent, so a move to another
+  agent's block *is* the handoff.
+
+**Round 2 (runtime):**
+
+- **CEL works for both sides of the stack.** `@marcbachmann/cel-js` type-checks against
+  declared schemas, so typos and type errors fail at load time; Rust has CEL
+  implementations for the office side (to be evaluated).
+- **Optional integration works per transition.** The same flow file runs with the `task`
+  and `project` capabilities (facts and host events) or without them (agent outcomes and
+  flags). Capability detection falls out of type-checking: an expression that is invalid
+  for the host but valid once a capability is added needs that capability.
+- **Level rules are the robust default.** `task.status == 'in_review'` moves the run even
+  when the change event is never delivered; edge rules need exactly-once delivery to be
+  trusted.
+- **"Did step 2 run" is answerable.** Step records plus the reconcile loop recover a crash
+  between the move and the dispatch, a lost dispatch and an agent that never starts; the
+  tests prove each case. Without a real agent turn runner (FC-101) a dispatch can only hand
+  out Markdown, so the last link stays simulated.
+- **Should we add it:** yes, as an optional library adopted in stages — see
+  [DESIGN.md](DESIGN.md#should-we-add-it) for the trade-offs.
 
 ### Gaps before taking it into the product
 
-- Run state is in memory only; the product needs persisted runs per task/office and
-  real task status events instead of buttons.
-- Context flags are not persisted: the agent passes them with each event (CLI) or they are
-  ticked by hand (UI). A real run should store context per run.
-- DSS artifacts themselves (product hierarchy, versions, trace links) are described in
-  the blocks but not modelled — that is REQ-06's data model, a separate piece.
-- No editing of the flow in the UI (Svelte Flow supports it; wiring would need to write
-  back to JSON with validation).
-- A new Product DSS version is only picked up from *Converged*; publishing v2 mid-delivery
-  needs re-entry edges (or a per-run supersede rule) from the delivery blocks.
-- The CLI is stateless: any caller can fire from any block, and nothing enforces that only
-  the assigned agent executes a block.
-- A block has one owning agent; the architect + staff engineer pairing on the Technical DSS
-  is only described in the Markdown, not modelled.
-- Parallel tasks (many executors at once) are not modelled — the flow is one cursor.
+- The run store is a JSON file or memory; the product needs the office journal (single
+  writer, operation receipts).
+- No real event source: the product needs a durable cursor over `work_feed`.
+- Each run has one subject task; a feature's N tasks need child runs plus a join.
+- The real task statuses have no `in_review` (decision open, see DESIGN.md).
+- No heartbeat while a step is `running`; only the dispatch-to-start lease is enforced.
+- Flow versions: running runs are not pinned to or migrated between flow versions.
+- A block has one owning agent; pairing (architect + staff engineer) is only in the Markdown.
+- Svelte Flow layout is hand-placed; labels overlap on back-edges.
+
+### Known issues (from the round-2 review, not fixed)
+
+Committed as-is while the direction is undecided (see DESIGN.md, *Workflow or agent-driven*).
+Fix these before reusing the runner code:
+
+- **Rejected reports are cached** under their op id, and the CLI's op id is
+  `<step>:<outcome>`, so retrying a rejected report (e.g. `approved` before the task is
+  `done`) replays the rejection forever. Only accepted results should be receipted.
+- **Flags stick to the run** (`run.flags = ...` in `applyReport`), so a later loop
+  (`new_version`) reuses an old `standards_changed`. Flags should apply to one report only.
+- **Dispatch runs before the caller saves state**, so "one commit, then dispatch" is only
+  half true; the crash test throws in the dispatcher rather than crashing after the commit.
+  Needs an outbox drained after persisting.
+- `where` on an agent outcome throws at runtime, and CEL evaluation errors are not
+  contained (should move the run to needs attention).
+- `task __proto__ done` in the CLI writes to `Object.prototype` (needs `Object.hasOwn`).
+- Two missing capabilities are reported as `invalid condition`; the native transition's
+  `capability` is a substring match and names only the first.
+- Flags are not restricted to `bool`.
+- `needs_attention` is terminal (no resume), hitting the level-move cap is silent, and a
+  report carries no attempt token.
+- CLI: `standards` does not validate its argument or require the `project` capability;
+  `--task` is accepted on every command.
+- REQ-03 metrics are argued from step timestamps, not computed.

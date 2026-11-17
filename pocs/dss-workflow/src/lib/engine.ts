@@ -1,6 +1,8 @@
-// Flow engine: Markdown blocks wired by JSON (REQ-01), with status-driven
-// handoff to a different agent (REQ-02). Pure: no I/O, so the UI and the
-// agent CLI share it.
+// Flow definition: Markdown blocks wired by transitions (REQ-01), each block owned by an
+// agent so crossing to another agent's block is a handoff (REQ-02). Conditions are CEL.
+// Pure: no I/O and no run state, so the UI, the runner and the agent CLI share it.
+
+import { Environment } from '@marcbachmann/cel-js';
 
 export interface AgentDef {
 	label: string;
@@ -17,73 +19,125 @@ export interface BlockDef {
 	produces?: string[];
 }
 
-export interface Transition {
-	from: string;
-	on: string;
-	to: string;
-	/** Context flag guard: `flag` or `!flag`. */
+/** How a transition fires. `on` absent = level-triggered: fires as soon as `when` holds. */
+export interface TransitionRule {
+	/** Event name: an agent outcome (`completed`) or a host event (`task.status_changed`). */
+	on?: string;
+	/** CEL filter over the event payload (`event`). */
+	where?: string;
+	/** CEL guard over facts (`flags`, `task`, `project`, ...). */
 	when?: string;
+}
+
+export interface TransitionDef extends TransitionRule {
+	from: string;
+	to: string;
+	/** Used instead when the host lacks a capability the rule references. */
+	fallback?: TransitionRule;
 }
 
 export interface FlowDef {
 	id: string;
 	version: number;
 	title: string;
+	/** Judgments an agent may pass with an outcome, e.g. `standards_changed: bool`. */
+	flags?: Record<string, string>;
 	agents: Record<string, AgentDef>;
 	triggers: { command: string; start: string }[];
 	blocks: BlockDef[];
-	transitions: Transition[];
+	transitions: TransitionDef[];
 }
 
-export type Context = Record<string, boolean>;
+/**
+ * A capability is an optional host integration that supplies facts under one CEL variable
+ * and may emit host events. The flow engine owns these contracts; a host implements them.
+ */
+export interface CapabilityContract {
+	name: string;
+	schema: Record<string, string>;
+	events: string[];
+}
+
+export const CAPABILITY_CATALOG: CapabilityContract[] = [
+	{
+		name: 'task',
+		schema: { id: 'string', status: 'string' },
+		events: ['task.status_changed']
+	},
+	{
+		name: 'project',
+		schema: { standards_defined: 'bool' },
+		events: []
+	}
+];
+
+/** A transition after capability resolution: its own rule or its fallback. */
+export interface Transition extends TransitionRule {
+	from: string;
+	to: string;
+	mode: 'native' | 'fallback';
+	/** Capability this transition uses (native) or lacked (fallback). */
+	capability?: string;
+}
 
 export interface Activation {
 	block: BlockDef;
 	agent: AgentDef & { id: string };
 	markdown: string;
-	/** What caused this activation: `command <name>` or `<from> on <event>`. */
-	cause: string;
-	/** True when the previous block belonged to another agent. */
-	handoff: boolean;
+}
+
+export type Facts = Record<string, unknown>;
+export interface FlowEvent {
+	type: string;
+	payload: Record<string, unknown>;
 }
 
 export interface Flow {
 	def: FlowDef;
-	activate(blockId: string, cause: string, previousAgent?: string): Activation;
-	runCommand(command: string): Activation;
-	fire(fromBlockId: string, event: string, ctx: Context): Activation;
+	capabilities: string[];
+	transitions: Transition[];
+	activate(blockId: string): Activation;
+	startBlock(command: string): string;
 	outgoing(blockId: string): Transition[];
+	/** Outcome names an agent may report from a block (host events excluded). */
+	outcomes(blockId: string): string[];
+	/** Flags an agent may pass with `outcome` from a block: those its transitions read. */
+	flagsFor(blockId: string, outcome: string): string[];
+	/** Transitions that fire for `event`, or level transitions when `event` is null. */
+	match(blockId: string, event: FlowEvent | null, facts: Facts): Transition[];
 }
 
 export const BLOCK_FILE = /^blocks\/[\w-]+\.md$/;
-const GUARD = /^!?[\w.-]+$/;
+const FLAG_NAME = /^[a-z][a-z0-9_]*$/;
+const HOST_EVENTS = new Set(CAPABILITY_CATALOG.flatMap((c) => c.events));
 
-export function guardPasses(when: string | undefined, ctx: Context): boolean {
-	if (!when) return true;
-	const flag = guardFlag(when);
-	const set = Object.hasOwn(ctx, flag) && ctx[flag] === true;
-	return when.startsWith('!') ? !set : set;
+function environment(flags: Record<string, string>, capabilities: CapabilityContract[]): Environment {
+	const env = new Environment();
+	env.registerVariable({ name: 'flags', schema: flags });
+	env.registerVariable('event', 'map');
+	for (const c of capabilities) env.registerVariable({ name: c.name, schema: c.schema });
+	return env;
 }
 
-export function guardFlag(when: string): string {
-	return when.startsWith('!') ? when.slice(1) : when;
-}
-
-/** Context flags referenced by transition guards. */
-export function guardFlags(def: FlowDef): string[] {
-	return [...new Set(def.transitions.flatMap((t) => (t.when ? [guardFlag(t.when)] : [])))];
-}
-
-/** Validates the wiring and binds block Markdown by file path. Throws on broken wiring. */
-export function loadFlow(def: FlowDef, markdownByFile: Record<string, string>): Flow {
+/**
+ * Validates the wiring, type-checks every CEL expression against the host's capabilities and
+ * binds block Markdown. A rule needing a capability the host lacks is replaced by its fallback.
+ */
+export function loadFlow(def: FlowDef, markdownByFile: Record<string, string>, provided: string[]): Flow {
 	const blocks = new Map(def.blocks.map((b) => [b.id, b]));
 	const errors: string[] = [];
+	const flags = def.flags ?? {};
+	const hostCaps = CAPABILITY_CATALOG.filter((c) => provided.includes(c.name));
+	const hostEnv = environment(flags, hostCaps);
+
+	for (const p of provided)
+		if (!CAPABILITY_CATALOG.some((c) => c.name === p)) errors.push(`unknown capability ${p}`);
+	for (const f of Object.keys(flags)) if (!FLAG_NAME.test(f)) errors.push(`flag ${f}: use snake_case`);
 
 	const seen = (kind: string, keys: string[]) =>
 		keys.forEach((k, i) => keys.indexOf(k) !== i && errors.push(`duplicate ${kind} ${k}`));
 	seen('block', def.blocks.map((b) => b.id));
 	seen('command', def.triggers.map((t) => t.command));
-	seen('transition', def.transitions.map((t) => `${t.from} on ${t.on} when ${t.when ?? '-'}`));
 
 	for (const b of def.blocks) {
 		if (!BLOCK_FILE.test(b.file)) errors.push(`block ${b.id}: file must be blocks/<name>.md`);
@@ -93,53 +147,96 @@ export function loadFlow(def: FlowDef, markdownByFile: Record<string, string>): 
 	for (const t of def.triggers) {
 		if (!blocks.has(t.start)) errors.push(`trigger ${t.command}: unknown block ${t.start}`);
 	}
+
+	const validWith = (rule: TransitionRule, caps: CapabilityContract[], env: Environment) =>
+		(!rule.on || !HOST_EVENTS.has(rule.on) || caps.some((c) => c.events.includes(rule.on!))) &&
+		[rule.where, rule.when].every((e) => !e || env.check(e).valid);
+
+	/** null when valid for this host; else the missing capability's name, or 'invalid'. */
+	const missingCapability = (rule: TransitionRule): string | null => {
+		if (validWith(rule, hostCaps, hostEnv)) return null;
+		for (const cap of CAPABILITY_CATALOG.filter((c) => !provided.includes(c.name))) {
+			const caps = [...hostCaps, cap];
+			if (validWith(rule, caps, environment(flags, caps))) return cap.name;
+		}
+		return 'invalid';
+	};
+
+	const usedCapability = (rule: TransitionRule) =>
+		hostCaps.find((c) => c.events.includes(rule.on ?? '') || [rule.where, rule.when].some((e) => e?.includes(`${c.name}.`)))
+			?.name;
+
+	const describe = (rule: TransitionRule) =>
+		[rule.on && `on ${rule.on}`, rule.where && `where ${rule.where}`, rule.when && `when ${rule.when}`]
+			.filter(Boolean)
+			.join(' ');
+
+	const transitions: Transition[] = [];
 	for (const t of def.transitions) {
-		if (!blocks.has(t.from)) errors.push(`transition ${t.from}->${t.to}: unknown from`);
-		if (!blocks.has(t.to)) errors.push(`transition ${t.from}->${t.to}: unknown to`);
-		if (t.when !== undefined && !GUARD.test(t.when)) errors.push(`transition ${t.from}->${t.to}: bad guard ${t.when}`);
+		const label = `transition ${t.from}->${t.to}`;
+		if (!blocks.has(t.from)) errors.push(`${label}: unknown from`);
+		if (!blocks.has(t.to)) errors.push(`${label}: unknown to`);
+		const shapeOk = (rule: TransitionRule, what: string) => {
+			if (!rule.on && !rule.when) errors.push(`${label}: ${what} needs 'on' or a level 'when'`);
+			if (rule.where && !rule.on) errors.push(`${label}: ${what} 'where' needs an 'on' event`);
+		};
+		shapeOk(t, 'rule');
+		const missing = missingCapability(t);
+		if (missing === null) {
+			transitions.push({ from: t.from, to: t.to, on: t.on, where: t.where, when: t.when, mode: 'native', capability: usedCapability(t) });
+		} else if (missing === 'invalid') {
+			errors.push(`${label}: invalid condition (${describe(t)})`);
+		} else if (!t.fallback) {
+			errors.push(`${label}: needs capability ${missing} and has no fallback`);
+		} else if (missingCapability(t.fallback) !== null) {
+			errors.push(`${label}: fallback is not valid for this host (${describe(t.fallback)})`);
+		} else {
+			shapeOk(t.fallback, 'fallback');
+			transitions.push({ from: t.from, to: t.to, ...t.fallback, mode: 'fallback', capability: missing });
+		}
 	}
-	// Alternatives for one event must be exactly `flag` / `!flag`, so one always matches.
-	const groups = Map.groupBy(def.transitions, (t) => `${t.from} on ${t.on}`);
-	for (const [key, group] of groups) {
-		if (group.length < 2) continue;
-		const guards = group.map((t) => t.when ?? '').sort();
-		const flag = guardFlag(guards[0]);
-		if (guards.length !== 2 || !flag || guards[0] !== `!${flag}` || guards[1] !== flag)
-			errors.push(`transition ${key}: alternatives must be guarded by one flag and its negation`);
+
+	const outgoing = (blockId: string) => transitions.filter((t) => t.from === blockId);
+	for (const b of def.blocks) {
+		const unconditional = outgoing(b.id).filter((t) => !t.when && !t.where);
+		for (const [on, group] of Map.groupBy(unconditional, (t) => t.on ?? ''))
+			if (group.length > 1) errors.push(`block ${b.id}: ${group.length} unconditional transitions on ${on}`);
 	}
 	if (errors.length) throw new Error(`Invalid flow ${def.id}:\n${errors.join('\n')}`);
 
-	const activate = (blockId: string, cause: string, previousAgent?: string): Activation => {
+	const activate = (blockId: string): Activation => {
 		const block = blocks.get(blockId);
 		if (!block) throw new Error(`Unknown block ${blockId}`);
-		return {
-			block,
-			agent: { id: block.agent, ...def.agents[block.agent] },
-			markdown: markdownByFile[block.file],
-			cause,
-			handoff: previousAgent !== undefined && previousAgent !== block.agent
-		};
+		return { block, agent: { id: block.agent, ...def.agents[block.agent] }, markdown: markdownByFile[block.file] };
 	};
 
-	const outgoing = (blockId: string) => def.transitions.filter((t) => t.from === blockId);
+	const passes = (expr: string | undefined, ctx: Facts) => !expr || hostEnv.evaluate(expr, ctx) === true;
 
 	return {
 		def,
+		capabilities: provided,
+		transitions,
 		activate,
 		outgoing,
-		runCommand(command) {
+		startBlock(command) {
 			const trigger = def.triggers.find((t) => t.command === command);
 			if (!trigger) throw new Error(`Unknown command ${command}`);
-			return activate(trigger.start, `command ${command}`);
+			return trigger.start;
 		},
-		fire(fromBlockId, event, ctx) {
-			const from = blocks.get(fromBlockId);
-			if (!from) throw new Error(`Unknown block ${fromBlockId}`);
-			const candidates = outgoing(fromBlockId).filter((t) => t.on === event);
-			if (!candidates.length) throw new Error(`No transition from ${fromBlockId} on ${event}`);
-			const match = candidates.find((t) => guardPasses(t.when, ctx));
-			if (!match) throw new Error(`Guard blocked ${fromBlockId} on ${event} (needs ${candidates.map((t) => t.when).join(' or ')})`);
-			return activate(match.to, `${fromBlockId} on ${event}`, from.agent);
+		outcomes: (blockId) =>
+			[...new Set(outgoing(blockId).flatMap((t) => (t.on && !HOST_EVENTS.has(t.on) ? [t.on] : [])))],
+		flagsFor: (blockId, outcome) => [
+			...new Set(
+				outgoing(blockId)
+					.filter((t) => t.on === outcome)
+					.flatMap((t) => [...(t.when ?? '').matchAll(/\bflags\.([a-z][a-z0-9_]*)/g)].map((m) => m[1]))
+			)
+		],
+		match(blockId, event, facts) {
+			const ctx: Facts = { flags: {}, ...facts, event: event?.payload ?? {} };
+			return outgoing(blockId).filter(
+				(t) => (event ? t.on === event.type : !t.on) && passes(t.where, ctx) && passes(t.when, ctx)
+			);
 		}
 	};
 }

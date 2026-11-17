@@ -5,6 +5,6 @@ You are the **reviewer** — a different agent from the one that wrote the chang
 Check the change against the linked Product DSS and Technical DSS sections, the standards and
 the task's acceptance checks.
 
-- Problems found → emit `status:changes_requested` (back to the execution agent).
-- Acceptable → emit `status:approved`, passing flag `tasks.remaining` if any *other* planned task is
-  not yet approved (next task); omit it when this was the last one (reconcile).
+- Problems found → move the task back to **In Progress** with your feedback (or report
+  `changes_requested` if this step lists it).
+- Acceptable → mark the task **Done**, then report `approved`.

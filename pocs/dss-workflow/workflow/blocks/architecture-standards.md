@@ -6,4 +6,4 @@ You are the **system architect**. The Technical DSS produced a decision worth re
 2. Bump the standards version and reference it from the Technical DSS.
 3. Future runs will find it and stay in autonomous mode.
 
-Emit `standards.versioned`.
+Report `versioned`.

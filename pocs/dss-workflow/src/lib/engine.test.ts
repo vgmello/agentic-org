@@ -1,84 +1,62 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadFlow, type FlowDef } from './engine';
+import { readFlowDef, readMarkdown } from './load-node';
 
-const root = join(import.meta.dirname, '..', '..', 'workflow');
-const def = JSON.parse(readFileSync(join(root, 'dss.flow.json'), 'utf8')) as FlowDef;
-const md = Object.fromEntries(def.blocks.map((b) => [b.file, readFileSync(join(root, b.file), 'utf8')]));
-const flow = loadFlow(def, md);
+const def = readFlowDef();
+const md = readMarkdown(def);
+const withTransitions = (transitions: FlowDef['transitions']): FlowDef => ({ ...def, transitions });
 
-describe('dss flow', () => {
-	it('command returns the start block markdown (REQ-01)', () => {
-		const a = flow.runCommand('project-setup');
-		expect(a.block.id).toBe('project-setup');
-		expect(a.markdown).toContain('Tech stack evaluation');
+describe('flow definition', () => {
+	it('uses native rules when the host provides the capabilities', () => {
+		const flow = loadFlow(def, md, ['task', 'project']);
+		const toReview = flow.transitions.find((t) => t.from === 'execute-tasks' && t.to === 'code-review')!;
+		expect(toReview).toMatchObject({ mode: 'native', capability: 'task', when: "task.status == 'in_review'" });
+		expect(toReview.on).toBeUndefined();
 	});
 
-	it('picks autonomous or interactive Technical DSS from standards.defined', () => {
-		expect(flow.fire('publish-product-dss', 'product-dss.published', { 'standards.defined': true }).block.id).toBe(
-			'tech-dss-autonomous'
-		);
-		expect(flow.fire('publish-product-dss', 'product-dss.published', {}).block.id).toBe('tech-dss-interactive');
+	it('falls back per transition when a capability is missing', () => {
+		const flow = loadFlow(def, md, []);
+		const toReview = flow.transitions.find((t) => t.from === 'execute-tasks' && t.to === 'code-review')!;
+		expect(toReview).toMatchObject({ mode: 'fallback', capability: 'task', on: 'submitted_for_review' });
+		expect(flow.outcomes('execute-tasks')).toContain('submitted_for_review');
+		expect(loadFlow(def, md, ['task', 'project']).outcomes('execute-tasks')).not.toContain('submitted_for_review');
 	});
 
-	it('hands the block to a different agent on status:in_review (REQ-02)', () => {
-		const a = flow.fire('execute-tasks', 'status:in_review', {});
-		expect(a.block.id).toBe('code-review');
-		expect(a.agent.id).toBe('reviewer');
-		expect(a.handoff).toBe(true);
+	it('mixes capabilities: project native, task fallback', () => {
+		const flow = loadFlow(def, md, ['project']);
+		expect(flow.transitions.find((t) => t.to === 'tech-dss-autonomous')!.mode).toBe('native');
+		expect(flow.transitions.find((t) => t.to === 'code-review')!.mode).toBe('fallback');
 	});
 
-	it('keeps the same agent without a handoff', () => {
-		const a = flow.fire('product-dss-dialogue', 'context.sufficient', {});
-		expect(a.agent.id).toBe('product-owner');
-		expect(a.handoff).toBe(false);
-		expect(flow.runCommand('dss').handoff).toBe(false);
-	});
-
-	it('routes the optional standards byproduct and autonomous escalation', () => {
-		expect(flow.fire('tech-dss-autonomous', 'tech-dss.recorded', { 'standards.changed': true }).block.id).toBe(
-			'architecture-standards'
-		);
-		expect(flow.fire('tech-dss-autonomous', 'tech-dss.recorded', {}).block.id).toBe('implementation-planning');
-		expect(flow.fire('tech-dss-autonomous', 'decision.open', {}).block.id).toBe('tech-dss-interactive');
-	});
-
-	it('runs remaining tasks before reconciling', () => {
-		expect(flow.fire('code-review', 'status:approved', { 'tasks.remaining': true }).block.id).toBe('execute-tasks');
-		expect(flow.fire('code-review', 'status:approved', {}).block.id).toBe('reconcile');
-	});
-
-	it('loops reconcile back on drift and finishes on convergence', () => {
-		expect(flow.fire('reconcile', 'drift.detected', {}).block.id).toBe('implementation-planning');
-		expect(flow.fire('reconcile', 'converged', {}).block.id).toBe('converged');
-		expect(flow.fire('converged', 'product-dss.new-version', {}).block.id).toBe('product-dss-dialogue');
-	});
-
-	it('ignores prototype keys in guards', () => {
-		const ctx = Object.create({ 'standards.defined': true });
-		expect(flow.fire('publish-product-dss', 'product-dss.published', ctx).block.id).toBe('tech-dss-interactive');
-	});
-
-	it('rejects unknown events and broken wiring', () => {
-		expect(() => flow.runCommand('nope')).toThrow(/Unknown command/);
-		expect(() => flow.fire('execute-tasks', 'status:approved', {})).toThrow(/No transition/);
-		const noGuardPasses = { ...def, transitions: [{ from: 'converged', on: 'z', to: 'reconcile', when: 'x' }] };
-		expect(() => loadFlow(noGuardPasses, md).fire('converged', 'z', {})).toThrow(/Guard blocked/);
-		const broken = { ...def, transitions: [...def.transitions, { from: 'converged', on: 'x', to: 'nope' }] };
-		expect(() => loadFlow(broken, md)).toThrow(/unknown to/);
-		expect(() => loadFlow(def, {})).toThrow(/missing file/);
-		const block = def.blocks[0];
-		const variants: [Partial<FlowDef>, RegExp][] = [
-			[{ blocks: [...def.blocks, block] }, /duplicate block/],
-			[{ triggers: [...def.triggers, def.triggers[0]] }, /duplicate command/],
-			[{ blocks: [{ ...block, agent: 'ghost' }, ...def.blocks.slice(1)] }, /unknown agent/],
-			[{ blocks: [{ ...block, file: '../../package.json' }, ...def.blocks.slice(1)] }, /file must be/],
-			[{ triggers: [{ command: 'x', start: 'ghost' }] }, /unknown block/],
-			[{ transitions: [...def.transitions, { from: 'code-review', on: 'status:approved', to: 'converged' }] }, /alternatives/],
-			[{ transitions: [...def.transitions, { from: 'converged', on: 'w', to: 'reconcile', when: 'a' }, { from: 'converged', on: 'w', to: 'reconcile', when: 'b' }] }, /alternatives/],
-			[{ transitions: [...def.transitions, { from: 'converged', on: 'y', to: 'reconcile', when: '!!x' }] }, /bad guard/]
+	it('type-checks CEL when the flow is loaded', () => {
+		const base = { from: 'reconcile', to: 'converged' };
+		const cases: [FlowDef['transitions'][number], RegExp][] = [
+			[{ ...base, when: "task.stauts == 'done'" }, /invalid condition/],
+			[{ ...base, when: 'task.status == 1' }, /invalid condition/],
+			[{ ...base, when: 'flags.nope' }, /invalid condition/],
+			[{ ...base, on: 'x', where: 'event.to ==' }, /invalid condition/],
+			[{ ...base, when: "task.status == 'done'" }, /needs capability task and has no fallback/],
+			[{ ...base, on: 'task.status_changed' }, /needs capability task/],
+			[{ ...base, when: "task.status == 'done'", fallback: { when: 'task.status == 2' } }, /fallback is not valid/],
+			[{ ...base, where: "event.to == 'x'" }, /'where' needs an 'on'/],
+			[{ ...base }, /needs 'on' or a level 'when'/]
 		];
-		for (const [patch, error] of variants) expect(() => loadFlow({ ...def, ...patch }, md)).toThrow(error);
+		for (const [t, error] of cases) expect(() => loadFlow(withTransitions([...def.transitions, t]), md, [])).toThrow(error);
+	});
+
+	it('rejects broken wiring', () => {
+		expect(() => loadFlow(def, {}, [])).toThrow(/missing file/);
+		expect(() => loadFlow(def, md, ['crm'])).toThrow(/unknown capability crm/);
+		expect(() => loadFlow({ ...def, blocks: [...def.blocks, def.blocks[0]] }, md, [])).toThrow(/duplicate block/);
+		expect(() => loadFlow({ ...def, blocks: [{ ...def.blocks[0], file: '../x.md' }, ...def.blocks.slice(1)] }, md, [])).toThrow(/file must be/);
+		const twoUnconditional = withTransitions([...def.transitions, { from: 'project-setup', on: 'completed', to: 'converged' }]);
+		expect(() => loadFlow(twoUnconditional, md, [])).toThrow(/2 unconditional transitions on completed/);
+	});
+
+	it('allows only the flags a transition reads', () => {
+		const flow = loadFlow(def, md, ['task', 'project']);
+		expect(flow.flagsFor('tech-dss-autonomous', 'recorded')).toEqual(['standards_changed']);
+		expect(flow.flagsFor('publish-product-dss', 'published')).toEqual([]);
+		expect(loadFlow(def, md, []).flagsFor('publish-product-dss', 'published')).toEqual(['standards_defined']);
 	});
 });

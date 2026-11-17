@@ -2,11 +2,11 @@
 	import { Background, Controls, MarkerType, SvelteFlow, type Edge, type Node } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import BlockNode from './lib/BlockNode.svelte';
-	import { guardFlags, guardPasses } from './lib/engine';
-	import { run } from './lib/run.svelte';
-	import { flow } from './lib/workflow';
+	import { CAPABILITY_CATALOG, type Transition } from './lib/engine';
+	import { TASK_STATUSES } from './lib/host';
+	import { SUBJECT_TASK, sim } from './lib/run.svelte';
 
-	// Presentation-only layout; the wiring lives in workflow/dss.flow.json.
+	// Presentation-only layout; the wiring lives in workflow/dss.flow.yaml.
 	const layout: Record<string, [number, number]> = {
 		'project-setup': [0, 0],
 		'product-dss-dialogue': [0, 130],
@@ -24,119 +24,142 @@
 
 	const nodeTypes = { block: BlockNode };
 	let nodes = $state.raw<Node[]>(
-		flow.def.blocks.map((block, i) => {
+		sim.flow.def.blocks.map((block, i) => {
 			const [x, y] = layout[block.id] ?? [700, i * 130];
 			return { id: block.id, type: 'block', position: { x, y }, data: { block } };
 		})
 	);
 
+	const label = (t: Transition) =>
+		(t.on ? t.on : '⟳') + (t.where ? ` · ${t.where}` : '') + (t.when ? ` · ${t.when}` : '') + (t.mode === 'fallback' ? ' (fallback)' : '');
+
 	const edges = $derived<Edge[]>(
-		flow.def.transitions.map((t, i) => {
-			const fromActive = run.active?.block.id === t.from;
-			const open = fromActive && guardPasses(t.when, run.ctx);
-			const last = run.lastEdge?.from === t.from && run.lastEdge.on === t.on && run.lastEdge.to === t.to;
+		sim.flow.transitions.map((t, i) => {
+			const fromActive = sim.step?.block === t.from;
 			return {
-				id: `e${i}`,
+				id: `e${i}-${sim.capabilities.join()}`,
 				source: t.from,
 				target: t.to,
-				label: t.when ? `${t.on} [${t.when}]` : t.on,
-				animated: open,
+				label: label(t),
+				animated: fromActive,
 				markerEnd: { type: MarkerType.ArrowClosed },
-				class: open ? 'open' : last ? 'last' : fromActive ? 'blocked' : '',
+				class: [t.mode, t.on ? 'edge' : 'level', fromActive ? 'open' : ''].join(' '),
 				labelStyle: 'font-size:10px'
 			};
 		})
 	);
 
-	let preview = $state<string | null>(null);
-	const shown = $derived(preview ? flow.activate(preview, 'preview') : run.active);
-	const events = $derived(
-		run.active
-			? [...new Set(flow.outgoing(run.active.block.id).map((t) => t.on))].map((on) => ({
-					on,
-					enabled: flow.outgoing(run.active!.block.id).some((t) => t.on === on && guardPasses(t.when, run.ctx))
-				}))
-			: []
-	);
-	const flags = guardFlags(flow.def);
+	const outcomes = $derived(sim.step ? sim.flow.outcomes(sim.step.block) : []);
+	const stepFlags = $derived(sim.step ? [...new Set(outcomes.flatMap((o) => sim.flow.flagsFor(sim.step!.block, o)))] : []);
+	let flagValues = $state<Record<string, boolean>>({});
+	const activation = $derived(sim.step ? sim.flow.activate(sim.step.block) : undefined);
+	const fallbacks = $derived(sim.flow.transitions.filter((t) => t.mode === 'fallback').length);
+
+	function report(outcome: string) {
+		const allowed = sim.flow.flagsFor(sim.step!.block, outcome);
+		sim.report(outcome, Object.fromEntries(allowed.filter((f) => flagValues[f]).map((f) => [f, true])));
+		flagValues = {};
+	}
+
+	function toggleCapability(name: string, on: boolean) {
+		sim.reset(on ? [...sim.capabilities, name] : sim.capabilities.filter((c) => c !== name));
+	}
 </script>
 
 <main>
 	<section class="canvas">
 		<header>
-			<h1>{flow.def.title}</h1>
-			<p>REQ-01 Markdown blocks + JSON wiring · REQ-02 status handoff · REQ-06 DSS factory</p>
+			<h1>{sim.flow.def.title} <small>v{sim.flow.def.version}</small></h1>
+			<p>CEL conditions · optional host integrations · runner with step states and redispatch</p>
 			<div class="legend">
+				<span class="key edge-key">event (on)</span>
+				<span class="key level-key">⟳ level (when)</span>
+				<span class="key fallback-key">fallback</span>
 				{#each ['setup', 'product', 'factory', 'delivery', 'reconcile'] as s (s)}
-					<span style:--c="var(--stage-{s})">{s}</span>
+					<span class="stage" style:--c="var(--stage-{s})">{s}</span>
 				{/each}
 			</div>
 		</header>
-		<SvelteFlow
-			bind:nodes
-			{edges}
-			{nodeTypes}
-			fitView
-			onnodeclick={({ node }) => (preview = node.id)}
-			onpaneclick={() => (preview = null)}
-		>
+		<SvelteFlow bind:nodes {edges} {nodeTypes} fitView>
 			<Background />
 			<Controls />
 		</SvelteFlow>
 	</section>
 
 	<aside>
-		<h2>Agent commands</h2>
+		<h2>Host integrations</h2>
+		{#each CAPABILITY_CATALOG as c (c.name)}
+			<label>
+				<input type="checkbox" checked={sim.capabilities.includes(c.name)} onchange={(e) => toggleCapability(c.name, e.currentTarget.checked)} />
+				<code>{c.name}</code> <span class="muted">{Object.keys(c.schema).map((k) => `${c.name}.${k}`).join(', ')}</span>
+			</label>
+		{/each}
+		<p class="muted small">
+			{fallbacks ? `${fallbacks} transition(s) use their fallback.` : 'All transitions native.'} Changing this reloads the flow and resets the run.
+		</p>
+
+		<h2>Host: task {SUBJECT_TASK}</h2>
 		<div class="row">
-			{#each flow.def.triggers as t (t.command)}
-				<button onclick={() => ((preview = null), run.command(t.command))}>/{t.command}</button>
+			{#each TASK_STATUSES as s (s)}
+				<button class:selected={sim.host.tasks[SUBJECT_TASK].status === s} onclick={() => sim.moveTask(s)}>{s}</button>
+			{/each}
+		</div>
+		{#if !sim.capabilities.includes('task')}<p class="muted small">No task integration: the runner can't see this board.</p>{/if}
+		{#if sim.capabilities.includes('project')}
+			<label><input type="checkbox" checked={sim.host.project.standards_defined} onchange={(e) => sim.setStandards(e.currentTarget.checked)} /> project has standards (<code>project.standards_defined</code>)</label>
+		{/if}
+
+		<h2>Start</h2>
+		<div class="row">
+			{#each sim.flow.def.triggers as t (t.command)}
+				<button onclick={() => sim.start(t.command)}>/{t.command}</button>
 			{/each}
 		</div>
 
-		<h2>Context</h2>
-		{#each flags as f (f)}
-			<label><input type="checkbox" bind:checked={run.ctx[f]} /> <code>{f}</code></label>
-		{/each}
-
-		{#if run.active}
-			<h2>Report event from <code>{run.active.block.id}</code></h2>
-			<div class="row">
-				{#each events as e (e.on)}
-					<button disabled={!e.enabled} onclick={() => ((preview = null), run.fire(e.on))}>{e.on}</button>
-				{:else}
-					<em>terminal block</em>
+		{#if sim.run && sim.step}
+			<h2>Run {sim.run.id} · step {sim.step.id}</h2>
+			{#if sim.run.status === 'needs_attention'}<p class="error">Needs attention: {sim.run.attention}</p>{/if}
+			<p class="stepline">
+				<strong>{sim.step.block}</strong> @{sim.step.agent} · <span class="badge {sim.step.state}">{sim.step.state}</span> · attempts {sim.step.attempts}
+			</p>
+			{#if sim.step.state === 'dispatched'}
+				<button onclick={() => sim.begin()}>{sim.step.agent}: start turn</button>
+			{:else if sim.step.state === 'running'}
+				{#each stepFlags as f (f)}
+					<label><input type="checkbox" bind:checked={flagValues[f]} /> flag <code>{f}</code></label>
 				{/each}
-			</div>
-			{#if run.error}<p class="error">{run.error}</p>{/if}
-		{/if}
-
-		{#if shown}
-			<h2>
-				{preview ? 'Preview' : 'Active block'} · {shown.agent.label}
-			</h2>
-			{#if !preview && shown.handoff}
-				<p class="handoff">
-					Handoff: {run.history.at(-2)?.agent.label} → <strong>{shown.agent.label}</strong>
-				</p>
+				<div class="row">
+					{#each outcomes as o (o)}<button onclick={() => report(o)}>report {o}</button>{:else}<em class="muted">no agent outcomes — waits for a host fact/event</em>{/each}
+				</div>
+			{:else if sim.step.state === 'ready'}
+				<p class="muted small">Open step with no turn: the reconcile loop will dispatch it.</p>
 			{/if}
-			<pre class="md">{shown.markdown}</pre>
-		{:else}
-			<p class="hint">Run a command to start the flow, or click a block to preview its Markdown.</p>
+			{#if sim.lastResult}<p class="result">{sim.lastResult}</p>{/if}
 		{/if}
 
-		{#if run.history.length}
-			<h2>Activation log</h2>
+		<h2>Failures</h2>
+		<label><input type="checkbox" bind:checked={sim.loseNextDispatch} /> lose the next dispatch</label>
+		<div class="row">
+			<button onclick={() => sim.tick()}>tick (time passes)</button>
+			<button onclick={() => sim.restart()}>restart runner from snapshot</button>
+		</div>
+		<p class="muted small">clock {sim.view.clock} · restarts {sim.restarts}</p>
+
+		{#if activation}
+			<details>
+				<summary>Block Markdown sent to {activation.agent.label}</summary>
+				<pre class="md">{activation.markdown}</pre>
+			</details>
+		{/if}
+
+		{#if sim.log.length}
+			<h2>Runner log</h2>
 			<ol class="log">
-				{#each run.history as a, i (i)}
-					<li><span>{a.cause}</span> <strong>{a.block.id}</strong> <em>@{a.agent.id}</em></li>
+				{#each sim.log as l, i (i)}
+					<li><span>t{l.at}{l.run ? ` ${l.run}` : ''}</span> {l.text}</li>
 				{/each}
 			</ol>
 		{/if}
-
-		<details>
-			<summary>Flow wiring (JSON)</summary>
-			<pre>{JSON.stringify(flow.def.transitions, null, 1)}</pre>
-		</details>
 	</aside>
 </main>
 
@@ -202,7 +225,7 @@
 		gap: 10px;
 		font-size: 11px;
 	}
-	.legend span::before {
+	.legend .stage::before {
 		content: '';
 		display: inline-block;
 		width: 10px;
@@ -223,17 +246,16 @@
 		border: 0;
 		background: none;
 	}
+	.canvas :global(.svelte-flow__edge.level path) {
+		stroke-dasharray: 2 3;
+	}
+	.canvas :global(.svelte-flow__edge.fallback path) {
+		stroke: var(--stage-factory);
+		stroke-dasharray: 6 4;
+	}
 	.canvas :global(.svelte-flow__edge.open path) {
 		stroke: var(--accent);
 		stroke-width: 2;
-	}
-	.canvas :global(.svelte-flow__edge.last path) {
-		stroke: var(--stage-reconcile);
-		stroke-width: 2.5;
-	}
-	.canvas :global(.svelte-flow__edge.blocked path) {
-		stroke-dasharray: 4 4;
-		opacity: 0.5;
 	}
 	aside {
 		border-left: 1px solid var(--border);
@@ -283,6 +305,61 @@
 		padding: 10px;
 		font-size: 12px;
 	}
+	.key {
+		color: var(--muted);
+	}
+	.key::before {
+		content: '';
+		display: inline-block;
+		width: 18px;
+		margin-right: 4px;
+		vertical-align: 3px;
+		border-top: 2px solid var(--muted);
+	}
+	.level-key::before {
+		border-top-style: dotted;
+	}
+	.fallback-key::before {
+		border-top: 2px dashed var(--stage-factory);
+	}
+	h1 small {
+		color: var(--muted);
+		font-weight: 400;
+	}
+	.muted {
+		color: var(--muted);
+	}
+	.small {
+		font-size: 11px;
+	}
+	button.selected {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+	}
+	.stepline {
+		font-size: 12px;
+		margin: 4px 0 8px;
+	}
+	.badge {
+		padding: 1px 6px;
+		border-radius: 999px;
+		background: var(--chip);
+		font-weight: 600;
+	}
+	.badge.dispatched {
+		background: var(--stage-delivery);
+		color: #fff;
+	}
+	.badge.running {
+		background: var(--stage-reconcile);
+		color: #fff;
+	}
+	.result {
+		font-size: 12px;
+		background: var(--accent-soft);
+		padding: 6px 10px;
+		border-radius: 6px;
+	}
 	.handoff {
 		background: var(--accent-soft);
 		padding: 6px 10px;
@@ -300,8 +377,7 @@
 		padding-left: 18px;
 		font-size: 11px;
 	}
-	.log span,
-	.log em {
+	.log span {
 		color: var(--muted);
 	}
 </style>

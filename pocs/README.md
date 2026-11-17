@@ -12,4 +12,4 @@ Every POC README states:
 
 | POC | Question | Status |
 | --- | --- | --- |
-| [dss-workflow](dss-workflow/) | Can the DSS process (REQ-06) run as a Markdown + JSON workflow (REQ-01) with status-driven agent handoff (REQ-02), visualised with Svelte Flow? | Working demo |
+| [dss-workflow](dss-workflow/) | Can the DSS process (REQ-06) run as a Markdown workflow (REQ-01) with agent handoff (REQ-02), visualised with Svelte Flow — and how would a runner make sure each step really runs, with CEL conditions and optional product integration? | Working demo; [design notes](dss-workflow/DESIGN.md) |

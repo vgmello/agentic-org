@@ -6,5 +6,5 @@ You are the **reconciler**. The DSS is the desired state; the code is the report
 2. Compare each linked code location with the section it claims to satisfy.
 3. Any unlinked section or mismatched code is **drift**.
 
-- Drift → emit `drift.detected` (back to planning).
-- No drift → emit `converged`.
+- Drift → report `drift_detected` (back to planning).
+- No drift → report `converged`.

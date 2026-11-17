@@ -10,5 +10,5 @@ with each question.
 3. Record the agreed decisions in `dss/technical/<domain>/<vertical>/<area>.md`, linked to
    Product DSS sections, and bump its version.
 
-Emit `tech-dss.recorded`, passing flag `standards.changed` if any recorded decision should become
+Report `recorded`, passing flag `standards_changed` if any recorded decision should become
 a reusable standard; omit it otherwise.

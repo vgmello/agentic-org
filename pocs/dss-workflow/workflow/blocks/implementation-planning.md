@@ -9,6 +9,6 @@ Each task must reference:
 - the Technical DSS section(s) it implements,
 - its acceptance checks.
 
-If the `via:` line shows `reconcile on drift.detected`, plan only the drift fixes.
+If the step was opened by `drift_detected`, plan only the drift fixes.
 
-Emit `tasks.created`.
+Report `tasks_created`.

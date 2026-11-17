@@ -10,4 +10,4 @@ You are the **setup agent**. The `project-setup` command started this block.
 Report what is missing, and report whether architecture standards (`standards/`) or an existing
 Technical DSS (`dss/technical/`) already exist.
 
-Finish with event `completed`.
+Report `completed`.

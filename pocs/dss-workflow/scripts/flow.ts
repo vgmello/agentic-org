@@ -1,27 +1,28 @@
-// Agent-side entry point (REQ-01): an agent runs a command or reports an event
-// and receives the Markdown of the block it must execute next.
-//   bun scripts/flow.ts command project-setup
-//   bun scripts/flow.ts fire publish-product-dss product-dss.published standards.defined
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { BLOCK_FILE, guardFlag, loadFlow, type Activation, type Flow, type FlowDef } from '../src/lib/engine.ts';
+// Agent/host-side CLI over a persisted runner. The state file stands in for the office journal,
+// so every call is a fresh process: a "restart" between any two steps.
+//   bun scripts/flow.ts --state s.json --caps task,project start dss --task T-1
+//   bun scripts/flow.ts --state s.json begin R1.1
+//   bun scripts/flow.ts --state s.json report R1.1 context_sufficient
+//   bun scripts/flow.ts --state s.json task T-1 in_review
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { CAPABILITY_CATALOG } from '../src/lib/engine.ts';
+import { TASK_STATUSES, emptyHost, factSource, moveTask, type HostState, type TaskStatus } from '../src/lib/host.ts';
+import { readFlow } from '../src/lib/load-node.ts';
+import { Runner, emptyState, type RunState } from '../src/lib/runtime.ts';
 
-const USAGE = 'usage: flow.ts command <name> | fire <block> <event> [flag...]';
-const root = join(import.meta.dirname, '..', 'workflow');
+const USAGE = `usage: flow.ts [--state FILE] [--caps task,project] <command>
+  start <trigger> [--task ID]      start a run
+  begin <step>                     agent: my turn for this step started
+  report <step> <outcome> [flag..] agent: report the block's outcome
+  task <id> <${TASK_STATUSES.join('|')}>   host: move a task
+  standards <true|false>           host: project fact standards_defined
+  tick                             time passes; expired dispatches retry
+  status                           show runs`;
 
-function load(): Flow {
-	const def = JSON.parse(readFileSync(join(root, 'dss.flow.json'), 'utf8')) as FlowDef;
-	// Read only blocks/<name>.md paths; loadFlow reports anything skipped as a missing/invalid file.
-	const md: Record<string, string> = {};
-	for (const b of def.blocks) {
-		if (!BLOCK_FILE.test(b.file)) continue;
-		try {
-			md[b.file] = readFileSync(join(root, b.file), 'utf8');
-		} catch {
-			// missing file: reported by loadFlow
-		}
-	}
-	return loadFlow(def, md);
+interface Saved {
+	capabilities: string[];
+	runner: RunState;
+	host: HostState;
 }
 
 function fail(message: string): never {
@@ -29,32 +30,89 @@ function fail(message: string): never {
 	process.exit(2);
 }
 
-function resolve(flow: Flow, mode: string | undefined, args: string[]): Activation {
-	if (mode === 'command' && args.length === 1) return flow.runCommand(args[0]);
-	if (mode === 'fire' && args.length >= 2) {
-		// Only flags guarding this exact event are accepted, so a wrong flag cannot pick a branch silently.
-		const known = flow.outgoing(args[0]).flatMap((t) => (t.on === args[1] && t.when ? [guardFlag(t.when)] : []));
-		const flags = args.slice(2);
-		const unknown = flags.filter((f) => !known.includes(f));
-		if (unknown.length)
-			fail(`flag(s) ${unknown.join(', ')} not used by ${args[0]} on ${args[1]}; accepted: ${known.join(', ') || 'none'} (omit a flag to leave it unset)`);
-		return flow.fire(args[0], args[1], Object.fromEntries(flags.map((f) => [f, true])));
+const argv = process.argv.slice(2);
+const option = (name: string): string | undefined => {
+	const i = argv.indexOf(name);
+	if (i < 0) return undefined;
+	const value = argv[i + 1];
+	if (value === undefined || value.startsWith('--')) fail(`${name} needs a value`);
+	argv.splice(i, 2);
+	return value;
+};
+
+function main() {
+	const file = option('--state') ?? '.flow-state.json';
+	const capsArg = option('--caps');
+	const task = option('--task');
+	const saved: Saved = existsSync(file)
+		? (JSON.parse(readFileSync(file, 'utf8')) as Saved)
+		: { capabilities: capsArg ? capsArg.split(',').filter(Boolean) : [], runner: emptyState(), host: emptyHost() };
+	if (capsArg !== undefined && capsArg.split(',').filter(Boolean).join() !== saved.capabilities.join())
+		fail(`state file was created with --caps ${saved.capabilities.join(',') || '(none)'}; capabilities cannot change mid-run`);
+	for (const c of saved.capabilities)
+		if (!CAPABILITY_CATALOG.some((k) => k.name === c)) fail(`unknown capability ${c}`);
+
+	const dispatched: string[] = [];
+	const runner = new Runner(readFlow(saved.capabilities), saved.runner, factSource(saved.host, saved.capabilities), (run, step, a) => {
+		dispatched.push(
+			`<!-- dispatch: run ${run.id} | step ${step.id} | agent: ${a.agent.id} | outcomes: ${runner.flow.outcomes(step.block).join(', ') || 'none'} -->\n${a.markdown}`
+		);
+	});
+
+	const [cmd, ...args] = argv;
+	const need = (n: number) => args.length === n || fail(`${cmd} takes ${n} argument(s)`);
+	switch (cmd) {
+		case 'start':
+			need(1);
+			console.log(`started ${runner.start(args[0], task ? { task } : {}).id}`);
+			break;
+		case 'begin':
+			need(1);
+			runner.begin(args[0]);
+			console.log(`step ${args[0]} running`);
+			break;
+		case 'report': {
+			if (args.length < 2) fail('report takes <step> <outcome> [flag...]');
+			const [step, outcome, ...flags] = args;
+			const result = runner.report(`${step}:${outcome}`, step, outcome, Object.fromEntries(flags.map((f) => [f, true])));
+			console.log(result);
+			if (result.startsWith('rejected')) process.exitCode = 3;
+			break;
+		}
+		case 'task':
+			need(2);
+			if (!TASK_STATUSES.includes(args[1] as TaskStatus)) fail(`status must be one of ${TASK_STATUSES.join(', ')}`);
+			moveTask(saved.host, runner, args[0], args[1] as TaskStatus);
+			runner.reconcile();
+			console.log(`${args[0]} → ${args[1]}`);
+			break;
+		case 'standards':
+			need(1);
+			saved.host.project.standards_defined = args[0] === 'true';
+			runner.reconcile();
+			break;
+		case 'tick':
+			need(0);
+			runner.tick();
+			break;
+		case 'status':
+			need(0);
+			for (const run of runner.runs) {
+				const s = runner.current(run);
+				console.log(`${run.id} ${run.status}${run.attention ? ` (${run.attention})` : ''}: ${s.block} [${s.state}] @${s.agent} step ${s.id}`);
+			}
+			break;
+		default:
+			fail(cmd ? `unknown command ${cmd}` : 'missing command');
 	}
-	fail('bad arguments');
+	for (const d of dispatched) console.log(d);
+	// Write-then-rename so a crash never leaves a torn state file.
+	writeFileSync(`${file}.tmp`, JSON.stringify({ ...saved, runner: runner.snapshot() }, null, 1));
+	renameSync(`${file}.tmp`, file);
 }
 
-const [mode, ...args] = process.argv.slice(2);
-let flow: Flow;
-let activation: Activation;
 try {
-	flow = load();
-	activation = resolve(flow, mode, args);
+	main();
 } catch (e) {
 	fail((e as Error).message);
 }
-const next = flow.outgoing(activation.block.id).map((t) => t.on + (t.when ? ` [${t.when}]` : ''));
-console.log(`<!-- block: ${activation.block.id} | agent: ${activation.agent.id} | via: ${activation.cause} -->`);
-if (activation.handoff)
-	console.log(`<!-- HANDOFF: deliver this block to agent ${activation.agent.id}; do not execute it yourself. -->`);
-console.log(activation.markdown);
-console.log(`<!-- next events: ${[...new Set(next)].join(', ') || 'none'} -->`);
