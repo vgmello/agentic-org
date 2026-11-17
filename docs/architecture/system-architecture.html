@@ -512,8 +512,8 @@ offices/
     <tbody>
       <tr><td>Team</td><td class="k">TEAM-12</td><td>Organization</td><td>HQ</td></tr>
       <tr><td>Project</td><td class="k">P-8 + slug</td><td>Organization</td><td>HQ</td></tr>
-      <tr><td>Task, any type</td><td class="k">T-42</td><td>Project, or team when projectless</td><td>Any office</td></tr>
-      <tr><td>Feature</td><td class="k">F-6 + project/slug</td><td>Project</td><td>Any office</td></tr>
+      <tr><td>Task, any type</td><td class="k">T-B37</td><td>The creating office: one sequence per office, with the office's letter</td><td>Any office, which also numbers it</td></tr>
+      <tr><td>Feature</td><td class="k">F-6 + project/slug</td><td>Project</td><td>Any office; HQ numbers it</td></tr>
       <tr><td>Release</td><td class="k">R-3</td><td>Project</td><td>HQ</td></tr>
       <tr><td>Milestone</td><td class="k">M-2</td><td>Release</td><td>HQ</td></tr>
       <tr><td>Employee</td><td class="k">@handle</td><td>Organization, no counter</td><td>HQ</td></tr>
@@ -521,21 +521,23 @@ offices/
     </tbody>
   </table></div>
   <ul>
-    <li>The stable <code>id</code> is immutable and is what foreign keys, sync and file names use. IDs are ULIDs. Most of the code already uses them; the newer HQ-creation path in the host uses UUIDv7 and is to change.</li>
-    <li>An office that creates a task or feature while disconnected saves it with <code>number: null</code>. The organization authority allocates the number in one serialized transaction. No client ever computes <code>MAX + 1</code>.</li>
-    <li>Gaps are allowed and numbers are never reused. A type change or reassignment never renumbers.</li>
-    <li>Outside a selected scope, references are qualified: <code>P-8/T-42</code>, <code>TEAM-12/T-42</code>, <code>P-8/R-3/M-2</code>.</li>
+    <li>The stable <code>id</code> is immutable and is what foreign keys, sync and file names use. IDs are UUIDv7 (RFC 9562), written as lowercase hyphenated text; SQLite stores them as text and an engine with a native UUID type uses that. The newer HQ-creation path in the host already mints them; the rest of the code mints ULIDs and is to change.</li>
+    <li>A task is numbered by the office that creates it, in the same local save: <code>T-</code>, the office's letter, and the next number of that office's one sequence. It is never unnumbered and its reference is unique in the organization on its own.</li>
+    <li>A feature created while HQ is unreachable is saved with <code>number: null</code>. The organization authority allocates HQ numbers in one serialized transaction. No client ever computes <code>MAX + 1</code>.</li>
+    <li>Gaps are allowed and numbers are never reused. A type change, a reassignment or a move to another project or office never renumbers.</li>
+    <li>A task reference needs nothing in front. HQ-numbered records are qualified outside their scope: <code>P-8/F-6</code>, <code>P-8/R-3/M-2</code>.</li>
+    <li>Commands that need a project, such as creating or listing tasks, take it from the agent's context; an agent with no project, or meaning another one, must name it.</li>
     <li><code>schema_version</code> is the file format. <code>revision</code> is the record's concurrency revision. A task event is identified by organization, task and revision.</li>
     <li>There are no old references to map. Nothing has shipped, so bugs and requests are typed tasks from the start (owner decision 2026-11-17).</li>
-    <li><strong>Changing for tasks (ADR-0019, accepted in part on 2026-11-17):</strong> a task gets a reference minted by the office that creates it, with a letter for the office, such as <code>T-B37</code>, so creating one never waits for HQ. Tasks only. How an office counts (one sequence, or one per project) is still open, so the task rules above are not yet rewritten.</li>
+    <li>HQ gives each office its letter when it creates or enrols the office; a letter is never changed or reused (ADR-0019).</li>
   </ul>
-  <p>Today the code uses ULIDs and per-kind number scopes with <code>task.assign</code>. The typed-task identity is pending.</p>
+  <p>Today the code uses ULIDs and per-kind, per-project number scopes with <code>task.assign</code>. The typed-task identity, UUIDv7 and office-made task numbers are pending.</p>
   <h3>Offline offices</h3>
   <ul>
-    <li>No office receives a block of numbers. A record created offline is saved with its permanent ID and an empty number, shown as "Pending number".</li>
-    <li>It is fully usable by ID. On reconnect HQ allocates once; the number is added and never changes.</li>
+    <li>A task created offline has its final reference at once. A feature created offline is saved with its permanent ID and an empty number, shown as "Pending number".</li>
+    <li>The feature is fully usable by ID. On reconnect HQ allocates once; the number is added and never changes.</li>
     <li>Counters and allocations are files in organization Git (<code>identity/counters/</code>, <code>identity/allocations/</code>), published hourly. Allocations since the last publish live in <code>durable/authority/numbering-journal/</code>.</li>
-    <li>Agent tools must accept the permanent ID at all times and show it until a number exists (register entry C-12).</li>
+    <li>Each office keeps its own task counter with a durable mark above the last number used. An office that cannot prove its sequence gets a new letter from HQ before it creates another task (register entry C-12).</li>
   </ul>
 </section>
 
@@ -849,13 +851,14 @@ offices/
 
 <section id="conflicts">
   <h2><span class="num">16</span>Decisions from the architecture review</h2>
-  <p class="sec-lede">This part used to list every place where two documents, or a document and the code, disagreed. The owner has now reviewed all 52. 34 are fixed in the documents, 17 are decided and recorded as requirements with code still to change, and one waits for the owner. The <a href="../design/conflict-resolution-plan.md">conflict register</a> has every entry with what was applied.</p>
+  <p class="sec-lede">This part used to list every place where two documents, or a document and the code, disagreed. The owner has now reviewed all 52. 34 are fixed in the documents and 18 are decided and recorded as requirements with code still to change. A few questions remain with the owner. The <a href="../design/conflict-resolution-plan.md">conflict register</a> has every entry with what was applied.</p>
   <div class="note"><p><b>The rule above the rest.</b> Nothing has shipped. Until the owner declares v1 shipped there are no versions to keep side by side, no migrations and no old shapes to preserve. Where a rebuild gives the cleaner architecture, rebuild.</p></div>
   <h3>Decided, with code still to change</h3>
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Requirement</th><th>Code today</th><th>Recorded in</th></tr></thead>
     <tbody>
       <tr><td>Storage</td><td>Files are the source; rebuild the store against the selected contract.</td><td>Two encrypted databases with older tables are the source.</td><td class="k">B-01, organization data</td></tr>
+      <tr><td>IDs and task numbers</td><td>UUIDv7 everywhere. Task references minted by the creating office, <code>T-B37</code>.</td><td>ULIDs in most of the code; per-project task counters at HQ.</td><td class="k">B-04, C-12, ADR-0019</td></tr>
       <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">B-13, ADR-0018</td></tr>
       <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>Host and worker implement both forms; the host uses the rendezvous only for a registered, protected instance.</td><td class="k">B-06, host boundary design</td></tr>
       <tr><td>Authorization of people</td><td>Principal plus a host-issued grant, verified by the worker.</td><td>The launch line carries an app token; the grant key is unused.</td><td class="k">B-07</td></tr>
@@ -875,8 +878,8 @@ offices/
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Decided</th><th>What is open</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Task numbers</td><td>Creating a task never waits for HQ. Accepted: references minted by the creating office with a letter for the office (<code>T-A1</code>, <code>T-B37</code>), for tasks only.</td><td>Still open: one count per office, or one per office per project.</td><td class="k">C-12, ADR-0019 (accepted in part)</td></tr>
-      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components (REQ-04).</td><td>Still open: external channels in v1 or v2; own components instead of the React libraries named; an ask to a person must not hold a turn for hours; what a default value does.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>Fast acknowledgement for creating a task</td><td>Task numbers are decided and in the contract: minted by the creating office, one sequence per office.</td><td>Still open: may creating a task answer before the drive flush? Recommended yes.</td><td class="k">C-12, ADR-0019</td></tr>
+      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components in the product's own chat (REQ-04). There are no external channels.</td><td>Still open: own components instead of the React libraries named; an ask to a person must not hold a turn for hours; what a default value does.</td><td class="k">A-07, REQ-04</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>

@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-52 findings, all reviewed by the owner on 2026-11-17. 34 are fixed in the documents. 17 are decided and recorded as requirements, with code still to change. 1 needs the owner's choice (C-12).
+52 findings, all reviewed by the owner on 2026-11-17. 34 are fixed in the documents. 18 are decided and recorded as requirements, with code still to change. A few questions remain for the owner; they are listed under "Questions still with the owner".
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -24,7 +24,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [A-04](#a-04) | Moving an agent between machines: supported in one contract, unsupported in another | Before building the area | S | Fixed in documents | `4b7e893` |
 | [A-05](#a-05) | Three hash canonicalizations with no registry | Before building the area | S | Fixed in documents | `c71e33b` |
 | [A-06](#a-06) | Messaging has a data model and no named runtime owner | Before building the area | S | Fixed in documents | `7a552bf` |
-| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `cb49e54` |
+| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `3bbc57f` |
 | [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Decided; code pending | `cb49e54` |
 | [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Decided; code pending | `cb49e54` |
 | [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Fixed in documents | `817c4c2` |
@@ -34,7 +34,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [B-01](#b-01) | Storage: files are canonical in the design, databases are authoritative in the code | Decide first | L | Decided; code pending | `11464ce` |
 | [B-02](#b-02) | Single home team is selected; the code is many-to-many | Decide first | M | Decided; code pending | `47e1596` |
 | [B-03](#b-03) | One typed task is selected; the code has per-kind work items | Decide first | L | Decided; code pending | `47e1596` |
-| [B-04](#b-04) | New record IDs: UUIDv7 in the contract, ULID in the code | Before building the area | S | Decided; code pending | `cb49e54` |
+| [B-04](#b-04) | New record IDs: UUIDv7 in the contract, ULID in the code | Before building the area | S | Decided; code pending | `3bbc57f` |
 | [B-05](#b-05) | Areas are deferred in the design and live in the code | Before building the area | S | Decided; code pending | `47e1596` |
 | [B-06](#b-06) | Launch protocol: the host writes v2, the worker implements v3, three ADRs need v3 | Decide first | M | Decided; code pending | `cb49e54` |
 | [B-07](#b-07) | Human authorization: grants are designed, the app token is still what is checked | Before building the area | M | Decided; code pending | `11464ce` |
@@ -55,7 +55,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [C-09](#c-09) | Status labels and revisions differ across the set | Cleanup | S | Fixed in documents | `17c3964` |
 | [C-10](#c-10) | The usage ledger has no named writer | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-11](#c-11) | No traceability from the draft schema to the code | Before building the area | S | Fixed in documents | `17c3964` |
-| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Needs the owner | `cb49e54` |
+| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `3bbc57f` |
 | [C-13](#c-13) | Task history is published to Git as one file per change | Before building the area | S to keep, L to change | Fixed in documents | `17c3964` |
 | [C-14](#c-14) | Process and standard inheritance is stored but not applied in v1 | Before building the area | M | Fixed in documents | `11464ce` |
 | [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `cb49e54` |
@@ -103,13 +103,24 @@ Implementation was paused on 2026-11-17 while the architecture was reviewed. Bef
 
 **How the decisions reach an agent.** `AGENTS.md` sends every agent to the [documentation authority map](documentation-authority.md), which lists the ADRs and this plan. Each affected design, ADR and spec carries a dated note at the place an agent would read the old rule. [FEATURES.md](../FEATURES.md) has a row per decision.
 
-**Decided in part.** [ADR-0019](../adr/0019-office-coded-task-numbers.md): task references are minted by the creating office with a letter code (`T-B37`), for tasks only. Whether an office counts in one sequence or per project is still open, so the numbering contract is not yet rewritten. Do not build HQ allocation or a pending-number state for tasks, and do not build the office counters until that point is settled.
+**Task numbers.** [ADR-0019](../adr/0019-office-coded-task-numbers.md), accepted and in the data contract: a task reference is minted by the creating office, one sequence per office, with a letter code (`T-B37`), for tasks only. Build that; do not build HQ allocation or a pending-number state for tasks.
 
-**Owner requirements received in the review.** [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), questions from an agent to a person, and [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), the session view. REQ-04 has four points waiting for the owner; REQ-05 can start with its proof of concept.
+**IDs.** Every ID is a UUIDv7 ([identity contract](organization-data/06-identity-and-numbering.md)).
+
+**Owner requirements received in the review.** [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), questions from an agent to a person, and [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), the session view. There are no external channels; questions are rendered in the product's own chat. REQ-05 can start with its proof of concept.
+
+## Questions still with the owner
+
+1. May creating a task use the fast acknowledgement of ADR-0014? Recommended yes (C-12).
+2. REQ-04: the product's own Svelte components instead of the React libraries it names? Recommended yes.
+3. REQ-04: an ask to a person returns at once and the answer wakes the agent, instead of holding a turn for hours? Recommended yes.
+4. REQ-04: is a default value preselected, taken when nobody answers by the deadline, or both?
+5. Is the development team's previously installed command-line tool and its message queue carried over (AGENTS.md, ADR-0003 cutover), or dropped under the pre-release rule?
+6. Two readings to confirm: an empty milestone counts as not done; a cancelled task counts as done (C-02).
 
 ## Order of work
 
-1. **Before code.** The owner settles how an office counts tasks (C-12) and the four points in REQ-04. Short designs: Linux admission, credential provider and confinement (B-09); the vendor sign-in spike for the private agent home (A-08); the open questions in the Git design (A-11); the envelope flush discipline (ADR-0014).
+1. **Before code.** The owner's remaining questions above. Short designs: Linux admission, credential provider and confinement (B-09); the vendor sign-in spike for the private agent home (A-08); the open questions in the Git design (A-11); the envelope flush discipline (ADR-0014).
 2. **Storage rebuild.** B-01 with B-13: rebuild the office store against the selected files and tables, behind engine-independent contracts. This is the largest piece and needs its own plan. B-02, B-03 and B-05 land with it, since they remove shapes the rebuild would otherwise carry.
 3. **Host increment.** B-06 (one launch contract), then B-07 (grants), B-08 (channel limit), B-10 (work reads) and F-01 (stored sessions). This opens the web process.
 4. **Setup.** A-09 (create payload), E-01 (no database encryption, wrapped keys), then `agentic-org setup` on macOS and Linux (B-09).
@@ -238,8 +249,8 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** No in-browser takeover in v1; a person takes over an agent from a local terminal.
 - **Impact of applying it:** Move the PTY-attach section of the session design under a post-v1 heading. No code exists for it.
 - **Owner note:** "there is not browser terminal that is just read only, but I will send you two documents on how you that i visualized, the agent interaction is via chat"
-- **Applied in `cb49e54`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are now in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components. Each spec ends with a section on how it fits the architecture. Taking over an agent is a local command that starts the vendor tool in the person's own terminal; the office carries no terminal data.
-- **Still to do:** Four points in REQ-04 need your answer: are external channels (Slack, Teams, WhatsApp) v1 or v2; the web libraries it names are React and the product is Svelte, so I propose our own components; an ask to a person should not hold an agent's turn open for hours; and whether a default value is preselected, taken when nobody answers by the deadline, or both.
+- **Applied in `3bbc57f`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components in the product's own chat. As you said, there are no external channels, so that part of REQ-04 and the Vercel Chat SDK are not built. Taking over an agent is a local command that starts the vendor tool in the person's own terminal; the office carries no terminal data.
+- **Still to do:** Three points in REQ-04 need your answer: the web libraries it names are React and the product is Svelte, so I propose our own components; an ask to a person should not hold an agent's turn open for hours; and whether a default value is preselected, taken when nobody answers by the deadline, or both.
 
 ### A-08
 
@@ -419,8 +430,8 @@ Priority: Before building the area · Size: S · State: Decided; code pending
 - **What we lose:** The standard UUID format, which some external tools expect. Switching later would mean two ID formats forever, since IDs are never rewritten.
 - **Impact of applying it:** Either a one-line contract change (keep ULID) or a minting change plus a restated receipt rule (switch). Decide before the first real install.
 - **Owner note:** "sure lets do it"
-- **Applied in `cb49e54`:** The contract says ULID everywhere. A correction to what I told you: I said this matched the code, and that is only mostly true. Most of the code mints ULIDs, but the newer HQ-creation path in the host mints UUIDv7 for organization and office IDs, with its own profile in the launch contract. The documents now say so.
-- **Still to do:** Code: the host's HQ-creation path changes to ULIDs and the separate ID profile is removed (FC-142). If you would prefer UUIDv7 everywhere instead, say so now; it is the same amount of work in the other direction.
+- **Applied in `3bbc57f`:** Your decision: use whatever is the industry standard. That is UUIDv7 (RFC 9562), so every ID the product mints is a UUIDv7, written as lowercase hyphenated text. This reverses the ULID choice I had first recommended on a premise that was only partly true. The identity contract states the rule and the reason; example IDs in the documents are UUID-shaped; SQLite stores them as text and a database with a native UUID type uses that.
+- **Still to do:** Code: most of it mints ULIDs today and changes with the store rebuild; the newer HQ-creation path already mints UUIDv7 (FC-142).
 
 ### B-05
 
@@ -776,7 +787,7 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 
 **Offline offices use a pending number; the rule for agents is not written down**
 
-Priority: Before building the area · Size: S · State: Needs the owner
+Priority: Before building the area · Size: S · State: Decided; code pending
 
 - **Contract says:** Any office creates tasks and features offline with `number: null`. "An office must not independently increment its replicated counter." *(06-identity-and-numbering.md line 36; organization-data/README)*
 - **But:** The owner asked whether remote offices get number allocations to work offline, and how a model avoids losing a reference when a placeholder is replaced. The specs show "Pending number" and a copyable ID for people; nothing states what agent tools must accept and print. *(work-items-ux.md WORK-8; tasks-projects-docs.md line 86)*
@@ -787,8 +798,8 @@ Priority: Before building the area · Size: S · State: Needs the owner
 - **What we lose:** Readable numbers while offline. People and agents use the long permanent ID until HQ is reachable.
 - **Impact of applying it:** One rule in document 06 and matching behaviour in `agent-os` when typed tasks are built. Raised by the owner's review of the overview.
 - **Owner note:** "the problem problem I have with this is if an agent is creating a new task in a remote office it needs to align with that hq first, which will be slow, we if we implement a task convention per office that would go away, the problem is agents will reference the task I key or project key whatever, right? Projects are fine to be centralized at HQ level. But tasks aren't right because we want them to be incredibly fast so the problem  it's how long that scene could take for creating or updating or managing tasks. I don't want to go to HQ, that's too long of a round trip. So we need to think it's smarter and be efficient. we might just add the office index in front of the task id, all tasks start with T-{OFFICEINDEX}{TASKID}, so the first task would immediately start with T-11, and on the second office it would be T-21, etc, this is incredibly problematic issue. I need you to once you get to this point to do some extra analysis on this and how to get this properly implemented. Use the sub-agent for this.   For Everything the agents need to do a lot on a day-to-day, they should be VERY fast, things that they don't happen very often, like creating milestones, creating releases, creating you know projects that can wait for HQ sync, but tasks and things that happen that can happen inline and offline, that has to happen incredibly fast."
-- **Applied in `cb49e54`:** Recorded as ADR-0019, accepted in part. You accepted the letter: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. It applies to tasks only, as you said; features and everything else keep their HQ numbers. Each office mints the number itself, so creating a task never waits for HQ, online or offline. Document 06 carries a note telling agents not to build HQ allocation for tasks.
-- **Needs the owner:** One point to settle, explained in the ADR with a table. Today every project counts its own tasks, which is why references are written `P-8/T-42`. With office letters: (A) each office has one running count for all its tasks, so `T-B37` is unique alone and never needs the project in front; or (B) each office counts per project, so you get `P-8/T-B1` and `P-9/T-B1`. Your example had no project in front, which is A, and A is what I recommend. Second open point: may creating a task use the fast acknowledgement? Recommended yes.
+- **Applied in `3bbc57f`:** Decided and written into the data contract. A task reference is `T-`, the creating office's letter and a number: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. Each office counts all its tasks in one sequence, as you settled ("by office, keep it simple"), so a reference is unique in the organization on its own and never needs a project in front. The office numbers the task itself, so creating a task never waits for HQ and a task never shows "Pending number". Tasks only: features and everything else keep their HQ numbers. Commands that need a project take it from the agent's context and require it otherwise, as you described. The draft schema has the office codes and counters, with tests, and the examples in the specs now read `T-A42`.
+- **Still to do:** Code (FC-142): office codes and counters, the reference parser in `agent-os`, the default project. One answer from you: may creating a task use the fast acknowledgement? Recommended yes.
 
 ### C-13
 
