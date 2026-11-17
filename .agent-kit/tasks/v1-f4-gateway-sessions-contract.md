@@ -77,3 +77,10 @@ cookie/proof → host session-handle mapping on its admitted control connection.
 - Added tests: only the admitted GatewayConnection is gateway-kind; the write side of the transfer end is shut down before
   handoff; handoff descriptors are exact and in order; web decodes exactly two descriptors; one sign-in lockout through the
   gateway (HEAD per-socket login_lockout). This replaces the conditional B1-06 throttle deferral.
+
+## Amendment 3 (2026-11-17, from Sol review run cfde0832 R1; scope correction recorded by the contract owner)
+- The Outcome sentence "composed by `agentic-org serve`" is corrected. F4 composes the gateway into the HOST (`Host` supervisor plus
+  `startup_gateway`) and proves it through the test-support/bootstrap instance path (real host spawns the real web binary: the
+  real-process test). Production `agentic-org serve` → `Host::start_instance` composition is owned by U1 (ON-01 D2, U1-A3; already
+  implemented on worktree-u1-onboarding 7423b855/12dfe5db) because it requires the U1 setup/registry/launcher closure. F4 makes no
+  claim that `agentic-org serve` starts a gateway; FEATURES FC-013 already states production launcher = U1.

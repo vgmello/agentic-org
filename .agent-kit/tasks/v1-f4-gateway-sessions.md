@@ -70,3 +70,8 @@
   The lead fixed the follow-up found by the R2 writer (web reap didn't end host sessions): 00c93089, RED 0 / GREEN 2 host ends.
   Linux cross-target clippy is not runnable locally (no C cross compiler); R1 is verified by code reading plus the macOS regression test.
   Next: gates-3, then a new review run (review-2), the same journal.
+- Review run 6e6241e4: BLOCKED (runner rejects absolute finding paths) with R1 (blocking host.end in reap; a regression from the lead fix
+  00c93089) and R2 (Running before HTTP init). Fixed per GW-01 r4: be8adfb9, 825b68de. Gates-4 at 825b68de PASS 3219/0/9.
+- Review run cfde0832: R1 P1 contract/scope mismatch ("composed by agentic-org serve" vs U1-owned launcher) → contract Amendment 3 (scope
+  correction, no code). The acceptance contract changed (Amendments 1-3) → journal f3e39563 closed ABANDONED (reasons + observation); new journal
+  .agent-kit/logs/task-metrics/cd0f7eb53d644d06837bb16165fd0382.json (registered late). Next: gates-5 → review run 4.
