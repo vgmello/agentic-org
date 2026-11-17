@@ -76,3 +76,4 @@
   correction, no code). The acceptance contract changed (Amendments 1-3) → journal f3e39563 closed ABANDONED (reasons + observation); new journal
   .agent-kit/logs/task-metrics/cd0f7eb53d644d06837bb16165fd0382.json (registered late). Next: gates-5 → review run 4.
 - Final review 1 (split A/B/C, run 025e8b36) CHANGES_REQUIRED → fixes 163bbcef A1, 0d7f7e7d A2, 2001c033 A3, db63a2be B1 (gateway budget 992 = GATEWAY_SESSIONS; LOCAL_SESSION_RESERVE 32; supersedes the 1024 in contract AC/Amendment text — recorded here to keep the contract SHA stable). Deferred P3: per-call deadline counts queue time (pre-existing actor behavior).
+- Final review 2 (split, run 290bc190) CHANGES_REQUIRED (P3 only) → f0f59acf C2, 6cee0eb9 B1 (consecutive failures; stable 60 s), 57ada669 A1 (claimed jobs: queued expiry never closes), a49e1cc2 A2 (abandoned sign-in binds nothing; CAPACITY_RECHECK 2 s). Residual: microsecond insert/reply race leaves a binding until idle expiry.
