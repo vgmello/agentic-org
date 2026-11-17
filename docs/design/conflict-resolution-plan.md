@@ -24,7 +24,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [A-04](#a-04) | Moving an agent between machines: supported in one contract, unsupported in another | Before building the area | S | Fixed in documents | `4b7e893` |
 | [A-05](#a-05) | Three hash canonicalizations with no registry | Before building the area | S | Fixed in documents | `c71e33b` |
 | [A-06](#a-06) | Messaging has a data model and no named runtime owner | Before building the area | S | Fixed in documents | `7a552bf` |
-| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `3bbc57f` |
+| [A-07](#a-07) | Human takeover: browser attaches to the agent terminal, or local CLI only | Before building the area | S | Fixed in documents | `5b92fb4` |
 | [A-08](#a-08) | Agent credentials: the user's own vendor sign-in, or office-local bindings | Before building the area | S | Decided; code pending | `cb49e54` |
 | [A-09](#a-09) | Create organization: the published API takes a name, provisioning needs four more fields | Decide first | M | Decided; code pending | `cb49e54` |
 | [A-10](#a-10) | Is GitHub part of v1 | Before building the area | S | Fixed in documents | `817c4c2` |
@@ -45,7 +45,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [B-12](#b-12) | Setup is described in the present tense and refuses in the code | Cleanup | S | Fixed in documents | `11464ce` |
 | [B-13](#b-13) | The storage engine should stay replaceable; three files and some contract wording tie it to SQLite | Before building the area | M | Decided; code pending | `cb49e54` |
 | [C-01](#c-01) | Draft SQL allows an empty number on records only HQ creates | Before building the area | S | Fixed in documents | `17c3964` |
-| [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Fixed in documents | `cb49e54` |
+| [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Fixed in documents | `5b92fb4` |
 | [C-03](#c-03) | Employee state is spread over three fields and two documents | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-04](#c-04) | The owner is represented three different ways | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-05](#c-05) | The set depends on an Instance and never defines one | Before building the area | S | Fixed in documents | `17c3964` |
@@ -55,10 +55,10 @@ The interactive register with per-entry status is the companion view. This file 
 | [C-09](#c-09) | Status labels and revisions differ across the set | Cleanup | S | Fixed in documents | `17c3964` |
 | [C-10](#c-10) | The usage ledger has no named writer | Before building the area | S | Fixed in documents | `17c3964` |
 | [C-11](#c-11) | No traceability from the draft schema to the code | Before building the area | S | Fixed in documents | `17c3964` |
-| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `3bbc57f` |
+| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Decided; code pending | `5b92fb4` |
 | [C-13](#c-13) | Task history is published to Git as one file per change | Before building the area | S to keep, L to change | Fixed in documents | `17c3964` |
 | [C-14](#c-14) | Process and standard inheritance is stored but not applied in v1 | Before building the area | M | Fixed in documents | `11464ce` |
-| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `cb49e54` |
+| [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Fixed in documents | `e840ea3` |
 | [D-02](#d-02) | Named owners and approval gates that no longer exist | Cleanup | S | Fixed in documents | `e840ea3` |
 | [D-03](#d-03) | Crates described as absent that exist | Cleanup | S | Fixed in documents | `11464ce` |
 | [D-04](#d-04) | ADR-0004 is referenced and does not exist | Cleanup | S | Fixed in documents | `11464ce` |
@@ -107,16 +107,15 @@ Implementation was paused on 2026-11-17 while the architecture was reviewed. Bef
 
 **IDs.** Every ID is a UUIDv7 ([identity contract](organization-data/06-identity-and-numbering.md)).
 
-**Owner requirements received in the review.** [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), questions from an agent to a person, and [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), the session view. There are no external channels; questions are rendered in the product's own chat. REQ-05 can start with its proof of concept.
+**Asking and waiting.** [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md): an ask waits a bounded time and may be marked required; a required ask left unanswered suspends the agent, and the answer resumes it in the same session (FC-166).
+
+**Owner requirements received in the review.** [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), questions from an agent to a person, and [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), the session view. There are no external channels; questions are rendered in the product's own chat with shadcn-svelte and Bits UI components. REQ-05 can start with its proof of concept.
 
 ## Questions still with the owner
 
-1. May creating a task use the fast acknowledgement of ADR-0014? Recommended yes (C-12).
-2. REQ-04: the product's own Svelte components instead of the React libraries it names? Recommended yes.
-3. REQ-04: an ask to a person returns at once and the answer wakes the agent, instead of holding a turn for hours? Recommended yes.
-4. REQ-04: is a default value preselected, taken when nobody answers by the deadline, or both?
-5. Is the development team's previously installed command-line tool and its message queue carried over (AGENTS.md, ADR-0003 cutover), or dropped under the pre-release rule?
-6. Two readings to confirm: an empty milestone counts as not done; a cancelled task counts as done (C-02).
+1. REQ-04: is a default value preselected, taken when nobody answers by the deadline, or both?
+2. Is the development team's previously installed command-line tool and its message queue carried over (AGENTS.md, ADR-0003 cutover), or dropped under the pre-release rule? Recommended: drop.
+3. The setting values proposed in ADR-0020 (wait 10 minutes, grace 2 minutes).
 
 ## Order of work
 
@@ -249,8 +248,8 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** No in-browser takeover in v1; a person takes over an agent from a local terminal.
 - **Impact of applying it:** Move the PTY-attach section of the session design under a post-v1 heading. No code exists for it.
 - **Owner note:** "there is not browser terminal that is just read only, but I will send you two documents on how you that i visualized, the agent interaction is via chat"
-- **Applied in `3bbc57f`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components in the product's own chat. As you said, there are no external channels, so that part of REQ-04 and the Vercel Chat SDK are not built. Taking over an agent is a local command that starts the vendor tool in the person's own terminal; the office carries no terminal data.
-- **Still to do:** Three points in REQ-04 need your answer: the web libraries it names are React and the product is Svelte, so I propose our own components; an ask to a person should not hold an agent's turn open for hours; and whether a default value is preselected, taken when nobody answers by the deadline, or both.
+- **Applied in `5b92fb4`:** Recorded as ADR-0004: the office drives every agent headless, people interact through chat, the browser shows a session read-only, and there is no terminal in the browser. Your two documents are in the repository as specs. REQ-05 is the session view: a console decoupled from the agent's process, built by parsing the agent tool's conversation files (Claude and Codex), with toggles for tool calls and file-based visualizations, starting with a proof of concept. REQ-04 is questions from an agent to a person: one `ask_user` schema rendered as choice, yes/no or free-text components, built with shadcn-svelte and Bits UI (both already in the UI) in the product's own chat. No external channels and no React libraries, as you said. How long an agent waits is its own record, ADR-0020: an ask waits a bounded time; a required ask left unanswered stops the agent after telling it, and the answer starts it again in the same session.
+- **Still to do:** One point in REQ-04 needs your answer: is a default value preselected, taken when nobody answers by the deadline, or both?
 
 ### A-08
 
@@ -628,8 +627,7 @@ Priority: Before building the area · Size: S · State: Fixed in documents
 - **What we lose:** Free-form statuses. Adding a value becomes a contract change.
 - **Impact of applying it:** A value table in document 03 and CHECK constraints. No engine is implied.
 - **Owner note:** "we will need to mark stasks and release and milestones as done, the releation and milestones could be the agregation of their assigned tasks, it dont not need to have an ACTUAL status but if all the tasks under the milestone are done, then the milestone is done. And then if all milestones under the release is done, then the release is done. And then if there's no milestones, which is also possible, then all the tasks on the release is done, then the release is done. But we just yes, but we do need a first class citizen field to indicate when the task is done whatever that is. It could be the status or it could be another field. If the status then I think there would be need a num. So to keep things flexible, we can just have markers done and then honestly, let's just simplify this and create any numb for the test status on the things that we we we know what we need to do like normal inum for the statuses those are supposed to be well known at this point let's create the statuses the enum the last value in the enum is done if it's there that's it"
-- **Applied in `cb49e54`:** Task status is a closed list: `todo`, `in_progress`, `blocked`, `done`. Milestones and releases have no status column. Two views compute completion as you described: a milestone is done when all its tasks are done; a release is done when all its milestones are done, or, with no milestones, when all its tasks are done. They also return task and done counts for progress bars. Tests cover each case.
-- **Still to do:** Two readings of mine to confirm. An empty milestone or release counts as not done, so a release with one finished milestone and one empty milestone is not done. A task closed without being completed (cancelled, duplicate) is `done` with a reason, and counts as done.
+- **Applied in `5b92fb4`:** Task status is a closed list: `todo`, `in_progress`, `blocked`, `cancelled`, `done`. Milestones and releases have no status column. Two views compute completion as you described: a milestone is done when all its tasks are finished; a release is done when all its milestones are done, or, with no milestones, when all its tasks are finished. As you confirmed, an empty milestone is not done, and a cancelled task counts as done. The views also return task and finished counts for progress bars. Tests cover each case.
 
 ### C-03
 
@@ -798,8 +796,8 @@ Priority: Before building the area · Size: S · State: Decided; code pending
 - **What we lose:** Readable numbers while offline. People and agents use the long permanent ID until HQ is reachable.
 - **Impact of applying it:** One rule in document 06 and matching behaviour in `agent-os` when typed tasks are built. Raised by the owner's review of the overview.
 - **Owner note:** "the problem problem I have with this is if an agent is creating a new task in a remote office it needs to align with that hq first, which will be slow, we if we implement a task convention per office that would go away, the problem is agents will reference the task I key or project key whatever, right? Projects are fine to be centralized at HQ level. But tasks aren't right because we want them to be incredibly fast so the problem  it's how long that scene could take for creating or updating or managing tasks. I don't want to go to HQ, that's too long of a round trip. So we need to think it's smarter and be efficient. we might just add the office index in front of the task id, all tasks start with T-{OFFICEINDEX}{TASKID}, so the first task would immediately start with T-11, and on the second office it would be T-21, etc, this is incredibly problematic issue. I need you to once you get to this point to do some extra analysis on this and how to get this properly implemented. Use the sub-agent for this.   For Everything the agents need to do a lot on a day-to-day, they should be VERY fast, things that they don't happen very often, like creating milestones, creating releases, creating you know projects that can wait for HQ sync, but tasks and things that happen that can happen inline and offline, that has to happen incredibly fast."
-- **Applied in `3bbc57f`:** Decided and written into the data contract. A task reference is `T-`, the creating office's letter and a number: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. Each office counts all its tasks in one sequence, as you settled ("by office, keep it simple"), so a reference is unique in the organization on its own and never needs a project in front. The office numbers the task itself, so creating a task never waits for HQ and a task never shows "Pending number". Tasks only: features and everything else keep their HQ numbers. Commands that need a project take it from the agent's context and require it otherwise, as you described. The draft schema has the office codes and counters, with tests, and the examples in the specs now read `T-A42`.
-- **Still to do:** Code (FC-142): office codes and counters, the reference parser in `agent-os`, the default project. One answer from you: may creating a task use the fast acknowledgement? Recommended yes.
+- **Applied in `5b92fb4`:** Decided and written into the data contract. A task reference is `T-`, the creating office's letter and a number: HQ's first task is `T-A1`, the second office's thirty-seventh is `T-B37`. Each office counts all its tasks in one sequence, as you settled ("by office, keep it simple"), so a reference is unique in the organization on its own and never needs a project in front. The office numbers the task itself, so creating a task never waits for HQ and a task never shows "Pending number". Creating a task uses the fast acknowledgement, as you decided. Tasks only: features and everything else keep their HQ numbers. Commands that need a project take it from the agent's context and require it otherwise. The draft schema has the office codes and counters, with tests.
+- **Still to do:** Code (FC-142): office codes and counters, the reference parser in `agent-os`, the default project.
 
 ### C-13
 
@@ -855,8 +853,8 @@ Priority: Cleanup · Size: S · State: Fixed in documents
 - **What we lose:** Nothing.
 - **Impact of applying it:** Text sweep. Keep `org-agent` only where it means the installed Phase A tool.
 - **Owner note:** "There is no such thing called org agent, it's org or is agent OS for everything. Start doing the replacements on the on the names. Just get it replaced. There's no more let's remove the old names all like everywhere."
-- **Applied in `cb49e54`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. Research notes and dated verification records were left as written, since they are records of what was observed.
-- **Still to do:** One thing only you can settle. AGENTS.md still tells agents to leave a previously installed command-line tool and its message queue alone, and ADR-0003 has a cutover procedure for carrying that queue over. You said nothing old is kept. If that queue can be dropped, I remove the rule, the cutover section and three structures in the draft schema that exist only for it.
+- **Applied in `e840ea3`:** Replaced across the design documents, ADRs and specs: `org-agent` is `agent-os` and `org-server` is `agentic-org-office`. Research notes and dated verification records were left as written, since they are records of what was observed.
+- **Still to do:** One decision for you, with my suggestion. Before this product existed in its current form, the development team's agents talked to each other through an earlier command-line tool installed on the development machine, which keeps its messages in a folder there. AGENTS.md still tells agents not to touch that tool or folder, and ADR-0003 has a procedure for carrying those old messages into the new product. That team is offline and those messages are only old coordination chatter. My suggestion: drop the carry-over. I would remove the rule from AGENTS.md, the procedure from ADR-0003 and three structures in the draft schema that exist only for it. The files on that machine are not touched either way. Say yes and I do it.
 
 ### D-02
 

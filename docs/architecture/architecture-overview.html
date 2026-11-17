@@ -384,6 +384,14 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <p>With both, a send lands well inside 1 ms. With only the first, a Mac is bounded by process start at roughly 2 to 3 ms. For scale: one model call takes hundreds of milliseconds to seconds, so this matters for load with many agents more than for what one agent feels.</p>
   <p>Two smaller facts. The binary built here is 1.56 MB on Linux, above the 1 MB target; the target was written for a Mac build and I could not check that. The speed decision is ADR-0014 and register entry F-02.</p>
   <p><strong>Send and ask (decided 2026-11-17, register entry E-02).</strong> A plain send answers in single-digit milliseconds in every topology, also when the recipient is in another office. The sender's office saves the message locally and answers. Relaying it through HQ to the other office happens afterwards and is retried until it arrives or the message expires; a failure becomes a delivery notice, never a slower send. An ask is the one operation that holds its caller. It always has a deadline, the sender may say how long a reply is expected to take, and it returns a timeout when the deadline passes.</p>
+  <p><strong>Asking and waiting (decided 2026-11-17, ADR-0020).</strong> When an agent asks a person or another agent, it waits for a bounded time: a setting, 10 minutes in your example, the same for both. The agent says whether the answer is <em>required</em>, meaning it cannot continue without it.</p>
+  <ul>
+    <li><strong>Answered in time:</strong> the agent gets the answer and carries on.</li>
+    <li><strong>Not answered, not required:</strong> the ask returns a timeout. The agent decides: carry on, ask someone else, or declare that it does need this answer.</li>
+    <li><strong>Not answered, required:</strong> the system tells the agent to finish or stop its background work, then shuts the agent down. Its context is on disk. The question stays open.</li>
+    <li><strong>When the answer arrives:</strong> the system starts the agent again in the same session and hands it the answer. For the person, the agent was simply idle until they replied.</li>
+  </ul>
+  <p>A stopped agent holds no model turn, no subscription slot and spends nothing. The agent is always told before it is stopped and given a short grace period; anything still running after that is stopped and the agent is told on resume. People see in their inbox which questions are holding an agent up.</p>
 
   <h3>How an agent gets its model</h3>
   <ol>
@@ -585,7 +593,7 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
     <li><strong>Tasks only.</strong> Teams, projects, features, releases and milestones are created less often and keep their numbers from HQ. A feature created while HQ is unreachable is usable by its permanent ID and shows "Pending number" until HQ registers it.</li>
   </ul>
   <p><strong>Which project a command means.</strong> Finding a task by its reference never needs a project. Commands that do need one, such as creating or listing tasks, take it from the agent's context: <code>agent-os</code> knows the project of the task the agent is working on, or the project the agent is assigned to. If the agent has no project, or means another one, it must say which.</p>
-  <div class="note"><p><b>One point left.</b> May creating a task use the fast acknowledgement (answer once the office's database has it, flush to the drive just after)? With office-made numbers it is safe for numbering. I recommend yes.</p></div>
+  <p><strong>Creating a task is fast.</strong> Decided 2026-11-17: creating a task uses the fast acknowledgement. The office answers once its database has the task and flushes to the drive just after. That is safe for numbering, because the durable mark prevents a number from being given twice.</p>
 </section>
 
 <section id="authority">
@@ -665,9 +673,10 @@ footer.doc-foot { margin-top: 56px; padding-top: 18px; border-top: 1px solid var
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Decision</th><th>What is left</th><th>Entry</th></tr></thead>
     <tbody>
-      <tr><td>Task numbers</td><td>Minted by the creating office, one sequence per office, with a letter: <code>T-B37</code>. Tasks only. Now in the data contract.</td><td>Code. <strong>One answer from you:</strong> may creating a task use the fast acknowledgement?</td><td class="k">C-12</td></tr>
+      <tr><td>Task numbers</td><td>Minted by the creating office, one sequence per office, with a letter: <code>T-B37</code>. Tasks only. Creating a task uses the fast acknowledgement. In the data contract.</td><td>Code.</td><td class="k">C-12</td></tr>
       <tr><td>IDs</td><td>UUIDv7 everywhere, the published standard.</td><td>Code: most of it mints ULIDs today.</td><td class="k">B-04</td></tr>
-      <tr><td>Session view and questions</td><td>Your two requirement documents are in the repository: a read-only console built from the agent tool's conversation files (REQ-05), and structured questions rendered as choice, yes/no or free-text components in the product's own chat (REQ-04). There are no external channels.</td><td><strong>Three answers from you:</strong> our own Svelte components instead of the React libraries named; an ask to a person must not hold an agent's turn for hours; whether a default value is preselected, used when nobody answers, or both.</td><td class="k">A-07</td></tr>
+      <tr><td>Session view and questions</td><td>Your two requirement documents are in the repository: a read-only console built from the agent tool's conversation files (REQ-05), and structured questions rendered as choice, yes/no or free-text components (REQ-04), built with shadcn-svelte and Bits UI in the product's own chat. No external channels, no React.</td><td>Code. <strong>One answer from you:</strong> is a default value preselected, used when nobody answers, or both?</td><td class="k">A-07</td></tr>
+      <tr><td>Asking and waiting</td><td>An ask waits a bounded time. A required ask left unanswered stops the agent, after telling it, and the answer starts it again in the same session.</td><td>Code, with the agent launch path.</td><td class="k">ADR-0020</td></tr>
       <tr><td>Storage</td><td>Rebuild the store against the selected files and tables; no migration of the old tables. Keep the database replaceable.</td><td>Code. The largest piece of v1; needs its own plan.</td><td class="k">B-01, B-13</td></tr>
       <tr><td>Host and web</td><td>One launch contract, per-person grants instead of the app token, seven web channels, host serves work reads, stored sessions.</td><td>Code.</td><td class="k">B-06 to B-08, B-10, F-01</td></tr>
       <tr><td>Platforms</td><td>macOS and Linux, including an office in a container.</td><td>Three short designs, then code.</td><td class="k">B-09</td></tr>

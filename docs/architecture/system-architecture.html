@@ -695,6 +695,7 @@ offices/
     </div>
   </div>
   <div class="note"><p><b>Send and ask (ADR-0014, decided 2026-11-17).</b> A plain send answers once the sender's office has saved it locally, in single-digit milliseconds in every topology; relaying to another office happens afterwards and is retried. An ask holds its caller, always has a deadline, and returns a timeout when it passes. Each messaging file has one writing office: a message is written once by the sender's office, and each employee's read state, reactions and preferences live in that employee's own files.</p></div>
+  <div class="note"><p><b>Asking and waiting (ADR-0020, decided 2026-11-17).</b> An ask waits for a bounded time, an organization setting that is the same for a person or an agent, and carries <code>required</code>. Not required and unanswered: the ask returns a timeout and the agent decides. Required and unanswered: the office tells the agent to wind down its background work, gives it a grace period, stops its process and releases its turn permit and subscription slot; the question stays open. When the answer is committed, the office resumes the same session with the answer as the next input, through the normal start checks. The office keeps a durable record of each suspended agent, so a restart loses nothing.</p></div>
   <div class="note warn"><p><b>One instruction still stands in the repository.</b> <code>AGENTS.md</code> tells agents not to overwrite a previously installed command-line tool or move its message queue while <code>agent-os</code> is built. It was written for the development team's own machine. It has not been changed in this review.</p></div>
 </section>
 
@@ -858,6 +859,7 @@ offices/
     <thead><tr><th>Topic</th><th>Requirement</th><th>Code today</th><th>Recorded in</th></tr></thead>
     <tbody>
       <tr><td>Storage</td><td>Files are the source; rebuild the store against the selected contract.</td><td>Two encrypted databases with older tables are the source.</td><td class="k">B-01, organization data</td></tr>
+      <tr><td>Asking and waiting</td><td>Bounded wait; a required ask suspends the agent and the answer resumes it.</td><td>An ask blocks with a deadline; nothing suspends or resumes an agent.</td><td class="k">ADR-0020</td></tr>
       <tr><td>IDs and task numbers</td><td>UUIDv7 everywhere. Task references minted by the creating office, <code>T-B37</code>.</td><td>ULIDs in most of the code; per-project task counters at HQ.</td><td class="k">B-04, C-12, ADR-0019</td></tr>
       <tr><td>Storage engine</td><td>Only store adapters know the database; PostgreSQL must be possible.</td><td>One concrete store; two files use SQL outside it. Messaging and replication already have engine-independent tests.</td><td class="k">B-13, ADR-0018</td></tr>
       <tr><td>Launch contract</td><td>One contract, the verified rendezvous; no older form.</td><td>Host and worker implement both forms; the host uses the rendezvous only for a registered, protected instance.</td><td class="k">B-06, host boundary design</td></tr>
@@ -878,8 +880,8 @@ offices/
   <div class="tbl wide"><table>
     <thead><tr><th>Topic</th><th>Decided</th><th>What is open</th><th>Recorded in</th></tr></thead>
     <tbody>
-      <tr><td>Fast acknowledgement for creating a task</td><td>Task numbers are decided and in the contract: minted by the creating office, one sequence per office.</td><td>Still open: may creating a task answer before the drive flush? Recommended yes.</td><td class="k">C-12, ADR-0019</td></tr>
-      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components in the product's own chat (REQ-04). There are no external channels.</td><td>Still open: own components instead of the React libraries named; an ask to a person must not hold a turn for hours; what a default value does.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>Questions to people</td><td>Agents ask through one structured schema, rendered as choice, yes/no or free-text components built with shadcn-svelte and Bits UI in the product's own chat (REQ-04). No external channels.</td><td>Still open: whether a default value is preselected, used when nobody answers, or both.</td><td class="k">A-07, REQ-04</td></tr>
+      <tr><td>The old message queue</td><td>Nothing old is kept before v1 ships.</td><td>Still open: whether the development team's earlier command-line tool and its message queue are dropped. Recommended: drop.</td><td class="k">D-01</td></tr>
     </tbody>
   </table></div>
   <h3>Fixed in the documents</h3>

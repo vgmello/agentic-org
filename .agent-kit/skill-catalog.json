@@ -150,11 +150,11 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "332916ea1818c845b888c794158471ca738c66b6a9ab071eb63fd3a827dd0d61"
+      "sha256": "92db36e3eed628abb0622725aafb4fa20f0d82672f815b8e878e4b84ce7906b2"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "4a12effb20ea0809a77fbc325944cfd180803cf9fbdf898a7ba5c8471f484b7a"
+      "sha256": "832fea316d7e170bec44debed206976d59a3579c2522e8c22e0760db05f4c659"
     },
     {
       "path": "docs/design/project-structure.md",
