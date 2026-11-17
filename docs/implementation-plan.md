@@ -23,21 +23,24 @@ New here? Read [START-HERE](START-HERE.md) first.
 
 | Milestone | A person can | Increments |
 | --- | --- | --- |
-| M1 | Install the server, sign in, create the organization, and sign in from the command line | A1 to A5 |
-| M2 | Add people and teams, give the second engineer an account, and run the product in a Linux container | B1, B2, A6, A7, U1 |
-| M3 | Create, assign and follow tasks, in the browser and with `agent-os` | B3 to B5 |
-| M4 | Chat, and ask a question that waits for an answer | B6, B7 |
-| M5 | Hire an agent through HR that runs a task, asks questions and pushes a branch | C1 to C7 |
+| M1 | Install the server, register from the link setup prints, create the organization, and sign in from the command line | A1 to A5 |
+| M2 | Set up offices, projects, teams and people; give the second engineer an account; run the product in a Linux container | B1, B2, B3, O1, A6, U1, A7 |
+| M3 | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
+| M4 | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
+| M5 | Chat, and ask a question that waits for an answer | B6, B7, C6 |
 | Later | Costs and budgets, a second office, features and releases. All of it is v1 scope. | L1 to L10 |
 
-Track A is the way in: host, setup, web, sign-in. Track B is what people do once in: the
-office's storage and the domain on it. Track C is running agents. A and B start on the
-same day. C starts when M3 is usable.
+The order is the owner's (2026-11-17): the organization, its offices, projects, teams
+and people first, then agents, hired through HR. Most of M2 and the hire flow are
+create, read, update and delete on records the data contract already defines.
 
-**M1 to M4 is the point at which the team can move its own work into the product.** M5 is
-the point at which its agents work there too. An agent exists only as an employee of
-the organization: it is onboarded through HR and started by the office. Until M5 the
-product is used by people.
+Track A is the way in: host, setup, web, sign-in. Track B is the organization's data:
+the office's storage and the domain on it. Track C is agents. A and B start on the same
+day. C starts when M2 is usable; its spike (C1) and the proof of concept of the session
+view (C4) can start at once.
+
+An agent exists only as an employee of the organization: it is onboarded through HR
+and started by the office. People use the browser and the terminal.
 
 Two things to know about the order:
 
@@ -75,20 +78,22 @@ Two things to know about the order:
   used by `crates/org-office/src/store` and `crates/org-host/src/hostdb`.
 - **Done when:** the host starts and restarts an office with one launch form; the
   workspace has no SQLCipher dependency; ENC-1, ENC-5 and ENC-6 pass. ENC-3 is
-  finished in A2 and ENC-2 in A4, where an organization exists. ENC-4 is finished in C2 for the
+  finished in A2 and ENC-2 in A4, where an organization exists. ENC-4 is finished in C3 for the
   `same-user` mode and in L6 for `dedicated-user`.
 
-### A2 · Setup creates the instance and the first account
+### A2 · Setup creates the instance and a one-time registration link
 
-- **Outcome:** on a clean machine, `agentic-org setup` followed by `agentic-org serve`
-  gives a running instance with one account, the instance administrator. There is no
-  organization yet.
+- **Outcome:** on a clean machine, `agentic-org setup` gives a running instance and
+  prints a link. There is no account and no organization yet.
 - **Build:**
-  - Setup provisions the instance and its data root and registers the service.
-  - Setup creates the first account, which is an instance administrator.
+  - Setup provisions the instance and its data root, registers the service and starts
+    it.
+  - Setup asks for no username and no password. It prints one registration link to
+    the instance's own address. The link works once, expires, and is stored only as a
+    digest. A command on the server machine issues a new link, which cancels the
+    previous one.
   - Setup reports the state of disk encryption and the file permissions it set.
-  - Setup creates no organization and no office. An organization is created by a
-    signed-in administrator (A4).
+  - Setup creates no account, no organization and no office (A3, A4).
 - **Read:** [standalone server design](design/standalone-server.md),
   [installation and access UX](specs/server-installation-and-access-ux.md) (SRV criteria),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-3). Rows FC-011,
@@ -99,18 +104,23 @@ Two things to know about the order:
     `crates/org-host/src/bootstrap.rs` (the protected setup connection) exist and are
     reached only from tests.
   - `crates/org-host/src/hostdb` holds the account and registry storage and is unused
-    outside tests.
+    outside tests. `hostdb/first_account.rs` creates the first account from a typed
+    password, which the link replaces.
 - **Done when:** the SRV criteria for a fresh install pass on macOS; a second run of
-  setup changes nothing; ENC-3 passes.
+  setup changes nothing; a used or replaced link is refused; ENC-3 passes.
 - **Needs:** A1.
 
-### A3 · The web process and sign-in
+### A3 · The web process, registration and sign-in
 
-- **Outcome:** the administrator opens the address setup printed, signs in, and sees
-  the application shell. With no organization yet, it offers to create one.
+- **Outcome:** the person who ran setup opens the link, chooses a username and a
+  password, and is signed in as the instance administrator. With no organization yet,
+  the application offers to create one.
 - **Build:**
   - `agentic-org-web` is started by the host with a listener handed to it, serves the
     static UI and `/api/v1`, and confines itself before handling input.
+  - Registration through a one-time link: the page asks for a username and a
+    password, and the host creates the account. The account created from setup's link
+    is the instance administrator. No password is ever typed in a terminal.
   - Sign-in and sign-out. Sessions are stored at the host as digests, cached in the web
     process, and survive a restart of either.
   - Every request made for a person reaches the office with that person's principal and
@@ -134,8 +144,8 @@ Two things to know about the order:
     Sessions are digests kept in memory. These handlers answer only for a registered
     instance, and only the test entry registers one: the production entry serves
     `hello` and `instance.status`.
-- **Done when:** SES-1 to SES-7 and the SIGN criteria for first access, sign-in, sign-out
-  and expiry pass against a real instance, in a browser.
+- **Done when:** registration from the link works once and only once; SES-1 to SES-7
+  and the SIGN criteria for first access, sign-in, sign-out and expiry pass against a real instance, in a browser.
 - **Needs:** A2.
 
 ### A4 · Create the organization
@@ -143,17 +153,18 @@ Two things to know about the order:
 - **Outcome:** the signed-in administrator creates an organization in the browser and
   opens it. Whoever creates an organization is its owner.
 - **Build:**
-  - The create request carries the name, the slug, the remote organization repository,
-    the state branch and the first team.
+  - The create request carries the name, the slug, the remote organization repository
+    and the state branch. It asks for no team.
   - The host creates the organization together with its HQ office, through the
     existing protected creation path, and starts the office.
-  - The creator becomes a person in the organization, in its first team, and their
-    account owns the organization. Every account is tied to a person: from here on,
+  - Every employee sits in exactly one team, so creation makes one top-level team
+    named after the organization, without asking. The creator becomes a person in it,
+    and its lead, and their account owns the organization. Every account is tied to a person: from here on,
     what this account does in the organization carries that person's name.
-  - The built-in HR lead is created as an employee in the first team. It is part of the
+  - The built-in HR lead is created as an employee in the top-level team. It is part of the
     product: it appears and is addressed as an agent, but it is not kept running. It
-    runs only when called (C2), and the onboarding of a new agent is product code it
-    invokes (C3).
+    runs only when called, and the onboarding of a new agent is product code it
+    invokes (C2, C3).
   - The recovery code is released once, on the HQ machine.
   - Organization and office IDs are UUIDv7.
   - The UI's create flow talks to the real API.
@@ -174,7 +185,7 @@ Two things to know about the order:
     `hq_creation`. Keep the second, delete the first.
   - The UI flow runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`).
 - **Done when:** an organization created in the browser exists after a restart with its
-  owner as a person in the first team; its files are under `durable/state/`; the
+  owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
 - **Needs:** A3. A4 lands on the office store as it is. B1 then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
@@ -185,15 +196,17 @@ Two things to know about the order:
   instance under their own name. This is how the commands of B2, B4 and B5 are used
   from a terminal before the office starts any agent.
 - **Build:**
-  - Sign-in on the command line through the host's local socket. The session ends when
-    its connection closes.
+  - Sign-in on the command line through the host's local socket, approved in the
+    browser: the terminal prints a one-time link, and the person opens it where they
+    are signed in and approves. No password is typed in a terminal. The session ends
+    when its connection closes.
   - A person-started command names the instance and the office, or uses a saved context
     bound to those two IDs. With neither it fails and says how to select one.
   - Each call reaches the office with the person's principal and a host-issued grant,
     exactly as a browser request does, and is recorded under that person. This replaces
     the application token that A1 deletes.
   - Nothing here gives an agent a way in. An agent is an employee the office starts,
-    and it uses the binding of its run (C2).
+    and it uses the binding of its run (C3).
 - **Read:** [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 12 and 13 and
   "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
   [host boundary design](design/office-host-boundary.md),
@@ -208,7 +221,7 @@ Two things to know about the order:
 
 ---
 
-## M2 · People and teams
+## M2 · Offices, projects, teams and people
 
 ### B1 · The store foundation
 
@@ -268,18 +281,54 @@ Two things to know about the order:
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
 - **Needs:** B1, A5.
 
+### B3 · Projects, the minimum
+
+- **Outcome:** a person creates a project, and the project has its team.
+- **Build:** projects with their number and slug from HQ, the accountable team, and
+  contributing teams. Creating a project creates its team by default: a new team
+  named after the project, under the top-level team, accountable for it. Naming an
+  existing team instead stays possible. No features, releases or repositories yet.
+- **Read:** [project structure](design/organization-data/02-project-structure.md). Rows
+  FC-030, FC-038.
+- **Done when:** a project and its team exist after a restart, created from a terminal
+  and through `/api/v1`.
+- **Needs:** B2.
+
+### O1 · The office in the product
+
+- **Outcome:** a person sees the organization's offices with their readiness, and an
+  administrator restarts one.
+- **Build:** the office list and each office's state as the host and the office report
+  them; restart of an office through the host. The HQ office is the only office until a
+  second one is enrolled (L5).
+- **Read:** [offices design](design/offices-hq-and-satellites.md),
+  [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria that need one
+  office), [host boundary design](design/office-host-boundary.md). Rows FC-019, FC-021.
+- **Code today:** the host supervises and restarts an office worker
+  (`crates/org-host/src/supervisor`); the browser's office status screens run against
+  fakes.
+- **Done when:** the office list shows the real HQ office and its state from a terminal
+  and through `/api/v1`, and a restart from there brings it back ready.
+- **Needs:** A4.
+
 ### A6 · A second person can sign in
 
-- **Outcome:** the owner gives the second engineer an account, and that person signs in
-  and works in the same organization under their own name.
+- **Outcome:** the owner gives the second engineer a registration link; that person
+  creates their account, signs in, and works in the same organization under their own
+  name.
 - **Build:**
-  - `agentic-org account create`, `link`, `unlink` and `revoke`, run on the HQ machine by
-    an instance administrator. There is no browser screen for accounts.
+  - An instance administrator issues a one-time registration link for a person, from
+    the server machine (`agentic-org account invite`), and the person chooses their own
+    username and password in the browser, as in A3. A forgotten password is handled
+    the same way: a one-time link issued on the server machine. `account link`,
+    `unlink` and `revoke` stay commands on the server machine. There is no browser
+    screen for managing accounts in v1.
   - Every account is tied to a person (owner decision, 2026-11-17). In each
     organization an account can open, it is tied to exactly one person record, and
     what the account does there carries that person's name. A person does not need an
-    account. An account is never tied to an agent. `account create` and `account link`
-    name the person, or create one.
+    account. An account is never tied to an agent. `account invite` and `account link`
+    name the person, or create one in the top-level team, who is then moved between
+    teams like anyone else.
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
   [index, what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns).
@@ -288,10 +337,25 @@ Two things to know about the order:
   Account storage is `crates/org-host/src/hostdb/accounts.rs`; its schema allows many
   accounts and several linked organizations, but the only insert is the first
   administrator account. `account.create` is defined in `crates/org-host-control` and has
-  no handler. Account IDs are still ULIDs and become UUIDv7.
+  no handler; nothing issues or redeems a link. Account IDs are still ULIDs and become UUIDv7.
 - **Done when:** two people are signed in at once from two browsers, and a change each
   makes carries their own name.
 - **Needs:** A3, B2.
+
+### U1 · Offices, teams, people and projects in the browser
+
+- **Outcome:** the office list, the team directory, the organization chart, the project
+  list and the add, edit and move dialogs work against the real API.
+- **Build:** replace the fake-backed adapters for these screens; keep the screens.
+- **Read:** [offices and teams UX](specs/offices-and-teams-ux.md) (TEAM, PEOPLE, REPORT
+  criteria), [our organization in the app](specs/our-org-in-the-app.md),
+  [app shell UX](specs/app-shell-ux.md). Rows FC-003, FC-019, FC-025 to FC-027,
+  FC-030, FC-032, FC-038.
+- **Code today:** `apps/agentic-org-ui/src/lib/components` has the dialogs and charts;
+  `src/lib/platform/unavailable-api.ts` is what production uses today.
+- **Done when:** the TEAM, PEOPLE and REPORT criteria that need no agent runtime pass in
+  browser tests against a real instance.
+- **Needs:** A3, B2, B3, O1.
 
 ### A7 · Linux and containers
 
@@ -309,36 +373,94 @@ Two things to know about the order:
   but macOS; the web process's Linux confinement is a contract with no adapter and
   refuses to start; host secrets use the macOS keychain.
 - **Done when:** LNX-1 to LNX-6 pass.
-- **Needs:** A1 to A3. Each of the three Linux adapters starts with a short design,
+- **Needs:** A1 to A3; it can run alongside the rest of M2. Each of the three Linux adapters starts with a short design,
   which the engineer writes and decides.
-
-### U1 · The directory in the browser
-
-- **Outcome:** the team directory, the organization chart and the add, edit and move
-  dialogs work against the real API.
-- **Build:** replace the fake-backed adapters for these screens; keep the screens.
-- **Read:** [offices and teams UX](specs/offices-and-teams-ux.md) (TEAM, PEOPLE, REPORT
-  criteria), [our organization in the app](specs/our-org-in-the-app.md),
-  [app shell UX](specs/app-shell-ux.md). Rows FC-003, FC-025 to FC-027, FC-032.
-- **Code today:** `apps/agentic-org-ui/src/lib/components` has the dialogs and charts;
-  `src/lib/platform/unavailable-api.ts` is what production uses today.
-- **Done when:** the TEAM, PEOPLE and REPORT criteria that need no agent runtime pass in
-  browser tests against a real instance.
-- **Needs:** A3, B2.
 
 ---
 
-## M3 · Tasks
+## M3 · Agents
 
-### B3 · Projects, the minimum
+### C1 · The sign-in spike
 
-- **Outcome:** a person creates a project with an accountable team.
-- **Build:** projects with their number and slug from HQ, the accountable team, and
-  contributing teams. No features, releases or repositories yet.
-- **Read:** [project structure](design/organization-data/02-project-structure.md). Rows
-  FC-030, FC-038.
-- **Done when:** a project exists after a restart and a task can name it.
-- **Needs:** B2.
+- **Outcome:** a written result: for each vendor tool, how it is pointed at a private
+  home, where its sign-in is stored, and whether it resumes a session from there.
+- **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
+  [agent runtimes research](research/agent-runtimes-control.md).
+- **Done when:** the result is recorded and the first adapter to build is chosen.
+- **Needs nothing else and can start at any time.**
+
+### C2 · Hire an agent through HR
+
+- **Outcome:** the owner asks for a new agent, reviews the proposal, approves it, and
+  the agent exists in the organization with its team, its home and how it runs. This is
+  the only way an agent comes to exist.
+- **Build:**
+  - The hire flow: describe what is needed, or fill in the details yourself; review;
+    approve. Nothing is provisioned before approval.
+  - Provisioning, as product code: the employee record, its private home, and its
+    execution configuration (model profile and connection).
+  - The built-in HR lead drafts the proposal once agents can run (C3). Until then, and
+    whenever HR cannot run, the same flow works with the form.
+  - Edit, move, pause, resume and offboard an agent.
+- **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
+  hire flow; who approves; STAFF and HRL criteria), [roles UX](specs/roles-ux.md),
+  [agent structure](design/organization-data/04-agent-structure.md),
+  [model profiles and agent execution](design/organization-data/11-model-profiles-and-agent-execution.md),
+  [providers and connection pools](design/organization-data/14-model-providers-and-connection-pools.md).
+  Rows FC-031, FC-033, FC-034, FC-096, FC-097.
+- **Done when:** the STAFF and HRL criteria for a hire pass with the form, and no
+  employee, home or binding exists before approval.
+- **Needs:** B2, U1.
+
+### C3 · Start an agent
+
+- **Outcome:** from an agent's page the owner gives it an instruction; the office starts
+  it, it runs a turn in its own home, and the result is shown. The built-in HR lead
+  runs the same way when called, and now drafts hire proposals.
+- **Build:** the private agent home; the `same-user` isolation mode in the launch
+  description, with the product stating the reduced protection of that mode; one vendor
+  adapter behind the runtime contract; one open turn per agent, started only by an
+  explicit instruction; `agent-os` bound to the run the office started.
+- **Read:** [agent sessions design](design/agent-sessions.md),
+  [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
+  [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
+  [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
+  [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
+  [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
+  FC-098, FC-100, FC-101.
+- **Code today:** `crates/org-runtime` is the contract and has no caller.
+  `crates/org-supervise` starts, stops and cleans up processes; it is used only to
+  recover processes the office owned before a restart, not to launch an agent.
+- **Done when:** a hired agent completes an instruction given from its page, and the HR
+  lead drafts a hire proposal when asked.
+- **Needs:** C1, C2.
+
+### C4 · See what an agent did
+
+- **Outcome:** a person opens an agent's session in the browser and reads it, with
+  tool calls and file changes shown or hidden.
+- **Build:** first a proof of concept in the UI against sample Claude and Codex
+  conversation files; then the parsing and redaction in the office, served to authorized
+  people.
+- **Read:** [REQ-05](specs/req-05-virtual-console-conversation-log-viewer.md). Row FC-150.
+- **The proof of concept needs nothing else and can start at any time.** The rest
+  needs C3.
+
+### C5 · The agent follows the organization's processes
+
+- **Outcome:** an agent's instructions contain the processes and standards that apply to
+  its work, with the non-overridable ones marked as must-follow.
+- **Build:** the one-chain resolution (organization, the accountable team's chain, the
+  project) and its delivery at launch.
+- **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
+  Rows FC-110, FC-112.
+- **Code today:** `crates/org-process` resolves several chains, which the design
+  replaces with one, and has no caller.
+- **Needs:** C3.
+
+---
+
+## M4 · Tasks
 
 ### B4 · Typed tasks
 
@@ -375,7 +497,7 @@ Two things to know about the order:
 ### B5 · Tasks in `agent-os` and in the browser
 
 - **Outcome:** both engineers create, list and update tasks from the browser and from a
-  terminal. The same commands are what an agent uses through `agent-os` from C2 on.
+  terminal. An agent uses the same commands through `agent-os`.
 - **Build:** the task commands of `agent-os`, with the project taken from the agent's
   context and required when there is none; the board, list and detail screens against
   the real API, updated by the change stream.
@@ -385,11 +507,19 @@ Two things to know about the order:
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
-- **Needs:** B4, A3, A5.
+- **Needs:** B4, A3, A5. The agent part needs C3.
+
+### C7 · Repositories and worktrees
+
+- **Outcome:** an agent works in a worktree of a registered repository and the office
+  pushes its task branch.
+- **Read:** [Git design](design/projects-git-github.md) and its open questions, which the
+  engineer answers first. Rows FC-103, FC-139, FC-140.
+- **Needs:** C3, B4.
 
 ---
 
-## M4 · Chat and asks
+## M5 · Chat and asks
 
 ### B6 · Conversations and messages
 
@@ -426,7 +556,7 @@ Two things to know about the order:
   - The question components in the product's chat, built from shadcn-svelte and Bits UI:
     single choice, multiple choice, yes/no, free text. A default is preselected.
   - A required ask that is not answered in time returns "required answer pending". The
-    suspension that follows is increment C5.
+    suspension that follows is increment C6.
 - **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
   [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
   (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
@@ -434,72 +564,7 @@ Two things to know about the order:
   browser; ASK-1 and ASK-2 pass.
 - **Needs:** B6.
 
----
-
-## M5 · Agents run inside the product
-
-### C1 · The sign-in spike
-
-- **Outcome:** a written result: for each vendor tool, how it is pointed at a private
-  home, where its sign-in is stored, and whether it resumes a session from there.
-- **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-  [agent runtimes research](research/agent-runtimes-control.md).
-- **Done when:** the result is recorded and the first adapter to build is chosen.
-- **Needs nothing else and can start at any time.**
-
-### C2 · Launch the first agent
-
-- **Outcome:** the owner sends the built-in HR lead a message in chat; the office starts
-  it for that call, it runs a turn in its own home, answers, and stops.
-- **Build:** an employee's execution configuration; the private agent home; the
-  `same-user` isolation mode in the launch description, with the product stating the
-  reduced protection of that mode; one vendor adapter behind the runtime contract; one
-  open turn per agent, started only by an explicit instruction; `agent-os` bound to the
-  run the office started.
-- **Read:** [model profiles and agent execution](design/organization-data/11-model-profiles-and-agent-execution.md),
-  [providers and connection pools](design/organization-data/14-model-providers-and-connection-pools.md),
-  [agent sessions design](design/agent-sessions.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
-  [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
-  [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
-  [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
-  FC-096, FC-097, FC-098, FC-100, FC-101.
-- **Code today:** `crates/org-runtime` is the contract and has no caller.
-  `crates/org-supervise` starts, stops and cleans up processes; it is used only to
-  recover processes the office owned before a restart, not to launch an agent.
-- **Done when:** the HR lead answers a message, and creates and updates a task through
-  `agent-os`.
-- **Needs:** C1, B5, B6.
-
-### C3 · Hire an agent through HR
-
-- **Outcome:** the owner asks the HR lead for a new agent; HR proposes one; the owner
-  approves; the new agent is onboarded, is given a task and completes it. This is the
-  only way an agent comes to exist in an organization.
-- **Build:** the hire proposal, its approval, and provisioning of the employee, its
-  home and its execution configuration only after approval. HR drafts the proposal as
-  an agent would; the provisioning is the product's own code, not something the model
-  improvises.
-- **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
-  hire flow; who approves; STAFF and HRL criteria), [roles UX](specs/roles-ux.md),
-  [agent structure](design/organization-data/04-agent-structure.md). Rows FC-031, FC-033.
-- **Done when:** the STAFF and HRL criteria for a hire pass, and no employee, home or
-  binding exists before approval.
-- **Needs:** C2, B7.
-
-### C4 · The agent follows the organization's processes
-
-- **Outcome:** an agent's instructions contain the processes and standards that apply to
-  its work, with the non-overridable ones marked as must-follow.
-- **Build:** the one-chain resolution (organization, the accountable team's chain, the
-  project) and its delivery at launch.
-- **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
-  Rows FC-110, FC-112.
-- **Code today:** `crates/org-process` resolves several chains, which the design
-  replaces with one, and has no caller.
-- **Needs:** C2.
-
-### C5 · A required ask suspends and resumes the agent
+### C6 · A required ask suspends and resumes the agent
 
 - **Outcome:** an agent that cannot continue without an answer is stopped after being
   told, and starts again in the same session when the answer arrives.
@@ -508,25 +573,7 @@ Two things to know about the order:
 - **Done when:** ASK-3, ASK-5, ASK-6, ASK-7 and ASK-9 pass, and the presence part of
   ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
   finished with L4, and ASK-8 (a budget hold keeps the agent suspended) with L3.
-- **Needs:** B7, C2.
-
-### C6 · See what an agent did
-
-- **Outcome:** a person opens an agent's session in the browser and reads it, with
-  tool calls and file changes shown or hidden.
-- **Build:** first a proof of concept in the UI against sample Claude and Codex
-  conversation files; then the parsing and redaction in the office, served to authorized
-  people.
-- **Read:** [REQ-05](specs/req-05-virtual-console-conversation-log-viewer.md). Row FC-150.
-- **The proof of concept needs nothing else and can start at any time.**
-
-### C7 · Repositories and worktrees
-
-- **Outcome:** an agent works in a worktree of a registered repository and the office
-  pushes its task branch.
-- **Read:** [Git design](design/projects-git-github.md) and its open questions, which the
-  engineer answers first. Rows FC-103, FC-139, FC-140.
-- **Needs:** C2.
+- **Needs:** B7, C3.
 
 ---
 
