@@ -78,8 +78,8 @@ contradict it.
  └─────────────────────────────────────────┘
  ┌ Quality ───────────────────────────────┐ ┌ Needs you ─────────────────────────────────────────────┐
  │ Bugs open 7: 2 Critical · 1 Major · …   │ │ ADR-0004 Docs storage: proposed 2 d ago      [Open]     │
- │                                         │ │ F-9 Costs scoped by Eden: ≈ $40–70     [Review]   │
- │                                         │ │ 3 questions from ada and codex-dev            [Answer]   │
+ │                                         │ │ F-9 Costs scoped by Mira: ≈ $40–70     [Review]   │
+ │                                         │ │ 3 questions from sam and codex-dev            [Answer]   │
  └─────────────────────────────────────────┘ └────────────────────────────────────────────────────────┘
  Trend (8 weeks): ▁▂▃▅▆▇ done per week · cost per week · cycle time        [Table view]
  Latest report: Mon 7 Dec · On track → today At risk                       [All reports]
