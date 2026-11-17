@@ -39,3 +39,13 @@
   GW-01 r2 D1 "no transfer datagram" contradicts the reviewed [Transfer, Listener] wire and HEAD Gateway{transfer,listen}. No edits.
   Receipt: .agent-kit/logs/v1-f4-sessions/writer2-receipt.md. Lead chose option A → GW-01 r3; focused review pending.
 - GW-01 r3 READY (focused recheck); Amendment 2 recorded. Writer 3 dispatched for CHECKPOINT B.
+- Writer 3 (subagent ae8b79c1c7ef4b359, Opus High; preflight-writer3 DECLARED_READY, ack written after the edits, an order deviation):
+  CHECKPOINT B d00e0cef. `cargo test -p org-host` 463 passed/0 failed/3 ignored + 1; clippy and fmt clean (lead verified log
+  and readiness logic). Receipt: .agent-kit/logs/v1-f4-sessions/writer3-receipt.md. The lead accepted all four deviations:
+  1. Instance::browser() read accessor (4 lines, instance/registry.rs): needed by startup_gateway; owned-path list amended.
+  2. require_build_trust not added: its only consumer is setup (human/setup.rs absent), so it moves to the U1 setup slice.
+  3. Readiness split: start gated on gateway_eligible; gateway_ready = eligible + Running (avoids the circular reservoir gate).
+  4. Production Host::start_instance stays test-gated. F4 proves the gateway via start_instance_for_test. **U1 prerequisite:**
+     the `agentic-org serve` launcher owns production instance start (and thus production gateway spawn).
+  Readiness may lag exit/EOF by up to ~50 ms (supervise poll); accepted.
+- Writer 4 dispatched: CHECKPOINT C (web sessions).
