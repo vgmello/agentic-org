@@ -27,6 +27,13 @@ python3 .agent-kit/runtime/kit_doctor.py --project . --live --checks --json
 
 **LIVE_VALIDATED remains false for interactive native hook trust.** Actual daemon storage/recall and native MCP initialize/list passed. A real Codex `gpt-6.1-sol` extraction/store/recall probe passed with nonzero model usage, and its disposable bank was deleted (`logs/adoption/native-codex-memory-probe.json`). `logs/adoption/native-mcp.json` records all eight native tools. Open this directory in a fresh trusted Codex session to load/trust the exact installed native hooks; this running session cannot hot-reload them. CLI model cycles and native hook trust are separate evidence.
 
+**Evidence reassessment 2026-11-17 (F4, Claude lead):** Cargo.lock changed only by new agentic-org-web dependency edges
+(hmac, org-release, org-socket, rustix, serde, zeroize). All of these packages and versions were already locked, and no new
+third-party package was added. No role brief or project skill references web dependencies, so guidance is unaffected; only the
+Cargo.lock evidence hash was updated. apps/agentic-org-web/Cargo.toml changed with the same annotated edges plus an org-release
+build-dependency that embeds the public publisher registry at build time (release-verification consistent). Web still has no
+org-host/org-office/org-client dependency (checked with cargo tree), and its hash was updated after this review.
+
 ## Local daemon and native Codex memory
 
 The installed commands are pinned:
