@@ -9,12 +9,12 @@
 //! inherits stdin, then `exec` the genuine server and pass the check), and checks it by its
 //! **audit token**, which names the image the exec loaded: its code object
 //! (`SecCodeCopyGuestWithAttributes`) must satisfy a requirement compiled into the host,
-//! the server's signing identifier [`SERVER_SIGNING_ID`] signed with the app team's Developer
+//! the office worker's signing identifier [`OFFICE_SIGNING_ID`] signed with the app team's Developer
 //! ID, and run hardened code without the entitlements that let another process reach into it
 //! (`code_signing::satisfies_hardened`):
 //!
 //! ```text
-//! identifier "com.ellosoft.agentic-org.org-server" and anchor apple generic
+//! identifier "com.vgmello.agentic-org.office" and anchor apple generic
 //!   and certificate 1[field.1.2.840.113635.100.6.2.6] exists
 //!   and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
 //!   and certificate leaf[subject.OU] = "<ORG_APP_TEAM_ID>"
@@ -36,12 +36,12 @@
 //! all (logged loudly). **Debug builds don't check** (their servers are unsigned development and
 //! test builds), which is logged at startup.
 
-/// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
-/// only to a server signed with it by the app's team (`server_check`). The bundle must sign
+/// The office worker's signing identifier (ADR-0003 §2.1): a release host gives an office's key
+/// only to an office worker signed with it by the app's team (`server_check`). The bundle must sign
 /// agentic-org-office with it. The signing identifier is stable across filename changes.
-pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-server";
+pub const OFFICE_SIGNING_ID: &str = "com.vgmello.agentic-org.office";
 /// The browser service has no office-worker or Keychain authority (ADR-0008).
-pub const GATEWAY_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-gateway";
+pub const WEB_SIGNING_ID: &str = "com.vgmello.agentic-org.web";
 
 use crate::peer::AuditToken;
 
@@ -113,7 +113,7 @@ impl ServerCheck {
             return Ok(Self::Skip);
         }
         match team_id {
-            Some(team) => crate::code_signing::developer_id_requirement(GATEWAY_SIGNING_ID, team)
+            Some(team) => crate::code_signing::developer_id_requirement(WEB_SIGNING_ID, team)
                 .map(Self::Gateway),
             None => Ok(Self::Refuse),
         }
@@ -224,10 +224,10 @@ impl ServerCheck {
     }
 }
 
-/// The requirement an office server must satisfy: [`SERVER_SIGNING_ID`] signed with the
+/// The requirement an office worker must satisfy: [`OFFICE_SIGNING_ID`] signed with the
 /// Developer ID of team `team_id`.
 pub(crate) fn server_requirement(team_id: &str) -> Result<String, String> {
-    crate::code_signing::developer_id_requirement(SERVER_SIGNING_ID, team_id)
+    crate::code_signing::developer_id_requirement(OFFICE_SIGNING_ID, team_id)
 }
 
 /// The decision, pure: `token` gives the child's audit token, `satisfies` checks the code it
@@ -329,7 +329,7 @@ mod tests {
     fn the_requirement_names_the_server_and_the_team() {
         assert_eq!(
             server_requirement(TEAM).unwrap(),
-            "identifier \"com.ellosoft.agentic-org.org-server\" and anchor apple generic \
+            "identifier \"com.vgmello.agentic-org.office\" and anchor apple generic \
              and certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""
@@ -362,8 +362,8 @@ mod tests {
         else {
             panic!("release gateway policy")
         };
-        assert!(requirement.contains(GATEWAY_SIGNING_ID));
-        assert!(!requirement.contains(SERVER_SIGNING_ID));
+        assert!(requirement.contains(WEB_SIGNING_ID));
+        assert!(!requirement.contains(OFFICE_SIGNING_ID));
         assert_eq!(
             ServerCheck::gateway_for_build(false, None).unwrap(),
             ServerCheck::Refuse

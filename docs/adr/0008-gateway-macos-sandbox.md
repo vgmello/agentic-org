@@ -64,9 +64,9 @@ adapter refuses to start the web process; it never runs unconfined.
 ## Signing identity
 
 `agentic-org-web` is signed with its own identifier,
-`com.ellosoft.agentic-org.web` (owner decision 2026-11-17: there is no gateway; nothing
+`com.vgmello.agentic-org.web` (owner decision 2026-11-17: there is no gateway; nothing
 has shipped, so the identity is renamed in place). The office worker's identifier,
-`com.ellosoft.agentic-org.org-server`, never satisfies web admission. Release admission
+`com.vgmello.agentic-org.office`, never satisfies web admission. Release admission
 uses the Developer ID Application team requirement, the hardened runtime, and
 rejects debug and injection entitlements; the web process has no keychain
 access-group entitlement. A release build without a valid compiled team identifier

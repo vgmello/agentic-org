@@ -116,7 +116,7 @@ uses the same steps with its own identifier, image and listener handoff (see "Th
 1. The host spawns the worker **suspended**, with only its three pipes.
 2. It checks that the suspended child is the intended program through the platform's
    process-admission adapter. On macOS: the child's audit token, its code object, the
-   identifier `com.ellosoft.agentic-org.org-server` with the compiled Developer ID
+   identifier `com.vgmello.agentic-org.office` with the compiled Developer ID
    team, the hardened runtime and none of the refused entitlements. On Linux: the
    pinned path of the verified release image, its content digest from the release
    manifest, and the child's identity from the kernel. A child that fails is killed
@@ -215,7 +215,7 @@ carries host control; neither `host.sock` nor an office path is a fallback. `tls
 supplies the verified listener configuration before HTTP accepts. Host EOF ends the web
 process.
 
-On macOS the web process is admitted as `com.ellosoft.agentic-org.web`, with
+On macOS the web process is admitted as `com.vgmello.agentic-org.web`, with
 the compiled team, hardened runtime, no debug or injection entitlements and no Keychain
 access group. The host rechecks the reader's audit token, image and kernel sandbox
 before sending either descriptor. Browser sessions are stored at the host and survive a
