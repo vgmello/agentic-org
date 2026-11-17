@@ -382,13 +382,13 @@ where
     B: ApiBackend,
     S: Future<Output = ()>,
 {
-    run_gateway_reporting(listener, config, files, initialize, || Ok(()))
+    run_web_reporting(listener, config, files, initialize, || Ok(()))
 }
 
 /// [`run_gateway`], calling `serving` once after the runtime, listener
-/// registration, backend and gateway service are initialized and before the
-/// first accept. Its error stops the gateway before it serves any request.
-pub fn run_gateway_reporting<B, S>(
+/// registration, backend and web process service are initialized and before the
+/// first accept. Its error stops the web process before it serves any request.
+pub fn run_web_reporting<B, S>(
     listener: TcpListener,
     config: GatewayConfig,
     files: BuildFiles,

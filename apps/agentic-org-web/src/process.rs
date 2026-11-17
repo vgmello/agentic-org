@@ -33,7 +33,7 @@ use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKey
 const WAIT: Duration = Duration::from_secs(5);
 const HEADER: usize = 1024;
 fn failure() -> io::Error {
-    io::Error::other("authenticated gateway startup unavailable")
+    io::Error::other("authenticated web process startup unavailable")
 }
 fn fatal() -> ! {
     std::process::exit(1)
@@ -176,7 +176,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     // Sent exactly once, after HTTP initialization and before the first accept,
     // on the runtime's driving thread while no request is served yet.
     let serving = move || reporting.report_serving().map_err(|_| failure());
-    service::run_gateway_reporting(
+    service::run_web_reporting(
         listener,
         config,
         files,

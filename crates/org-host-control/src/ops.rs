@@ -478,22 +478,22 @@ impl Call for TlsFetch {
     type Result = TlsFetchResult;
 }
 
-/// `gateway.serving` (**gateway control connection only**; `not_authorized` on `host.sock` and
-/// setup connections): the gateway's one notification that its HTTP server is initialized and
+/// `web.serving` (**web process control connection only**; `not_authorized` on `host.sock` and
+/// setup connections): the web process's one notification that its HTTP server is initialized and
 /// accepting on the listener it was given. Sent exactly once, after a successful `tls.fetch`; the
-/// host answers `{}`. The host reports the gateway `running` only after it, and fails the start if
+/// host answers `{}`. The host reports the web process `running` only after it, and fails the start if
 /// it does not arrive within the host's serving deadline. A repeated or out-of-order notification
 /// is a protocol error: the host answers `invalid_request` and closes the control connection.
-pub struct GatewayServing;
+pub struct WebServing;
 
-/// `gateway.serving`'s params: closed and empty (`{}`).
+/// `web.serving`'s params: closed and empty (`{}`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GatewayServingParams {}
+pub struct WebServingParams {}
 
-impl Call for GatewayServing {
-    const METHOD: &'static str = "gateway.serving";
-    type Params = GatewayServingParams;
+impl Call for WebServing {
+    const METHOD: &'static str = "web.serving";
+    type Params = WebServingParams;
     type Result = Empty;
 }
 

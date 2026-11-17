@@ -1,8 +1,8 @@
-//! Publisher-authenticated immutable preload while the gateway is still alone
+//! Publisher-authenticated immutable preload while the web process is still alone
 //! and has no host control capability, listener, session or TLS material.
 mod files;
 use crate::assets::{BuildError, BuildFiles};
-use org_host_control::gateway::GatewayRelease;
+use org_host_control::gateway::WebRelease;
 use org_release::{Architecture, Platform, TrustedKeys, TrustedPolicy, VerifiedManifest};
 use std::path::Path;
 // Public policy data only: the reviewed build script validates the registry
@@ -87,7 +87,7 @@ fn policy() -> Result<(TrustedPolicy, TrustedKeys), BuildError> {
     ))
 }
 
-pub(crate) fn load(assets: &Path, pin: Option<&GatewayRelease>) -> Result<BuildFiles, BuildError> {
+pub(crate) fn load(assets: &Path, pin: Option<&WebRelease>) -> Result<BuildFiles, BuildError> {
     let Some(pin) = pin else {
         #[cfg(debug_assertions)]
         {
@@ -130,7 +130,7 @@ fn verify_running_image(_: &VerifiedManifest) -> Result<(), BuildError> {
 
 fn authenticate(
     root: &files::Directory,
-    pin: &GatewayRelease,
+    pin: &WebRelease,
     policy: &TrustedPolicy,
     keys: &TrustedKeys,
 ) -> Result<(VerifiedManifest, Vec<u8>), BuildError> {

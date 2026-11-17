@@ -1,5 +1,5 @@
 //! One bounded actor owns the already-admitted private host connection. The
-//! gateway transfer descriptor from the reviewed handoff is held for the
+//! web process transfer descriptor from the reviewed handoff is held for the
 //! connection's lifetime; the web process opens no office channel on it and
 //! sends no office channel request. No host.sock/path fallback, office key or
 //! registry access. Browser sessions are not served here until FC-159.
@@ -149,8 +149,8 @@ fn receive_error(error: ReceiveError, fatal: &dyn Fn()) -> Failure {
     Failure::Unavailable
 }
 impl HostControl {
-    /// The verified gateway rendezvous supplies both descriptors. `fatal` must
-    /// terminate the gateway on fatal ancillary framing (X-02 §5.2); it is not
+    /// The verified web process rendezvous supplies both descriptors. `fatal` must
+    /// terminate the web process on fatal ancillary framing (X-02 §5.2); it is not
     /// an authorization hook. No process is spawned by this crate.
     pub fn from_handoff(
         control: OwnedFd,
@@ -168,7 +168,7 @@ impl HostControl {
         let live = Arc::new(AtomicBool::new(true));
         let alive = Arc::clone(&live);
         thread::Builder::new()
-            .name("gateway-host-control".into())
+            .name("web-host-control".into())
             .spawn(move || {
                 actor(writer, receiver, pending, &alive, &*fatal);
                 alive.store(false, Ordering::SeqCst);
@@ -198,10 +198,10 @@ impl HostControl {
     pub fn fetch_listener(&self) -> Result<ops::TlsFetchResult, Failure> {
         self.call::<ops::TlsFetch>(&Default::default())
     }
-    /// The one `gateway.serving` notification (GW-01 r4): HTTP serving is
-    /// established. The host keeps the gateway `starting` until it arrives.
+    /// The one `web.serving` notification (GW-01 r4): HTTP serving is
+    /// established. The host keeps the web process `starting` until it arrives.
     pub fn report_serving(&self) -> Result<(), Failure> {
-        self.call::<ops::GatewayServing>(&Default::default())
+        self.call::<ops::WebServing>(&Default::default())
             .map(|_| ())
     }
     pub fn live(&self) -> bool {

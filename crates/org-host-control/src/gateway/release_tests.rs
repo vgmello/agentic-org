@@ -1,7 +1,7 @@
 use super::*;
 #[test]
-fn selected_gateway_pin_roundtrips_and_rejects_ambiguous_or_invalid_whole_frames() {
-    let pin = GatewayRelease {
+fn selected_web_pin_roundtrips_and_rejects_ambiguous_or_invalid_whole_frames() {
+    let pin = WebRelease {
         release_id: "release-1".into(),
         manifest_sha256: "ab".repeat(32),
         sequence: u64::MAX,

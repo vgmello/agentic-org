@@ -99,32 +99,32 @@ struct Gateway {
     listen: org_host_control::listen::ListenConfig,
     /// A successful `tls.fetch` answered on this connection.
     fetched: AtomicBool,
-    /// The gateway's one `gateway.serving` was accepted.
+    /// The web process's one `web.serving` was accepted.
     serving: AtomicBool,
-    /// The host refused a `gateway.serving` as a protocol error and closed control.
+    /// The host refused a `web.serving` as a protocol error and closed control.
     serving_refused: AtomicBool,
 }
 
-/// How the host takes a `gateway.serving` notification.
+/// How the host takes a `web.serving` notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServingReport {
-    /// Not the admitted gateway connection.
-    NotGateway,
+    /// Not the admitted web process connection.
+    NotWeb,
     /// Accepted: the first one, after hello and a successful `tls.fetch`.
     Accepted,
     /// Repeated, or before hello/`tls.fetch`: a protocol error.
     OutOfOrder,
 }
 
-/// Lifetime of the sole authenticated gateway control connection. Constructed only by
-/// the gateway supervisor, after its image/reader/sandbox admission and handoff ACK.
-/// This is the only production path that gives a connection gateway privilege:
+/// Lifetime of the sole authenticated web process control connection. Constructed only by
+/// the web process supervisor, after its image/reader/sandbox admission and handoff ACK.
+/// This is the only production path that gives a connection web process privilege:
 /// host.sock and setup connections stay `ChannelKind::Local`.
-pub(crate) struct GatewayConnection {
+pub(crate) struct WebConnection {
     connection: Arc<Connection>,
     thread: Option<JoinHandle<()>>,
 }
-impl GatewayConnection {
+impl WebConnection {
     pub(crate) fn start(
         stream: UnixStream,
         transfer: std::os::unix::net::UnixDatagram,
@@ -144,7 +144,7 @@ impl GatewayConnection {
         });
         let serving = Arc::clone(&connection);
         let thread = thread::Builder::new()
-            .name("gateway-control".into())
+            .name("web-control".into())
             .spawn(move || serve(stream, serving, queue, handler, 4))?;
         Ok(Self {
             connection,
@@ -154,14 +154,14 @@ impl GatewayConnection {
     pub(crate) fn live(&self) -> bool {
         !self.connection.closed.load(Ordering::SeqCst)
     }
-    /// The host refused the gateway's `gateway.serving` as a protocol error.
+    /// The host refused the web process's `web.serving` as a protocol error.
     pub(crate) fn serving_refused(&self) -> bool {
         self.connection
             .gateway
             .as_ref()
             .is_some_and(|g| g.serving_refused.load(Ordering::SeqCst))
     }
-    /// The gateway reported, in order, that its HTTP server is serving.
+    /// The web process reported, in order, that its HTTP server is serving.
     pub(crate) fn reported_serving(&self) -> bool {
         self.connection
             .gateway
@@ -169,7 +169,7 @@ impl GatewayConnection {
             .is_some_and(|g| g.serving.load(Ordering::SeqCst))
     }
 }
-impl Drop for GatewayConnection {
+impl Drop for WebConnection {
     fn drop(&mut self) {
         self.connection.close();
         if let Some(thread) = self.thread.take() {
@@ -664,20 +664,20 @@ impl Connection {
     pub(crate) fn gateway_listen(&self) -> Option<&org_host_control::listen::ListenConfig> {
         self.gateway.as_ref().map(|g| &g.listen)
     }
-    /// Records a successful `tls.fetch` answer on the gateway connection.
+    /// Records a successful `tls.fetch` answer on the web process connection.
     pub(crate) fn note_listener_fetched(&self) {
-        if let Some(gateway) = &self.gateway {
-            gateway.fetched.store(true, Ordering::SeqCst);
+        if let Some(web) = &self.gateway {
+            web.fetched.store(true, Ordering::SeqCst);
         }
     }
-    /// Takes the gateway's `gateway.serving`: accepted once, after hello and `tls.fetch`.
+    /// Takes the web process's `web.serving`: accepted once, after hello and `tls.fetch`.
     pub(crate) fn report_serving(&self) -> ServingReport {
-        let Some(gateway) = &self.gateway else {
-            return ServingReport::NotGateway;
+        let Some(web) = &self.gateway else {
+            return ServingReport::NotWeb;
         };
         if self.hello_completed()
-            && gateway.fetched.load(Ordering::SeqCst)
-            && gateway
+            && web.fetched.load(Ordering::SeqCst)
+            && web
                 .serving
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
@@ -714,11 +714,11 @@ impl Connection {
         lock(&self.received_channels).insert(channel.into(), slot);
     }
 
-    /// Refuses a gateway's `gateway.serving` as a protocol error, noting it so the
+    /// Refuses a web process's `web.serving` as a protocol error, noting it so the
     /// supervisor logs that cause rather than only the control EOF that follows.
     pub(crate) fn refuse_serving(&self, response: Response) {
-        if let Some(gateway) = &self.gateway {
-            gateway.serving_refused.store(true, Ordering::SeqCst);
+        if let Some(web) = &self.gateway {
+            web.serving_refused.store(true, Ordering::SeqCst);
         }
         self.refuse_and_finish(response);
     }
@@ -969,11 +969,11 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn gateway_serving_is_taken_only_from_the_gateway_after_hello_and_tls_fetch() {
+    fn web_serving_is_taken_only_from_the_web_after_hello_and_tls_fetch() {
         let plain = Connection::for_test();
         plain.complete_hello();
         plain.note_listener_fetched();
-        assert!(matches!(plain.report_serving(), ServingReport::NotGateway));
+        assert!(matches!(plain.report_serving(), ServingReport::NotWeb));
         let (host, _peer) = UnixStream::pair().unwrap();
         let (transfer, _received) = std::os::unix::net::UnixDatagram::pair().unwrap();
         let (mut connection, _queue) =
@@ -1298,19 +1298,18 @@ mod tests {
     }
 
     #[test]
-    fn only_the_admitted_gateway_connection_is_gateway_kind() {
+    fn only_the_admitted_web_connection_is_web_kind() {
         let (host, peer) = UnixStream::pair().unwrap();
         let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
-        let gateway =
-            GatewayConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
+        let web = WebConnection::start(host, transfer, loopback_listen(), Arc::new(Echo)).unwrap();
         assert_eq!(
-            gateway.connection.channel_kind(),
+            web.connection.channel_kind(),
             org_office_launch::v3::ChannelKind::Gateway
         );
-        assert!(gateway.connection.gateway_listen().is_some());
-        assert!(gateway.live());
+        assert!(web.connection.gateway_listen().is_some());
+        assert!(web.live());
 
-        // A setup reverse connection never gets gateway privilege.
+        // A setup reverse connection never gets web process privilege.
         let (setup_host, _setup_peer) = UnixStream::pair().unwrap();
         let setup = SetupConnection::start(setup_host, Arc::new(Echo)).unwrap();
         assert_eq!(
@@ -1320,7 +1319,7 @@ mod tests {
         assert!(setup.connection.gateway_listen().is_none());
 
         // Every connection the host.sock listener accepts is built by `Connection::new`,
-        // which carries no gateway.
+        // which carries no web process.
         let (accepted, _accepted_peer) = UnixStream::pair().unwrap();
         let (plain, _queue) =
             Connection::new(accepted.try_clone().unwrap(), Accepted::sample(&accepted));
@@ -1329,13 +1328,13 @@ mod tests {
             org_office_launch::v3::ChannelKind::Local
         );
 
-        // Peer EOF ends the gateway control connection.
+        // Peer EOF ends the web process control connection.
         drop(peer);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while gateway.live() && std::time::Instant::now() < until {
+        while web.live() && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(!gateway.live());
+        assert!(!web.live());
     }
 
     #[test]

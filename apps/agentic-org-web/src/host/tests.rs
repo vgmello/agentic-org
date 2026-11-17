@@ -44,12 +44,12 @@ fn host(instance: &'static str, peer: UnixStream) -> JoinHandle<()> {
     })
 }
 fn connect(instance: &'static str) -> (io::Result<Arc<HostControl>>, UnixStream, JoinHandle<()>) {
-    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (web, peer) = UnixStream::pair().unwrap();
     let stop = peer.try_clone().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
     let thread = host(instance, peer);
     let control = HostControl::from_handoff(
-        gateway.into(),
+        web.into(),
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
@@ -120,7 +120,7 @@ fn control_replies_accept_the_native_frame_limit_and_refuse_larger_frames() {
 
 #[test]
 fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
-    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (web, peer) = UnixStream::pair().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
     let (release, stalled) = mpsc::sync_channel(1);
     let host = thread::spawn(move || {
@@ -144,7 +144,7 @@ fn a_call_that_outlives_the_full_deadline_closes_the_connection() {
         stalled.recv().unwrap();
     });
     let control = HostControl::from_handoff(
-        gateway.into(),
+        web.into(),
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
@@ -200,7 +200,7 @@ fn host_errors_map_to_denied_not_found_or_unavailable_by_matching_id() {
 
 #[test]
 fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() {
-    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (web, peer) = UnixStream::pair().unwrap();
     let (transfer, _host_transfer) = UnixDatagram::pair().unwrap();
     let (release, stalled) = mpsc::sync_channel::<()>(1);
     let (started, observed) = mpsc::sync_channel(1);
@@ -233,7 +233,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
         methods
     });
     let control = HostControl::from_handoff(
-        gateway.into(),
+        web.into(),
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),
@@ -296,7 +296,7 @@ fn a_call_that_expires_while_queued_is_never_written_and_keeps_the_connection() 
 fn scripted(
     answer: impl Fn(&serde_json::Value) -> Option<serde_json::Value> + Send + 'static,
 ) -> (Arc<HostControl>, JoinHandle<Vec<String>>) {
-    let (gateway, peer) = UnixStream::pair().unwrap();
+    let (web, peer) = UnixStream::pair().unwrap();
     let (transfer, host_transfer) = UnixDatagram::pair().unwrap();
     let host = thread::spawn(move || {
         let _transfer = host_transfer;
@@ -325,7 +325,7 @@ fn scripted(
         methods
     });
     let control = HostControl::from_handoff(
-        gateway.into(),
+        web.into(),
         transfer.into(),
         INSTANCE.into(),
         Arc::new(|| panic!("unexpected ancillary failure")),

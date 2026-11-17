@@ -1,4 +1,4 @@
-//! The browser gateway has no office database, key or host-supervisor access: its
+//! The web process has no office database, key or host-supervisor access: its
 //! normal (linked) dependency closure never reaches the host or office crates.
 
 use std::collections::{BTreeSet, HashMap};
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Crates that own host supervision, office storage/keys, work execution or the
-/// privileged client. None may be linked into the gateway.
+/// privileged client. None may be linked into the web process.
 const FORBIDDEN: &[&str] = &["org-host", "org-office", "org-work", "org-client"];
 
 /// The package names reachable from `agentic-org-web` through normal dependency
@@ -109,9 +109,9 @@ fn normal_closure() -> BTreeSet<String> {
 }
 
 #[test]
-fn the_gateway_links_no_host_office_work_or_client_crate() {
+fn the_web_links_no_host_office_work_or_client_crate() {
     let closure = normal_closure();
-    // Not vacuous: the walk reaches the gateway's real workspace dependencies.
+    // Not vacuous: the walk reaches the web process's real workspace dependencies.
     for expected in ["org-host-control", "org-proto", "org-socket", "org-release"] {
         assert!(
             closure.contains(expected),

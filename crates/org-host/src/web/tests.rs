@@ -28,7 +28,7 @@ fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
 }
 
 #[test]
-fn refused_gateway_start_never_becomes_ready() {
+fn refused_web_start_never_becomes_ready() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
@@ -48,13 +48,13 @@ fn refused_gateway_start_never_becomes_ready() {
     let Err(error) = started else {
         panic!("a release build without a team never spawns")
     };
-    // The log names the real cause and that it is the gateway's check.
+    // The log names the real cause and that it is the web process's check.
     let message = error.to_string();
-    assert!(message.contains("browser gateway"), "{message}");
+    assert!(message.contains("web process"), "{message}");
     assert!(message.contains("no app team id"), "{message}");
     let observed = *lock(&state);
     assert_ne!(observed, GatewayState::Running);
-    assert!(!crate::service::gateway_serving(true, true, observed));
+    assert!(!crate::service::web_serving(true, true, observed));
 }
 
 #[test]
@@ -74,11 +74,14 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
     };
     // The supervisor logs this text, so the refusal cause must survive.
     let message = error.to_string();
-    assert!(message.contains("gateway admission refused"), "{message}");
+    assert!(
+        message.contains("web process admission refused"),
+        "{message}"
+    );
     assert!(message.contains("no app team id"), "{message}");
 }
 
-/// A started gateway: `live` is the child/control state, `reported` its `gateway.serving`.
+/// A started web process: `live` is the child/control state, `reported` its `web.serving`.
 struct Fake {
     live: Arc<AtomicBool>,
     reported: Arc<AtomicBool>,
@@ -111,7 +114,7 @@ impl Drop for Fake {
 }
 
 #[test]
-fn running_is_published_only_after_the_gateway_reports_serving() {
+fn running_is_published_only_after_the_web_reports_serving() {
     let stopping = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
@@ -144,17 +147,17 @@ fn running_is_published_only_after_the_gateway_reports_serving() {
     thread::sleep(Duration::from_millis(200));
     // Started and admitted, but HTTP initialization is not reported yet.
     assert_eq!(*lock(&state), GatewayState::Starting);
-    assert!(!crate::service::gateway_serving(true, true, *lock(&state)));
+    assert!(!crate::service::web_serving(true, true, *lock(&state)));
     reported.store(true, Ordering::SeqCst);
     wait_for("running", || *lock(&state) == GatewayState::Running);
-    assert!(crate::service::gateway_serving(true, true, *lock(&state)));
+    assert!(crate::service::web_serving(true, true, *lock(&state)));
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
 }
 
 #[test]
-fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped() {
+fn a_web_that_never_reports_serving_fails_after_the_deadline_and_is_stopped() {
     let stopping = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
@@ -195,7 +198,7 @@ fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped(
     });
     assert!(started.elapsed() >= Duration::from_millis(250));
     assert!(!lock(&observed).contains(&GatewayState::Running));
-    assert!(!crate::service::gateway_serving(true, true, *lock(&state)));
+    assert!(!crate::service::web_serving(true, true, *lock(&state)));
     // The unreported child is dropped: control closed, then killed and reaped.
     wait_for("child stopped", || dropped.load(Ordering::SeqCst));
     stopping.store(true, Ordering::SeqCst);
@@ -205,7 +208,7 @@ fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped(
 }
 
 #[test]
-fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
+fn readiness_turns_false_when_the_web_exits_or_its_control_reaches_eof() {
     let stopping = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
@@ -232,10 +235,10 @@ fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
         })
     };
     wait_for("running", || *lock(&state) == GatewayState::Running);
-    assert!(crate::service::gateway_serving(true, true, *lock(&state)));
+    assert!(crate::service::web_serving(true, true, *lock(&state)));
     live.store(false, Ordering::SeqCst); // child exit or control EOF
     wait_for("failed", || *lock(&state) == GatewayState::Failed);
-    assert!(!crate::service::gateway_serving(true, true, *lock(&state)));
+    assert!(!crate::service::web_serving(true, true, *lock(&state)));
     stopping.store(true, Ordering::SeqCst);
     supervisor.thread().unpark();
     supervisor.join().unwrap();
@@ -244,7 +247,7 @@ fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
 }
 
 #[test]
-fn an_ineligible_host_never_starts_the_gateway() {
+fn an_ineligible_host_never_starts_the_web() {
     let stopping = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let supervisor = {
@@ -269,7 +272,7 @@ fn an_ineligible_host_never_starts_the_gateway() {
 }
 
 #[test]
-fn transfer_end_handed_to_the_gateway_cannot_send() {
+fn transfer_end_handed_to_the_web_cannot_send() {
     let (transfer, child) = transfer_pair().unwrap();
     let error = child.send(b"x").unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe, "{error}");
@@ -280,7 +283,7 @@ fn transfer_end_handed_to_the_gateway_cannot_send() {
 
 #[test]
 fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
-    let (mut host, gateway) = UnixStream::pair().unwrap();
+    let (mut host, web) = UnixStream::pair().unwrap();
     let (transfer, child) = transfer_pair().unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -294,7 +297,7 @@ fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
     drop(child);
     drop(listener);
 
-    let mut receiver = org_socket::rights::StreamReceiver::new(gateway);
+    let mut receiver = org_socket::rights::StreamReceiver::new(web);
     let mut header = Vec::new();
     loop {
         // Every header byte carries no descriptor (an early descriptor is refused).
@@ -317,7 +320,7 @@ fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
     assert_eq!(marker, org_host_control::ops::HOST_SOCK_MARKER);
     let [first, second]: [OwnedFd; 2] = fds.try_into().unwrap();
 
-    // First: the gateway's receive-only transfer end, paired with the host's end.
+    // First: the web process's receive-only transfer end, paired with the host's end.
     let received = UnixDatagram::from(first);
     assert_eq!(
         received.send(b"x").unwrap_err().kind(),
@@ -464,11 +467,11 @@ fn connecting_script(ready: &str) -> String {
     )
 }
 
-/// The ready line a well-behaved gateway sends.
+/// The ready line a well-behaved web process sends.
 #[cfg(target_os = "macos")]
 const READY: &str = r#"{"v":1,"event":"ready_for_secrets"}"#;
 
-/// Starts a gateway whose child runs `script`. The scripted admission answers
+/// Starts a web process whose child runs `script`. The scripted admission answers
 /// `answer(step, nth, pid)`, with `nth` counting calls of that step (1-based).
 #[cfg(target_os = "macos")]
 fn start_scripted(
@@ -540,7 +543,7 @@ fn scripted_config(
     (dir, config)
 }
 
-/// Starts a scripted gateway whose admission answers the child's real token when
+/// Starts a scripted web process whose admission answers the child's real token when
 /// `tokens` (no token otherwise, so the child passes the peer-pid check and
 /// reaches the post-ready re-admission), except that the `nth` call (1-based)
 /// of `refuse` fails with `cause`.
@@ -580,7 +583,7 @@ fn a_changed_identity_at_re_admission_names_that_cause() {
     });
     let message = error.to_string();
     assert!(
-        message.contains("gateway admission refused at re-admission: the identity changed"),
+        message.contains("web process admission refused at re-admission: the identity changed"),
         "{message}"
     );
 }
@@ -610,7 +613,7 @@ fn a_ready_line_reporting_landlock_on_macos_names_that_cause() {
     );
     let message = error.to_string();
     assert!(
-        message.contains("gateway start failed: the ready line reports landlock on macOS"),
+        message.contains("web process start failed: the ready line reports landlock on macOS"),
         "{message}"
     );
 }
@@ -626,7 +629,7 @@ fn only_the_exact_handoff_ack_is_accepted() {
     ] {
         let message = check_ack(malformed).unwrap_err().to_string();
         assert_eq!(
-            message, "gateway start failed: the handoff ACK is malformed",
+            message, "web process start failed: the handoff ACK is malformed",
             "{malformed:?}"
         );
     }
@@ -637,7 +640,7 @@ fn only_the_exact_handoff_ack_is_accepted() {
     ] {
         let message = check_ack(wrong).unwrap_err().to_string();
         assert_eq!(
-            message, "gateway start failed: the handoff ACK does not acknowledge the handoff",
+            message, "web process start failed: the handoff ACK does not acknowledge the handoff",
             "{wrong:?}"
         );
     }
@@ -648,7 +651,7 @@ fn a_fatal_receive_logs_its_step_and_error_kind_escaped() {
     let line = fatal_receive("handoff ACK", io::ErrorKind::InvalidData);
     assert_eq!(
         line,
-        "gateway start failed fatally while receiving the handoff ACK (InvalidData); the host exits"
+        "web process start failed fatally while receiving the handoff ACK (InvalidData); the host exits"
     );
     // A step label is fixed text, but the line is escaped all the same.
     let forged = fatal_receive("ready line\nagentic-org: forged", io::ErrorKind::Other);
@@ -676,7 +679,7 @@ fn recording() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + 'static) {
 }
 
 #[test]
-fn the_exit_of_a_running_gateway_is_logged_with_its_reason_and_restart() {
+fn the_exit_of_a_running_web_is_logged_with_its_reason_and_restart() {
     let stopping = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let live = Arc::new(AtomicBool::new(true));
@@ -711,7 +714,7 @@ fn the_exit_of_a_running_gateway_is_logged_with_its_reason_and_restart() {
     let logged = lock(&lines).clone();
     assert_eq!(
         logged,
-        ["authenticated browser restarting in 1s because the running gateway stopped: the fake exited"],
+        ["authenticated browser restarting in 1s because the running web process stopped: the fake exited"],
     );
 }
 
@@ -746,7 +749,7 @@ fn every_failed_start_is_logged_escaped_with_its_restart_until_the_limit() {
     });
     let logged = lock(&lines).clone();
     assert_eq!(logged.len(), MAX_STARTS, "{logged:?}");
-    assert!(logged[0].ends_with("because it did not report gateway.serving before the deadline"));
+    assert!(logged[0].ends_with("because it did not report web.serving before the deadline"));
     assert!(logged[1].ends_with("because it stopped before serving: the fake exited"));
     assert!(
         logged[2].ends_with("because refused\\nforged line"),
@@ -788,7 +791,7 @@ fn every_admission_refusal_inside_start_keeps_its_cause() {
     ] {
         let message = start_refusing(step, nth, tokens, cause).to_string();
         assert!(
-            message.contains("gateway admission refused"),
+            message.contains("web process admission refused"),
             "{step:?} {nth}: {message}"
         );
         assert!(message.contains(cause), "{step:?} {nth}: {message}");
@@ -802,16 +805,16 @@ fn every_admission_refusal_inside_start_keeps_its_cause() {
 }
 
 #[test]
-fn a_running_gateway_names_why_it_ended() {
+fn a_running_web_names_why_it_ended() {
     let exit = || Some("exit status: 3".to_owned());
     assert_eq!(
         ended_cause(true, None, false),
-        "the host refused its gateway.serving as a protocol error"
+        "the host refused its web.serving as a protocol error"
     );
     // The refusal closes the connection; its EOF and exit must not hide it.
     assert_eq!(
         ended_cause(true, exit(), false),
-        "the host refused its gateway.serving as a protocol error"
+        "the host refused its web.serving as a protocol error"
     );
     assert_eq!(
         ended_cause(false, exit(), false),
@@ -859,11 +862,11 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("an HTTPS listener never starts the browser gateway")
+        panic!("an HTTPS listener never starts the web process")
     };
     assert_eq!(
         error.to_string(),
-        "the browser gateway requires a verified HTTP loopback listener"
+        "the web process requires a verified HTTP loopback listener"
     );
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
 }
@@ -888,7 +891,7 @@ fn the_supervisor_refuses_an_os_without_process_confinement() {
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("no browser gateway without macOS confinement")
+        panic!("no web process without macOS confinement")
     };
     assert!(error.to_string().contains("requires macOS"), "{error}");
 }
@@ -917,7 +920,7 @@ fn a_control_line_longer_than_1023_bytes_is_refused() {
     let error = line(&mut receiver, until, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
-        "gateway start failed: the ready line exceeds 1023 bytes"
+        "web process start failed: the ready line exceeds 1023 bytes"
     );
 }
 
@@ -930,7 +933,7 @@ fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
     let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
     assert_eq!(
         error.to_string(),
-        "gateway start failed: the handoff ACK did not arrive before the deadline"
+        "web process start failed: the handoff ACK did not arrive before the deadline"
     );
     assert!(started.elapsed() < Duration::from_secs(4));
     drop(peer);
@@ -945,7 +948,7 @@ fn control_eof_before_a_line_is_refused() {
     let error = line(&mut receiver, until, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
-        "gateway start failed: control EOF before the ready line"
+        "web process start failed: control EOF before the ready line"
     );
 }
 
@@ -987,7 +990,7 @@ fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "gateway start failed: the child did not connect before the deadline"
+        "web process start failed: the child did not connect before the deadline"
     );
 }
 
@@ -1009,7 +1012,7 @@ fn a_rendezvous_peer_other_than_the_admitted_child_is_refused() {
     let error = start_scripted(&script, |_, _, _| Ok(None));
     let message = error.to_string();
     assert!(
-        message.contains("gateway start failed: the rendezvous peer is not the admitted child"),
+        message.contains("web process start failed: the rendezvous peer is not the admitted child"),
         "{message}"
     );
 }
@@ -1029,7 +1032,7 @@ fn an_unconfined_child_fails_the_sandbox_verification() {
     let error = start_error(&config);
     let message = error.to_string();
     assert!(
-        message.contains("gateway start failed: verify the gateway sandbox"),
+        message.contains("web process start failed: verify the web process sandbox"),
         "{message}"
     );
 }
@@ -1044,7 +1047,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     config.listen = loopback_on(taken.local_addr().unwrap().port());
     let message = start_error(&config).to_string();
     assert!(
-        message.starts_with("gateway start failed: bind the browser listener ("),
+        message.starts_with("web process start failed: bind the browser listener ("),
         "{message}"
     );
     // The runtime directory is a file, so its rendezvous folder cannot be created.
@@ -1055,7 +1058,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     config.runtime = file;
     assert_eq!(
         start_error(&config).to_string(),
-        "gateway start failed: bind the rendezvous (NotADirectory)"
+        "web process start failed: bind the rendezvous (NotADirectory)"
     );
     // The rendezvous folder already exists as a symlink, so the owner-only check
     // refuses it (mkdir alone would accept the existing name and bind through it).
@@ -1072,7 +1075,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     config.runtime = runtime;
     assert_eq!(
         start_error(&config).to_string(),
-        "gateway start failed: bind the rendezvous (Other)"
+        "web process start failed: bind the rendezvous (Other)"
     );
     assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
     // The program is missing.
@@ -1080,7 +1083,7 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     config.program = dir.path().join("missing");
     let message = start_error(&config).to_string();
     assert!(
-        message.starts_with("gateway start failed: spawn the gateway suspended ("),
+        message.starts_with("web process start failed: spawn the web process suspended ("),
         "{message}"
     );
     // The first line would not fit in 1023 bytes.
@@ -1088,26 +1091,25 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
     config.instance = "i".repeat(1024);
     assert_eq!(
         start_error(&config).to_string(),
-        "gateway start failed: the first line exceeds 1023 bytes"
+        "web process start failed: the first line exceeds 1023 bytes"
     );
 }
 
-/// The supervisor's exit cause for an admitted gateway comes from the live `Running`
-/// inputs: the control connection's `gateway.serving` refusal, the reaped child's
+/// The supervisor's exit cause for an admitted web process comes from the live `Running`
+/// inputs: the control connection's `web.serving` refusal, the reaped child's
 /// status and the control EOF, each read at the `Running::ended` call site.
 #[test]
 fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
-    use org_host_control::ops::GatewayServing;
+    use org_host_control::ops::WebServing;
     use org_proto::frame;
     let home = tempfile::tempdir().unwrap();
-    let (handler, offices) = crate::service::tests::gateway_handler(home.path());
+    let (handler, offices) = crate::service::tests::web_handler(home.path());
     let running = |program: &str, resume: bool| {
         let (host, peer) = UnixStream::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
         let (transfer, _child) = UnixDatagram::pair().unwrap();
-        let control =
-            GatewayConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
+        let control = WebConnection::start(host, transfer, loopback(), handler.clone()).unwrap();
         let spawned = spawn::spawn_suspended(Path::new(program), &[], &[]).unwrap();
         if resume {
             spawned.process.resume().unwrap();
@@ -1126,17 +1128,17 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
             .flatten()
     };
 
-    // A refused gateway.serving wins over the EOF it causes; the child still runs.
+    // A refused web.serving wins over the EOF it causes; the child still runs.
     let (mut refused, mut peer) = running("/bin/sleep", false);
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     call(&mut peer, hello.unwrap()).expect("hello answered");
-    let early = org_proto::Request::new::<GatewayServing>(2, &Default::default()).unwrap();
+    let early = org_proto::Request::new::<WebServing>(2, &Default::default()).unwrap();
     call(&mut peer, early);
     wait_for("refusal closes control", || !refused.serving());
     assert!(matches!(refused.process.try_wait(), Ok(false)));
     assert_eq!(
         refused.ended(),
-        "the host refused its gateway.serving as a protocol error"
+        "the host refused its web.serving as a protocol error"
     );
 
     // A reaped child's status, while the control connection is still open.
@@ -1156,8 +1158,8 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
     offices.shutdown();
 }
 
-fn binding() -> org_host_control::gateway::GatewayRelease {
-    org_host_control::gateway::GatewayRelease {
+fn binding() -> org_host_control::gateway::WebRelease {
+    org_host_control::gateway::WebRelease {
         release_id: "release".into(),
         manifest_sha256: "ab".repeat(32),
         sequence: 7,
@@ -1165,30 +1167,30 @@ fn binding() -> org_host_control::gateway::GatewayRelease {
 }
 
 #[test]
-fn a_release_build_gateway_admission_pins_the_selected_image_and_binds_its_release() {
+fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release() {
     const TEAM: &str = "AB12CD34EF";
     let hash = [7u8; 20];
-    let gateway = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
-    assert!(matches!(gateway, ServerCheck::Gateway(_)));
-    // A selected release pins its exact gateway image and binds its identity.
+    let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
+    assert!(matches!(web, ServerCheck::Gateway(_)));
+    // A selected release pins its exact web process image and binds its identity.
     let (check, release) = admission::<()>(false, Some(TEAM), Some((Ok(hash), binding())));
-    assert_eq!(check, gateway.clone().pinned(hash));
+    assert_eq!(check, web.clone().pinned(hash));
     assert_eq!(release, Some(binding()));
-    // No release: the Developer ID gateway check alone, no binding.
+    // No release: the Developer ID web process check alone, no binding.
     let (check, release) = admission::<()>(false, Some(TEAM), None);
-    assert_eq!(check, gateway);
+    assert_eq!(check, web);
     assert_eq!(release, None);
     assert!(check.may_spawn().is_ok());
 }
 
 #[test]
-fn a_release_build_gateway_admission_refuses_a_missing_image_hash_a_malformed_or_missing_team() {
+fn a_release_build_web_admission_refuses_a_missing_image_hash_a_malformed_or_missing_team() {
     const TEAM: &str = "AB12CD34EF";
-    // A selected release without a gateway image hash refuses every start.
+    // A selected release without a web process image hash refuses every start.
     let (check, release) = admission(false, Some(TEAM), Some((Err(()), binding())));
     assert_eq!(
         check,
-        ServerCheck::GatewayRefused("the selected release has no agentic-org-web image hash")
+        ServerCheck::WebRefused("the selected release has no agentic-org-web image hash")
     );
     assert_eq!(release, Some(binding()));
     assert!(check.may_spawn().is_err());
@@ -1207,13 +1209,13 @@ fn a_release_build_gateway_admission_refuses_a_missing_image_hash_a_malformed_or
     }
     // No team id in a release build refuses.
     let (check, release) = admission::<()>(false, None, None);
-    assert!(matches!(check, ServerCheck::GatewayRefused(_)), "{check:?}");
+    assert!(matches!(check, ServerCheck::WebRefused(_)), "{check:?}");
     assert!(check.may_spawn().is_err());
     assert_eq!(release, None);
 }
 
 #[test]
-fn a_debug_build_gateway_admission_skips_the_signature_check_but_still_pins_a_release() {
+fn a_debug_build_web_admission_skips_the_signature_check_but_still_pins_a_release() {
     let (check, release) = admission::<()>(true, None, None);
     assert_eq!(check, ServerCheck::Skip);
     assert_eq!(release, None);
@@ -1274,7 +1276,7 @@ fn a_confined_child_with_a_wrong_handoff_ack_is_refused() {
     )
     .to_string();
     assert_eq!(
-        message, "gateway start failed: the handoff ACK does not acknowledge the handoff",
+        message, "web process start failed: the handoff ACK does not acknowledge the handoff",
         "the child passed the sandbox verification and reached the ACK check"
     );
 }
@@ -1288,7 +1290,7 @@ fn a_confined_child_that_closes_control_before_its_handoff_ack_is_refused() {
             .to_string();
     assert_eq!(
         message,
-        "gateway start failed: control EOF before the handoff ACK"
+        "web process start failed: control EOF before the handoff ACK"
     );
 }
 
@@ -1312,7 +1314,7 @@ fn the_rendezvous_is_owner_only_when_the_child_connects() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn a_started_gateway_serves_but_is_not_reported_before_gateway_serving() {
+fn a_started_web_serves_but_is_not_reported_before_web_serving() {
     // Confined, acknowledged: the start succeeds, but nothing reported serving yet.
     let (_dir, config) = confined_config(
         "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"handoff\"}'\nsleep 20\n",
@@ -1321,7 +1323,7 @@ fn a_started_gateway_serves_but_is_not_reported_before_gateway_serving() {
     assert!(running.serving());
     assert!(
         !running.reported(),
-        "running is reported only after gateway.serving"
+        "running is reported only after web.serving"
     );
 }
 
@@ -1346,7 +1348,7 @@ fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line() {
     });
     assert_eq!(
         error.to_string(),
-        "gateway start failed: the ready-line peer is not the admitted child"
+        "web process start failed: the ready-line peer is not the admitted child"
     );
 }
 

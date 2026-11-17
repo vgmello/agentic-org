@@ -79,9 +79,9 @@ impl Drop for Input {
 fn mode(path: &Path, value: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(value)).unwrap();
 }
-fn pin() -> GatewayRelease {
+fn pin() -> WebRelease {
     use sha2::{Digest, Sha256};
-    GatewayRelease {
+    WebRelease {
         release_id: "gateway-input-fixture-1".into(),
         sequence: 1,
         manifest_sha256: Sha256::digest(MANIFEST)

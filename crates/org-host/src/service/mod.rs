@@ -113,21 +113,21 @@ impl Service {
         self.gateway = state;
         self
     }
-    /// Whether the host may start its browser gateway: host authentication is
+    /// Whether the host may start its web process: host authentication is
     /// present and HQ is Active. Persisted listener configuration alone never qualifies.
-    pub(crate) fn gateway_eligible(&self) -> bool {
-        gateway_start_eligible(self.authentication.is_some(), self.hq_active())
+    pub(crate) fn web_eligible(&self) -> bool {
+        web_start_eligible(self.authentication.is_some(), self.hq_active())
     }
-    /// The start-eligibility predicate the host wires into its gateway supervisor:
-    /// [`Service::gateway_eligible`], evaluated live on each supervisor poll.
-    pub(crate) fn gateway_eligibility(self: &Arc<Self>) -> Arc<dyn Fn() -> bool + Send + Sync> {
+    /// The start-eligibility predicate the host wires into its web process supervisor:
+    /// [`Service::web_eligible`], evaluated live on each supervisor poll.
+    pub(crate) fn web_eligibility(self: &Arc<Self>) -> Arc<dyn Fn() -> bool + Send + Sync> {
         let service = Arc::clone(self);
-        Arc::new(move || service.gateway_eligible())
+        Arc::new(move || service.web_eligible())
     }
-    /// Whether browsers can be served: eligible, and an admitted gateway is serving
+    /// Whether browsers can be served: eligible, and an admitted web process is serving
     /// (the supervisor publishes `Running` only between admission and exit/EOF).
-    pub(crate) fn gateway_ready(&self) -> bool {
-        gateway_serving(
+    pub(crate) fn web_ready(&self) -> bool {
+        web_serving(
             self.authentication.is_some(),
             self.hq_active(),
             *crate::sync::lock(&self.gateway),
@@ -301,12 +301,12 @@ fn deliver_channel(
     }
 }
 
-/// `gateway.serving` (GW-01 r4): only the admitted gateway connection may report, once, after
+/// `web.serving` (GW-01 r4): only the admitted web process connection may report, once, after
 /// hello and a successful `tls.fetch`. Anything else from it is a protocol error that closes
 /// the control connection, so supervision fails the start rather than publishing `running`.
-fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
+fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
     use crate::service::listener::ServingReport;
-    use org_host_control::ops::GatewayServing;
+    use org_host_control::ops::WebServing;
     let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
     if connection.gateway_listen().is_none() {
         connection.send_response(refused(
@@ -315,7 +315,7 @@ fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
         ));
         return;
     }
-    if request.params::<GatewayServing>().is_err() {
+    if request.params::<WebServing>().is_err() {
         connection.refuse_serving(refused(
             ErrorCode::InvalidRequest,
             "the params don't fit this method",
@@ -324,12 +324,12 @@ fn gateway_reports_serving(request: &Request, connection: &Arc<Connection>) {
     }
     match connection.report_serving() {
         ServingReport::Accepted => {
-            connection.send_response(ok::<GatewayServing>(request.id, &Default::default()));
+            connection.send_response(ok::<WebServing>(request.id, &Default::default()));
         }
-        ServingReport::OutOfOrder | ServingReport::NotGateway => {
+        ServingReport::OutOfOrder | ServingReport::NotWeb => {
             connection.refuse_serving(refused(
                 ErrorCode::InvalidRequest,
-                "gateway.serving is sent once, after hello and tls.fetch",
+                "web.serving is sent once, after hello and tls.fetch",
             ));
         }
     }
@@ -386,8 +386,8 @@ impl Handler for Service {
             ));
             return;
         };
-        if request.is::<org_host_control::ops::GatewayServing>() {
-            gateway_reports_serving(&request, connection);
+        if request.is::<org_host_control::ops::WebServing>() {
+            web_reports_serving(&request, connection);
             return;
         }
         if !connection.hello_completed() && !request.is::<Hello>() {
@@ -609,63 +609,60 @@ pub(crate) fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
 
 /// The start-eligibility rule: host authentication is present and HQ is Active.
 /// Persisted listener configuration alone never qualifies.
-pub(crate) fn gateway_start_eligible(authenticated: bool, hq_active: bool) -> bool {
+pub(crate) fn web_start_eligible(authenticated: bool, hq_active: bool) -> bool {
     authenticated && hq_active
 }
 
 /// The readiness rule: all three conditions, never persisted state alone.
-pub(crate) fn gateway_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
-    gateway_start_eligible(authenticated, hq_active) && state == GatewayState::Running
+pub(crate) fn web_serving(authenticated: bool, hq_active: bool, state: GatewayState) -> bool {
+    web_start_eligible(authenticated, hq_active) && state == GatewayState::Running
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     #[test]
-    fn gateway_start_needs_authentication_and_an_active_hq() {
-        use super::gateway_start_eligible;
-        assert!(gateway_start_eligible(true, true));
-        assert!(!gateway_start_eligible(false, true), "no authentication");
-        assert!(!gateway_start_eligible(true, false), "no Active HQ");
-        assert!(!gateway_start_eligible(false, false));
+    fn web_start_needs_authentication_and_an_active_hq() {
+        use super::web_start_eligible;
+        assert!(web_start_eligible(true, true));
+        assert!(!web_start_eligible(false, true), "no authentication");
+        assert!(!web_start_eligible(true, false), "no Active HQ");
+        assert!(!web_start_eligible(false, false));
     }
 
-    /// The service fixture, and the predicate the host wires into its gateway
-    /// supervisor, refuse to start the gateway without authentication and without an
+    /// The service fixture, and the predicate the host wires into its web process
+    /// supervisor, refuse to start the web process without authentication and without an
     /// Active HQ. An Active HQ needs a real office worker: the ignored real-process
     /// test covers the eligible case and the authenticated, not-yet-Active window.
     #[test]
-    fn the_wired_gateway_eligibility_refuses_without_authentication_or_an_active_hq() {
+    fn the_wired_web_eligibility_refuses_without_authentication_or_an_active_hq() {
         let home = tempfile::tempdir().unwrap();
         let bare = Arc::new(service(home.path()));
-        assert!(!bare.gateway_eligible(), "no authentication");
-        assert!(!(bare.gateway_eligibility())(), "wired: no authentication");
+        assert!(!bare.web_eligible(), "no authentication");
+        assert!(!(bare.web_eligibility())(), "wired: no authentication");
         let (_root, authentication, _connection) = crate::service::authentication::tests::fixture();
         let authenticated =
             Arc::new(service(home.path()).with_authentication(Some(Arc::new(authentication))));
         assert!(authenticated.offices.offices().is_empty());
-        assert!(!authenticated.gateway_eligible(), "no Active HQ");
-        assert!(
-            !(authenticated.gateway_eligibility())(),
-            "wired: no Active HQ"
-        );
+        assert!(!authenticated.web_eligible(), "no Active HQ");
+        assert!(!(authenticated.web_eligibility())(), "wired: no Active HQ");
         bare.offices.shutdown();
         authenticated.offices.shutdown();
     }
 
     #[test]
-    fn gateway_ready_needs_authentication_active_hq_and_a_serving_gateway() {
-        use super::gateway_serving;
-        assert!(gateway_serving(true, true, GatewayState::Running));
+    fn web_ready_needs_authentication_active_hq_and_a_serving_web() {
+        use super::web_serving;
+        assert!(web_serving(true, true, GatewayState::Running));
         for state in [
             GatewayState::NotConfigured,
             GatewayState::Starting,
             GatewayState::Failed,
             GatewayState::Unknown,
         ] {
-            assert!(!gateway_serving(true, true, state), "{state:?}");
+            assert!(!web_serving(true, true, state), "{state:?}");
         }
-        assert!(!gateway_serving(false, true, GatewayState::Running));
-        assert!(!gateway_serving(true, false, GatewayState::Running));
+        assert!(!web_serving(false, true, GatewayState::Running));
+        assert!(!web_serving(true, false, GatewayState::Running));
     }
 
     use super::*;
@@ -738,35 +735,35 @@ pub(crate) mod tests {
         Service::new(offices, broadcast, None)
     }
 
-    /// A service fixture with an instance id, as an admitted gateway's handler, and
+    /// A service fixture with an instance id, as an admitted web process's handler, and
     /// its offices for shutdown.
-    pub(crate) fn gateway_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
+    pub(crate) fn web_handler(home: &Path) -> (Arc<Service>, Arc<Offices>) {
         let mut service = service(home);
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
         (Arc::new(service), offices)
     }
 
-    /// The real handler on an admitted gateway control connection, plus its peer end.
-    fn gateway_peer(
+    /// The real handler on an admitted web process control connection, plus its peer end.
+    fn web_peer(
         home: &Path,
     ) -> (
-        listener::GatewayConnection,
+        listener::WebConnection,
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
-        gateway_peer_on(
+        web_peer_on(
             home,
             r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
         )
     }
 
-    /// [`gateway_peer`] whose gateway listens on `listen` (JSON).
-    fn gateway_peer_on(
+    /// [`web_peer`] whose web process listens on `listen` (JSON).
+    fn web_peer_on(
         home: &Path,
         listen: &str,
     ) -> (
-        listener::GatewayConnection,
+        listener::WebConnection,
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
@@ -778,9 +775,9 @@ pub(crate) mod tests {
             .unwrap();
         let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
         let listen = serde_json::from_str(listen).unwrap();
-        let gateway =
-            listener::GatewayConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
-        (gateway, std::io::BufReader::new(peer), offices)
+        let web =
+            listener::WebConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
+        (web, std::io::BufReader::new(peer), offices)
     }
 
     fn exchange<C: Call>(
@@ -798,22 +795,19 @@ pub(crate) mod tests {
             Some(org_proto::Outcome::Error(error)) if error.code == code)
     }
 
-    fn wait_closed(gateway: &listener::GatewayConnection) {
+    fn wait_closed(web: &listener::WebConnection) {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while gateway.live() && std::time::Instant::now() < until {
+        while web.live() && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert!(
-            !gateway.live(),
-            "protocol error closes the control connection"
-        );
+        assert!(!web.live(), "protocol error closes the control connection");
     }
 
     #[test]
-    fn gateway_serving_is_accepted_once_after_hello_and_tls_fetch() {
-        use org_host_control::ops::{GatewayServing, TlsFetch};
+    fn web_serving_is_accepted_once_after_hello_and_tls_fetch() {
+        use org_host_control::ops::{TlsFetch, WebServing};
         let home = tempfile::tempdir().unwrap();
-        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        let (web, mut peer, offices) = web_peer(home.path());
         exchange::<Hello>(&mut peer, 1, &Default::default())
             .unwrap()
             .into_result::<Hello>()
@@ -822,31 +816,31 @@ pub(crate) mod tests {
             .unwrap()
             .into_result::<TlsFetch>()
             .unwrap();
-        assert!(!gateway.reported_serving());
-        exchange::<GatewayServing>(&mut peer, 3, &Default::default())
+        assert!(!web.reported_serving());
+        exchange::<WebServing>(&mut peer, 3, &Default::default())
             .unwrap()
-            .into_result::<GatewayServing>()
+            .into_result::<WebServing>()
             .unwrap();
-        assert!(gateway.reported_serving());
-        assert!(gateway.live());
-        assert!(!gateway.serving_refused());
+        assert!(web.reported_serving());
+        assert!(web.live());
+        assert!(!web.serving_refused());
         // A duplicate is refused and closes the control connection.
         assert!(refused(
-            exchange::<GatewayServing>(&mut peer, 4, &Default::default()),
+            exchange::<WebServing>(&mut peer, 4, &Default::default()),
             ErrorCode::InvalidRequest
         ));
-        wait_closed(&gateway);
+        wait_closed(&web);
         // The supervisor logs the refusal, not only the EOF that follows it.
-        assert!(gateway.serving_refused());
-        drop(gateway);
+        assert!(web.serving_refused());
+        drop(web);
         offices.shutdown();
     }
 
     #[test]
-    fn gateway_serving_with_params_that_do_not_fit_is_a_protocol_error() {
+    fn web_serving_with_params_that_do_not_fit_is_a_protocol_error() {
         use org_host_control::ops::TlsFetch;
         let home = tempfile::tempdir().unwrap();
-        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        let (web, mut peer, offices) = web_peer(home.path());
         exchange::<Hello>(&mut peer, 1, &Default::default())
             .unwrap()
             .into_result::<Hello>()
@@ -855,28 +849,28 @@ pub(crate) mod tests {
             .unwrap()
             .into_result::<TlsFetch>()
             .unwrap();
-        // In order, but its params don't fit `gateway.serving`.
+        // In order, but its params don't fit `web.serving`.
         let request: Request = serde_json::from_value(serde_json::json!({
             "id": 3,
-            "method": "gateway.serving",
+            "method": "web.serving",
             "params": {"ready": true},
         }))
         .unwrap();
         org_proto::frame::write_message(peer.get_mut(), &request).unwrap();
         let response = org_proto::frame::read_message(&mut peer).ok().flatten();
         assert!(refused(response, ErrorCode::InvalidRequest));
-        wait_closed(&gateway);
-        assert!(!gateway.reported_serving());
-        assert!(gateway.serving_refused());
-        drop(gateway);
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        assert!(web.serving_refused());
+        drop(web);
         offices.shutdown();
     }
 
     #[test]
     fn tls_fetch_off_an_http_loopback_listener_is_unavailable_and_never_enables_serving() {
-        use org_host_control::ops::{GatewayServing, TlsFetch};
+        use org_host_control::ops::{TlsFetch, WebServing};
         let home = tempfile::tempdir().unwrap();
-        let (gateway, mut peer, offices) = gateway_peer_on(
+        let (web, mut peer, offices) = web_peer_on(
             home.path(),
             r#"{"address":"127.0.0.1","port":8443,"scheme":"https","origin":"https://127.0.0.1:8443","hsts":"off"}"#,
         );
@@ -889,38 +883,38 @@ pub(crate) mod tests {
             ErrorCode::Unavailable
         ));
         assert!(refused(
-            exchange::<GatewayServing>(&mut peer, 3, &Default::default()),
+            exchange::<WebServing>(&mut peer, 3, &Default::default()),
             ErrorCode::InvalidRequest
         ));
-        wait_closed(&gateway);
-        assert!(!gateway.reported_serving());
-        drop(gateway);
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        drop(web);
         offices.shutdown();
     }
 
     #[test]
-    fn gateway_serving_before_tls_fetch_is_a_protocol_error() {
-        use org_host_control::ops::GatewayServing;
+    fn web_serving_before_tls_fetch_is_a_protocol_error() {
+        use org_host_control::ops::WebServing;
         let home = tempfile::tempdir().unwrap();
-        let (gateway, mut peer, offices) = gateway_peer(home.path());
+        let (web, mut peer, offices) = web_peer(home.path());
         exchange::<Hello>(&mut peer, 1, &Default::default())
             .unwrap()
             .into_result::<Hello>()
             .unwrap();
         assert!(refused(
-            exchange::<GatewayServing>(&mut peer, 2, &Default::default()),
+            exchange::<WebServing>(&mut peer, 2, &Default::default()),
             ErrorCode::InvalidRequest
         ));
-        wait_closed(&gateway);
-        assert!(!gateway.reported_serving());
-        assert!(gateway.serving_refused());
-        drop(gateway);
+        wait_closed(&web);
+        assert!(!web.reported_serving());
+        assert!(web.serving_refused());
+        drop(web);
         offices.shutdown();
     }
 
     #[test]
-    fn gateway_serving_from_a_local_connection_is_not_authorized() {
-        use org_host_control::ops::GatewayServing;
+    fn web_serving_from_a_local_connection_is_not_authorized() {
+        use org_host_control::ops::WebServing;
         let home = tempfile::tempdir().unwrap();
         let mut service = service(home.path());
         service.instance_id = Some(crate::ids::generate().unwrap());
@@ -936,7 +930,7 @@ pub(crate) mod tests {
             .into_result::<Hello>()
             .unwrap();
         assert!(refused(
-            exchange::<GatewayServing>(&mut peer, 2, &Default::default()),
+            exchange::<WebServing>(&mut peer, 2, &Default::default()),
             ErrorCode::NotAuthorized
         ));
         assert!(local.live());

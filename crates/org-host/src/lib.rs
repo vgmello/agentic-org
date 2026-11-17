@@ -46,7 +46,6 @@ mod clock;
 mod cloexec;
 mod code_signing;
 mod error;
-mod gateway;
 mod home;
 mod host_log;
 mod host_secrets;
@@ -58,6 +57,7 @@ mod hostdb;
 pub mod human;
 mod ids;
 pub mod release;
+mod web;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
@@ -351,7 +351,7 @@ pub struct Host {
     lock: Option<HostLock>,
     instance: Option<instance::registry::Instance>,
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
-    gateway: Option<gateway::Supervisor>,
+    web: Option<web::Supervisor>,
     service: Arc<Service>,
 }
 
@@ -526,31 +526,31 @@ fn startup_catalog(
     Ok((catalog, protected_offices, unfinished))
 }
 
-fn startup_gateway(
+fn startup_web(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     layout: &Layout,
     dev_key_dir: Option<&Path>,
-) -> Result<Option<gateway::Configuration>, HostError> {
+) -> Result<Option<web::Configuration>, HostError> {
     let Some(instance) = instance else {
         return Ok(None);
     };
     let Some(listen) = instance.browser().map_err(instance_error)? else {
         return Ok(None);
     };
-    let (check, release) = gateway::admission(
+    let (check, release) = web::admission(
         cfg!(debug_assertions),
         config.app_team_id.as_deref(),
         config
             .runtime_release
             .as_ref()
-            .map(|release| (release.cdhash("agentic-org-web"), release.gateway_binding())),
+            .map(|release| (release.cdhash("agentic-org-web"), release.web_binding())),
     );
     let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
     if let Some(dir) = dev_key_dir {
         critical_paths.push(dir.to_owned());
     }
-    Ok(Some(gateway::Configuration {
+    Ok(Some(web::Configuration {
         release,
         program: config.server_program.with_file_name("agentic-org-web"),
         instance: instance.id().into(),
@@ -731,7 +731,7 @@ impl Host {
         let gateway_state = Arc::new(std::sync::Mutex::new(
             org_host_control::GatewayState::NotConfigured,
         ));
-        let gateway_config = startup_gateway(&config, &instance, &layout, dev_key_dir)?;
+        let web_config = startup_web(&config, &instance, &layout, dev_key_dir)?;
         let recovery = match (&instance, &authentication) {
             (Some(instance), Some(authentication)) => Some(Arc::new(recovery::Recovery::new(
                 Arc::clone(authentication),
@@ -754,14 +754,14 @@ impl Host {
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
-        let gateway = gateway_config.and_then(|gateway_config| {
-            match gateway::Supervisor::start(
-                gateway_config,
+        let web = web_config.and_then(|web_config| {
+            match web::Supervisor::start(
+                web_config,
                 service.clone(),
                 Arc::clone(&gateway_state),
-                service.gateway_eligibility(),
+                service.web_eligibility(),
             ) {
-                Ok(gateway) => Some(gateway),
+                Ok(web) => Some(web),
                 Err(error) => {
                     *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
                     host_log::log(&format!(
@@ -780,7 +780,7 @@ impl Host {
             lock: Some(lock),
             instance,
             authentication_lifecycle,
-            gateway,
+            web,
             service,
         })
     }
@@ -790,10 +790,10 @@ impl Host {
         &self.layout.home
     }
 
-    /// Whether the browser gateway is serving: host authentication is present, HQ is
-    /// Active and an admitted gateway's control connection is live.
-    pub fn gateway_ready(&self) -> bool {
-        self.service.gateway_ready()
+    /// Whether the web process is serving: host authentication is present, HQ is
+    /// Active and an admitted web process's control connection is live.
+    pub fn web_ready(&self) -> bool {
+        self.service.web_ready()
     }
 
     /// `host.sock`, where clients connect.
@@ -812,8 +812,8 @@ impl Host {
             return;
         };
         listener.close();
-        // Ends the gateway control connection (and its sessions), then kills/reaps it.
-        self.gateway.take();
+        // Ends the web process control connection (and its sessions), then kills/reaps it.
+        self.web.take();
         // Before joining the listener: a create still running answers as soon as the
         // supervisor stops its server.
         self.offices.shutdown();

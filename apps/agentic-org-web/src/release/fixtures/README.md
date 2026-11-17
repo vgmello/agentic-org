@@ -4,6 +4,6 @@ public payload bytes are retained. The generated private key was discarded.
 
 The four three-byte executable payloads are deliberately not executable images.
 The Linux manifest is used only by private unit-test verification and preload;
-it cannot admit a running gateway, platform signing, release activation or a
+it cannot admit a running web, platform signing, release activation or a
 production trust registry. Tests never inject this registry through a public
 runtime configuration.

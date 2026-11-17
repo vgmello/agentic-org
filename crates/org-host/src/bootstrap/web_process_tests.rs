@@ -32,7 +32,7 @@ struct Reply {
     body: serde_json::Value,
 }
 fn http(address: SocketAddr, method: &str, path: &str, headers: &str, body: &str) -> Reply {
-    let mut stream = TcpStream::connect(address).expect("gateway listener");
+    let mut stream = TcpStream::connect(address).expect("web process listener");
     stream.set_read_timeout(Some(WAIT)).unwrap();
     write!(
         stream,
@@ -118,13 +118,13 @@ fn answer<C: Call>(
     })
 }
 
-fn gateway_ready(host: &BootstrapHost) -> bool {
+fn web_ready(host: &BootstrapHost) -> bool {
     let state = host.state.state.lock().unwrap();
-    state.host.as_ref().is_some_and(crate::Host::gateway_ready)
+    state.host.as_ref().is_some_and(crate::Host::web_ready)
 }
 
 /// Every live process executing exactly `program` (a unique temp path).
-fn gateway_pids(program: &Path) -> Vec<String> {
+fn web_pids(program: &Path) -> Vec<String> {
     let out = Command::new("/usr/bin/pgrep")
         .arg("-f")
         .arg(program)
@@ -138,15 +138,15 @@ fn gateway_pids(program: &Path) -> Vec<String> {
 }
 
 /// The single live process executing exactly `program` (a unique temp path).
-fn gateway_pid(program: &Path) -> String {
-    let pids = gateway_pids(program);
-    assert_eq!(pids.len(), 1, "exactly one gateway process: {pids:?}");
+fn web_pid(program: &Path) -> String {
+    let pids = web_pids(program);
+    assert_eq!(pids.len(), 1, "exactly one web process: {pids:?}");
     pids.into_iter().next().unwrap()
 }
 
 #[test]
-#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual gateway/worker listeners require permitted local bind"]
-fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     let office = std::env::var_os("ORG_TEST_OFFICE_BIN")
         .expect("ORG_TEST_OFFICE_BIN must name the built agentic-org-office");
     let web = std::env::var_os("ORG_TEST_WEB_BIN")
@@ -157,7 +157,7 @@ fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
         fs::create_dir(base.join(name)).unwrap();
         fs::set_permissions(base.join(name), fs::Permissions::from_mode(0o700)).unwrap();
     }
-    // The host runs the gateway as the worker's sibling; the web image serves
+    // The host runs the web process as the worker's sibling; the web image serves
     // `<exe dir>/ui`. Copies keep the build outputs untouched.
     let worker = base.join("bin/agentic-org-office");
     let program = base.join("bin/agentic-org-web");
@@ -212,17 +212,17 @@ fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
     else {
         panic!("bootstrap refused")
     };
-    // Authenticated but HQ is not Active yet: the gateway is not serving.
-    assert!(!gateway_ready(&host));
+    // Authenticated but HQ is not Active yet: the web process is not serving.
+    assert!(!web_ready(&host));
     // The wired start-eligibility gate holds the supervisor before any spawn or bind:
     // across several supervisor polls no agentic-org-web child runs and the browser
     // port accepts nothing.
     let window = Instant::now() + Duration::from_secs(3);
     while Instant::now() < window {
-        let pids = gateway_pids(&program);
+        let pids = web_pids(&program);
         assert!(
             pids.is_empty(),
-            "gateway spawned before HQ is Active: {pids:?}"
+            "web process spawned before HQ is Active: {pids:?}"
         );
         assert!(
             TcpStream::connect(address).is_err(),
@@ -230,7 +230,7 @@ fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
         );
         thread::sleep(Duration::from_millis(50));
     }
-    assert!(!gateway_ready(&host));
+    assert!(!web_ready(&host));
     let prepared = Params {
         session: first.session,
         operation_id: p.hq_operation_id.clone(),
@@ -259,7 +259,7 @@ fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
     }
 
     // 1. Admission after HQ: the supervisor spawns and admits the real web image.
-    wait_until("gateway_ready", || gateway_ready(&host));
+    wait_until("web_ready", || web_ready(&host));
     wait_until("HTTP readiness", || http_ready(address));
     let version = http(address, "GET", "/api/v1/version", "", "");
     assert_eq!(version.status, 200);
@@ -276,29 +276,32 @@ fn actual_host_spawns_web_gateway_serves_version_and_restarts_after_eof() {
     //    credentials reach no host account.verify.
     assert_no_sign_in(address);
 
-    // 3. Control EOF: kill the admitted gateway. Readiness turns false; the
+    // 3. Control EOF: kill the admitted web process. Readiness turns false; the
     //    supervisor's bounded restart serves a new process.
-    let killed = gateway_pid(&program);
+    let killed = web_pid(&program);
     let status = Command::new("/bin/kill")
         .args(["-KILL", &killed])
         .status()
         .unwrap();
     assert!(status.success());
-    wait_until("gateway_ready false after EOF", || !gateway_ready(&host));
-    wait_until("restarted gateway_ready", || gateway_ready(&host));
+    wait_until("web_ready false after EOF", || !web_ready(&host));
+    wait_until("restarted web_ready", || web_ready(&host));
     wait_until("restarted HTTP readiness", || http_ready(address));
-    assert_ne!(gateway_pid(&program), killed, "a new admitted process");
+    assert_ne!(web_pid(&program), killed, "a new admitted process");
     assert_eq!(http(address, "GET", "/api/v1/version", "", "").status, 200);
     assert_no_sign_in(address);
 
     answer::<Exit>(&mut wire, id, &Empty {}).unwrap();
     host.shutdown();
     drop(wire);
-    // Host shutdown drops the gateway first: no web process survives.
+    // Host shutdown drops the web process first: no web process survives.
     let left = Command::new("/usr/bin/pgrep")
         .arg("-f")
         .arg(&program)
         .output()
         .unwrap();
-    assert!(left.stdout.is_empty(), "gateway reaped on host shutdown");
+    assert!(
+        left.stdout.is_empty(),
+        "web process reaped on host shutdown"
+    );
 }

@@ -4,7 +4,7 @@ use crate::{
     cloexec::SPAWN_LOCK,
     home,
     server_check::ServerCheck,
-    service::listener::{GatewayConnection, Handler},
+    service::listener::{Handler, WebConnection},
     spawn::{self, Process},
     sync::lock,
 };
@@ -40,9 +40,9 @@ const WAIT: Duration = Duration::from_secs(5);
 /// Consecutive failed starts before the supervisor gives up.
 const MAX_STARTS: usize = 5;
 const POLL: Duration = Duration::from_millis(50);
-/// How long a started gateway may take to report `gateway.serving` (GW-01 r4).
+/// How long a started web process may take to report `web.serving` (GW-01 r4).
 const SERVING_DEADLINE: Duration = Duration::from_secs(10);
-/// A gateway that stayed `Running` this long was a healthy start: its later
+/// A web process that stayed `Running` this long was a healthy start: its later
 /// exit begins a fresh run of consecutive failures instead of adding to one.
 const STABLE_RUNNING: Duration = Duration::from_secs(60);
 /// First restart delay; each further consecutive failure doubles it.
@@ -68,14 +68,14 @@ fn unavailable() -> io::Error {
 fn invalid<T>(_: T) -> io::Error {
     unavailable()
 }
-/// The launch check refused the gateway at `step`. Its cause names only the check
+/// The launch check refused the web process at `step`. Its cause names only the check
 /// and the executable's identity, so it is kept for the supervisor's log line.
 fn refused(step: &'static str) -> impl FnOnce(String) -> io::Error {
-    move |why| io::Error::other(format!("gateway admission refused at {step}: {why}"))
+    move |why| io::Error::other(format!("web process admission refused at {step}: {why}"))
 }
 /// A failed start step with a fixed, secret-free cause for the supervisor's log line.
 fn failed(cause: &str) -> io::Error {
-    io::Error::other(format!("gateway start failed: {cause}"))
+    io::Error::other(format!("web process start failed: {cause}"))
 }
 /// A failed start step caused by an OS error. Only the error's kind is kept, never
 /// its text, so the cause stays fixed and secret-free.
@@ -90,34 +90,28 @@ pub(crate) struct Configuration {
     pub listen: ListenConfig,
     pub check: ServerCheck,
     pub critical_paths: Vec<PathBuf>,
-    pub release: Option<org_host_control::gateway::GatewayRelease>,
+    pub release: Option<org_host_control::gateway::WebRelease>,
 }
-/// The selected release's gateway image hash (`Err`: the release has none) and the
-/// release identity bound into the gateway's first line.
-pub(crate) type SelectedRelease<E> = (
-    Result<[u8; 20], E>,
-    org_host_control::gateway::GatewayRelease,
-);
+/// The selected release's web process image hash (`Err`: the release has none) and the
+/// release identity bound into the web process's first line.
+pub(crate) type SelectedRelease<E> = (Result<[u8; 20], E>, org_host_control::gateway::WebRelease);
 
-/// The gateway admission policy of a build (`debug`: `cfg!(debug_assertions)`) with app
+/// The web process admission policy of a build (`debug`: `cfg!(debug_assertions)`) with app
 /// team id `team_id` and the selected `release`, if any: the check every start uses and
 /// the release binding of its first line. A malformed team id or a release without a
-/// gateway image hash refuses every start; a selected release pins its exact image.
+/// web process image hash refuses every start; a selected release pins its exact image.
 pub(crate) fn admission<E>(
     debug: bool,
     team_id: Option<&str>,
     release: Option<SelectedRelease<E>>,
-) -> (
-    ServerCheck,
-    Option<org_host_control::gateway::GatewayRelease>,
-) {
+) -> (ServerCheck, Option<org_host_control::gateway::WebRelease>) {
     let check = ServerCheck::gateway_for_build(debug, team_id)
-        .unwrap_or(ServerCheck::GatewayRefused("malformed app team id"));
+        .unwrap_or(ServerCheck::WebRefused("malformed app team id"));
     match release {
         None => (check, None),
         Some((Ok(hash), binding)) => (check.pinned(hash), Some(binding)),
         Some((Err(_), binding)) => (
-            ServerCheck::GatewayRefused("the selected release has no agentic-org-web image hash"),
+            ServerCheck::WebRefused("the selected release has no agentic-org-web image hash"),
             Some(binding),
         ),
     }
@@ -139,12 +133,12 @@ impl Supervisor {
         // Each refusal names its cause for the host log.
         if !cfg!(target_os = "macos") {
             return Err(io::Error::other(
-                "the browser gateway requires macOS process confinement",
+                "the web process requires macOS process confinement",
             ));
         }
         if config.listen.scheme() != ListenMode::HttpLoopback {
             return Err(io::Error::other(
-                "the browser gateway requires a verified HTTP loopback listener",
+                "the web process requires a verified HTTP loopback listener",
             ));
         }
         config
@@ -185,21 +179,21 @@ impl Drop for Supervisor {
     }
 }
 
-/// A started gateway the supervisor watches.
+/// A started web process the supervisor watches.
 trait Serving {
     /// Whether the control connection is open and the child has not exited.
     fn serving(&mut self) -> bool;
-    /// Whether the admitted gateway reported, in order, that its HTTP server serves.
+    /// Whether the admitted web process reported, in order, that its HTTP server serves.
     fn reported(&mut self) -> bool;
     /// Why it stopped serving: fixed, secret-free text for the host log.
     fn ended(&mut self) -> String;
 }
 
-/// Starts the gateway once `eligible`. It stays `Starting` until the admitted
-/// gateway reports `gateway.serving` within `deadline`, then publishes `Running`
-/// only while that gateway serves. A missing report, an exit or control EOF
+/// Starts the web process once `eligible`. It stays `Starting` until the admitted
+/// web process reports `web.serving` within `deadline`, then publishes `Running`
+/// only while that web process serves. A missing report, an exit or control EOF
 /// publishes `Failed` and stops/reaps the child, before any bounded restart.
-/// Only consecutive failed starts count toward [`MAX_STARTS`]: a gateway that
+/// Only consecutive failed starts count toward [`MAX_STARTS`]: a web process that
 /// stayed `Running` for `timing.stable` resets the count. No backoff follows
 /// the final failed start. Every failed start and every exit is passed to `log`
 /// with its cause, escaped, together with the restart it leads to.
@@ -245,9 +239,9 @@ fn supervise<S: Serving>(
                         thread::park_timeout(POLL);
                     }
                     stable = running.elapsed() >= timing.stable;
-                    format!("the running gateway stopped: {}", child.ended())
+                    format!("the running web process stopped: {}", child.ended())
                 } else if child.serving() {
-                    "it did not report gateway.serving before the deadline".to_owned()
+                    "it did not report web.serving before the deadline".to_owned()
                 } else {
                     format!("it stopped before serving: {}", child.ended())
                 };
@@ -354,7 +348,7 @@ impl Drop for Rendezvous {
 
 struct Running {
     // Drop order: close control/revoke first, then kill/reap the child.
-    control: GatewayConnection,
+    control: WebConnection,
     process: Process,
     _stdin: fs::File,
 }
@@ -371,11 +365,11 @@ impl Serving for Running {
         ended_cause(refused, exit, self.control.live())
     }
 }
-/// Why a running gateway ended, pure: a refused `gateway.serving` wins over the EOF it
+/// Why a running web process ended, pure: a refused `web.serving` wins over the EOF it
 /// causes, then a reaped child's exit status (`exit`), then the control EOF.
 fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> String {
     if serving_refused {
-        "the host refused its gateway.serving as a protocol error".to_owned()
+        "the host refused its web.serving as a protocol error".to_owned()
     } else if let Some(status) = exit {
         format!("the child exited ({status})")
     } else if !live {
@@ -407,7 +401,7 @@ impl Running {
         let mut spawned = {
             let _fence = lock(&SPAWN_LOCK);
             spawn::spawn_suspended(&config.program, &[OsStr::new("--serve")], &[])
-                .map_err(os_failed("spawn the gateway suspended"))?
+                .map_err(os_failed("spawn the web process suspended"))?
         };
         let pid = spawned.process.id();
         let admitted = config.check.admit(pid).map_err(refused("admission"))?;
@@ -418,7 +412,7 @@ impl Running {
         spawned
             .process
             .resume()
-            .map_err(os_failed("resume the gateway"))?;
+            .map_err(os_failed("resume the web process"))?;
         let first = GatewayFirstLine {
             rendezvous: rendezvous
                 .path
@@ -440,14 +434,14 @@ impl Running {
         // Drain bounded chunks without retaining any child output in logs.
         let mut stdout = spawned.stdout;
         thread::Builder::new()
-            .name("gateway-stdout".into())
+            .name("web-stdout".into())
             .spawn(move || {
                 let _ = io::copy(&mut stdout, &mut io::sink());
             })
             .map_err(os_failed("start the stdout drain"))?;
         let mut stderr = spawned.stderr;
         thread::Builder::new()
-            .name("gateway-stderr".into())
+            .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
                 while matches!(stderr.read(&mut bytes), Ok(n) if n > 0) {}
@@ -476,12 +470,12 @@ impl Running {
             .map_err(refused("the post-ready re-check"))?;
         if config.check.admit(pid).map_err(refused("re-admission"))? != admitted {
             return Err(io::Error::other(
-                "gateway admission refused at re-admission: the identity changed",
+                "web process admission refused at re-admission: the identity changed",
             ));
         }
         let paths: Vec<_> = config.critical_paths.iter().map(PathBuf::as_path).collect();
         org_socket::confinement::verify_gateway(pid, &paths)
-            .map_err(os_failed("verify the gateway sandbox"))?;
+            .map_err(os_failed("verify the web process sandbox"))?;
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
@@ -493,7 +487,7 @@ impl Running {
         stream
             .set_write_timeout(None)
             .map_err(os_failed("clear the control write timeout"))?;
-        let control = GatewayConnection::start(stream, transfer, config.listen.clone(), handler)
+        let control = WebConnection::start(stream, transfer, config.listen.clone(), handler)
             .map_err(os_failed("start the control connection"))?;
         Ok(Self {
             control,
@@ -503,7 +497,7 @@ impl Running {
     }
 }
 
-/// Accepts only the gateway's `{"v":1,"event":"fds.received","of":"handoff"}` line.
+/// Accepts only the web process's `{"v":1,"event":"fds.received","of":"handoff"}` line.
 /// Each refusal has a fixed, secret-free cause for the supervisor's log line.
 fn check_ack(bytes: &[u8]) -> io::Result<()> {
     #[derive(serde::Deserialize)]
@@ -522,9 +516,9 @@ fn check_ack(bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// The host's transfer end (send-only) and the gateway's end (receive-only).
-/// The gateway's write side is shut down before the end is handed off, so the
-/// gateway cannot send on its transfer endpoint.
+/// The host's transfer end (send-only) and the web process's end (receive-only).
+/// The web process's write side is shut down before the end is handed off, so the
+/// web process cannot send on its transfer endpoint.
 fn transfer_pair() -> io::Result<(UnixDatagram, UnixDatagram)> {
     let (transfer, child) = {
         let _fence = lock(&SPAWN_LOCK);
@@ -611,7 +605,7 @@ fn line(
 /// step and the error's kind only, never its text, escaped for one log line.
 fn fatal_receive(what: &str, kind: io::ErrorKind) -> String {
     crate::host_log::untrusted(&format!(
-        "gateway start failed fatally while receiving the {what} ({kind:?}); the host exits"
+        "web process start failed fatally while receiving the {what} ({kind:?}); the host exits"
     ))
 }
 

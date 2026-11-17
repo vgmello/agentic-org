@@ -52,7 +52,7 @@ pub(super) fn dependency(
         _ => panic!("unreviewed build dependency or invalid kind for {package}: {value}"),
     }
     // Reviewed callers: the host build script (cc + org-release) and the web
-    // gateway build script, which may only embed public release trust through
+    // web process build script, which may only embed public release trust through
     // the same pinned org-release helper (no other build edge).
     let host = manifest == scope.root.join("crates/org-host/Cargo.toml");
     let web = manifest == scope.root.join("apps/agentic-org-web/Cargo.toml")

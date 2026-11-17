@@ -34,11 +34,11 @@ fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
 #[test]
 fn a_refused_or_pinned_check_never_admits_through_the_plain_decision() {
     let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
-    assert!(ServerCheck::GatewayRefused("refused")
+    assert!(ServerCheck::WebRefused("refused")
         .admit(std::process::id())
         .is_err());
     assert!(admit(
-        &ServerCheck::GatewayRefused("refused"),
+        &ServerCheck::WebRefused("refused"),
         never,
         |_, _| panic!("signature"),
         |_| panic!("keychain"),

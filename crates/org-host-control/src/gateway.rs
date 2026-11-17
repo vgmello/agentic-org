@@ -24,13 +24,13 @@ pub struct GatewayFirstLine {
     pub instance_id: String,
     /// Exact protected release pin. Missing only in explicit development/legacy
     /// fixtures; production requires it before preload or secret handoff.
-    pub release: Option<GatewayRelease>,
+    pub release: Option<WebRelease>,
 }
 
-/// Non-secret startup binding, independently checked against the gateway's
+/// Non-secret startup binding, independently checked against the web process's
 /// build-pinned publisher signature. This value alone confers no authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatewayRelease {
+pub struct WebRelease {
     pub release_id: String,
     pub manifest_sha256: String,
     pub sequence: u64,
@@ -43,7 +43,7 @@ struct ReleaseWire {
     manifest_sha256: String,
     sequence: u64,
 }
-impl Serialize for GatewayRelease {
+impl Serialize for WebRelease {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         ReleaseWire {
             version: 1,
@@ -54,7 +54,7 @@ impl Serialize for GatewayRelease {
         .serialize(s)
     }
 }
-impl<'de> Deserialize<'de> for GatewayRelease {
+impl<'de> Deserialize<'de> for WebRelease {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let w = ReleaseWire::deserialize(d)?;
         let id = w.release_id.as_bytes();
@@ -72,7 +72,9 @@ impl<'de> Deserialize<'de> for GatewayRelease {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
         {
-            return Err(serde::de::Error::custom("invalid gateway release binding"));
+            return Err(serde::de::Error::custom(
+                "invalid web process release binding",
+            ));
         }
         Ok(Self {
             release_id: w.release_id,
@@ -89,7 +91,7 @@ struct FirstLineWire<T> {
     rendezvous: T,
     instance_id: T,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    release: Option<GatewayRelease>,
+    release: Option<WebRelease>,
 }
 
 impl Serialize for GatewayFirstLine {

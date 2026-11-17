@@ -82,10 +82,10 @@ impl RuntimeRelease {
             .copied()
             .ok_or(Error::PlatformAdmission)
     }
-    /// Release identity the host binds into the gateway's first line.
-    pub(crate) fn gateway_binding(&self) -> org_host_control::gateway::GatewayRelease {
+    /// Release identity the host binds into the web process's first line.
+    pub(crate) fn web_binding(&self) -> org_host_control::gateway::WebRelease {
         let pin = self.pin();
-        org_host_control::gateway::GatewayRelease {
+        org_host_control::gateway::WebRelease {
             release_id: pin.release_id.clone(),
             manifest_sha256: pin.manifest_sha256.clone(),
             sequence: pin.sequence,
