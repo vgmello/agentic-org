@@ -135,10 +135,10 @@ type starts the office worker and the web process, each with its own
 **macOS adapter.** Today's code, unchanged in behaviour: `spawn_suspended`, the audit
 token from `task_name_for_pid`, the Developer ID requirement and hardened-runtime
 check, the pinned CDHash, `SIGCONT`, and the token comparison in `verify_reader`. The
-signing identifiers (`SERVER_SIGNING_ID`, `com.ellosoft.agentic-org.org-server`, for
-the worker; `GATEWAY_SIGNING_ID` for the web process; `HOST_SIGNING_ID` for the host)
+signing identifiers (`OFFICE_SIGNING_ID`, `com.vgmello.agentic-org.office`, for
+the worker; `WEB_SIGNING_ID` for the web process; `HOST_SIGNING_ID` for the host)
 and the team ID are this adapter's data, passed in `macos_requirement`; they keep
-their names and values. The Linux adapter has no equivalent identifier: it uses the
+their names and values (renamed 2026-11-17, see ADR-0008). The Linux adapter has no equivalent identifier: it uses the
 release manifest digest.
 `org-host/src/spawn.rs` and the Security-framework half of `code_signing.rs` move;
 `ServerCheck` in `server_check.rs` becomes the policy that builds `ExpectedImage`
