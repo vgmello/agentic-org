@@ -425,7 +425,9 @@ impl HostDb {
         loop {
             let op: Option<String> = {
                 let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
-                db.query_row("SELECT operation_id FROM selected_provisioning WHERE linked=1 AND operation_id>?1 ORDER BY operation_id LIMIT 1",[&previous],|r|r.get(0)).optional()?
+                // The worker may commit before the host records linkage. Every
+                // reservation must retain its pending custody until ACK intent.
+                db.query_row("SELECT operation_id FROM selected_provisioning WHERE operation_id>?1 ORDER BY operation_id LIMIT 1",[&previous],|r|r.get(0)).optional()?
             };
             let Some(op) = op else {
                 break;

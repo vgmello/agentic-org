@@ -94,6 +94,107 @@ fn fixture() -> Fixture {
         public,
     }
 }
+#[cfg(debug_assertions)]
+#[test]
+fn unlinked_reservation_reopen_requires_original_recovery_custody() {
+    use crate::host_secrets::dev::DevSecrets;
+    use std::os::unix::fs::PermissionsExt;
+
+    for case in ["healthy", "missing", "malformed", "mismatched"] {
+        let Fixture {
+            _dir: home,
+            db,
+            custody: memory,
+            r,
+            public,
+        } = fixture();
+        // A worker can commit its HQ before the host records provision_linked.
+        // Reproduce that durable host state without creating a delivery ledger.
+        let frozen = {
+            let connection = db.connection.lock().unwrap();
+            connection
+                .execute(
+                    "UPDATE selected_provisioning SET linked=0 WHERE operation_id=?1",
+                    [&r.operation_id],
+                )
+                .unwrap();
+            let reservation = provisioning::read(&connection, &r.operation_id)
+                .unwrap()
+                .unwrap();
+            assert!(!reservation.linked && reservation.key_fingerprint.is_some());
+            serde_json::to_value(reservation).unwrap()
+        };
+        let base = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(base.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let stored = DevSecrets::open(base.path(), home.path(), &public.instance_id).unwrap();
+        for name in memory.list().unwrap() {
+            stored
+                .put(&name, &memory.load(&name).unwrap().unwrap())
+                .unwrap();
+        }
+        let name = Name::parse(&r.recovery_handle).unwrap();
+        match case {
+            "missing" => stored.delete(&name).unwrap(),
+            "malformed" => stored
+                .put(&name, &Value::new(b"{".to_vec()).unwrap())
+                .unwrap(),
+            "mismatched" => {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(stored.load(&name).unwrap().unwrap().expose()).unwrap();
+                value["reservation"]["operation_id"] = crate::ids::generate().unwrap().into();
+                stored
+                    .put(
+                        &name,
+                        &Value::new(serde_json::to_vec(&value).unwrap()).unwrap(),
+                    )
+                    .unwrap();
+            }
+            "healthy" => {}
+            _ => unreachable!(),
+        }
+        let mut names = stored.list().unwrap();
+        names.sort();
+        let retained: Vec<_> = names
+            .iter()
+            .map(|name| (name.clone(), stored.load(name).unwrap().unwrap()))
+            .collect();
+        drop(db);
+        drop(memory);
+        drop(stored);
+
+        let custody: Arc<dyn HostSecrets> =
+            Arc::new(DevSecrets::open(base.path(), home.path(), &public.instance_id).unwrap());
+        // Production startup reconciles before starting any catalogued office.
+        let reopened = crate::service::authentication::Authentication::open(
+            home.path(),
+            custody.clone(),
+            &public.instance_id,
+        );
+        assert_eq!(reopened.is_ok(), case == "healthy", "{case}");
+        drop(reopened);
+
+        let db = HostDb::open(home.path(), &*custody).unwrap();
+        let connection = db.connection.lock().unwrap();
+        let reservation = provisioning::read(&connection, &r.operation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::to_value(reservation).unwrap(), frozen);
+        let count: i64 = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM selected_recovery) + (SELECT count(*) FROM selected_recovery_audit)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "startup cannot infer delivery or acknowledgement");
+        let mut after = custody.list().unwrap();
+        after.sort();
+        assert_eq!(after, names);
+        for (name, value) in retained {
+            assert!(custody.load(&name).unwrap().unwrap().expose() == value.expose());
+        }
+    }
+}
 #[test]
 fn durable_show_redelivery_ack_intent_deletion_and_exact_retry() {
     let f = fixture();
