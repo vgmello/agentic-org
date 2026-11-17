@@ -281,11 +281,6 @@ describe('P6a session ownership', () => {
 	});
 	it.each([
 		['success', undefined],
-		[
-			'503 pool refusal or timeout',
-			() =>
-				new SessionRequestError(503, { code: 'unavailable', message: proof, retry_after_ms: 1000 })
-		],
 		['401 refusal', unauthorized]
 	] as const)(
 		'every gateway sign-out reply (%s) ends the pair locally and in every tab',
@@ -310,7 +305,7 @@ describe('P6a session ownership', () => {
 			expect(s.http).not.toHaveBeenCalled();
 		}
 	);
-	it('a typed sign-out refusal under an incompatible renegotiation clears storage but keeps update-required', async () => {
+	it('a 401 sign-out refusal under an incompatible renegotiation clears storage but keeps update-required', async () => {
 		const s = setup();
 		await s.controller.boot();
 		const reply = deferred<Record<string, never>>();
@@ -319,10 +314,34 @@ describe('P6a session ownership', () => {
 		await tick();
 		s.gateway.version.mockResolvedValueOnce({ api_version: 2, contract_revision: 2 });
 		await s.controller.boot();
-		reply.reject(new SessionRequestError(503, { code: 'unavailable', message: 'x' }));
-		await expect(logout).rejects.toMatchObject({ status: 503 });
+		reply.reject(unauthorized());
+		await expect(logout).rejects.toMatchObject({ status: 401 });
 		expect(s.stored()).toBeUndefined();
 		expect(s.states.at(-1)).toEqual({ kind: 'update-required' });
+		expect(s.postMessage.mock.calls).toEqual([[{ kind: 'signed-out' }]]);
+	});
+	it('a 503 sign-out keeps the session and proof, and Try again then ends it', async () => {
+		const s = setup();
+		await s.controller.boot();
+		const error = new SessionRequestError(503, {
+			code: 'unavailable',
+			message: proof,
+			retry_after_ms: 1000
+		});
+		s.gateway.signOut.mockRejectedValueOnce(error);
+		await expect(s.controller.signOut()).rejects.toBe(error);
+		expect(s.states).toEqual([{ kind: 'signed-in', session: view }]);
+		expect(s.stored()).toEqual(record);
+		expect(s.store.clear).not.toHaveBeenCalled();
+		expect(s.postMessage).not.toHaveBeenCalled();
+		// The kept pair still authenticates reads, and the retry presents the same proof.
+		await s.controller.read('/api/v1/capabilities');
+		expect(s.http).toHaveBeenCalledWith(expect.objectContaining({ proof }));
+		await s.controller.signOut();
+		expect(s.gateway.signOut).toHaveBeenCalledTimes(2);
+		expect(s.gateway.signOut).toHaveBeenLastCalledWith(proof, undefined);
+		expect(s.stored()).toBeUndefined();
+		expect(s.states.at(-1)).toEqual({ kind: 'signed-out', reason: 'signed-out' });
 		expect(s.postMessage.mock.calls).toEqual([[{ kind: 'signed-out' }]]);
 	});
 	// No reply means the cookie half may be intact: the UX spec keeps the session until HQ ends it.
@@ -336,6 +355,10 @@ describe('P6a session ownership', () => {
 		[
 			'403 origin refusal',
 			() => new SessionRequestError(403, { code: 'not_authorized', message: 'x' })
+		],
+		[
+			'503 unavailable (possibly before dispatch)',
+			() => new SessionRequestError(503, { code: 'unavailable', message: 'x' })
 		]
 	] as const)('keeps session and storage unchanged on a sign-out %s', async (_outcome, failure) => {
 		const s = setup();

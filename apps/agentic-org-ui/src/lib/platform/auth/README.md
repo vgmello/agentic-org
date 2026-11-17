@@ -25,8 +25,9 @@ localStorage/sessionStorage or published state. A missing proof has no cookie-on
 recovery. Another account clears earlier views and requires a reload.
 
 Refresh is an explicit locked `refresh(triggered_at_ms)` only: there is no timer.
-A failed sign-out keeps storage and state; a successful one clears the record before
-notifying. Dispose detaches notifications and rejects new operations and late read
+A sign-out clears the record before notifying only on a confirmed end: success or an
+unauthenticated 401. Every other failure, including a 503 that may precede dispatch,
+keeps storage, state and the proof so the person can try again (ADR-0013, SIGN-29). Dispose detaches notifications and rejects new operations and late read
 results. Pair changes already dispatched may finish persisting, without publishing to
 the disposed view. HTTP errors expose the status, a validated duration and the
 session reason, never the server's message. Browser storage failures use a generic

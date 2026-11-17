@@ -244,8 +244,19 @@ export function sessionTestMiddleware() {
 				return;
 			}
 			if (signOut) {
-				// The authenticated pair is invalidated before the pool is asked, so a pool
-				// refusal or timeout (503) ends it as surely as success; the host end is queued.
+				// A 503 may come before dispatch (web-api-v1 §5), and the host deletes the stored
+				// record first and never ends sessions on a restart (ADR-0013). An unavailable reply
+				// (pool refusal, or the gateway's backend timeout from
+				// apps/agentic-org-web/src/service.rs `CallKind::unknown`) therefore changes nothing:
+				// the pair keeps authenticating and the cookie half stays, so a retry can end it.
+				if (state.signOutFails) {
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+					return;
+				}
+				if (state.signOutTimesOut) {
+					json({ error: { code: 'timeout', message: 'Backend did not answer in time.' } }, 503);
+					return;
+				}
 				state.pair = undefined;
 				// The body is checked only after that invalidation, so a refused body (anything
 				// but `{}`) is a 400 that still ends the pair and clears the cookie half. The UI
@@ -255,17 +266,7 @@ export function sessionTestMiddleware() {
 					json(invalidRequest, 400, ended);
 					return;
 				}
-				if (state.signOutFails)
-					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
-				// The gateway's backend timeout (apps/agentic-org-web/src/service.rs `CallKind::unknown`):
-				// a 503 `timeout` that follows the invalidation, so it clears the cookie half too.
-				else if (state.signOutTimesOut)
-					json(
-						{ error: { code: 'timeout', message: 'Backend did not answer in time.' } },
-						503,
-						ended
-					);
-				else respond({}, ended);
+				respond({}, ended);
 				return;
 			}
 			// A known session path with another method is an invalid request after authentication.

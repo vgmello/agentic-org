@@ -30,8 +30,12 @@ const sameAccount = (a: SessionRecord, b: SessionRecord) =>
 const matches = (view: SessionView, record: SessionRecord) =>
 	view.instance_id === record.instance_id && view.account.id === record.account_id;
 
-/** Sign-out replies that prove the gateway ended or never held this browser's pair. */
-const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401, 503]);
+/**
+ * Sign-out refusals that prove the host no longer holds this browser's session. Only an
+ * unauthenticated 401 does: a 503 may come before dispatch, and the host deletes the stored
+ * record first, so an unavailable reply leaves the session in place (ADR-0013, SIGN-29).
+ */
+const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401]);
 
 /** Owns the browser pair. UI receives views only; every pair change shares the cross-tab lock. */
 export function createSessionController({
@@ -292,15 +296,15 @@ export function createSessionController({
 					ended(stored ? 'changed-account' : 'signed-out', stored?.login);
 					return;
 				}
-				// The gateway invalidates an authenticated pair before it replies and clears the
-				// cookie half on 200, on an unauthenticated 401 and on the 503 (pool refusal or
-				// timeout) that follows an invalidation, so those replies end this browser's pair.
-				// A 400/403 before authentication changes nothing; no reply at all may mean HQ was
-				// never reached (UX: "Couldn't sign out"). Both keep the session. Documented limit:
-				// a refusal after authentication (a 400 body, a 413 too-large body) has already
-				// invalidated the binding and cleared the cookie half, but a 400 is
-				// indistinguishable by status from one before authentication, so this record is
-				// kept until the next 401. This controller always sends `{}`, so it never causes one.
+				// Only a confirmed end clears this browser's pair: success, or an unauthenticated
+				// 401 proving the host no longer holds the session. A 503 may come before dispatch
+				// and a restart never ends a stored session (ADR-0013), so an unavailable reply,
+				// like a 400/403 before authentication or no reply at all, keeps the session and
+				// the proof for a retry (UX SIGN-29: "Couldn't sign out", Try again). Documented
+				// limit: a refusal after authentication (a 400 body, a 413 too-large body) may
+				// already have ended the session, but a 400 is indistinguishable by status from one
+				// before authentication, so this record is kept until the next 401. This
+				// controller always sends `{}`, so it never causes one.
 				let refusal: SessionRequestError | undefined;
 				try {
 					await gateway.signOut(stored.proof, signal);

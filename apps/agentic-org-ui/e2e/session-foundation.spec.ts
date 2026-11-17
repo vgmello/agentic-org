@@ -174,7 +174,20 @@ test.describe('P6a auth foundation @webkit', () => {
 				)
 			)
 		).toBe('Session request failed');
-		// The 503 reply cleared the cookie half, so this browser's pair ends in every tab despite the refusal.
+		// A 503 may come before dispatch and never ends a stored session (ADR-0013, SIGN-29):
+		// the page stays signed in, keeps its proof and cookie half, and no tab is told to sign out.
+		expect(await storedProof(page)).toBe(secondPair.proof);
+		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
+			kind: 'signed-in',
+			session: view
+		});
+		await otherTabUnchanged(page, second);
+		expect(await storedProof(second)).toBe(secondPair.proof);
+		expect((await browserCookie(context))?.value).toBe(secondPair.cookie);
+		expect((await getSession(page, secondPair.proof)).status).toBe(200);
+		// Try again once HQ answers: the retry presents the kept pair and ends it in every tab.
+		await api.setSignOutFails(false);
+		await page.evaluate(() => window.p6.controller.signOut());
 		expect(await storedProof(page)).toBeUndefined();
 		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
 			kind: 'signed-out',
@@ -185,7 +198,6 @@ test.describe('P6a auth foundation @webkit', () => {
 			.toEqual({ kind: 'signed-out', reason: 'signed-out' });
 		expect(await second.evaluate(() => window.p6.store.read())).toBeUndefined();
 		expect(await browserCookie(context)).toBeUndefined();
-		// The binding was invalidated before the 503: the old pair no longer authenticates.
 		await setBrowserCookie(context, page, secondPair.cookie);
 		expect(await getSession(page, secondPair.proof)).toMatchObject({ status: 401, body: denied });
 	});
@@ -268,7 +280,7 @@ test.describe('P6a auth foundation @webkit', () => {
 			expect((await api.stats()).requestHeaders.length).toBe(requestsBefore);
 			expect((await getSession(page, pair.proof)).status).toBe(200);
 		});
-	test('SIGN-OUT gateway timeout: the 503 after invalidation clears the cookie and ends the session in every tab', async ({
+	test('SIGN-OUT gateway timeout: a 503 keeps the session in every tab and Try again ends it', async ({
 		page,
 		context
 	}) => {
@@ -278,6 +290,7 @@ test.describe('P6a auth foundation @webkit', () => {
 		await mount(second);
 		await signInTwoTabs(page, second);
 		const [pair] = await api.issued();
+		const statesBefore = await page.evaluate(() => window.p6.states.length);
 		await api.setSignOutTimesOut(true);
 		expect(
 			await page.evaluate(() =>
@@ -287,6 +300,16 @@ test.describe('P6a auth foundation @webkit', () => {
 				)
 			)
 		).toBe('Session request failed 503');
+		// Unavailable is not a confirmed end: cookie, stored proof, state and the binding are unchanged.
+		expect((await browserCookie(context))?.value).toBe(pair.cookie);
+		expect(await storedProof(page)).toBe(pair.proof);
+		expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
+		await otherTabUnchanged(page, second);
+		expect(await storedProof(second)).toBe(pair.proof);
+		expect((await getSession(page, pair.proof)).status).toBe(200);
+		// Try again succeeds and ends the pair in every tab.
+		await api.setSignOutTimesOut(false);
+		await page.evaluate(() => window.p6.controller.signOut());
 		expect(await browserCookie(context)).toBeUndefined();
 		expect(await storedProof(page)).toBeUndefined();
 		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
@@ -300,7 +323,6 @@ test.describe('P6a auth foundation @webkit', () => {
 			.poll(() => second.evaluate(() => window.p6.states.at(-1)))
 			.toEqual({ kind: 'signed-out', reason: 'signed-out' });
 		expect(await second.evaluate(() => window.p6.store.read())).toBeUndefined();
-		// The binding was invalidated before the backend timed out: the old pair no longer authenticates.
 		await setBrowserCookie(context, page, pair.cookie);
 		expect(await getSession(page, pair.proof)).toMatchObject({ status: 401, body: denied });
 	});
