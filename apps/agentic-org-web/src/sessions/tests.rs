@@ -297,6 +297,54 @@ fn passwords_and_secret_bodies_are_redacted() {
     assert_eq!(format!("{body:?}"), "SecretBody(<redacted>)");
 }
 
+fn with_cookies(proof: &str, cookies: &[&[u8]]) -> Parts {
+    let mut builder = Request::builder()
+        .uri("/api/v1/session")
+        .header(SESSION_PROOF_HEADER, proof);
+    for cookie in cookies {
+        builder = builder.header(
+            header::COOKIE,
+            header::HeaderValue::from_bytes(cookie).unwrap(),
+        );
+    }
+    builder.body(()).unwrap().into_parts().0
+}
+
+#[test]
+fn unrelated_cookies_never_deny_but_our_duplicates_and_malformed_values_do() {
+    let f = Fixture::new();
+    let pair = f.sign_in();
+    let ours = cookie_pair(&pair.cookie);
+    let name = ours.split_once('=').unwrap().0;
+    let proof = pair.proof.expose();
+    let large = format!("large={}", "a".repeat(16 * 1024));
+    let mixed = format!("orphan; {large}; {ours}; other=x");
+    for cookies in [
+        vec![mixed.as_bytes()],
+        vec![b"orphan".as_slice(), large.as_bytes(), ours.as_bytes()],
+        vec![b"odd=\x80\xff; =; ;".as_slice(), ours.as_bytes()],
+    ] {
+        assert!(
+            f.sessions
+                .authenticate(&with_cookies(proof, &cookies))
+                .is_ok(),
+            "unrelated cookie content denied a valid pair"
+        );
+    }
+    let malformed = format!("{name}=xyz");
+    let twice = format!("{ours}; {ours}");
+    for cookies in [
+        vec![twice.as_bytes()],
+        vec![ours.as_bytes(), ours.as_bytes()],
+        vec![ours.as_bytes(), malformed.as_bytes()],
+        vec![malformed.as_bytes()],
+        vec![b"orphan".as_slice()],
+    ] {
+        let denied = f.sessions.authenticate(&with_cookies(proof, &cookies));
+        assert!(matches!(denied, Err(ref error) if is_session_ended(error)));
+    }
+}
+
 #[test]
 fn refresh_renews_on_the_host_and_rotates_both_values_atomically() {
     let f = Fixture::new();

@@ -431,17 +431,25 @@ impl BrowserSessions {
         if proofs.next().is_some() {
             return Err(denied());
         }
-        let mut value = None;
+        // The transport bounds the whole header block (HttpLimits::header_bytes),
+        // so this allocation-free byte scan stays linear in admitted bytes. Items
+        // that cannot be this instance's cookie (no `=`, another name, non-ASCII
+        // content) are skipped rather than refused; another site's or app's
+        // loopback cookies must not end this session. Our name is exact: any
+        // duplicate or malformed value of it is refused.
+        let mut value: Option<&[u8]> = None;
         for header in request.headers.get_all(hyper::header::COOKIE) {
-            let header = header.to_str().map_err(|_| denied())?;
-            if header.len() > 8192 {
-                return Err(denied());
-            }
-            for item in header.split(';') {
-                let Some((name, v)) = item.trim().split_once('=') else {
-                    return Err(denied());
+            for item in header.as_bytes().split(|b| *b == b';') {
+                let item = item.trim_ascii();
+                let Some(v) = item
+                    .iter()
+                    .position(|b| *b == b'=')
+                    .filter(|at| item[..*at] == *self.cookie_name.as_bytes())
+                    .map(|at| &item[at + 1..])
+                else {
+                    continue;
                 };
-                if name == self.cookie_name && value.replace(v).is_some() {
+                if value.replace(v).is_some() {
                     return Err(denied());
                 }
             }
@@ -449,11 +457,11 @@ impl BrowserSessions {
         let value = value
             .filter(|v| {
                 v.len() == 64
-                    && v.bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    && v.iter()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
             })
             .ok_or_else(denied)?;
-        let key = Sha256::digest(value.as_bytes()).into();
+        let key = Sha256::digest(value).into();
         let sessions = self.sessions.lock().map_err(|_| unavailable())?;
         let session = sessions.get(&key).filter(|s| s.live()).ok_or_else(denied)?;
         self.mac(proof.as_bytes())
