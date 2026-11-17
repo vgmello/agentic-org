@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-44 findings. 7 applied, 37 proposed and waiting for a decision.
+49 findings. 7 applied, 42 proposed and waiting for a decision.
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -43,6 +43,7 @@ The interactive register with per-entry status is the companion view. This file 
 | [B-10](#b-10) | Calls defined in the contract and not served by the office | Before building the area | M | Proposed |  |
 | [B-11](#b-11) | Libraries with no consumer | Cleanup | S | Proposed |  |
 | [B-12](#b-12) | Setup is described in the present tense and refuses in the code | Cleanup | S | Proposed |  |
+| [B-13](#b-13) | The storage engine should stay replaceable; three files and some contract wording tie it to SQLite | Before building the area | M | Proposed |  |
 | [C-01](#c-01) | Draft SQL allows an empty number on records only HQ creates | Before building the area | S | Proposed |  |
 | [C-02](#c-02) | Task, release and milestone status have no published vocabulary | Before building the area | S | Proposed |  |
 | [C-03](#c-03) | Employee state is spread over three fields and two documents | Before building the area | S | Proposed |  |
@@ -54,13 +55,17 @@ The interactive register with per-entry status is the companion view. This file 
 | [C-09](#c-09) | Status labels and revisions differ across the set | Cleanup | S | Proposed |  |
 | [C-10](#c-10) | The usage ledger has no named writer | Before building the area | S | Proposed |  |
 | [C-11](#c-11) | No traceability from the draft schema to the code | Before building the area | S | Proposed |  |
+| [C-12](#c-12) | Offline offices use a pending number; the rule for agents is not written down | Before building the area | S | Proposed |  |
+| [C-13](#c-13) | Task history is published to Git as one file per change | Before building the area | S to keep, L to change | Proposed |  |
+| [C-14](#c-14) | Process and standard inheritance is stored but not applied in v1 | Before building the area | M | Proposed |  |
 | [D-01](#d-01) | Old executable names in live design text | Cleanup | S | Proposed |  |
 | [D-02](#d-02) | Named owners and approval gates that no longer exist | Cleanup | S | Proposed |  |
 | [D-03](#d-03) | Crates described as absent that exist | Cleanup | S | Proposed |  |
 | [D-04](#d-04) | ADR-0004 is referenced and does not exist | Cleanup | S | Proposed |  |
 | [D-05](#d-05) | The implemented-entry-points record lags the branch | Cleanup | S | Proposed |  |
 | [D-06](#d-06) | Code comments that still describe the desktop app | Cleanup | S | Proposed |  |
-| [E-01](#e-01) | Encryption at rest is decided for databases and unstated for the files that replace them | Decide first | M | Proposed |  |
+| [D-07](#d-07) | The web process is still called the gateway in designs and code | Cleanup | S for prose, M for code | Proposed |  |
+| [E-01](#e-01) | Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner | Decide first | S to decide, M to apply | Proposed |  |
 | [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Proposed |  |
 
 Size: S is one documentation change, M is several documents or a bounded code change, L is a code migration.
@@ -68,11 +73,11 @@ Size: S is one documentation change, M is several documents or a bounded code ch
 ## Order of work
 
 1. **Done.** The six findings with owner notes (A-01 to A-06), plus C-06 which A-01 closes.
-2. **Decisions that only need a yes, then a documentation change.** A-07, A-08, A-10, A-12, B-04, B-05, B-09, B-11, B-12, C-01 to C-05, C-07 to C-11, D-01 to D-06. These can be applied in one pass once decided.
-3. **Contract changes that gate code.** E-01 (encryption at rest) and A-09 (create-organization payload) first, then A-11 (Git paths) and E-02 (message flush discipline).
+2. **Decisions that only need a yes, then a documentation change.** A-07, A-08, A-10, A-12, B-04, B-05, B-09, B-11, B-12, C-01 to C-05, C-07 to C-13, D-01 to D-07. These can be applied in one pass once decided.
+3. **Contract changes that gate code.** E-01 (encryption at rest) and A-09 (create-organization payload) first, then A-11 (Git paths), A-13 and E-02 (message layout and flush discipline) and C-14 (process inheritance).
 4. **Host increment.** B-06 (launch v3 in the host), then B-07 (grants) and B-08 (channel limit) with it. This unlocks the browser gateway.
 5. **Model changes at the API version boundary.** B-02 (single home team), B-03 (typed tasks), B-05 (areas), B-10 (work reads).
-6. **Storage migration, one record family at a time.** B-01, tracked by C-11. Needs explicit go-ahead.
+6. **Storage migration, one record family at a time.** B-01, tracked by C-11, with B-13 alongside. Needs explicit go-ahead.
 
 ## A. Contract against contract
 
@@ -469,6 +474,21 @@ Priority: Cleanup · Size: S · State: Proposed
 - **What we lose:** Nothing.
 - **Impact of applying it:** One status line per affected section of the standalone design.
 
+### B-13
+
+**The storage engine should stay replaceable; three files and some contract wording tie it to SQLite**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Design says:** Storage adapters implement ports owned by the domain crates; the office store stays private. Volatile infrastructure sits behind an abstraction. *(project-structure.md section 3; architecture-rules.md dependency inversion)*
+- **Code does:** SQL is confined to `org-office` and `org-host`, and 23 of 26 SQL-using files in `org-office` are in `store/`. Three are outside it: `messaging.rs`, `organization/bootstrap.rs`, `organization/admission.rs`. Contracts name `BEGIN IMMEDIATE`, and encryption is tied to SQLCipher. *(crates/org-office/src; 06-identity-and-numbering.md; 11 section 6; ADR-0002)*
+- **Why it matters:** The owner wants to be able to move to PostgreSQL later without a re-architecture, and without over-building for it now. The code is nearly there; these are the places it leaks.
+- **Which source wins:** The architecture rules (infrastructure behind ports)
+- **Recommendation:** Three small steps and no PostgreSQL work. Move the SQL in the three files behind the store module. Word the invariant in the contracts as "one accepting writer per stream; sequence allocation, deduplication and outbox commit atomically", keeping SQLite mechanics as implementation notes. Keep encryption a property of the adapter, not of the domain.
+- **What we gain:** A later move to another database is a rewrite of one module (about 14,700 lines), with domain rules, wire contract and UI untouched. The invariant is stated in terms that hold for any engine.
+- **What we lose:** A small refactor now for a move that may never happen. Nothing is built for PostgreSQL.
+- **Impact of applying it:** Three files in `org-office`, and wording in documents 06 and 11. Best done alongside B-01, which touches the same code. Raised by the owner's review of the overview.
+
 ## C. Organization data improvements
 
 Gaps and inconsistencies inside docs/design/organization-data itself.
@@ -639,6 +659,51 @@ Priority: Before building the area · Size: S · State: Proposed
 - **What we lose:** A small upkeep cost on each storage increment.
 - **Impact of applying it:** One status column in SCHEMA-COVERAGE.
 
+### C-12
+
+**Offline offices use a pending number; the rule for agents is not written down**
+
+Priority: Before building the area · Size: S · State: Proposed
+
+- **Contract says:** Any office creates tasks and features offline with `number: null`. "An office must not independently increment its replicated counter." *(06-identity-and-numbering.md line 36; organization-data/README)*
+- **But:** The owner asked whether remote offices get number allocations to work offline, and how a model avoids losing a reference when a placeholder is replaced. The specs show "Pending number" and a copyable ID for people; nothing states what agent tools must accept and print. *(work-items-ux.md WORK-8; tasks-projects-docs.md line 86)*
+- **Why it matters:** There is no placeholder to replace, which is the safe design, but an agent given only a readable number later, or only an ID earlier, must be able to resolve both.
+- **Which source wins:** Organization data (pending numbers), plus one new rule
+- **Recommendation:** Keep pending numbers for v1 and do not hand out number blocks. Add one rule to document 06: agent tools accept the permanent ID at all times, show it until a number exists, and show both afterwards. Number blocks per office stay a recorded option for later.
+- **What we gain:** Numbering stays in one place with nothing to reconcile, and an agent can never hold a reference that stops resolving.
+- **What we lose:** Readable numbers while offline. People and agents use the long permanent ID until HQ is reachable.
+- **Impact of applying it:** One rule in document 06 and matching behaviour in `agent-os` when typed tasks are built. Raised by the owner's review of the overview.
+
+### C-13
+
+**Task history is published to Git as one file per change**
+
+Priority: Before building the area · Size: S to keep, L to change · State: Proposed
+
+- **Contract says:** Each accepted task revision has an immutable event file at `work-history/tasks/<task-id>/<revision>.json`, published with the task. *(05-operational-data.md task activity history)*
+- **But:** The owner asked whether history belongs in Git at all. Every comment, checklist tick and reassignment becomes a file and a Git object. The same events must exist locally anyway, in the journal. *(Owner review of the architecture overview, 2026-11-17)*
+- **Why it matters:** History is what answers who did what and when after a task closes, and what lets an office database be rebuilt. The question is where it lives and in what shape, not whether it exists.
+- **Which source wins:** Organization data as specified, with a revisit trigger
+- **Recommendation:** Keep it as specified for v1: the acceptance journal already writes this shape, and changing it costs code. Set a trigger to revisit (for example repository size or file count per task). The fallback is one append-only file per task, or keeping events only under `durable/` and publishing a summary on close.
+- **What we gain:** Keeping it: no rework of the acceptance journal, and history survives loss of the machine up to the last publish.
+- **What we lose:** Keeping it: many small files in the organization repository over time. Changing it: the per-revision identity that the journal, hashes and conflict detection are built on.
+- **Impact of applying it:** No change now. Record the trigger in document 05. Raised by the owner's review of the overview.
+
+### C-14
+
+**Process and standard inheritance is stored but not applied in v1**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Contract says:** Content, scope and the override lock are selected. "Deferred resolution: organization → accountable team's ancestor chain → optional project is a candidate resolution order." The process engine is out of scope. *(processes.md decisions 3 to 4; organization-data/README decisions table)*
+- **But:** The owner describes it as working behaviour: each team has its own processes and standards that inherit from the organization unless the organization forbids overriding. `org-process` holds earlier resolve and render rules with no consumer. *(Owner review of the architecture overview, 2026-11-17; crates/org-process)*
+- **Why it matters:** Without resolution, a team's standards are files nobody is shown. The owner treats this as a core primitive.
+- **Which source wins:** Owner intent; needs a scope decision in organization data
+- **Recommendation:** Select a narrow resolution for v1 and nothing more: a read-only effective set per task (organization, then the accountable team's parent chain, then the project, honouring the lock), shown in the UI and readable through `agent-os`. Keep enforcement, approvals, automatic delivery into sessions and checklist composition deferred. Decide that contributing teams do not take part.
+- **What we gain:** Team and project standards become visible and usable, which is the reason to store them per scope. The existing `org-process` rules get a consumer.
+- **What we lose:** A little v1 scope. It also forces the open question of whether contributing teams take part in resolution.
+- **Impact of applying it:** A selected read-only resolution rule in documents 01 and processes.md, one office query, one UI view and one `agent-os` read. Enforcement stays deferred. Raised by the owner's review of the overview.
+
 ## D. Stale documentation
 
 Text that was true once and now points people at the wrong name, owner or status.
@@ -733,24 +798,39 @@ Priority: Cleanup · Size: S · State: Proposed
 - **What we lose:** Nothing.
 - **Impact of applying it:** Two lines.
 
+### D-07
+
+**The web process is still called the gateway in designs and code**
+
+Priority: Cleanup · Size: S for prose, M for code · State: Proposed
+
+- **Text says:** `gateway-api-v1.md`, "Gateway" throughout ADR-0008 and ADR-0012, `ChannelKind::Gateway`, the `org-proto` `gateway` module. The word appears in 27 documents and 53 source files. *(docs/; crates/org-proto/src/gateway)*
+- **Now:** The executable is `agentic-org-web`. The owner asked to say "web" to avoid confusion with a model gateway, which does not exist. *(Owner review of the architecture overview, 2026-11-17)*
+- **Why it matters:** A reader new to the project assumes a gateway sits in front of the models.
+- **Which source wins:** Current executable name
+- **Recommendation:** Rename in prose across the designs now, and add one glossary line where the file name `gateway-api-v1.md` is kept. Rename code identifiers at the API version boundary, since some are on the wire.
+- **What we gain:** Nobody assumes a gateway in front of the models.
+- **What we lose:** Continuity with ADR text and file names that say gateway; mitigated by one glossary line.
+- **Impact of applying it:** Prose sweep across 27 documents now; identifier rename in 53 source files at the API version boundary (A-12). The three architecture pages already say web. Raised by the owner's review of the overview.
+
 ## E. ADR decisions the data contract did not carry over
 
 The organization data was written after the ADRs. These are ADR decisions it replaces without restating, found on a second pass.
 
 ### E-01
 
-**Encryption at rest is decided for databases and unstated for the files that replace them**
+**Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner**
 
-Priority: Decide first · Size: M · State: Proposed
+Priority: Decide first · Size: S to decide, M to apply · State: Proposed
 
 - **ADR says:** "Organizations will hold confidential information, so the server's database must be encrypted at rest." Every reader and writer keys SQLCipher with a host-held key. *(adr/0002-storage-sqlite-sqlcipher-one-writer.md context and decisions 1 to 2)*
 - **Organization data says:** Sources move to files under `durable/`. Only the private-notes database is stated as SQLCipher. Document 15 asks for "encrypted storage … according to the existing storage boundary" without defining it; documents 10, 16 and 17 say "protected". *(05-operational-data.md lines 551, 563; 15-messaging-and-chat.md line 15; 10; 16; 17)*
-- **Why it matters:** Today chat bodies and receipts sit in an encrypted database. Moved to files as specified, they could lose encryption at rest without anyone deciding that.
-- **Which source wins:** ADR-0002 (encryption at rest), merged into organization data
-- **Recommendation:** Add an at-rest rule to the storage contract: which directories under `durable/` are encrypted, with which key, and how host key custody covers them. The simplest consistent choice is that every protected source directory is encrypted under a key the host hands the worker at launch, exactly as it does the database key.
-- **What we gain:** Chat bodies, receipts, budgets and usage keep the confidentiality the databases have today.
-- **What we lose:** Plain files are easy to inspect and repair by hand; encrypted ones are not. Encrypting per file also costs throughput.
-- **Impact of applying it:** A decision in the storage contract: which directories under `durable/` are encrypted, with what key, and how the host's key custody extends to them. Must be settled before B-01 moves any protected family.
+- **Why it matters:** Today chat bodies and receipts sit in an encrypted database. Moved to files as specified, they would lose encryption at rest without anyone deciding that. The owner also asked whether encryption is needed at all, given the server is like any database host. It protects two things disk encryption does not: agents run as the same OS user as the data, and copies of the data directory leave the machine. It costs signed binaries, an undecided Linux key store, and data loss if the key is lost.
+- **Which source wins:** Your decision. I lean to dropping application-level encryption when sources move to files
+- **Recommendation:** Decide between two consistent positions; the mixed one protects little. Either encrypt every protected source under `durable/` with a host-held key, or drop application-level encryption and state that protection comes from disk encryption, file permissions and sandbox rules that deny agents the data root. I lean to the second when sources move to files (B-01), and to not extending encryption before then. Keep SQLCipher as it is meanwhile, since removing it buys nothing yet.
+- **What we gain:** If dropped: no key custody to lose, no signed-binary requirement for storage, Linux unblocked, files a person can inspect and repair. If extended instead: chat, receipts and budgets stay unreadable to a same-user process and to anyone holding a copy.
+- **What we lose:** If dropped: a second line of defence against an agent tool that escapes its sandbox, and protection for copies and backups of the data directory. If extended: throughput, simplicity, and recoverability when the key is lost.
+- **Impact of applying it:** No change until you decide. Either way the storage contract gets one explicit at-rest rule before B-01 moves any protected record family. Raised by the owner's review of the overview.
 
 ### E-02
 
