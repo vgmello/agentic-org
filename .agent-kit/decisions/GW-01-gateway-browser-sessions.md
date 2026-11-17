@@ -116,3 +116,13 @@ production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these be
     - C-r3-2: D2a is amended. HEAD already throttles with per-socket `login_lockout` (authentication.rs:340-351) under Socket::Control,
       so this is recorded as existing rather than a B1-06 deferral, with one lockout test through the gateway.
   - CHECKPOINT B resumes against r3.
+- 2026-11-17, Sol review run 6e6241e4 round 1 (BLOCKED before the fix phase: the runner rejected absolute finding paths, a known kit limitation):
+  - R1 P2 (a regression from the lead's reap fix 00c93089): synchronous host.end inside reap on the async routing path can block an HTTP
+    worker for up to 5 s per session. Decision: reap only removes mappings, and host cleanup is queued to ONE background thread via a
+    bounded channel (try_send; when full, drop and the host's own expiry covers it).
+  - R2 P2: Running was published before web HTTP initialization (process.rs:125-180), contradicting D1 / native-boundary condition 5.
+    **Revision 4 (additive wire):** after HTTP serving is established, the web sends one `gateway.serving` notification on the control
+    connection. The host keeps Starting until it arrives within a bounded deadline (10 s); otherwise Failed and the child is stopped. A
+    duplicate or out-of-order notification is refused. Tests: Running only after serving; a missing notification leads to Failed after the
+    deadline, with readiness false; real-process test unchanged (it still waits for gateway_ready).
+  - Status: ACTIVE revision 4 (lead decision, narrow additive change inside the r3 reviewed design; the fresh final review covers it).
