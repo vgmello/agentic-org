@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import type { Harness } from './session-browser-harness';
 import { sessionCookieName, sessionView as view, type SessionPair } from './fakes/session-server';
@@ -48,6 +49,7 @@ async function backend(context: BrowserContext) {
 		holdRefresh: () => control('hold'),
 		releaseRefresh: () => control('release'),
 		setSignOutFails: (value: boolean) => control('signOutFails', value),
+		setSignOutTimesOut: (value: boolean) => control('signOutTimesOut', value),
 		setSignOutRefused: (value: 400 | 403 | null) => control('signOutRefused', value),
 		setRevision: (value: number) => control('revision', value)
 	};
@@ -78,6 +80,44 @@ const getSession = (page: Page, proof?: string) =>
 	}, proof);
 const storedProof = (page: Page) =>
 	page.evaluate(async () => (await window.p6.store.read())?.proof);
+/** Signs in on `page` with `other` mounted and waits until `other` is signed in through the broadcast. */
+async function signInTwoTabs(page: Page, other: Page) {
+	await page.evaluate(() =>
+		window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
+	);
+	await expect.poll(() => other.evaluate(() => window.p6.states.at(-1)?.kind)).toBe('signed-in');
+}
+/**
+ * The broadcasts `to` has received once a probe posted from `from` arrives. A page never receives its
+ * own BroadcastChannel messages, so a missing sign-out broadcast is observable only in another tab;
+ * messages from one tab arrive in order, so a sign-out posted before the probe is already recorded.
+ */
+async function broadcastsBeforeProbe(from: Page, to: Page) {
+	const probe = randomUUID();
+	await from.evaluate((probe) => {
+		const channel = new BroadcastChannel('org-session');
+		channel.postMessage({ kind: 'probe', probe });
+		channel.close();
+	}, probe);
+	await expect
+		.poll(() =>
+			to.evaluate(
+				(probe) =>
+					window.p6.broadcasts.some((value) => (value as { probe?: string }).probe === probe),
+				probe
+			)
+		)
+		.toBe(true);
+	return to.evaluate(() => window.p6.broadcasts);
+}
+/** The other tab saw no sign-out broadcast and is still signed in. */
+async function otherTabUnchanged(page: Page, other: Page) {
+	expect(await broadcastsBeforeProbe(page, other)).not.toContainEqual({ kind: 'signed-out' });
+	expect(await other.evaluate(() => window.p6.states.at(-1))).toEqual({
+		kind: 'signed-in',
+		session: view
+	});
+}
 
 test.describe('P6a auth foundation @webkit', () => {
 	test('SIGN-7/14/16: native storage, secret-free broadcasts and one cross-tab refresh lock', async ({
@@ -155,10 +195,10 @@ test.describe('P6a auth foundation @webkit', () => {
 			context
 		}) => {
 			const api = await backend(context);
+			const second = await context.newPage();
 			await mount(page);
-			await page.evaluate(() =>
-				window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
-			);
+			await mount(second);
+			await signInTwoTabs(page, second);
 			const [pair] = await api.issued();
 			const statesBefore = await page.evaluate(() => window.p6.states.length);
 			await api.setSignOutRefused(status);
@@ -173,11 +213,97 @@ test.describe('P6a auth foundation @webkit', () => {
 			expect((await browserCookie(context))?.value).toBe(pair.cookie);
 			expect(await storedProof(page)).toBe(pair.proof);
 			expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
-			expect(await page.evaluate(() => window.p6.broadcasts)).not.toContainEqual({
-				kind: 'signed-out'
-			});
+			await otherTabUnchanged(page, second);
+			expect(await storedProof(second)).toBe(pair.proof);
 			expect((await getSession(page, pair.proof)).status).toBe(200);
 		});
+	// No reply (I4): an aborted request (HQ unreachable) or one the client abandons at its own
+	// timeout (the harness's 5 s). Here neither reaches the gateway, so nothing changes and the error
+	// is rethrown. A request sent and then abandoned may already have ended the binding (I1); the UI
+	// cannot tell and keeps its record until the next 401.
+	for (const [row, reply, message] of [
+		['network error', 'abort', undefined],
+		['client timeout', 'hold', 'Request timed out']
+	] as const)
+		test(`SIGN-OUT ${row}: no reply changes nothing and the error is rethrown`, async ({
+			page,
+			context
+		}) => {
+			const api = await backend(context);
+			const second = await context.newPage();
+			await mount(page);
+			await mount(second);
+			await signInTwoTabs(page, second);
+			const [pair] = await api.issued();
+			const statesBefore = await page.evaluate(() => window.p6.states.length);
+			const requestsBefore = (await api.stats()).requestHeaders.length;
+			let intercepted = 0;
+			await page.route('**/api/v1/session/sign-out', async (route) => {
+				intercepted++;
+				if (reply === 'abort') await route.abort('internetdisconnected');
+				else
+					await new Promise((resolve) => setTimeout(resolve, 7_000)).then(() =>
+						route.abort().catch(() => {})
+					);
+			});
+			const outcome = await page.evaluate(() =>
+				window.p6.controller.signOut().then(
+					() => ({ name: 'unexpected', message: '', status: undefined }),
+					(error) => ({ name: error.name, message: error.message, status: error.status })
+				)
+			);
+			expect(intercepted).toBe(1);
+			// Not a gateway reply: the transport error itself is rethrown, without a status.
+			expect(outcome.name).not.toBe('unexpected');
+			expect(outcome.status).toBeUndefined();
+			if (message) expect(outcome.message).toBe(message);
+			else expect(outcome.name).toBe('TypeError');
+			await page.unrouteAll({ behavior: 'ignoreErrors' });
+			// Cookie, stored proof, state and the gateway binding are all unchanged.
+			expect((await browserCookie(context))?.value).toBe(pair.cookie);
+			expect(await storedProof(page)).toBe(pair.proof);
+			expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
+			await otherTabUnchanged(page, second);
+			// The request never reached the gateway, and the other tab had no reason to re-read.
+			expect((await api.stats()).requestHeaders.length).toBe(requestsBefore);
+			expect((await getSession(page, pair.proof)).status).toBe(200);
+		});
+	test('SIGN-OUT gateway timeout: the 503 after invalidation clears the cookie and ends the session in every tab', async ({
+		page,
+		context
+	}) => {
+		const api = await backend(context);
+		const second = await context.newPage();
+		await mount(page);
+		await mount(second);
+		await signInTwoTabs(page, second);
+		const [pair] = await api.issued();
+		await api.setSignOutTimesOut(true);
+		expect(
+			await page.evaluate(() =>
+				window.p6.controller.signOut().then(
+					() => 'unexpected',
+					(error) => `${error.message} ${error.status}`
+				)
+			)
+		).toBe('Session request failed 503');
+		expect(await browserCookie(context)).toBeUndefined();
+		expect(await storedProof(page)).toBeUndefined();
+		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
+			kind: 'signed-out',
+			reason: 'signed-out'
+		});
+		await expect
+			.poll(() => second.evaluate(() => window.p6.broadcasts))
+			.toContainEqual({ kind: 'signed-out' });
+		await expect
+			.poll(() => second.evaluate(() => window.p6.states.at(-1)))
+			.toEqual({ kind: 'signed-out', reason: 'signed-out' });
+		expect(await second.evaluate(() => window.p6.store.read())).toBeUndefined();
+		// The binding was invalidated before the backend timed out: the old pair no longer authenticates.
+		await setBrowserCookie(context, page, pair.cookie);
+		expect(await getSession(page, pair.proof)).toMatchObject({ status: 401, body: denied });
+	});
 	test('SIGN-OUT 400 after authentication: a refused body ends the pair, the UI keeps its record until the next 401', async ({
 		page,
 		context

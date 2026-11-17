@@ -35,6 +35,8 @@ function newCase() {
 		refreshCount: 0,
 		gets: 0,
 		signOutFails: false,
+		/** The host end of an invalidated sign-out outlives the gateway's backend timeout. */
+		signOutTimesOut: false,
 		/** A 400/403 refused before authentication: the pair and the cookie are kept. */
 		signOutRefused: undefined as 400 | 403 | undefined,
 		revision: 2,
@@ -127,6 +129,8 @@ export function sessionTestMiddleware() {
 						controlled.release?.();
 					} else if (value.action === 'signOutFails')
 						controlled.signOutFails = value.value === true;
+					else if (value.action === 'signOutTimesOut')
+						controlled.signOutTimesOut = value.value === true;
 					else if (value.action === 'signOutRefused')
 						controlled.signOutRefused =
 							value.value === 400 || value.value === 403 ? value.value : undefined;
@@ -253,6 +257,14 @@ export function sessionTestMiddleware() {
 				}
 				if (state.signOutFails)
 					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
+				// The gateway's backend timeout (apps/agentic-org-web/src/service.rs `CallKind::unknown`):
+				// a 503 `timeout` that follows the invalidation, so it clears the cookie half too.
+				else if (state.signOutTimesOut)
+					json(
+						{ error: { code: 'timeout', message: 'Backend did not answer in time.' } },
+						503,
+						ended
+					);
 				else respond({}, ended);
 				return;
 			}
