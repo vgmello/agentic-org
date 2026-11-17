@@ -94,7 +94,7 @@ fn running_is_published_only_after_the_gateway_reports_serving() {
             Arc::clone(&reported),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, SERVING_DEADLINE, || {
+            supervise(&stopping, &state, &|| true, Timing::PRODUCTION, || {
                 Ok(Fake {
                     live: Arc::clone(&live),
                     reported: Arc::clone(&reported),
@@ -135,7 +135,10 @@ fn a_gateway_that_never_reports_serving_fails_after_the_deadline_and_is_stopped(
                 &stopping,
                 &state,
                 &|| true,
-                Duration::from_millis(300),
+                Timing {
+                    serving: Duration::from_millis(300),
+                    ..Timing::PRODUCTION
+                },
                 || {
                     Ok(Fake {
                         live: Arc::clone(&live),
@@ -177,7 +180,7 @@ fn readiness_turns_false_when_the_gateway_exits_or_its_control_reaches_eof() {
             Arc::clone(&starts),
         );
         thread::spawn(move || {
-            supervise(&stopping, &state, &|| true, SERVING_DEADLINE, || {
+            supervise(&stopping, &state, &|| true, Timing::PRODUCTION, || {
                 starts.fetch_add(1, Ordering::SeqCst);
                 Ok(Fake::reporting(&live))
             })
@@ -206,7 +209,7 @@ fn an_ineligible_host_never_starts_the_gateway() {
                 &stopping,
                 &state,
                 &|| false,
-                SERVING_DEADLINE,
+                Timing::PRODUCTION,
                 || -> io::Result<Fake> { panic!("started without HQ/authentication") },
             )
         })
@@ -281,4 +284,90 @@ fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
     // Second: the bound browser listener.
     let listening = TcpListener::from(second);
     assert_eq!(listening.local_addr().unwrap().port(), port);
+}
+
+/// Serves (reported) until `lifetime` after its start, then exits.
+struct Brief {
+    until: Instant,
+}
+impl Serving for Brief {
+    fn serving(&mut self) -> bool {
+        Instant::now() < self.until
+    }
+    fn reported(&mut self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn only_consecutive_failed_starts_count_and_a_stable_run_resets_them() {
+    let stopping = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let timing = Timing {
+        serving: SERVING_DEADLINE,
+        stable: Duration::from_millis(100),
+        backoff: Duration::from_millis(1),
+    };
+    let supervisor = {
+        let (stopping, state, starts) = (
+            Arc::clone(&stopping),
+            Arc::clone(&state),
+            Arc::clone(&starts),
+        );
+        thread::spawn(move || {
+            supervise(&stopping, &state, &|| true, timing, || {
+                starts.fetch_add(1, Ordering::SeqCst);
+                // Each run stays Running past `stable`, then dies.
+                Ok(Brief {
+                    until: Instant::now() + Duration::from_millis(250),
+                })
+            })
+        })
+    };
+    // Healthy runs that later die are not consecutive failed starts: the
+    // supervisor keeps restarting well past the failed-start limit.
+    let until = Instant::now() + Duration::from_secs(20);
+    while starts.load(Ordering::SeqCst) <= MAX_STARTS + 1 {
+        assert!(
+            !supervisor.is_finished(),
+            "gave up after {} stable runs",
+            starts.load(Ordering::SeqCst)
+        );
+        assert!(Instant::now() < until, "timed out waiting for restarts");
+        thread::sleep(Duration::from_millis(10));
+    }
+    stopping.store(true, Ordering::SeqCst);
+    supervisor.thread().unpark();
+    supervisor.join().unwrap();
+    assert_eq!(*lock(&state), GatewayState::Failed);
+}
+
+#[test]
+fn consecutive_failed_starts_stop_at_the_limit_without_a_final_backoff() {
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let starts = std::sync::atomic::AtomicUsize::new(0);
+    let last = Mutex::new(Instant::now());
+    let timing = Timing {
+        serving: SERVING_DEADLINE,
+        stable: Duration::from_millis(100),
+        backoff: Duration::from_millis(40),
+    };
+    supervise(&stopping, &state, &|| true, timing, || {
+        starts.fetch_add(1, Ordering::SeqCst);
+        *lock(&last) = Instant::now();
+        // Exits before it ever reports serving.
+        Ok(Brief {
+            until: Instant::now(),
+        })
+    });
+    assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
+    assert_eq!(*lock(&state), GatewayState::Failed);
+    // The final backoff would be 40 ms << 4 = 640 ms; none follows the last start.
+    let tail = lock(&last).elapsed();
+    assert!(
+        tail < Duration::from_millis(320),
+        "slept {tail:?} after the final start"
+    );
 }

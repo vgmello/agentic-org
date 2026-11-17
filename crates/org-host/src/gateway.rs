@@ -37,10 +37,31 @@ use std::{
 };
 
 const WAIT: Duration = Duration::from_secs(5);
+/// Consecutive failed starts before the supervisor gives up.
 const MAX_STARTS: usize = 5;
 const POLL: Duration = Duration::from_millis(50);
 /// How long a started gateway may take to report `gateway.serving` (GW-01 r4).
 const SERVING_DEADLINE: Duration = Duration::from_secs(10);
+/// A gateway that stayed `Running` this long was a healthy start: its later
+/// exit begins a fresh run of consecutive failures instead of adding to one.
+const STABLE_RUNNING: Duration = Duration::from_secs(60);
+/// First restart delay; each further consecutive failure doubles it.
+const RESTART_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Supervisor timing. Production uses [`Timing::PRODUCTION`]; tests shorten it.
+#[derive(Clone, Copy)]
+struct Timing {
+    serving: Duration,
+    stable: Duration,
+    backoff: Duration,
+}
+impl Timing {
+    const PRODUCTION: Self = Self {
+        serving: SERVING_DEADLINE,
+        stable: STABLE_RUNNING,
+        backoff: RESTART_BACKOFF,
+    };
+}
 fn unavailable() -> io::Error {
     io::Error::other("authenticated browser service unavailable")
 }
@@ -80,9 +101,13 @@ impl Supervisor {
         let thread = thread::Builder::new()
             .name("org-browser-supervisor".into())
             .spawn(move || {
-                supervise(&stopping, &observing, &*eligible, SERVING_DEADLINE, || {
-                    Running::start(&config, Arc::clone(&handler))
-                })
+                supervise(
+                    &stopping,
+                    &observing,
+                    &*eligible,
+                    Timing::PRODUCTION,
+                    || Running::start(&config, Arc::clone(&handler)),
+                )
             })?;
         Ok(Self {
             stop,
@@ -114,14 +139,18 @@ trait Serving {
 /// gateway reports `gateway.serving` within `deadline`, then publishes `Running`
 /// only while that gateway serves. A missing report, an exit or control EOF
 /// publishes `Failed` and stops/reaps the child, before any bounded restart.
+/// Only consecutive failed starts count toward [`MAX_STARTS`]: a gateway that
+/// stayed `Running` for `timing.stable` resets the count. No backoff follows
+/// the final failed start.
 fn supervise<S: Serving>(
     stopping: &AtomicBool,
     state: &Mutex<GatewayState>,
     eligible: &dyn Fn() -> bool,
-    deadline: Duration,
+    timing: Timing,
     mut start: impl FnMut() -> io::Result<S>,
 ) {
-    for attempt in 0..MAX_STARTS {
+    let mut failures = 0usize;
+    loop {
         // First protected bootstrap starts the host before HQ exists. Wait without
         // binding or spending restart attempts; the same controller observes actual
         // completed provisioning.
@@ -133,10 +162,11 @@ fn supervise<S: Serving>(
             break;
         }
         *lock(state) = GatewayState::Starting;
+        let mut stable = false;
         match start() {
             Ok(mut child) => {
                 // HTTP initialization is still pending until the child reports it.
-                let until = Instant::now() + deadline;
+                let until = Instant::now() + timing.serving;
                 while !stopping.load(Ordering::SeqCst)
                     && child.serving()
                     && !child.reported()
@@ -146,9 +176,11 @@ fn supervise<S: Serving>(
                 }
                 if !stopping.load(Ordering::SeqCst) && child.serving() && child.reported() {
                     *lock(state) = GatewayState::Running;
+                    let running = Instant::now();
                     while !stopping.load(Ordering::SeqCst) && child.serving() {
                         thread::park_timeout(POLL);
                     }
+                    stable = running.elapsed() >= timing.stable;
                 } else if !stopping.load(Ordering::SeqCst) {
                     crate::host_log::log("authenticated browser did not report serving");
                 }
@@ -158,7 +190,16 @@ fn supervise<S: Serving>(
             Err(_) => crate::host_log::log("authenticated browser startup failed"),
         }
         *lock(state) = GatewayState::Failed;
-        let retry = Instant::now() + Duration::from_secs(1 << attempt);
+        if stopping.load(Ordering::SeqCst) {
+            break;
+        }
+        failures = if stable { 0 } else { failures + 1 };
+        if failures >= MAX_STARTS {
+            crate::host_log::log("authenticated browser restart limit reached");
+            break;
+        }
+        // 1x after a stable run or the first failure, then 2x, 4x, 8x.
+        let retry = Instant::now() + timing.backoff * (1 << failures.saturating_sub(1));
         while !stopping.load(Ordering::SeqCst) && Instant::now() < retry {
             thread::park_timeout(POLL);
         }
