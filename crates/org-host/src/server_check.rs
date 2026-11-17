@@ -426,6 +426,26 @@ mod tests {
         panic!("asked for the Keychain entitlement")
     }
 
+    /// The live probe reads a real child's signed entitlements. A suspended
+    /// `/bin/sleep` holds no `keychain-access-groups` entitlement and is accepted.
+    /// A suspended `/usr/libexec/security-sysdiagnose` (an Apple system tool that
+    /// never runs here) holds one and is refused. No local build product carries it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_live_keychain_probe_refuses_only_a_child_with_keychain_access_groups() {
+        let probe = |program: &str| {
+            let spawned =
+                crate::spawn::spawn_suspended(std::path::Path::new(program), &[], &[]).unwrap();
+            let token = crate::spawn::audit_token_of_child(spawned.process.id()).unwrap();
+            gateway_without_keychain(&token)
+        };
+        assert!(probe("/bin/sleep"), "an unentitled child was refused");
+        assert!(
+            !probe("/usr/libexec/security-sysdiagnose"),
+            "a child holding keychain-access-groups was accepted"
+        );
+    }
+
     #[test]
     fn the_gateway_is_admitted_only_without_a_keychain_entitlement() {
         let ServerCheck::Gateway(requirement) =

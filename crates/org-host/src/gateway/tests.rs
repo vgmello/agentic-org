@@ -949,6 +949,31 @@ fn control_eof_before_a_line_is_refused() {
     );
 }
 
+#[test]
+fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&elsewhere)
+        .unwrap();
+    std::os::unix::fs::symlink(&elsewhere, dir.path().join("r")).unwrap();
+    let Err(error) = Rendezvous::bind(dir.path()) else {
+        panic!("a symlinked rendezvous folder was accepted");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(
+        error.to_string(),
+        "authenticated browser service unavailable"
+    );
+    // Nothing was bound through the symlink, and the symlink target is unchanged.
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    assert_eq!(
+        fs::metadata(&elsewhere).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
@@ -1018,17 +1043,34 @@ fn each_failed_start_step_before_the_child_connects_names_its_cause() {
         message.starts_with("gateway start failed: bind the browser listener ("),
         "{message}"
     );
-    // The runtime directory is a file, so no rendezvous can be bound.
+    // The runtime directory is a file, so its rendezvous folder cannot be created.
     let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
     config.listen = loopback_on(free_port());
     let file = dir.path().join("not-a-directory");
     fs::write(&file, b"").unwrap();
     config.runtime = file;
-    let message = start_error(&config).to_string();
-    assert!(
-        message.starts_with("gateway start failed: bind the rendezvous ("),
-        "{message}"
+    assert_eq!(
+        start_error(&config).to_string(),
+        "gateway start failed: bind the rendezvous (NotADirectory)"
     );
+    // The rendezvous folder already exists as a symlink, so the owner-only check
+    // refuses it (mkdir alone would accept the existing name and bind through it).
+    let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
+    config.listen = loopback_on(free_port());
+    let runtime = dir.path().join("runtime");
+    let elsewhere = dir.path().join("elsewhere");
+    fs::DirBuilder::new().mode(0o700).create(&runtime).unwrap();
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&elsewhere)
+        .unwrap();
+    std::os::unix::fs::symlink(&elsewhere, runtime.join("r")).unwrap();
+    config.runtime = runtime;
+    assert_eq!(
+        start_error(&config).to_string(),
+        "gateway start failed: bind the rendezvous (Other)"
+    );
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
     // The program is missing.
     let (dir, mut config) = scripted_config(&script, |_, _, _| Ok(None));
     config.program = dir.path().join("missing");
