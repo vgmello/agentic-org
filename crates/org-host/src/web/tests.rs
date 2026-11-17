@@ -493,10 +493,12 @@ fn a_stable_run_resets_failures_accumulated_before_it() {
 
 #[test]
 fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
+    const STOPPED: &str = "authenticated browser stopped because the host is no longer eligible; it starts again once eligible";
     let stopping = AtomicBool::new(false);
     let state = Mutex::new(GatewayState::NotConfigured);
     let starts = std::sync::atomic::AtomicUsize::new(0);
     let eligible = AtomicBool::new(true);
+    let (lines, record) = recording();
     let timing = Timing {
         serving: SERVING_DEADLINE,
         stable: Duration::from_millis(100),
@@ -505,19 +507,22 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
     // MAX_STARTS - 1 failed starts, one run that stays Running past `stable`
     // and is then stopped because the host is no longer eligible, then
     // MAX_STARTS - 1 more failed starts (still restarting), then the limit.
+    // The run never ends on its own, so only the eligibility stop can reset.
     thread::scope(|scope| {
         scope.spawn(|| {
-            let until = Instant::now() + Duration::from_secs(20);
-            while starts.load(Ordering::SeqCst) < MAX_STARTS {
-                assert!(
-                    Instant::now() < until,
-                    "timed out waiting for the stable run"
-                );
-                thread::sleep(Duration::from_millis(5));
-            }
+            let wait = |what: &str, done: &dyn Fn() -> bool| {
+                let until = Instant::now() + Duration::from_secs(20);
+                while !done() {
+                    assert!(Instant::now() < until, "timed out waiting for {what}");
+                    thread::sleep(Duration::from_millis(5));
+                }
+            };
+            wait("the stable run", &|| *lock(&state) == GatewayState::Running);
             thread::sleep(Duration::from_millis(300)); // past `stable`
             eligible.store(false, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(200));
+            wait("the eligibility stop", &|| {
+                *lock(&state) == GatewayState::Starting
+            });
             eligible.store(true, Ordering::SeqCst);
         });
         supervise(
@@ -525,13 +530,13 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
             &state,
             &|| eligible.load(Ordering::SeqCst),
             timing,
-            &quiet,
+            &record,
             || {
                 let n = starts.fetch_add(1, Ordering::SeqCst) + 1;
                 assert!(n <= 2 * MAX_STARTS, "restarted past the limit");
                 if n == MAX_STARTS {
                     Ok(Brief {
-                        until: Instant::now() + Duration::from_secs(30),
+                        until: Instant::now() + Duration::from_secs(3600),
                     })
                 } else {
                     Err(io::Error::other("scripted failed start"))
@@ -541,6 +546,18 @@ fn a_stable_run_ended_by_ineligibility_also_resets_failures() {
     });
     assert_eq!(starts.load(Ordering::SeqCst), 2 * MAX_STARTS);
     assert_eq!(*lock(&state), GatewayState::Failed);
+    let lines = lock(&lines);
+    assert_eq!(
+        lines.iter().filter(|l| l.as_str() == STOPPED).count(),
+        1,
+        "{lines:?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains("running web process stopped")),
+        "{lines:?}"
+    );
 }
 
 #[test]
