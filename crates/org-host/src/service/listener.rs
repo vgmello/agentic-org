@@ -973,6 +973,39 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn gateway_serving_is_taken_only_from_the_gateway_after_hello_and_tls_fetch() {
+        let plain = Connection::for_test();
+        plain.complete_hello();
+        plain.note_listener_fetched();
+        assert!(matches!(plain.report_serving(), ServingReport::NotGateway));
+        let (host, _peer) = UnixStream::pair().unwrap();
+        let (transfer, _received) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let (mut connection, _queue) =
+            Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+        Arc::get_mut(&mut connection).unwrap().gateway = Some(Gateway {
+            transfer: Arc::new(transfer),
+            listen: serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap(),
+            fetched: AtomicBool::new(false),
+            serving: AtomicBool::new(false),
+            serving_refused: AtomicBool::new(false),
+        });
+        connection.note_listener_fetched();
+        assert!(
+            matches!(connection.report_serving(), ServingReport::OutOfOrder),
+            "tls.fetch without hello"
+        );
+        connection.complete_hello();
+        assert!(matches!(
+            connection.report_serving(),
+            ServingReport::Accepted
+        ));
+        assert!(matches!(
+            connection.report_serving(),
+            ServingReport::OutOfOrder
+        ));
+    }
+
+    #[test]
     fn gateway_descriptor_uses_datagram_and_receipt_never_stream_rights() {
         use std::os::fd::AsFd;
         let (host, peer) = UnixStream::pair().unwrap();

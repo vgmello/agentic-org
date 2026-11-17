@@ -755,6 +755,21 @@ pub(crate) mod tests {
         std::io::BufReader<std::os::unix::net::UnixStream>,
         Arc<Offices>,
     ) {
+        gateway_peer_on(
+            home,
+            r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#,
+        )
+    }
+
+    /// [`gateway_peer`] whose gateway listens on `listen` (JSON).
+    fn gateway_peer_on(
+        home: &Path,
+        listen: &str,
+    ) -> (
+        listener::GatewayConnection,
+        std::io::BufReader<std::os::unix::net::UnixStream>,
+        Arc<Offices>,
+    ) {
         let mut service = service(home);
         service.instance_id = Some(crate::ids::generate().unwrap());
         let offices = service.offices.clone();
@@ -762,7 +777,7 @@ pub(crate) mod tests {
         peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();
         let (transfer, _child) = std::os::unix::net::UnixDatagram::pair().unwrap();
-        let listen = serde_json::from_str(r#"{"address":"127.0.0.1","port":48123,"scheme":"http_loopback","origin":"http://127.0.0.1:48123","hsts":"off"}"#).unwrap();
+        let listen = serde_json::from_str(listen).unwrap();
         let gateway =
             listener::GatewayConnection::start(host, transfer, listen, Arc::new(service)).unwrap();
         (gateway, std::io::BufReader::new(peer), offices)
@@ -853,6 +868,32 @@ pub(crate) mod tests {
         wait_closed(&gateway);
         assert!(!gateway.reported_serving());
         assert!(gateway.serving_refused());
+        drop(gateway);
+        offices.shutdown();
+    }
+
+    #[test]
+    fn tls_fetch_off_an_http_loopback_listener_is_unavailable_and_never_enables_serving() {
+        use org_host_control::ops::{GatewayServing, TlsFetch};
+        let home = tempfile::tempdir().unwrap();
+        let (gateway, mut peer, offices) = gateway_peer_on(
+            home.path(),
+            r#"{"address":"127.0.0.1","port":8443,"scheme":"https","origin":"https://127.0.0.1:8443","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<TlsFetch>(&mut peer, 2, &Default::default()),
+            ErrorCode::Unavailable
+        ));
+        assert!(refused(
+            exchange::<GatewayServing>(&mut peer, 3, &Default::default()),
+            ErrorCode::InvalidRequest
+        ));
+        wait_closed(&gateway);
+        assert!(!gateway.reported_serving());
         drop(gateway);
         offices.shutdown();
     }

@@ -1229,6 +1229,13 @@ fn a_debug_build_gateway_admission_skips_the_signature_check_but_still_pins_a_re
 /// it runs `after_ready` on the control connection (`$REPLY`).
 #[cfg(target_os = "macos")]
 fn confined_start(after_ready: &str) -> io::Error {
+    let (_dir, config) = confined_config(after_ready);
+    start_error(&config)
+}
+
+/// The configuration [`confined_start`] starts, with its temporary directory.
+#[cfg(target_os = "macos")]
+fn confined_config(after_ready: &str) -> (tempfile::TempDir, Configuration) {
     let (dir, mut config) = scripted_config("", |_, _, _| Ok(None));
     let root = fs::canonicalize(dir.path()).unwrap();
     let critical = root.join("critical");
@@ -1255,7 +1262,7 @@ fn confined_start(after_ready: &str) -> io::Error {
     )
     .unwrap();
     config.critical_paths = vec![critical];
-    start_error(&config)
+    (dir, config)
 }
 
 #[cfg(target_os = "macos")]
@@ -1283,4 +1290,85 @@ fn a_confined_child_that_closes_control_before_its_handoff_ack_is_refused() {
         message,
         "gateway start failed: control EOF before the handoff ACK"
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_rendezvous_is_owner_only_when_the_child_connects() {
+    // The child refuses (exit 7) unless the rendezvous socket is 0600 in a 0700
+    // folder, then sends a mismatched ready line so the start stops right after.
+    let script = connecting_script(r#"{"v":1,"event":"other"}"#).replace(
+        "zmodload zsh/net/socket || exit 1\n",
+        "[[ $(/usr/bin/stat -f %Lp \"$p\") == 600 ]] || exit 7\n\
+         [[ $(/usr/bin/stat -f %Lp \"${p:h}\") == 700 ]] || exit 8\n\
+         zmodload zsh/net/socket || exit 1\n",
+    );
+    let message = start_scripted(&script, |_, _, _| Ok(None)).to_string();
+    assert!(
+        message.contains("the ready line does not match ready_for_secrets"),
+        "{message}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_started_gateway_serves_but_is_not_reported_before_gateway_serving() {
+    // Confined, acknowledged: the start succeeds, but nothing reported serving yet.
+    let (_dir, config) = confined_config(
+        "print -r -u $REPLY '{\"v\":1,\"event\":\"fds.received\",\"of\":\"handoff\"}'\nsleep 20\n",
+    );
+    let mut running = Running::start(&config, Arc::new(NoOps)).unwrap();
+    assert!(running.serving());
+    assert!(
+        !running.reported(),
+        "running is reported only after gateway.serving"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_child_that_exec_ed_after_connecting_is_refused_at_the_ready_line() {
+    // Admitted with its real token; it connects, then execs (a new image, same pid)
+    // before its ready line. The scripted re-checks answer the admitted token, so
+    // only the ready-line peer check can see the change.
+    let script = connecting_script(READY).replace(
+        "print -r -u $REPLY",
+        "exec 3<&$REPLY\nsleep 0.5\nready='{\"v\":1,\"event\":\"ready_for_secrets\"}'\n\
+         exec /bin/zsh -f -c 'print -r -u 3 -- \"$0\"; sleep 20' \"$ready\"\nprint -r -u $REPLY",
+    );
+    let admitted = Arc::new(Mutex::new(None));
+    let error = start_scripted(&script, move |step, n, pid| {
+        let mut admitted = lock(&admitted);
+        if step == crate::server_check::Step::Admit && n == 1 {
+            *admitted = Some(crate::spawn::audit_token_of_child(pid).map_err(|e| e.to_string())?);
+        }
+        Ok(*admitted)
+    });
+    assert_eq!(
+        error.to_string(),
+        "gateway start failed: the ready-line peer is not the admitted child"
+    );
+}
+
+#[test]
+fn runs_that_end_before_they_are_stable_count_as_failed_starts() {
+    let stopping = AtomicBool::new(false);
+    let state = Mutex::new(GatewayState::NotConfigured);
+    let starts = std::sync::atomic::AtomicUsize::new(0);
+    let timing = Timing {
+        serving: SERVING_DEADLINE,
+        stable: Duration::from_secs(3600),
+        backoff: Duration::from_millis(1),
+    };
+    let began = Instant::now();
+    // Each run is published Running, then ends long before it is stable.
+    supervise(&stopping, &state, &|| true, timing, &quiet, || {
+        starts.fetch_add(1, Ordering::SeqCst);
+        Ok(Brief {
+            until: Instant::now() + Duration::from_millis(30),
+        })
+    });
+    assert_eq!(starts.load(Ordering::SeqCst), MAX_STARTS);
+    assert!(began.elapsed() < Duration::from_secs(10));
+    assert_eq!(*lock(&state), GatewayState::Failed);
 }
