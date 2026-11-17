@@ -208,9 +208,10 @@ test.describe('P6a auth foundation @webkit', () => {
 			login: 'Blair'
 		});
 	});
-	test('SIGN-7: unrelated nameless and padded cookies never deny the session pair', async ({
+	test('SIGN-7: unrelated named and nameless cookies never deny the session pair', async ({
 		page,
-		context
+		context,
+		browserName
 	}) => {
 		const api = await backend(context);
 		await mount(page);
@@ -224,7 +225,11 @@ test.describe('P6a auth foundation @webkit', () => {
 			document.cookie = 'orphan-value; path=/';
 			document.cookie = 'other_app=1; path=/';
 		});
-		expect(await page.evaluate(() => document.cookie)).toContain('orphan-value');
+		const jar = await page.evaluate(() => document.cookie);
+		expect(jar).toContain('other_app=1');
+		// WebKit does not store a nameless cookie; Chromium does, so it covers the
+		// nameless case while both browsers cover an unrelated named cookie.
+		if (browserName === 'chromium') expect(jar).toContain('orphan-value');
 		expect((await getSession(page, pair.proof)).status).toBe(200);
 	});
 	test('SIGN-7: the real server refuses cookie-only, wrong-proof and proof-only recovery', async ({
