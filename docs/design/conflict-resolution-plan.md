@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-49 findings. 7 applied, 42 proposed and waiting for a decision.
+52 findings. 7 applied, 45 proposed and waiting for a decision.
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -67,6 +67,9 @@ The interactive register with per-entry status is the companion view. This file 
 | [D-07](#d-07) | The web process is still called the gateway in designs and code | Cleanup | S for prose, M for code | Proposed |  |
 | [E-01](#e-01) | Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner | Decide first | S to decide, M to apply | Proposed |  |
 | [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Proposed |  |
+| [F-01](#f-01) | Browser sessions live in memory, so every restart signs everyone out | Before building the area | M | Proposed |  |
+| [F-02](#f-02) | A 15 ms send target for agent-os, against an owner target of 1 to 2 ms | Before building the area | M | Proposed |  |
+| [F-03](#f-03) | Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract | Decide first | S for the setting, M to L for the separate user | Proposed |  |
 
 Size: S is one documentation change, M is several documents or a bounded code change, L is a code migration.
 
@@ -74,7 +77,7 @@ Size: S is one documentation change, M is several documents or a bounded code ch
 
 1. **Done.** The six findings with owner notes (A-01 to A-06), plus C-06 which A-01 closes.
 2. **Decisions that only need a yes, then a documentation change.** A-07, A-08, A-10, A-12, B-04, B-05, B-09, B-11, B-12, C-01 to C-05, C-07 to C-13, D-01 to D-07. These can be applied in one pass once decided.
-3. **Contract changes that gate code.** E-01 (encryption at rest) and A-09 (create-organization payload) first, then A-11 (Git paths), A-13 and E-02 (message layout and flush discipline) and C-14 (process inheritance).
+3. **Contract changes that gate code.** F-03 (agent isolation) first, because E-01 (encryption at rest) follows from it. Then A-09 (create-organization payload), F-01 (sessions), F-02 (agent-os speed), A-11 (Git paths), A-13 and E-02 (message layout and flush discipline) and C-14 (process inheritance).
 4. **Host increment.** B-06 (launch v3 in the host), then B-07 (grants) and B-08 (channel limit) with it. This unlocks the browser gateway.
 5. **Model changes at the API version boundary.** B-02 (single home team), B-03 (typed tasks), B-05 (areas), B-10 (work reads).
 6. **Storage migration, one record family at a time.** B-01, tracked by C-11, with B-13 alongside. Needs explicit go-ahead.
@@ -485,7 +488,7 @@ Priority: Before building the area · Size: M · State: Proposed
 - **Why it matters:** The owner wants to be able to move to PostgreSQL later without a re-architecture, and without over-building for it now. The code is nearly there; these are the places it leaks.
 - **Which source wins:** The architecture rules (infrastructure behind ports)
 - **Recommendation:** Three small steps and no PostgreSQL work. Move the SQL in the three files behind the store module. Word the invariant in the contracts as "one accepting writer per stream; sequence allocation, deduplication and outbox commit atomically", keeping SQLite mechanics as implementation notes. Keep encryption a property of the adapter, not of the domain.
-- **What we gain:** A later move to another database is a rewrite of one module (about 14,700 lines), with domain rules, wire contract and UI untouched. The invariant is stated in terms that hold for any engine.
+- **What we gain:** A later move to another database is a second implementation of the store, which is already split by area behind small interfaces (about 14,700 lines in all), with domain rules, wire contract and UI untouched. The invariant is stated in terms that hold for any engine.
 - **What we lose:** A small refactor now for a move that may never happen. Nothing is built for PostgreSQL.
 - **Impact of applying it:** Three files in `org-office`, and wording in documents 06 and 11. Best done alongside B-01, which touches the same code. Raised by the owner's review of the overview.
 
@@ -830,7 +833,7 @@ Priority: Decide first · Size: S to decide, M to apply · State: Proposed
 - **Recommendation:** Decide between two consistent positions; the mixed one protects little. Either encrypt every protected source under `durable/` with a host-held key, or drop application-level encryption and state that protection comes from disk encryption, file permissions and sandbox rules that deny agents the data root. I lean to the second when sources move to files (B-01), and to not extending encryption before then. Keep SQLCipher as it is meanwhile, since removing it buys nothing yet.
 - **What we gain:** If dropped: no key custody to lose, no signed-binary requirement for storage, Linux unblocked, files a person can inspect and repair. If extended instead: chat, receipts and budgets stay unreadable to a same-user process and to anyone holding a copy.
 - **What we lose:** If dropped: a second line of defence against an agent tool that escapes its sandbox, and protection for copies and backups of the data directory. If extended: throughput, simplicity, and recoverability when the key is lost.
-- **Impact of applying it:** No change until you decide. Either way the storage contract gets one explicit at-rest rule before B-01 moves any protected record family. Raised by the owner's review of the overview.
+- **Impact of applying it:** Follows from F-03. If agents run as a separate user, drop application-level encryption and state that protection is disk encryption plus file permissions. If they stay same-user, decide between encrypting every protected source and accepting the risk. Either way the storage contract gets one explicit at-rest rule before B-01 moves any protected record family.
 
 ### E-02
 
@@ -846,6 +849,55 @@ Priority: Before building the area · Size: M · State: Proposed
 - **What we gain:** Messaging stays fast enough for many agents after the move to protected files.
 - **What we lose:** Either some durability granularity (batching several envelopes behind one flush) or the current latency targets.
 - **Impact of applying it:** Design the envelope flush discipline and measure it before the messaging adapter is built. Recorded as an open item in document 15.
+
+## F. Design choices the owner challenged
+
+Choices that are internally consistent but that the owner questioned in review. Each has an evaluation and a recommendation.
+
+### F-01
+
+**Browser sessions live in memory, so every restart signs everyone out**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Design says:** The web process keeps only an in-memory link between cookie and session. "A gateway restart loses mappings; require reauthentication." The host's session list is also a map in memory. *(gateway-api-v1.md section 4; crates/org-host/src/service/authentication.rs line 39)*
+- **Owner asks:** Why keep sessions in memory at all? Sign tokens with a key pair generated at provisioning and verify them, so no session state is needed. *(Owner review, second round, 2026-11-17)*
+- **Why it matters:** Every update or crash signs every person out. The reasons for the current design (a web process with no secrets, instant sign-out) can be kept without that cost.
+- **Which source wins:** Your direction (no sign-out on restart); the mechanism is your choice
+- **Recommendation:** Two ways work. Stored sessions: the host keeps each session as a database row and the web process re-checks a cookie once after a restart; sign-out stays instant. Signed tokens: the host signs a short-lived token with a private key it keeps, the web process verifies with the public key, and a per-account marker in the host database makes password change and sign-out-everywhere immediate. I recommend stored sessions for v1 and signed tokens if there is ever more than one web process. In both, the key or table belongs to the host, because accounts are per instance.
+- **What we gain:** People stay signed in across updates, crashes and host restarts. The web process still holds no secret.
+- **What we lose:** Stored sessions: session rows on the host's disk, which the current design avoids. Signed tokens: instant sign-out, unless tokens are short-lived and a marker is kept; plus key rotation and clock handling to get right.
+- **Impact of applying it:** A change to section 4 of the browser API design and to the host's session code. Best decided before sign-in (FC-014) is finished. No office or domain change.
+
+### F-02
+
+**A 15 ms send target for agent-os, against an owner target of 1 to 2 ms**
+
+Priority: Before building the area · Size: M · State: Proposed
+
+- **Design says:** Same-office send p50 under 15 ms and p95 under 30 ms: about 2 ms process start, 0.5 ms connect, 6 to 10 ms for one full flush to disk. Every write is acknowledged only after it would survive a power cut. *(adr/0003 section 5; adr/0002 decision 4)*
+- **Owner asks:** 15 ms is too long. It should be 1 to 2 ms at most; it is only a save to the local office database. *(Owner review, second round, 2026-11-17)*
+- **Why it matters:** Measured here, starting any process costs about 1.1 ms and `agent-os --version` about 1.5 ms, so the budget is spent before any work. The rest of the 15 ms is waiting for the disk by rule, not slow code.
+- **Which source wins:** Your target, by changing the durability rule for chosen operations
+- **Recommendation:** Two changes. Let chosen operations be acknowledged after a commit that survives a process crash but not a power cut, with the full flush following in the next batch; keep the strict rule for task changes, assignments and budget actions. And add a long-running `agent-os` mode, one per agent session, so a call is one exchange on an open socket. Then measure on the target Mac and replace the estimates in ADR-0003 with numbers.
+- **What we gain:** Sends in well under a millisecond once a process is kept open, and about 2 to 3 ms on a Mac with a process per call. Higher throughput with many agents.
+- **What we lose:** For the fast class only: a message acknowledged in the last few milliseconds before a power cut or kernel crash can be lost while the sender believes it was sent. It conflicts with the rule "acknowledge after durable evidence", so that rule needs a stated exception.
+- **Impact of applying it:** An amendment to ADR-0002 decision 4 and ADR-0003 section 5 naming which operations may use the fast acknowledgement; a long-running mode in `agent-os`; measurements on the target Mac. The binary built on Linux is 1.56 MB against a 1 MB target, which should be checked on a Mac too.
+
+### F-03
+
+**Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract**
+
+Priority: Decide first · Size: S for the setting, M to L for the separate user · State: Proposed
+
+- **Design says:** "OS-user sharing is not a security isolation boundary … stronger isolation needs separate users/containers." Agents rely on the vendor runtime's tool sandbox and the office's permission policy. `SpawnSpec` has program, arguments, working directory and environment only. *(standalone-server.md line 299; agent-sessions.md security; crates/org-supervise/src/spawn.rs line 12)*
+- **Owner asks:** Run agents as a different user at least, if that needs no drastic re-architecture. Keep the runtime extensible: a separate user, a lightweight sandbox, or strong isolation. Not everything can be a container, because some agents build iOS features. *(Owner review, second round, 2026-11-17)*
+- **Why it matters:** This is the root of the encryption question. Application-level encryption exists mainly because same-user agents are not stopped by file permissions. Separate the agent from the data and that reason goes away.
+- **Which source wins:** Your direction, staged
+- **Recommendation:** Make isolation a named, replaceable setting in the launch contract, chosen per agent, with four levels: tool sandbox only, OS sandbox as the same user, a dedicated OS user, and a container or VM. Target the dedicated user for v1, after a short spike on a Mac confirming the vendor sign-in and Xcode work as a second account. It needs one administrator step at install and a small privileged launcher, because the office cannot start or signal another user's process. Keep tool-sandbox-only as a per-agent fallback for iOS work.
+- **What we gain:** Agents cannot read the organization's data even if a tool escapes its own sandbox. Application-level encryption becomes unnecessary, which removes key custody and unblocks Linux (E-01, B-09). Isolation can differ per agent, so iOS work is not blocked.
+- **What we lose:** Zero-setup installs: a separate user needs one administrator step and a privileged launcher to maintain. More to set up for agents that use Xcode or a vendor sign-in. The OS-sandbox level may not work with tools that start their own sandbox.
+- **Impact of applying it:** Add an isolation field to the launch contract (`org-runtime`, `org-supervise`) and name the levels in document 11. Start, stop, cleanup and orphan recovery must work across users. Workspace ownership and the data-root permissions change. Needs a macOS spike before committing to the default.
 
 ## Checks
 
