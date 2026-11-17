@@ -1071,13 +1071,16 @@ fn credential_routes_decode_directly_and_reject_duplicates_arrays_and_unknowns()
 // HTTP surface through the real gateway service, its Host/Origin admission
 // and the session routes.
 fn gateway(f: &Fixture) -> Gateway<SessionApi> {
+    gateway_with(f, ApiLimits::default())
+}
+fn gateway_with(f: &Fixture, limits: ApiLimits) -> Gateway<SessionApi> {
     let origin = ListenOrigin::parse(ORIGIN).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     Gateway::new(
         StaticUi::new(files, origin.clone(), Hsts::Off),
         SessionApi::new(Arc::clone(&f.sessions)),
-        ApiLimits::default(),
+        limits,
         RequestAdmission::new(origin),
     )
     .unwrap()
@@ -1144,6 +1147,104 @@ fn origin_or_host_mismatch_is_refused_before_any_host_call() {
         assert!(sent.headers.get(header::SET_COOKIE).is_none());
     }
     assert_eq!(f.count("account.verify"), 0);
+}
+
+fn clears_cookie(sent: &Sent) -> bool {
+    sent.headers
+        .get(header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("=; Max-Age=0;"))
+}
+fn http_sign_in(gateway: &Gateway<SessionApi>) -> (String, String) {
+    let signed = send(
+        gateway,
+        Method::POST,
+        "/api/v1/session/sign-in",
+        &[("host", HOST), ("origin", ORIGIN)],
+        SIGN_IN,
+    );
+    assert_eq!(signed.status, StatusCode::OK);
+    let set_cookie = signed.headers[header::SET_COOKIE].to_str().unwrap();
+    let proof = signed.body["result"]["proof"].as_str().unwrap().to_owned();
+    (cookie_pair(set_cookie).to_owned(), proof)
+}
+
+#[test]
+fn every_sign_out_reply_clears_the_cookie_even_when_refused_before_execution() {
+    let f = Fixture::new();
+    let gateway = gateway(&f);
+    let unknown = format!("{}={}", f.sessions.cookie_name, "a".repeat(64));
+    let refused = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        &[
+            ("host", HOST),
+            ("origin", ORIGIN),
+            ("cookie", &unknown),
+            (SESSION_PROOF_HEADER, &"b".repeat(64)),
+        ],
+        "{}",
+    );
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert!(clears_cookie(&refused), "{:?}", refused.headers);
+    // A known pair whose body preparation is refused also clears the cookie.
+    let (cookie, proof) = http_sign_in(&gateway);
+    let invalid = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        &[
+            ("host", HOST),
+            ("origin", ORIGIN),
+            ("cookie", &cookie),
+            (SESSION_PROOF_HEADER, &proof),
+        ],
+        "[]",
+    );
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
+    assert!(clears_cookie(&invalid), "{:?}", invalid.headers);
+    // Other session routes never clear it.
+    let get = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/session",
+        &[
+            ("host", HOST),
+            ("cookie", &cookie),
+            (SESSION_PROOF_HEADER, &proof),
+        ],
+        "",
+    );
+    assert_eq!(get.status, StatusCode::OK);
+    assert!(get.headers.get(header::SET_COOKIE).is_none());
+}
+
+#[test]
+fn a_timed_out_sign_out_still_clears_the_cookie() {
+    let f = Fixture::scripted(false, Duration::from_millis(1500));
+    let gateway = gateway_with(
+        &f,
+        ApiLimits {
+            backend_timeout: Duration::from_millis(200),
+            ..ApiLimits::default()
+        },
+    );
+    let (cookie, proof) = http_sign_in(&gateway);
+    let timed_out = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        &[
+            ("host", HOST),
+            ("origin", ORIGIN),
+            ("cookie", &cookie),
+            (SESSION_PROOF_HEADER, &proof),
+        ],
+        "{}",
+    );
+    assert_eq!(timed_out.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(clears_cookie(&timed_out), "{:?}", timed_out.headers);
 }
 
 #[test]

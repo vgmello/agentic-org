@@ -66,6 +66,13 @@ pub trait ApiBackend: Send + Sync + 'static {
         let _ = watch;
         self.execute(call)
     }
+    /// Adjusts every reply on an `/api/v1` request, including refusals before
+    /// or after execution: routing, body reading, preparation, pool admission
+    /// and backend timeouts.
+    fn finish(&self, request: &Parts, path: &RequestPath, reply: ApiReply) -> ApiReply {
+        let _ = (request, path);
+        reply
+    }
 }
 
 pub struct ApiReply {
@@ -350,8 +357,10 @@ impl<B: ApiBackend> Gateway<B> {
                     )
                     .into_http(head)
                 }
-                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                    self.api_response(&parts, path, body).await.into_http(head)
+                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") =>
+                {
+                    let reply = self.api_response(&parts, &path, body).await;
+                    self.backend.finish(&parts, &path, reply).into_http(head)
                 }
                 Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
             }
@@ -367,12 +376,12 @@ impl<B: ApiBackend> Gateway<B> {
         response
     }
 
-    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> ApiReply
+    async fn api_response<T>(&self, parts: &Parts, path: &RequestPath, body: T) -> ApiReply
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        let route = match self.backend.route(parts, &path) {
+        let route = match self.backend.route(parts, path) {
             Ok(route) => route,
             Err(reply) => return reply,
         };

@@ -181,13 +181,23 @@ impl ApiBackend for SessionApi {
                 .sessions
                 .refresh_with(ticket, watch, |result| self.established(result))
                 .unwrap_or_else(|reply| reply),
-            // Every sign-out reply clears the browser's cookie half.
+            // `finish` adds the clearing cookie to this and every other reply.
             Command::SignOut(ticket) => match self.sessions.sign_out(ticket) {
                 Ok(()) => ApiReply::json(StatusCode::OK, serde_json::json!({"result":{}})),
                 Err(reply) => reply,
-            }
-            .cookie(&self.sessions.clear_cookie())
-            .unwrap_or_else(|reply| reply),
+            },
         }
+    }
+    /// Every reply on the sign-out route clears the browser's cookie half,
+    /// including refusals before execution (authentication, body, preparation,
+    /// pool admission) and a backend timeout: the browser's pair ends either way.
+    fn finish(&self, request: &Parts, path: &RequestPath, reply: ApiReply) -> ApiReply {
+        if request.method == Method::POST && path.segments() == ["api", "v1", "session", "sign-out"]
+        {
+            return reply
+                .cookie(&self.sessions.clear_cookie())
+                .unwrap_or_else(|reply| reply);
+        }
+        reply
     }
 }
