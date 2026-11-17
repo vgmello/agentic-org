@@ -284,7 +284,7 @@ restarted.
   uptime. `office.restart` resets the count.
 - **`office.restart`** starts an `offline` or `unavailable` office now and answers
   `conflict` for any other status, `unavailable` for a terminal satellite join, and
-  refuses `unsupported_version` and `invalid_request`. It needs an authorized person.
+  refuses `unsupported_version` and `invalid_request`. It needs the organization's owner or the server's administrator.
 - **`office.status_changed`** is level-triggered: each event carries the state at that
   moment, intermediate states may be skipped and duplicates are possible, so clients
   replace their record idempotently.
@@ -385,7 +385,7 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | Seven web channels per office | Done: `MAX_GATEWAY_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The first line carries `db_key`, the office opens its SQLCipher databases with it, and a wrong key fails with `key_missing`. |
-| A7 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+| X1 | macOS and Linux, including a container | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
 
 `organization.provision.v1` today carries a `home_team_name`, creates no person record
 for the creator, and is reached only from tests (implementation plan A4).

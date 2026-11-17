@@ -40,10 +40,13 @@ satellite completed an operation.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
    admitted identity, role and policy. An execution file, a note or a process document
    cannot grant a permission.
-6. **People above an agent direct it.** An agent always replies to a person who
-   messages it. It follows instructions from a person above it in the organization's
-   hierarchy: the leads of its home team and of each ancestor team, up to the owner.
-   A message from a person who is not above it is a request: the agent answers it and
+6. **People above an agent direct it.** A person is whatever place the administrator
+   or owner gives them in the hierarchy: a member of a team an agent leads, the lead
+   of a team of agents, or a lead of leads. There are no access roles, and any person
+   can interact with any agent. An agent always replies to a person who messages it.
+   It follows instructions from a person above it in the organization's hierarchy:
+   the leads of its home team and of each ancestor team, up to the owner. A message
+   from a person who is not above it, including one who reports to it, is a request: the agent answers it and
    may act on it, but where it conflicts with what its own chain asked, its chain
    wins, and between two people in its chain, the one higher up wins. The office
    gives the agent, with each delivered message, whether the sender is above it,

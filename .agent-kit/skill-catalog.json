@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "3009b99ef0b5e6c29d1ce723e5496b69e70e103fe0a9d6a4064b17a7f3b22601"
+      "sha256": "a00694890e74108d8c4f0e96261f404713fbaf02b8da5d065ddc769a9ec94a1e"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "3f52910dd53e86881d44e34bb8abe9c13a4dd07fcf00cc2e33c5890eb1861fa9"
+      "sha256": "a44742d06a8fc174b913a2b46a29c28dd8d787d0b915909d115eb64cc82bb6de"
     },
     {
       "path": "Cargo.lock",
@@ -118,23 +118,23 @@
     },
     {
       "path": "docs/adr/0002-storage-sqlite-sqlcipher-one-writer.md",
-      "sha256": "d63ae24c88dd8e9c4476376211cbedc17b26795c8b5b63b58da647ad86dfad46"
+      "sha256": "258d322d6ed3188b904f1cdd4aaea1adc2b72f3c08f68ea85fa9138f85c6e99d"
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "437abd9be1721ca4e6f71aa54c675420ef162d9cd2e4da036335cd56f360ae2b"
+      "sha256": "9ec59a0d7284bdfd83c9dcf515ce650fbf5ea75a409b5b1860207134a588cf05"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "cec497fab9ea05352144376909601376b5366f0a5f0a14853584f5d96afef94f"
+      "sha256": "4d245c2cb68fe3242c46a11da40621ddc78d9d5aa1a6f476224a2cb27418f36e"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "f588cbddac60d2eec410a217a1b005288fd53483b95214c265fcc8636ba88f23"
+      "sha256": "3ea5bb50698ca19d8df4471a7ad4c2a47b289bf29355f49d95bffb8a1b2af756"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",
-      "sha256": "aa43a5f046cc8992ec0ead5b66af8c094632dc21a63929e080124ce0409f0f51"
+      "sha256": "dcff88ed9584629b9bef05933c2014a900286b0bffbdf00a3b9150c2ed8d66e8"
     },
     {
       "path": "docs/adr/0010-legacy-task-adoption.md",
@@ -142,7 +142,7 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "07aea48691616c61dac62c0e28f83e993e896e74adf00ea36eef4f9c5f5a52e5"
+      "sha256": "c34a33bd6095481d017fc3efa8b37a6b5d98fb4f8cca255e23371dde7785d1d5"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -150,15 +150,15 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "9c136759738fd445728e798069f65fefe0f03818a28f1ff46f2e15b36ef5c0f4"
+      "sha256": "4e3e626378854f9e0643e32df9c9d6dc408705aa03375e2da23b7127974f6396"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "2a6b19abd4e5e16bd744de911082e5a3f1294aa4f5fb5c83fe69dc08646d7871"
+      "sha256": "f077a1cdd3b4d9807fe04f09e1f922317fbb8739af1975ec3d8e9c7688e836d2"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "e53891a673dd8674b778debf2ae77f37ab67565eb370d5d774fcd15691d155fb"
+      "sha256": "7d4aca69ed6594a9df1d474e0e2342d1ccf16d526d7b2645ebd14ef65c7d26ac"
     },
     {
       "path": "docs/processes/branch-and-merge.md",
@@ -182,11 +182,11 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "3a1b4f759245b360f9440186b2050f3064efa47e0023f18be0b65acffb4331b9"
+      "sha256": "0c5322e6eece9034087730ba0c52ee7986572dd65ebc9e1f79c881379fb43adf"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "bd079b2bf0bf81fd7186c8a1ab55c4b64eb59d4e0d82237529b8a193e967f13a"
+      "sha256": "16875cf364b82ed80b18680cb9b482b8dc146a8ce05c25d69d5ecfa1fbc105d4"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",

@@ -21,21 +21,25 @@ New here? Read [START-HERE](START-HERE.md) first.
 
 ## The path
 
-**Milestone one: one office, with people and agents on board and talking.** This is
-the owner's first milestone (2026-11-17), and everything in it runs in a single
-office. Its steps, in order:
+**Milestone one: one office on a Mac, with people and agents on board and talking.**
+This is the owner's first milestone (2026-11-17), and everything in it runs in a
+single office on macOS. Its steps, in order:
 
 | Step | A person can | Increments |
 | --- | --- | --- |
 | 1 · Getting in | Install the server, register from the link setup prints, and create the organization | A2, A3, A4, then A5; A1 alongside |
-| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer; run the product in a Linux container | B1, B2, B3, O1, A6, U1, A7 |
+| 2 · The organization | Set up the office, projects, teams and people; invite the second engineer | B1, B2, B3, O1, A6, U1 |
 | 3 · Agents | Hire an agent through HR, start it with an instruction, and see what it did | C1 to C5 |
 | 4 · Messages | Chat with people and agents, and ask a question that waits for an answer | B6, B7, C6 |
 | 5 · Tasks | Create, assign and follow tasks, in the browser and with `agent-os`; an agent works in a repository | B4, B5, C7 |
 
-**Milestone two: a second office on another machine.** It is a separate thread and
-starts only when milestone one works in one office: enrolment of the office,
-replication between offices, and messages relayed between them (S1).
+**Milestone two: Linux.** Once everything in milestone one works on a Mac, the same
+server runs on Linux, including inside a container (X1). Until then nothing may make
+Linux harder: platform differences stay behind their small contracts.
+
+**Milestone three: a second office on another machine.** It is a separate thread:
+enrolment of the office, replication between offices, and messages relayed between
+them (S1).
 
 **Later:** costs and budgets, features and releases, updates. All of it is v1 scope.
 
@@ -61,8 +65,9 @@ Three things to know about the order:
   office store that A1 removes the encryption from. B1's written plan is prepared
   meanwhile. A1 also removes the encryption of the host database, which A2 and A3
   write to: the two leads agree the order of those commits.
-- **Both engineers work on macOS and use Docker to run the product on Linux.** Linux is
-  therefore a scheduled increment, A7, and not an option.
+- **Mac first, then Linux.** Both engineers work on macOS. Linux, including a
+  container, is milestone two (X1): it is required, and it comes after milestone one
+  works on a Mac.
 
 ---
 
@@ -316,10 +321,10 @@ Three things to know about the order:
 ### O1 · The office in the product
 
 - **Outcome:** a person sees the organization's offices with their readiness, and an
-  administrator restarts one.
+  administrator or the organization's owner restarts one.
 - **Build:** the office list and each office's state as the host and the office report
   them; restart of an office through the host. The HQ office is the only office until a
-  second one is enrolled (milestone two, S1).
+  second one is enrolled (milestone three, S1).
 - **Read:** [offices design](design/offices-hq-and-satellites.md),
   [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria that need one
   office), [host boundary design](design/office-host-boundary.md). Rows FC-019, FC-021.
@@ -349,6 +354,13 @@ Three things to know about the order:
     account. An account is never tied to an agent.
   - An owner hands ownership of the organization to another person who has an account.
     An organization has exactly one owner.
+  - A person is whatever place the administrator or owner gives them in the hierarchy:
+    a member of a team that an agent leads, the lead of a team of agents, or a lead of
+    leads. There are no access roles. Any person can interact with any agent; position
+    only decides whose instructions an agent follows
+    ([supervision design](design/employee-supervision.md), decision 6). Only inviting
+    people, removing access, handing over ownership or the administrator role, and
+    creating organizations are reserved to the owner or the administrator.
 - **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
   (accounts), [agent structure](design/organization-data/04-agent-structure.md),
   [index, what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns).
@@ -356,9 +368,9 @@ Three things to know about the order:
 - **Code today:** `crates/org-host/src/accounts` holds only the login value types.
   Account storage is `crates/org-host/src/hostdb/accounts.rs`; its schema allows many
   accounts and several linked organizations, but the only insert is the first
-  administrator account. `account.create` is defined in `crates/org-host-control` and has
-  no handler; nothing issues or redeems a link. The command-line account operations
-  defined there are removed. Account IDs are still ULIDs and become UUIDv7.
+  administrator account. Nothing issues or redeems a link. The account operations
+  defined for the command line in `crates/org-host-control` (`account.create` among
+  them, which has no handler) are removed. Account IDs are still ULIDs and become UUIDv7.
 - **Done when:** two people are signed in at once from two browsers, and a change each
   makes carries their own name.
 - **Needs:** A3, B2.
@@ -377,25 +389,6 @@ Three things to know about the order:
 - **Done when:** the TEAM, PEOPLE and REPORT criteria that need no agent runtime pass in
   browser tests against a real instance.
 - **Needs:** A3, B2, B3, O1.
-
-### A7 · Linux and containers
-
-- **Outcome:** the same instance runs as the main process of a Docker container on an
-  engineer's Mac, with its data and secrets on mounted volumes, and behaves as on macOS.
-- **Build:** the Linux implementation of each platform contract: checking that a started
-  worker is the intended program, where the host keeps its secrets, confinement of the
-  web process, and running in the foreground under a container runtime. Nothing outside
-  those adapters branches on the operating system. A container file in the repository
-  builds the image. The workspace checks run on both systems in CI.
-- **Read:** [ADR-0017](adr/0017-linux-and-container-hosting.md) (LNX-1 to LNX-6),
-  [host boundary design](design/office-host-boundary.md), [ADR-0008](adr/0008-gateway-macos-sandbox.md).
-  Row FC-164.
-- **Code today:** `crates/org-host/src/spawn.rs` refuses to start a worker on anything
-  but macOS; the web process's Linux confinement is a contract with no adapter and
-  refuses to start; host secrets use the macOS keychain.
-- **Done when:** LNX-1 to LNX-6 pass.
-- **Needs:** A1 to A3; it can run alongside the rest of step 2. Each of the three Linux adapters starts with a short design,
-  which the engineer writes and decides.
 
 ---
 
@@ -598,7 +591,30 @@ Three things to know about the order:
 
 ---
 
-## Milestone two · A second office
+## Milestone two · Linux
+
+### X1 · Linux and containers
+
+- **Outcome:** the same instance runs as the main process of a Docker container on an
+  engineer's Mac, with its data and secrets on mounted volumes, and behaves as on macOS.
+- **Build:** the Linux implementation of each platform contract: checking that a started
+  worker is the intended program, where the host keeps its secrets, confinement of the
+  web process, and running in the foreground under a container runtime. Nothing outside
+  those adapters branches on the operating system. A container file in the repository
+  builds the image. The workspace checks run on both systems in CI.
+- **Read:** [ADR-0017](adr/0017-linux-and-container-hosting.md) (LNX-1 to LNX-6),
+  [host boundary design](design/office-host-boundary.md), [ADR-0008](adr/0008-gateway-macos-sandbox.md).
+  Row FC-164.
+- **Code today:** `crates/org-host/src/spawn.rs` refuses to start a worker on anything
+  but macOS; the web process's Linux confinement is a contract with no adapter and
+  refuses to start; host secrets use the macOS keychain.
+- **Done when:** LNX-1 to LNX-6 pass.
+- **Needs:** milestone one working on a Mac. Each of the three Linux adapters starts with a short design,
+  which the engineer writes and decides.
+
+---
+
+## Milestone three · A second office
 
 ### S1 · A second office on another machine
 
