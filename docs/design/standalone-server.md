@@ -146,7 +146,7 @@ release; a malformed input fails the build.
 Setup talks to the host over a typed reverse connection: `agentic-org serve` in
 bootstrap mode connects to setup's private listener, and `bootstrap` and `exit` are
 never ordinary `host.sock` methods. Both sides are the same executable, with the
-retained signing identifier `com.ellosoft.agentic-org.org-office-host` and the
+retained signing identifier `com.vgmello.agentic-org.org-office-host` and the
 compiled team and hardened-runtime checks on macOS. A debug executable allowance is
 debug-only. Before creating the registry, the bootstrap host holds the instance,
 root and host locks and hands those same locks and custody to the normal runtime

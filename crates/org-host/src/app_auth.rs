@@ -48,7 +48,7 @@
 use std::path::{Path, PathBuf};
 
 /// The desktop app's bundle id.
-pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
+pub const APP_BUNDLE_ID: &str = "com.vgmello.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
@@ -367,7 +367,7 @@ mod tests {
     fn the_requirement_names_the_bundle_and_team() {
         assert_eq!(
             designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap(),
-            "identifier \"com.ellosoft.agentic-org\" and anchor apple generic and \
+            "identifier \"com.vgmello.agentic-org\" and anchor apple generic and \
              certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""

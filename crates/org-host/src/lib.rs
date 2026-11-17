@@ -97,13 +97,13 @@ use crate::supervisor::{Supervisor, SupervisorConfig};
 pub mod test_support;
 
 pub use crate::app_auth::APP_BUNDLE_ID;
-pub use crate::server_check::GATEWAY_SIGNING_ID;
-pub use crate::server_check::SERVER_SIGNING_ID;
+pub use crate::server_check::OFFICE_SIGNING_ID;
+pub use crate::server_check::WEB_SIGNING_ID;
 
 /// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
 /// the agentic-org executable in host mode. The signing identifier remains stable
 /// across the executable migration; agent-os must never receive this entitlement.
-pub const HOST_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-office-host";
+pub const HOST_SIGNING_ID: &str = "com.vgmello.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
