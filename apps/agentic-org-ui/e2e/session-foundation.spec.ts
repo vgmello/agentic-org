@@ -210,6 +210,48 @@ test.describe('P6a auth foundation @webkit', () => {
 		expect(await storedProof(page)).toBe(proof);
 		expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
 	});
+	test('SIGN-OUT 401: a stale pair is refused, its cookie half cleared and the session ends in every tab', async ({
+		page,
+		context
+	}) => {
+		const api = await backend(context);
+		await mount(page);
+		await page.evaluate(() =>
+			window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
+		);
+		const second = await context.newPage();
+		await mount(second);
+		await page.evaluate((time) => window.p6.controller.refresh(time), Date.now());
+		const [firstPair, secondPair] = await api.issued();
+		await expect.poll(() => storedProof(second)).toBe(secondPair.proof);
+		// The browser now presents the stale cookie half of the first pair with the current proof.
+		await setBrowserCookie(context, page, firstPair.cookie);
+		expect((await browserCookie(context))?.value).toBe(firstPair.cookie);
+		const outcome = await page.evaluate(() =>
+			window.p6.controller.signOut().then(
+				() => 'unexpected',
+				(error) => `${error.message} ${error.status}`
+			)
+		);
+		expect(outcome).toBe('Session request failed 401');
+		// The unauthenticated reply clears the cookie half and ends the local session in both tabs.
+		expect(await browserCookie(context)).toBeUndefined();
+		expect(await storedProof(page)).toBeUndefined();
+		expect(await page.evaluate(() => window.p6.states.at(-1))).toEqual({
+			kind: 'signed-out',
+			reason: 'signed-out'
+		});
+		await expect
+			.poll(() => second.evaluate(() => window.p6.broadcasts))
+			.toContainEqual({ kind: 'signed-out' });
+		await expect
+			.poll(() => second.evaluate(() => window.p6.states.at(-1)))
+			.toEqual({ kind: 'signed-out', reason: 'signed-out' });
+		expect(await second.evaluate(() => window.p6.store.read())).toBeUndefined();
+		// Without authentication no binding was identified, so none was invalidated.
+		await setBrowserCookie(context, page, secondPair.cookie);
+		expect((await getSession(page, secondPair.proof)).status).toBe(200);
+	});
 	test('unknown /api/v1 paths are a JSON 404 decided by shape before the pair', async ({
 		page,
 		context
