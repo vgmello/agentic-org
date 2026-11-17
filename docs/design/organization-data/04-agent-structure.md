@@ -1,6 +1,6 @@
 # Agents and employees
 
-Structural draft for v1. Document revision 2.8. This document fixes employee identity relationships. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling remain separate pending work. [Document 05](05-operational-data.md#private-notes-attached-to-tasks) checks private task notes against v1.
+Status: **selected** data contract, revision 2.9. This document fixes employee identity relationships. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling remain separate pending work. [Document 05](05-operational-data.md#private-notes-attached-to-tasks) checks private task notes against v1.
 
 ## Confirmed relationships
 
@@ -40,8 +40,6 @@ erDiagram
         TEXT focus "optional"
         TEXT role_text "optional"
         TEXT title_in_team "optional"
-        INTEGER is_owner "required"
-        TEXT agent_status "optional"
         TEXT offboarded_at "optional"
     }
     agent_placements {
@@ -80,20 +78,20 @@ teams/<team-id>/
 ```markdown
 ---
 schema_version: 1
-id: 01J00000000000000000000030
+id: 01930000-0000-7000-8000-000000000030
 handle: ana
 revision: 1
 kind: agent
 status: active
 name: Ana
-home_team_id: 01J00000000000000000000020
+home_team_id: 01930000-0000-7000-8000-000000000020
 role_id: null
 reports_to_employee_id: null
 ---
 Reservations team employee identity. Execution configuration is stored separately in execution.md, as defined in document 11.
 ```
 
-Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Preserve existing v1 handles on import where valid and resolve collisions explicitly. Agent provisioning and messaging transport remain pending specifications. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling remain outside this specification.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. Handles are readable identity references; stable IDs remain the foreign keys. Agent provisioning and messaging transport remain pending specifications. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling remain outside this specification.
 
 ## Runtime location
 
@@ -136,7 +134,7 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   role_id TEXT,
   reports_to_employee_id TEXT,
   body_markdown TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'inactive')),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'owner', 'system', 'unknown')),
   created_by_id TEXT,
@@ -148,11 +146,9 @@ kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
   focus TEXT,
   role_text TEXT,
   title_in_team TEXT,
-  is_owner INTEGER NOT NULL DEFAULT 0 CHECK (is_owner IN (0,1)),
-  agent_status TEXT CHECK (agent_status IN ('active','paused','offboarded')),
   offboarded_at TEXT,
-  CHECK (kind='agent' OR (agent_status IS NULL AND offboarded_at IS NULL)),
-  CHECK (offboarded_at IS NULL OR agent_status='offboarded'),
+  CHECK (kind = 'agent' OR status <> 'paused'),
+  CHECK (offboarded_at IS NULL OR status = 'inactive'),
   PRIMARY KEY (organization_id, id),
 UNIQUE (organization_id, handle),
   UNIQUE (organization_id, id, home_team_id),
@@ -197,11 +193,13 @@ Direct reporting must be acyclic within an organization, independently of the te
 
 ## Employee field reconciliation with v1
 
-The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `is_owner`, `agent_status`, `offboarded_at`. Nullable text remains NULL if not known. `is_owner` defaults to false; `agent_status` is optional legacy operating state (`active`, `paused`, `offboarded`), allowed only for agents. `offboarded_at` requires offboarded state; legacy records without the timestamp remain distinguishable from fabricated dates. `status` still describes active/inactive employment: import maps offboarded to inactive and active/paused to active. Commands/imports reject contradictory new records. Pause preserves employment and history; it is not removal. An offboarded profile keeps its handle.
+The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`. Nullable text remains NULL if not known.
 
-`role_text` preserves v1's descriptive role independently of the normalized `role_id`; import must not invent a role ID from arbitrary text. `title_in_team` describes the home-team appointment, not a second membership. `is_owner` preserves the v1 organization-owner marker; it does not create a login, grant administrator privileges or replace the host's authenticated ownership record. Import requires at most one owner and reconciles it with that record. Team leadership remains a separate appointment.
+**Employee state is one field (owner decision 2026-11-17).** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](11-model-profiles-and-agent-execution.md)), and no unreleased budget hold applies ([document 17](17-budgets-and-controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
 
-V1 members can have several memberships. Import must require an explicit chosen home team; preserve unselected associations in migration staging rather than picking the first or copying all membership titles into one field. Runtime/model move to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
+`role_text` is a free descriptive role, independent of the normalized `role_id`; a role ID is never invented from that text. `title_in_team` describes the home-team appointment, not a second membership. **There is no owner field on an employee.** The organization owner is an authenticated account held by the host, described in the [index](README.md#outside-this-set-what-the-host-owns). If that account is also represented by a person record, the record is an ordinary employee with a home team. Team leadership remains a separate appointment.
+
+Runtime and model belong to document 11's execution configuration; machine-specific home remains managed local state. Run modes, scheduling and memory remain deferred; no schedule engine or schedule table is introduced here.
 
 ```yaml
 contact: "product@example.invalid"
@@ -209,8 +207,7 @@ title: "Product lead"
 focus: "Guest booking"
 role_text: "Product management"
 title_in_team: "Lead"
-is_owner: false
-agent_status: paused
+status: paused
 ```
 
 [Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.

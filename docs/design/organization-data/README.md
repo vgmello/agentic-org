@@ -1,6 +1,6 @@
 # Organization design document set
 
-Structural draft for v1. Document revision 2.8. This proposal specifies the selected data relationships and storage, including task assignment and activity history. It does not change the application implementation or authorize a migration.
+Status: **selected** data contract for v1, set revision 2.14 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
 
@@ -19,17 +19,17 @@ This set owns the **selected target data relationships, fields and canonical sou
 | [Release content and flags](09-release-content-and-flags.md) | Explicit release contents, product/technical changelogs, flag definitions, intended settings and applied snapshots | Flag evaluation or deployment execution |
 | [Usage and cost accounting](10-usage-and-cost-accounting.md) | Durable usage events, historical attribution, price versions, checkpoints and derived totals | Budgets, automatic pausing, actual billing or execution routing |
 | [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) | Provider/subscription connections, ordered model profiles, agent execution configuration, office bindings, permits, turns/attempts/processes and durable placement generations | Agent memory, automatic scheduling, installation implementation or task lifecycle |
-| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics, v1 evidence and migration boundaries | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
+| [Task assignment and history](12-task-assignment-and-history.md) | Owning versus assigned team, current individual assignment, reporter semantics and what the code does today | Private task-note application implementation, Undo, all v1 transition engines or a deployed mutation/replication service |
 | [Model providers, connections and pools](14-model-providers-and-connection-pools.md) | Provider/driver identity, connections, ordered pools, office bindings, discovered models and agent selection in the common data-structure format | A second provider system, additional tables or supervisor/failover implementation |
 | [Messaging and chat](15-messaging-and-chat.md) | Conversations, memberships, messages, recipient state, attachments, read markers and reactions; runtime ownership and routing rules merged from ADR-0003 | Transport/wake engines and external bridges |
 | [Recovery and office continuity](16-recovery-and-office-continuity.md) | Mutation receipts, origin streams, checkpoints, snapshots and process cleanup evidence | Automatic promotion, restore engines or backup automation |
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
 
-Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, with document 14 repeating the provider/pool subset, including model profiles/execution and task assignment/history, into one shared draft containing 75 tables and 8 views plus indexes/triggers. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
+Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 75 tables and 10 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
-Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. New records use UUIDv7; preserve existing v1 IDs exactly without regenerating or reformatting them. Readable identifiers never replace stable IDs.
+Every entity keeps an immutable stable `id`, used for foreign keys, synchronization and filenames. IDs are UUID version 7 (RFC 9562), written as lowercase hyphenated text (selected 2026-11-17 at the owner's request for the industry standard; [document 06](06-identity-and-numbering.md#stable-ids-readable-references-and-scopes) has the rule and the reason). The newer HQ-creation code already mints them; the rest of the code mints ULIDs and changes under FC-142. Readable identifiers never replace stable IDs.
 
 | Entity | Readable identifier | Uniqueness / counter scope |
 | --- | --- | --- |
@@ -38,13 +38,13 @@ Every entity keeps an immutable stable `id`, used for foreign keys, synchronizat
 | Agent or person | `handle`, displayed as `@ana` | Organization, shared across both employee kinds; no counter |
 | Team | `TEAM-12` | Team counter within organization |
 | Project | `P-8` and `slug`, e.g. `reservations` | Project counter and slug uniqueness within organization |
-| Task of any type | `T-42` | Task counter within project, or within team when projectless |
+| Task of any type | `T-B37`: `T-`, the creating office's letter code, a number | One sequence per office, minted by that office; unique in the organization ([document 06](06-identity-and-numbering.md)) |
 | Feature | `F-6` and full slug `reservations/table-booking` | Feature counter and `local_slug` within project; full slug unique within organization |
 | Release | `R-3` and optional text `version_label` | Release counter within project |
 | Milestone | `M-2` | Milestone counter within release |
 | Repository, role, provider connection or model profile | Descriptive `key` | Organization, separately per entity type; no counter |
 
-Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied on import it must match. `number: null` denotes a locally created task/feature awaiting allocation, or an unresolved import and exposes no final readable reference. A record accepted by the organization authority must have a number and a durable allocation; local tasks/features can be used by stable ID while registration is pending. Separate scopes can both contain `T-42`: use `P-8/T-42` or `TEAM-12/T-42` outside an already selected scope. Changing task type never changes its ID or number.
+Numbered records persist `number`; SQL derives `key` as the prefix plus number. The canonical file does not need a duplicate `key`; if supplied it must match. `number: null` denotes a locally created feature awaiting allocation and exposes no final readable reference. A task is numbered by its creating office at creation, so it is never null. Changing task type never changes its ID or number.
 
 Slugs are lowercase kebab-case identifiers; handles are lowercase identifiers using letters, digits, dots, underscores or hyphens, stored without `@`. They are explicit fields rather than values recalculated when display names change. Teams need no additional slug. Projects have both a numeric reference and an organization-unique slug. Features store `local_slug`, and their public `slug` is automatically derived as `<project.slug>/<feature.local_slug>`. Never manually enter the project prefix on a feature. The resulting path is unique within the organization because both component scopes enforce uniqueness. Release version labels are plain text, not an enforced semantic-version type or identity.
 
@@ -70,7 +70,8 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   ├── recovery/                    # Receipts, origin streams, acceptance journals, checkpoints (16)
 │   ├── budgets/                     # Protected policies, periods, events, holds (17)
 │   ├── private/task-notes.db        # HQ only: author-private task notes (05)
-│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11)
+│   ├── local/offices/<office-id>/   # Machine-specific bindings, auth and supervision journal (11);
+│   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
     ├── office.db                    # Projection + explicitly transient state
@@ -94,6 +95,20 @@ Structural import validation rejects duplicate IDs, invalid references, team cyc
 
 Saving files and Git publication remain separate. Hourly pending-work publication and prompt important-knowledge publication are publication targets, not a newly implemented sync engine. Offices host agents and cache organization data; they do not own teams, projects or counters. HQ creates teams, projects, releases and milestones. Tasks and features may be created and durably saved in any office, including while disconnected. Offices submit their stable IDs and scopes to the shared organization authority for final number allocation and feature-slug registration; they never increment replicated counters independently. Numbering recovery must preserve every acknowledged allocation; hourly Git publication alone cannot provide that guarantee.
 
+## No compatibility obligations before v1 ships
+
+Nothing has been deployed. Until the owner declares v1 shipped (owner decision 2026-11-17):
+
+- There are no existing users, organizations or data to preserve. No migration, import staging, alias, compatibility adapter or legacy shape is built or kept for a pre-release form.
+- Wire names, method names, file formats, schemas, identifiers and the local API version may change freely. The local API version is 1.
+- No document in this set asks for old data, identifiers, references such as `B-` and `REQ-`, hashes or events to be preserved, imported, adopted, staged or mapped. The structures that existed only for that were removed from the draft schema on 2026-11-17 (set revision 2.13): the imported conversation kind, the source-hash columns on messages, the second task-event version and the feature's old-path field. ADR-0010 is withdrawn.
+- The better design wins. When rebuilding is the cleaner architecture, rebuild; the result must be fast, memory-efficient and reliable.
+- The former development team's message queue is dropped too (owner, 2026-11-17); nothing of it is carried over.
+
+## Outside this set: what the host owns
+
+The instance, accounts, sessions and the office registry belong to the host, not to this set. They are defined in [status and host records](STATUS.md#outside-this-set-what-the-host-owns).
+
 ## Organization authority
 
 In v1 the **organization authority is the HQ office worker**. It is a role of that process, not a separate service or daemon: the single writer at HQ owns `durable/authority/`, allocates readable numbers, registers feature slugs and flag keys, accepts usage corrections, issues turn permits and cooldowns, and holds placement generations and budget-control state. Wherever a document in this set says "shared organization authority", "shared logical organization authority" or "HQ's organization service", it means this role. Other offices submit requests to it and never act as it, including while disconnected. Moving the role to another office is promotion; it is manual, fenced by epoch, and deferred ([offices design](../offices-hq-and-satellites.md), [document 16](16-recovery-and-office-continuity.md)).
@@ -102,7 +117,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 
 | Topic | Current decision |
 | --- | --- |
-| Stable IDs | Preserve existing IDs; use UUIDv7 for new records, plus readable identifiers |
+| Stable IDs | UUIDv7, plus readable identifiers |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
 | Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |
@@ -114,7 +129,9 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Organization authority | The HQ office worker in v1: one role for numbering, slug/key registration, permits, placement generations, budget-control state and corrections; promotion deferred |
 | Project/feature slugs | Organization-unique project slug; feature full slug automatically prefixed by project |
 | Knowledge documents | Required project, optional same-project feature/release/deployment scope; feature definitions stay in `feature.md` |
-| Accountability and lifecycle | Feature/document owners; active/archived teams, active/inactive employees, draft/current/deprecated documents |
+| Accountability and lifecycle | Feature/document owners; active/archived teams; employees `active`, `paused` (agents) or `inactive` in one status field; draft/current/deprecated documents |
+| Task, milestone and release completion | Task status is the closed list `todo`, `in_progress`, `blocked`, `cancelled`, `done`; done or cancelled is finished. Milestones and releases store no status; done is derived from their tasks |
+| Compatibility before v1 ships | None. Nothing is deployed: no migration, import, alias or legacy shape is kept ([rule](#no-compatibility-obligations-before-v1-ships)) |
 | Attribution and relationships | Common creation/update actors and times; typed authored links and derived inverse/scope relationships |
 | Encryption at rest | None for data at the application level (ADR-0016); disk encryption, file permissions and agent isolation (ADR-0015) protect it. An office's private keys are stored wrapped by a host-held key |
 | Budgets | Optional task limits, daily/monthly agent limits and release warning caps; protected definitions/operational controls in document 17, runtime service still unimplemented |
@@ -125,9 +142,9 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Watchers, owner questions, waiting spans | Include their data structures in document 05 |
 | Agent setup/execution | Document 11 defines model profiles, provider connections and execution data/behavior; memory consolidation and automatic scheduling remain separate pending work |
 | Subscription connections | One connection per provider subscription, reused by office-local bindings and profiles; shared quota remains attached to that connection |
-| Process engine | Out of scope for now; retain process/standard content and scope metadata only |
+| Processes and standards | Content, scope and the override lock are selected, and so is resolution: the effective set for a task is the organization's entries, then the accountable team's chain, then the project's, and entries that may not be overridden are always given to the agent ([processes design](../processes.md)). Enforcement, approvals and checklist composition stay out of scope |
 | Areas, advanced checklist workflows, Undo, organization-wide event history, retrospectives | Still unselected; do not silently port or delete them |
 
-The SQL is a structural draft for the selected scope. Document 11 owns model/execution behavior within this integrated document set; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.
+## Status and changelog
 
-Recovery sources are defined in [document 16](16-recovery-and-office-continuity.md); office caches are disposable only after durable sources and safe process reconciliation are accounted for.
+Every numbered document is **selected**. The status vocabulary, the changelog of this set and what the draft SQL does and does not establish are in [status and host records](STATUS.md#status-and-changelog).

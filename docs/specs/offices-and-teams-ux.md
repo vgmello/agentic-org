@@ -3,7 +3,7 @@ kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
 revision: 19
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: ac-staff-engineer-ada
@@ -13,7 +13,7 @@ builds_on: []
 
 # Spec · Offices, organizations and teams (UX)
 
-Selected chart data follows [organization](../design/organization-data/01-organization-structure.md), [projects](../design/organization-data/02-project-structure.md), [employees](../design/organization-data/04-agent-structure.md) and [task assignment](../design/organization-data/12-task-assignment-and-history.md). The body and criteria below use those target relationships. Detailed office/enrollment UX remains a requirement; target records do not prove handlers or migration are implemented. [Authority map](../design/documentation-authority.md).
+Selected chart data follows [organization](../design/organization-data/01-organization-structure.md), [projects](../design/organization-data/02-project-structure.md), [employees](../design/organization-data/04-agent-structure.md) and [task assignment](../design/organization-data/12-task-assignment-and-history.md). The body and criteria below use those target relationships. Detailed office/enrollment UX remains a requirement; target records do not prove handlers are implemented. [Authority map](../design/documentation-authority.md).
 
 **Revision 12 (2026-11-09): standalone server pivot.**
 [server-installation-and-access-ux.md](server-installation-and-access-ux.md) supplies
@@ -32,7 +32,7 @@ Requested by ada for the user.
 
 **Revision 19 (2026-11-15):** Teams index, mixed Members directory and one reporting tree replace the three canvases; retain selected home-team/accountability/editing rules and move Offices under Organization settings.
 
-**Revision 18 (2026-11-15):** rewrites chart forms, diagrams, model wording and TEAM/PEOPLE/REPORT/OWNER criteria for one home team, subtree leads, independent reporting, required project owner and optional contributors. Owner/HR employee exemptions are removed. Existing wire adapters need an explicit migration; no new commands are introduced. Layout-changing operations wait for verified turn/process quiescence and cleanup, without depending on deferred run modes or automatic restart. Undo remains deferred.
+**Revision 18 (2026-11-15):** rewrites chart forms, diagrams, model wording and TEAM/PEOPLE/REPORT/OWNER criteria for one home team, subtree leads, independent reporting, required project owner and optional contributors. Owner/HR employee exemptions are removed. The wire contract changes in place; no new commands are introduced. Layout-changing operations wait for verified turn/process quiescence and cleanup, without depending on deferred run modes or automatic restart. Undo remains deferred.
 
 The entries below are historical revision notes, not active relationship or identifier requirements. Pre-selection statements about multiple memberships, teamless owners, name-as-handle and ownerless projects are superseded individually by §§7.0–7.10 and their revised criteria.
 
@@ -42,7 +42,7 @@ The entries below are historical revision notes, not active relationship or iden
 and the details sheet.** From the Principal Product Designer's decision of
 2026-11-10 on narrow widths and its follow-ups:
 - **`unsupported_version`:** the repair instructions' toggle, copy and Copy
-  command, naming the office's host; "the office's machine" for the legacy host
+  command, naming the office's host; "the office's machine" for the host value
   "This Mac"; no invented instance name, and never "this Mac" for the office's
   machine. No restart button in this state (§3.3).
 - **The office row's screen-reader label** says "(you're here)" only when the
@@ -306,7 +306,7 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
     instance on that machine and says what to repair. Follow its steps there.
     This page updates on its own when the office is back." Then "If <host> runs
     more than one instance, add `--name <instance>`."
-  - **<host>** is the office's host name. When the host is the legacy value "This
+  - **<host>** is the office's host name. When the host is the value "This
     Mac", both the reason ("<office machine / instance>" in the table) and the
     steps say "the office's machine" instead.
   - Never invent an instance name, and never say "this Mac" for the office's
@@ -434,7 +434,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 
 - Count affected employees with active/open turns, live main processes or unresolved stopping/cleanup evidence, including a warm idle process when it holds the old layout context. A status label such as Idle, Paused, Offline or Asleep does not prove quiescence. Admit the layout change only when the owning process controller confirms no affected active work/live process remains and cleanup is complete. Stale/unavailable evidence keeps the operation waiting with “Can't confirm that work has stopped on <instance>.” No cache deletion, elapsed timeout or zero presence count substitutes for this proof.
 - Waiting does not automatically stop, cancel, restart or schedule agent work. Any necessary drain/admission control and safe stop must use explicitly supported, authorized lifecycle actions and durable control state; do not imply a newly implemented drain service or invent a command. Later explicit work still requires current execution readiness, placement generation and permits.
-- The create remains accepted. Preserve existing operation lookup/status and the current-contract `waiting_for_idle { sessions: n }` field, but map that legacy session count to verified target turn/process blockers through an explicit adapter. A count alone cannot prove target quiescence. Counts update in place as blockers clear. Without a trustworthy number show “Waiting for active work and process cleanup to finish”; if verification is unavailable say so instead of reporting zero or ready.
+- The create remains accepted. Operation lookup/status stays available. The earlier contract's `waiting_for_idle { sessions: n }` field is a session count; it is replaced by verified target turn/process blockers. A count alone cannot prove target quiescence. Counts update in place as blockers clear. Without a trustworthy number show “Waiting for active work and process cleanup to finish”; if verification is unavailable say so instead of reporting zero or ready.
 - **Authorized list:** one row per affected employee, with a profile link, observed turn/process state, observation freshness and any supported Pause action:
 
   ```text
@@ -463,7 +463,7 @@ is **Created, then stopped** (above), never a failure, so Try again can't hit
 | `storage_error` | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
 | `not_ready` | "HQ is still starting. Try again in a moment." **Try again** |
 | `unavailable` | "Several organizations are being created right now. Try again in a moment." **Try again** |
-| Not an instance admin (refused by the gateway, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
+| Not an instance admin (refused by the web process, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
 | Any other error | "Side Project wasn't created. Try again." |
 
 Whether a recovery package that can't be created fails the create is A89; if it
@@ -536,7 +536,7 @@ From the owner's decision O-1. People records and agents never sign in.
 
 ### 5c. Joining from setup: waiting, errors and repair *(rev 15)*
 
-**Owner scope amendment (2026-11-15):** setup in the legacy enrollment copy below means the destination flow initiated by HQ's Add office UI or an HQ-issued command, not agentic-org setup. Initial setup creates HQ only and has no satellite option. This separate flow reuses installation/service internals and existing approval/repair semantics; the public HQ-issued command is supplied by HQ, not a new initial-setup flag.
+**Owner scope amendment (2026-11-15):** setup in the earlier enrollment copy below means the destination flow initiated by HQ's Add office UI or an HQ-issued command, not agentic-org setup. Initial setup creates HQ only and has no satellite option. This separate flow reuses installation/service internals and existing approval/repair semantics; the public HQ-issued command is supplied by HQ, not a new initial-setup flag.
 
 The HQ-issued onboarding flow on the joining machine hands the invitation to its instance, then watches
 the join until it ends (`offices-hq-and-satellites.md`, "Provisioning a
@@ -618,7 +618,7 @@ Press Ctrl-C to cancel.
   ```
 
   If lifecycle evidence/counts are unavailable, show “Waiting for active work and process cleanup to finish; verification unavailable” rather than inventing zero blockers or a run-mode explanation. Until A106's organization counts exist, retain only the supported total.
-- No time limit. Noninteractive enrollment returns its existing `waiting_for_idle` result without blocking; the legacy wire result needs the verified lifecycle adapter described in §5a. It prints:
+- No time limit. Noninteractive enrollment returns the `waiting_for_idle` result without blocking; its session count is replaced by the verified lifecycle blockers described in §5a. It prints:
 
   ```text
   Waiting for 3 agents to stop before joining (2 in Lumen Labs, 1 in Side Project).
@@ -873,7 +873,7 @@ not inferred from a robot glyph, color or avatar shape:
 | Screen reader | “Riley, agent” | “Sam Ortiz, person” |
 | Home-team card | Agents row | People row |
 
-Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employment (`active | inactive`), legacy operating state and observed process status are separate.
+Every employee has one required home team and appears once in that tree. Display `@handle` separately from a freely editable display name; names need not be unique. People and agents share the organization-wide handle namespace. Employee `status` (`active | paused | inactive`) and observed process status are separate.
 
 ### 7.1 The owner account and linked employee
 
@@ -884,9 +884,9 @@ Every employee has one required home team and appears once in that tree. Display
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Its `is_owner` marker neither grants authentication nor waives required membership.
+- The owner bar presents authenticated account authority; the account is not counted as an employee merely because it signs in. An optional linked owner employee is a normal home-team member and is counted once there. Nothing on the employee record marks it as the owner, grants authentication or waives required membership.
 - A linked owner employee can be shown on its home-team card and in eligible member/lead pickers subject to ordinary direct-membership rules. Account-removal protections are separate from employee editing. Changing an employee name, handle, home team or reporting line cannot transfer ownership of the account.
-- **Message/Ask** can retain the current owner security-principal recipient route. Task assignment stores an employee ID: list a linked active owner employee if present; do not manufacture one from a sign-in account. Current wire `owner` addressing stays unchanged until explicitly migrated.
+- **Message/Ask** can retain the current owner security-principal recipient route. Task assignment stores an employee ID: list a linked active owner employee if present; do not manufacture one from a sign-in account. The code today addresses the owner as the `owner` recipient.
 - The built-in HR shortcut may sit beside the bar. Its employee also has a valid home team and appears in the team and reporting views; the shortcut does not hide it from employee counts. Earlier built-in lifecycle/manager restrictions remain a separate UX policy to implement; home membership itself never appoints HR as a lead or manager.
 
 ### 7.2 Teams index, Members directory and team pages
@@ -918,7 +918,7 @@ Once added, agents in Lumen Labs can reach Sam as a participant.
                                             [Cancel] [Add person]
 ```
 
-- Name is trimmed, required and has no control characters. Display-name duplicates are allowed. Handle is a separate explicit lowercase identifier using permitted letters/digits/dots/underscores/hyphens; check uniqueness across people and agents, not by renaming a display name. Preserve current reserved recipient addresses/ID disambiguation at the compatibility boundary. Inline errors name the unavailable handle and suggest another; do not silently overwrite it when the name changes.
+- Name is trimmed, required and has no control characters. Display-name duplicates are allowed. Handle is a separate explicit lowercase identifier using permitted letters/digits/dots/underscores/hyphens; check uniqueness across people and agents, not by renaming a display name. Keep the reserved recipient addresses and ID disambiguation. Inline errors name the unavailable handle and suggest another; do not silently overwrite it when the name changes.
 - Contact remains optional free text (trimmed); clearing it is allowed. Home team cannot be cleared. If none exists, **Create team…** returns to this form with the chosen valid team before submission.
 - Added: show once at the home team, highlight for two seconds and focus it. Toast “Added Sam Ortiz. Agents can now reach Sam.” Pending on the receiving office's outbox is distinct from an accepted committed record.
 - Quick view: name/handle, Person, contact, Home team, Reports to and reports. Actions: Edit · Move home team… · Change manager… · Deactivate…. Employment and account access remain separate.
@@ -936,7 +936,7 @@ Lead        [No lead                    ] optional, direct member only
 ```
 
 - A new empty team needs no lead. To appoint one, explicitly select/create an employee whose home team is this team; moving an existing employee requires the same reviewed home-team move as §7.6. Never silently add another membership. Explain that the lead manages the whole subtree, including child-team leads.
-- New team numbers come from organization-wide allocation, never depth/name. Client-side name checks preserve compatible length/control-character constraints and backend conflict feedback. Do not invent a target uniqueness constraint from a display name alone; existing sibling-name restrictions remain in the current wire adapter.
+- New team numbers come from organization-wide allocation, never depth/name. Client-side name checks preserve compatible length/control-character constraints and backend conflict feedback. Do not invent a target uniqueness constraint from a display name alone; the code today also restricts sibling names.
 - Created: card appears under its parent, highlights for two seconds and receives focus. Show Pending/Blocked accurately. Empty organization: “Teams group your agents and people. A team can contain other teams.” **Create your first team**. Create a valid team before any employee or owned project can be accepted, including owner/HR employee bootstrap.
 
 <a id="76-add-a-member-to-several-teams"></a>
@@ -985,7 +985,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - Prefer **Archive** to preserve team IDs/history. Explain how current employees, owned projects/tasks and live assignments/lead appointments will be resolved before admitting an incompatible lifecycle change.
 - Delete is blocked while child teams, home employees, accountable projects/tasks or other durable references remain. List blockers with links and explicit move/reassign/archive actions. No cascade into teamless employees or ownerless projects; no silent history deletion. “Checkout still has 1 child team and 2 home employees. Resolve them first.”
 - Loading: owner bar/root then skeleton cards/nodes. Large organization (>30 teams or >50 reporting nodes): collapse below level two; keep expand/collapse and keyboard navigation, without Fit/zoom. Live updates apply in place, retaining selection; removed/archived card focus goes to its parent or a stable ancestor.
-- Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Riley's home team is Office, so Riley cannot lead Checkout”; “Choose an accountable owner team”). Current-wire `owner_protected` remains a compatibility error, not a target rule forbidding an owner employee from having a team.
+- Revision conflict: “Checkout changed while you were editing. Here's the latest.” Retain typed fields and mark them. Backend errors name the actual constraint (“Riley's home team is Office, so Riley cannot lead Checkout”; “Choose an accountable owner team”). The code today returns `owner_protected`; it is not a target rule forbidding an owner employee from having a team.
 
 ## 8. UX acceptance criteria
 
@@ -1055,12 +1055,12 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - OFC-26 · In the joining instance's own view (its status and, if it has one, its local status page), a satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office. HQ's Offices list never shows this row: after 3 wrong check codes, a decline or an expired invitation it shows §6.3's row with New invitation and Remove.
 - OFC-27 · On the joining instance's own status (CLI or local status page), when `office.restart` answers `unavailable` because the office's join ended, the office shows the join-ended row, with no restart action. HQ's Offices list is unaffected and keeps §6.3's rows.
 - OFC-28 · *(rev 18)* Create organization waits for verified affected turns/processes to finish and cleanup to complete; a live idle process or unresolved cleanup blocks, and Paused/Offline/presence alone cannot clear it. Keep Cancel, authorized profile links and supported Pause controls. Show stop pending until confirmed cleanup; name only owned-organization agents, count others. Unknown evidence keeps waiting. No mode engine or automatic stop/restart is assumed.
-- OFC-29 · *(rev 18)* Add office on this instance uses the same verified turn/process/drain boundary and controls/privacy/freshness as OFC-28, with spinner, retained read-only fields and Cancel. Existing waiting_for_idle tracking needs an explicit lifecycle adapter; do not infer readiness from a zero legacy count or an agent mode/status label.
+- OFC-29 · *(rev 18)* Add office on this instance uses the same verified turn/process/drain boundary and controls/privacy/freshness as OFC-28, with spinner, retained read-only fields and Cancel. The earlier waiting_for_idle session count is replaced by verified lifecycle blockers; do not infer readiness from a zero session count or an agent mode/status label.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
 - OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
 - OFC-32 · *(rewritten in rev 15, A102)* In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval while its `join_phase` is `awaiting_approval`, then Starting · copying records while it's `initial_sync`, and never Online before its first copy of records completes. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
 - OFC-33 · *(rev 18)* A warm idle process holding the affected layout context, open turn or unresolved cleanup keeps create/Add office/join waiting. Only verified quiescence clears the blocker; Paused, Offline or a deferred Asleep label is not proof.
-- OFC-34 · *(rev 18)* Waiting counts update without reload as verified blockers clear. Existing waiting_for_idle.sessions is a legacy session count requiring target lifecycle mapping; unavailable counts/evidence show explicit waiting/verification copy rather than fabricated zero or readiness.
+- OFC-34 · *(rev 18)* Waiting counts update without reload as verified blockers clear. The earlier waiting_for_idle.sessions is a session count, replaced by verified lifecycle blockers; unavailable counts/evidence show explicit waiting/verification copy rather than fabricated zero or readiness.
 - OFC-35 · *(new, rev 15, A101)* Cancel on a waiting create or Add office, from the panel, another tab, the switcher's waiting entry or the Offices list's pending row, cancels that same operation, and the organization or office is never created.
 - OFC-36 · *(new, rev 15, A101)* After its panel is closed, a waiting organization shows in the switcher as "<name> · Waiting for <n> agents to stop", can't be opened, and reopens the panel in its Waiting state when chosen.
 - OFC-37 · *(new, rev 15, A101; rewritten, review of 02316bb)* A waiting Add office shows in the Offices list only as a pending row with "Waiting for <n> agents to stop" and Cancel, with no status dot or other action; choosing it reopens the form in its Waiting state with the agents and their Pause, and it becomes the office once it's added.
@@ -1069,7 +1069,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 **Repair, restart and details (OFC)** *(new, rev 16, §3.3, §6.1)*
 - OFC-39 · *(new, rev 16)* For `unsupported_version`, the toggle reads "Show local CLI repair instructions", then "Hide repair instructions" while they're shown, with `aria-expanded` and `aria-controls`, and focus stays on the toggle.
 - OFC-40 · *(new, rev 16)* The repair instructions show "On <host>, run:", then `agentic-org doctor` in a code block with Copy command, which changes to Copied; then "It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back."; then "If <host> runs more than one instance, add `--name <instance>`."
-- OFC-41 · *(new, rev 16)* <host> is the office's host name; when the host is the legacy value "This Mac", the reason and the steps both say "the office's machine". The copy never invents an instance name and never says "this Mac" for the office's machine.
+- OFC-41 · *(new, rev 16)* <host> is the office's host name; when the host is the value "This Mac", the reason and the steps both say "the office's machine". The copy never invents an instance name and never says "this Mac" for the office's machine.
 - OFC-42 · *(new, rev 16)* The office row's screen-reader label doesn't claim "(you're here)" unless the host says so.
 - OFC-43 · *(new, rev 16)* An office whose reason is `unsupported_version` shows no restart button.
 - OFC-44 · *(new, rev 16)* While a restart runs, the restart button stays focusable (`aria-disabled` plus `aria-busy`), and the busy state is announced.
@@ -1081,9 +1081,9 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 **Org chart: Teams (TEAM)**
 - TEAM-1 · Teams index uses indented divided rows for the recursive parent_team_id tree, showing TEAM- reference/name, optional direct lead, direct People/Agents counts and projects marked Owner or Contributor.
 - TEAM-2 · Every employee is counted once at the required home team and listed once in Members. No multiple-membership badge or checklist is offered; name, handle and home-team appointment title remain distinct.
-- TEAM-3 · *(rev 18)* Required home-team failures appear as validation or unresolved import repair, never an ordinary Not in a team tray. Owner and HR employee records obey the same constraint.
+- TEAM-3 · *(rev 18)* Required home-team failures appear as validation errors, never an ordinary Not in a team tray. Owner and HR employee records obey the same constraint.
 - TEAM-4 · Agent rows may show real executing office/Unplaced with freshness; office placement neither owns teams/projects nor changes directory membership. The earlier canvas-highlighting filter is retired with those canvases.
-- TEAM-5 · *(rev 18)* New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Create a valid team before employee/bootstrap admission; preserve current-wire name validation only in its adapter.
+- TEAM-5 · *(rev 18)* New team supports optional parent and optional direct-member lead. Explicitly review home-team moves before appointment; explain subtree responsibility. Create a valid team before employee/bootstrap admission.
 - TEAM-6 · *(rev 18)* Move home team is one employee-revision-checked recoverable operation updating field/path and resolving departed leadership; preserve ID, handle, reporting, history and current task assignments. Stale state keeps input and explains the conflict.
 - TEAM-7 · *(rev 18)* Team move works by drag and Move to…, excludes self/descendants, previews subtree effects and preserves identity. Undo is deferred; concurrent cycle/revision failure refreshes current state without applying the edit.
 - TEAM-8 · *(rev 18)* Projects have a required single accountable owner and optional contributors, editable from project/team entry points. Owner removal requires a replacement; changing owner updates task accountability/history together and leaves assignments unchanged.
@@ -1092,14 +1092,14 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - TEAM-11 · Teams · Members · Org chart switch between the index, mixed directory and one vertical reporting tree. The old three canvases, View menu, Fit/zoom and chart search are removed; editing survives in index/directory/tree menus.
 - TEAM-12 · Agents and people use initial avatars and explicit Agent/Person words, including the accessible name; kind is never conveyed by color, shape or robot glyph.
 - TEAM-13 · A participating project appears in owner/contributor team rows with distinct words/badges and links to its accountable owner and other contributors; optional participation never creates additional owners.
-- TEAM-14 · *(rev 18)* New projects cannot omit their owner team. Unresolved legacy ownerless records stay in explicit repair/staging rather than an ordinary Unassigned projects tray.
+- TEAM-14 · *(rev 18)* New projects cannot omit their owner team. An ownerless project record is a validation error, never an ordinary Unassigned projects tray.
 - TEAM-15 · *(rev 18)* The lead picker accepts only direct home-team employees and states subtree management, including child leads. Project cards identify accountable ownership without inferring project co-leads.
 
 **Org chart: People (PEOPLE)**
 - PEOPLE-1 · Members lists people and agents as divided rows, filtered All · People · Agents, with name/handle/role, kind in words, real presence when available and current task when known.
 - PEOPLE-2 · The directory explains that agents can reach people registered in the organization, with Add a person; registration does not grant sign-in or authority.
 - PEOPLE-3 · *(rev 18)* Add person requires name, independent handle and one valid home team, with optional contact and explicit employee manager. Team entry points prefill the home team; accepted people appear once there.
-- PEOPLE-4 · *(rev 18)* Duplicate display names are allowed; handles are explicit lowercase identifiers unique across agents/people. Invalid or unavailable handles show inline errors/suggestions and block submission; current reserved routing/ID namespaces remain preserved by the adapter.
+- PEOPLE-4 · *(rev 18)* Duplicate display names are allowed; handles are explicit lowercase identifiers unique across agents/people. Invalid or unavailable handles show inline errors/suggestions and block submission; reserved routing/ID namespaces stay reserved.
 - PEOPLE-5 · *(rev 18)* Deactivation preserves ID, profile, required home team and handle; preview/resolve live leadership, reporting and assignments. History is retained; hard delete requires backend proof of no history/references. Assignment cleanup never erases accountability or automatically changes task status.
 - PEOPLE-6 · People never show execution placement or invented runtime presence.
 - PEOPLE-7 · When an agent's message or task fails because the recipient isn't in the organization (or was removed), the agent's activity says so in plain words, with Add a person… for an unknown recipient.
@@ -1114,7 +1114,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 
 **The owner (OWNER)**
 - OWNER-1 · *(rev 18)* The owner account bar presents organization access above each chart. A linked owner employee has a required home team and is counted/displayed there; a security account without a profile is not an employee.
-- OWNER-2 · *(rev 18)* Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from is_owner. No blanket teamless-owner exception appears.
+- OWNER-2 · *(rev 18)* Owner employee home-team/lead eligibility follows ordinary employee constraints; profile edits cannot transfer account ownership or derive privileges from any employee field. No blanket teamless-owner exception appears.
 - OWNER-3 · *(rev 18)* Messaging retains the authenticated owner routing contract. Task assignees and employee managers use eligible employee IDs, including a linked owner employee where valid; a sign-in account alone supplies neither reference.
 
 **Retired:** GUILD-1, GUILD-2 (rev 2); MENU-1 through MENU-6 from v1 (rev 12). IDs are not reused.
@@ -1132,7 +1132,7 @@ Nodes show shape/name/handle, Agent or Person, one Home team and number of expli
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?
 - A91 · *(rev 14)* The name rules follow `org-proto` (trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively on the trimmed name). Open: is the duplicate check per HQ instance or per account?
-- A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
+- A95 · *(rev 14)* Which error does the web process return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
 - ~~A101~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* a waiting create or Add office stays `accepted`, and its lookup and the instance status feed report `waiting_for_idle { sessions: n }`, so the copy gives the number. Cancel uses the original operation ID, as for Create organization. A waiting office isn't in the Offices list yet: it's a pending row driven by the operation, like a waiting organization in the switcher. A satellite join on an instance with running agents waits the same way, and setup shows "Waiting for N running agents to stop…" with "Press Ctrl-C to cancel". There's no longest wait: the person can always cancel, and `agentic-org doctor` shows the wait (§5a, §5c, §6.2; OFC-33 to OFC-38, JOIN-15, JOIN-16).
 - ~~A102~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the status read adds `join_phase: awaiting_approval | initial_sync` under `join_pending`, so the joining instance shows Waiting for approval, then Starting · copying records (§3.1, §5c, OFC-32). `join_cancelled` also covers an invitation the owner cancelled or replaced after it was used (HQ refuses the join). An HQ identity mismatch ends the join as `join_rejected`, a security failure that isn't retried. An unsupported version keeps the join pending until the invitation expires (§5c; JOIN-7, JOIN-13, JOIN-14).

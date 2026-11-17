@@ -39,8 +39,9 @@ section 8.
    - `same-user`: today's behaviour. The agent runs as the service's own OS user,
      protected by the vendor tool sandbox and the office's permission policy.
    - `dedicated-user`: the agent runs as a dedicated OS account, one per instance in
-     v1, that owns only agent workspaces. Ordinary file permissions close `durable/`,
-     the office database and the host's files to that account. Its workspaces stay
+     v1, that owns only agent workspaces and the agents' private homes (decision 10).
+     Ordinary file permissions close the rest of `durable/`, the office database and the
+     host's files to that account. Its workspaces stay
      where the storage contract puts them, reached through parent directories it may
      traverse and not list. Because all agents share the one account, separation
      between agents remains the vendor sandbox and the office's rules; an account per
@@ -70,22 +71,68 @@ section 8.
 8. **No silent downgrade.** An agent configured for `dedicated-user` is not runnable
    when the launcher or account is unavailable. It is never started as `same-user`
    instead.
-9. **Workspaces and sign-in.** In `dedicated-user`, agent workspaces are owned by or
-   shared with the agent account, and each vendor sign-in is stored under it. This
-   fits the selected rule that credentials are bound per office. Where the vendor
-   sign-in comes from in `same-user` mode remains conflict plan entry A-08.
+9. **Workspaces.** In `dedicated-user`, agent workspaces and each agent's private home
+   (decision 10) are owned by or shared with the agent account. Where the sign-in lives
+   is decision 11.
+10. **Every agent has a private home, in both modes (owner decision 2026-11-17,
+    conflict plan entry A-08).** The office creates one home directory per agent at
+    `durable/local/offices/<office-id>/agents/<employee-id>/home/` and starts the agent with `HOME` and each vendor's configuration
+    location pointing into it. The agent sees a vendor folder (a "virtual Claude
+    folder") that contains only what the office put there: the office's settings, the
+    agent's own transcripts, and one sign-in. The user's own `~/.claude`, Codex home and
+    `~/.gemini` are never read or written by an office-run agent. This replaces the
+    earlier choice in the session design to reuse the user's real folders.
+    The home is durable office-local data, not a cache: it holds the transcripts a
+    session is resumed from and that the session view reads. In `dedicated-user` it is
+    the one subtree under `durable/` that the agent account owns; its parent
+    directories can be traversed and not listed.
+11. **The sign-in comes from the subscription pool.** For each launch the pool
+    ([document 14](../design/organization-data/14-model-providers-and-connection-pools.md))
+    selects a connection. The source of truth for a sign-in stays in the office's
+    binding, `auth/<connection-id>/`, which the agent account cannot read. At launch the
+    office places a copy of that sign-in in the agent's private home for the run, and
+    takes back any refreshed token when the run ends. An agent can therefore read the
+    sign-in it is running with, in either mode; that cannot be avoided, because the
+    vendor tool runs as the agent and needs it. Keeping an agent away from other
+    sign-ins is not something the operating system does in v1: in `same-user` the agent
+    runs as the service user, and in `dedicated-user` all agents share one account and
+    could read each other's homes. As for everything between agents (decision 2), that
+    barrier is the vendor tool's sandbox and the office's rules. The spike of decision 7
+    also covers two agents on one connection each refreshing a copied token, and office
+    settings kept in a home the agent can write. Switching an agent to another connection is a
+    controlled relaunch with the other sign-in. Two agents on one subscription use
+    the same connection state through the office, never through each other's homes.
+    How each vendor runtime is pointed at a relocated sign-in (an environment variable
+    for the configuration folder, and on macOS where the Keychain entry is looked up)
+    is the first item of the spike in decision 7.
+12. **Changing the filesystem root was evaluated and is the reserved `os-sandbox`
+    mode, not v1.** The owner asked whether putting each agent in its own root
+    directory (chroot) would be a cheap sandbox.
+    | Question | Finding |
+    | --- | --- |
+    | Does it need privilege? | Yes for `chroot` on both systems. On Linux an unprivileged process can get the same effect with user and mount namespaces. |
+    | Does it work on macOS? | Not for this use. Tools, compilers and Xcode need the system volume, the shared library cache and per-user services, which a changed root hides. macOS confines a process with a Seatbelt profile instead. |
+    | What does it add over decision 10? | Decision 10 redirects where well-behaved tools look. A changed root, or a Seatbelt profile that denies everything outside the private home and workspace, also stops a tool that ignores `HOME`. |
+    | Cost | A per-agent root must contain or bind every tool the agent runs. That is a packaging problem per platform and per toolchain. |
+    The decision: v1 ships the private home of decision 10 in both modes, which gives
+    the "virtual folder" the owner described without privilege. `os-sandbox` is
+    specified next as one mode with two adapters: a mount-namespace root on Linux and
+    a Seatbelt deny-by-default profile on macOS. It needs its own spike and is not a
+    v1 commitment.
 
 ## Acceptance criteria
 
 | ID | Passing evidence |
 | --- | --- |
-| ISO-1 | In `dedicated-user`, a command run by an agent cannot read or list `durable/`, the office database or the host's files; the attempt fails with a permission error from the operating system. It can read and write its own workspace. |
+| ISO-1 | In `dedicated-user`, a command run by an agent cannot read or list `durable/` outside the agents' private homes, the office database or the host's files; the attempt fails with a permission error from the operating system. It can read and write its own workspace. |
 | ISO-7 | In `dedicated-user`, `agent-os` run by the agent account is admitted by the office socket and still needs its session binding; any other OS user is refused. |
 | ISO-2 | Start, stop, cleanup after a crash and orphan recovery all work for an agent owned by the dedicated account. |
 | ISO-3 | Setup without administrator rights completes in `same-user` and reports the reduced isolation; nothing is half-provisioned. |
 | ISO-4 | An agent set to `dedicated-user` with the launcher removed is reported not runnable and no process starts. |
 | ISO-5 | Changing an agent's mode changes its launch digest and causes a controlled relaunch. |
 | ISO-6 | The spike of decision 7 is recorded with the vendor runtime versions and the Xcode result. |
+| ISO-8 | In both modes, an office-run agent of each supported vendor starts with a private home, signs in with the connection the pool selected, and a file search from its tools finds nothing from the user's own vendor folders. |
+| ISO-9 | Changing an agent's pool connection relaunches it with the other sign-in; the previous connection's state is no longer reachable from its home. |
 
 ## Consequences
 

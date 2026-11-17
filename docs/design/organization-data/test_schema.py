@@ -19,7 +19,17 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+# Teams, projects, releases and milestones are created only by HQ and always carry a number.
+HQ_NUMBERED = {"teams", "projects", "releases", "milestones"}
+_next_number = iter(range(1000, 10**9))
+
+
 def insert(connection, table, **fields):
+    if table in HQ_NUMBERED and "number" not in fields:
+        fields["number"] = next(_next_number)
+    if table == "tasks":  # a task is numbered by its creating office; the fixtures use HQ, code A
+        fields.setdefault("office_code", "A")
+        fields.setdefault("number", next(_next_number))
     columns = ",".join(fields)
     placeholders = ",".join("?" for _ in fields)
     connection.execute(
@@ -51,6 +61,12 @@ def seed_organization(connection, organization="org"):
            remote_url="https://example.com/organization.git")
     for team in ("payments", "platform", "consulting"):
         insert(connection, "teams", **common, id=team, name=team)
+    # Two offices whose only job in the fixtures is to own the task-number codes A and B. They are
+    # satellites so that tests which create their own HQ office are unaffected.
+    for office, code, role in (("numbering-a", "A", "satellite"), ("numbering-b", "B", "satellite")):
+        insert(connection, "offices", **common, id=office, slug=office, name=office, role=role)
+        insert(connection, "office_codes", organization_id=organization, code=code, office_id=office,
+               issued_at="2026-11-15T09:00:00Z")
     insert(connection, "employees", **common, id="reporter", handle="reporter",
            kind="person", name="Reporter", home_team_id="payments")
     insert(connection, "employees", **common, id="ana", handle="ana",
@@ -62,7 +78,7 @@ def seed_organization(connection, organization="org"):
 
 def seed_task(connection, task="task", project="project", task_type="bug"):
     insert(connection, "tasks", organization_id="org", id=task, schema_version=1,
-           revision=1, number=42, team_id="payments", project_id=project,
+           revision=1, number=42 if task == "task" else next(_next_number), team_id="payments", project_id=project,
            type=task_type, title="Prevent duplicate charges", status="todo",
            created_by_kind="employee", created_by_id="reporter",
            created_at="2026-11-15T10:00:00Z")
@@ -74,7 +90,7 @@ def seed_task(connection, task="task", project="project", task_type="bug"):
 def event(revision, change, task="task", source_metadata=None):
     record = dict(
         organization_id="org", task_kind="task", task_id=task, revision=revision,
-        schema_version=1, occurred_at=f"2026-11-15T10:{revision:02d}:00Z",
+        schema_version=2, occurred_at=f"2026-11-15T10:{revision:02d}:00Z",
         actor_kind="employee", actor_id="reporter", operation_id=f"operation-{revision}",
         change=change, source_metadata=source_metadata or {},
     )
@@ -86,6 +102,8 @@ def project_event(connection, record):
     fields = dict(record)
     fields["change_json"] = canonical(fields.pop("change"))
     fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+    fields.setdefault("resource_profile", "selected-task-resources/1")
+    fields.setdefault("event_bytes", canonical(record).encode())  # the event as accepted
     insert(connection, "task_events", **fields)
 
 
@@ -107,8 +125,6 @@ class DraftSchemaTests(unittest.TestCase):
     def test_consolidated_tables_and_views_match_structural_documents(self):
         sections = []
         for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            if path.name.startswith("14-"):
-                continue  # Field-level subset of document 11, verified independently below.
             sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
@@ -314,14 +330,15 @@ class DraftSchemaTests(unittest.TestCase):
 
     def test_projectless_task_keeps_owning_team_scope_when_assigned_elsewhere(self):
         seed_task(self.db, task="team-task", project=None, task_type="request")
+        before = self.db.execute("SELECT key FROM tasks WHERE id='team-task'").fetchone()[0]
         self.db.execute(
             "UPDATE tasks SET assigned_team_id='platform',assignee_id='ana' WHERE id='team-task'"
         )
         self.db.commit()
         row = self.db.execute(
-            "SELECT team_id,project_id,number FROM tasks WHERE id='team-task'"
+            "SELECT team_id,project_id,key FROM tasks WHERE id='team-task'"
         ).fetchone()
-        self.assertEqual(tuple(row), ("payments", None, 42))
+        self.assertEqual(tuple(row), ("payments", None, before))  # assignment never changes the reference
 
     def test_cross_organization_assignment_is_rejected(self):
         seed_organization(self.db, "other-org")
@@ -360,7 +377,7 @@ class DraftSchemaTests(unittest.TestCase):
         record.pop("source_metadata")
         record.update(schema_version=2,
                       change_json='{"type":"future_event","n":184467440737095516160001}',
-                      source_metadata_json='{"legacy_event":{"n":-0.000000000000123456789E+009}}',
+                      source_metadata_json='{"future_field":{"n":-0.000000000000123456789E+009}}',
                       resource_profile="selected-task-resources/1",
                       event_bytes=b'{"original":"retained source bytes"}')
         for missing in ("resource_profile", "event_bytes"):
@@ -441,21 +458,26 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(original, restored)
         self.assertEqual(rebuilt.execute("PRAGMA foreign_key_check").fetchall(), [])
 
-    def test_legacy_event_and_unknown_future_payload_are_retained(self):
-        legacy = {
-            "target_id": "task", "version": 1, "at": "2026-11-14T10:00:00Z",
-            "actor_id": "reporter", "auto": False, "org_position": {"epoch": 1, "seq": 3},
-            "change": {"type": "assigned", "from": None, "to": "ana"},
-        }
-        record = event(1, legacy["change"], source_metadata={"legacy_event": legacy})
-        record["occurred_at"] = legacy["at"]
-        record["payload_sha256"] = hashlib.sha256(canonical({k: v for k, v in record.items() if k != "payload_sha256"}).encode()).hexdigest()
-        project_event(self.db, record)
-        project_event(self.db, event(2, {"type": "future_event", "evidence": "retain me"}))
+    def test_unknown_future_payload_is_retained(self):
+        project_event(self.db, event(1, {"type": "future_event", "evidence": "retain me"},
+                                     source_metadata={"future_field": {"keep": True}}))
         self.db.commit()
-        saved = self.db.execute("SELECT source_metadata_json FROM task_events WHERE revision=1").fetchone()[0]
-        self.assertEqual(json.loads(saved)["legacy_event"], legacy)
+        change, extra = self.db.execute("SELECT change_json, source_metadata_json FROM task_events WHERE revision=1").fetchone()
+        self.assertEqual(json.loads(change)["evidence"], "retain me")
+        self.assertEqual(json.loads(extra)["future_field"], {"keep": True})
         self.assertIsNone(self.db.execute("SELECT assigned_team_id FROM tasks").fetchone()[0])
+
+    def test_every_task_event_carries_its_profile_and_bytes(self):
+        record = event(1, {"type": "future_event"})
+        for missing, value in (("schema_version", 1), ("resource_profile", None), ("event_bytes", None)):
+            fields = dict(record)
+            fields["change_json"] = canonical(fields.pop("change"))
+            fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+            fields.update(resource_profile="selected-task-resources/1", event_bytes=b"{}")
+            fields[missing] = value
+            with self.subTest(field=missing), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "task_events", **fields)
+            self.db.rollback()
 
     def test_relative_document_links_exist(self):
         for path in ROOT.glob("*.md"):
@@ -475,7 +497,7 @@ class IntegrityAuditTests(unittest.TestCase):
 
     def delivery(self):
         common = dict(organization_id="org", schema_version=1, revision=1)
-        insert(self.db, "releases", **common, id="release", project_id="project", title="Release", status="released")
+        insert(self.db, "releases", **common, id="release", project_id="project", title="Release")
         insert(self.db, "deployments", **common, id="deploy", project_id="project", release_id="release",
                environment="production", target="primary", operation="deploy", status="queued")
         self.db.commit()
@@ -495,19 +517,6 @@ class IntegrityAuditTests(unittest.TestCase):
         insert(self.db, "usage_stream_checkpoints", organization_id="org", origin_office_id="hq",
                producer_id="producer", high_water_sequence=1, head_sha256="a"*64, state="sealed", checkpointed_at="2026-11-15T12:00:00Z")
         self.db.commit()
-
-    def test_provider_pool_document_matches_executable_sql_subset(self):
-        documented = sqlite3.connect(":memory:")
-        self.addCleanup(documented.close)
-        source = (ROOT / "14-model-providers-and-connection-pools.md").read_text()
-        for block in re.findall(r"```sql\n(.*?)\n```", source, re.S):
-            documented.executescript(block)
-        definitions = documented.execute("SELECT name,sql FROM sqlite_schema WHERE type IN ('table','view')").fetchall()
-        self.assertEqual(len(definitions), 8)
-        for name, sql in definitions:
-            actual = self.db.execute("SELECT sql FROM sqlite_schema WHERE name=?", (name,)).fetchone()[0]
-            with self.subTest(entity=name):
-                self.assertEqual(re.sub(r"\s+", "", sql).lower(), re.sub(r"\s+", "", actual).lower())
 
     def test_execution_definitions_are_in_the_consolidated_schema(self):
         documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-model-profiles-and-agent-execution.md").read_text(), re.S))
@@ -722,15 +731,157 @@ class GapPreservationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
         self.db.rollback()
 
-    def test_employee_lifecycle_cannot_be_assigned_to_a_person(self):
+    def test_employee_status_is_one_enum_and_only_agents_pause(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE employees SET agent_status='paused' WHERE id='reporter'")
+            self.db.execute("UPDATE employees SET status='paused' WHERE id='reporter'")
         self.db.rollback()
-        self.db.execute("UPDATE employees SET agent_status='offboarded',offboarded_at='2026-11-15T12:00:00Z',status='inactive' WHERE id='ana'")
+        self.db.execute("UPDATE employees SET status='paused' WHERE id='ana'")
         self.db.commit()
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE employees SET agent_status='active' WHERE id='ana'")
+            self.db.execute("UPDATE employees SET status='offboarded' WHERE id='ana'")
         self.db.rollback()
+        self.db.execute("UPDATE employees SET offboarded_at='2026-11-15T12:00:00Z',status='inactive' WHERE id='ana'")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE employees SET status='active' WHERE id='ana'")
+        self.db.rollback()
+        columns = [row[1] for row in self.db.execute("PRAGMA table_xinfo(employees)")]
+        self.assertNotIn("is_owner", columns)
+        self.assertNotIn("agent_status", columns)
+
+    def test_hq_created_records_always_have_a_number(self):
+        for table, extra in (("teams", dict(name="No number")),
+                             ("projects", dict(slug="no-number", name="No number", owner_team_id="payments")),
+                             ("releases", dict(project_id="project", title="No number")),
+                             ("milestones", dict(project_id="project", release_id="release", title="No number"))):
+            with self.subTest(table=table), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(
+                    f"INSERT INTO {table} (organization_id,id,schema_version,revision,number,{','.join(extra)}) "
+                    f"VALUES ('org','unnumbered',1,1,NULL,{','.join('?' for _ in extra)})", list(extra.values()))
+            self.db.rollback()
+
+    def test_task_numbers_are_minted_per_office_and_unique_in_the_organization(self):
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='task'").fetchone()[0], "T-A42")
+        base = dict(organization_id="org", schema_version=1, revision=1, team_id="payments", type="task",
+                    title="t", status="todo")
+        # the same number under another office's code is a different task, in any project or none
+        insert(self.db, "tasks", **base, id="east-42", office_code="B", number=42)
+        insert(self.db, "record_refs", organization_id="org", kind="task", id="east-42", is_deleted=0)
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='east-42'").fetchone()[0], "T-B42")
+        # two projectless tasks of one team may carry the same number under different office codes,
+        # and a task may move out of its project into that team without changing its reference
+        insert(self.db, "tasks", **base, id="team-a7", office_code="A", number=7)
+        insert(self.db, "tasks", **base, id="team-b7", office_code="B", number=7)
+        insert(self.db, "tasks", **base, id="proj-b8", office_code="B", number=8, project_id="project")
+        for identity in ("team-a7", "team-b7", "proj-b8"):
+            insert(self.db, "record_refs", organization_id="org", kind="task", id=identity, is_deleted=0)
+        self.db.commit()
+        self.db.execute("UPDATE tasks SET project_id=NULL WHERE id='proj-b8'")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='proj-b8'").fetchone()[0], "T-B8")
+        # one office never gives the same number twice, whatever the project
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "tasks", **base, id="dup", office_code="A", number=42)
+        self.db.rollback()
+        # a task always has its number, and its office code must be one HQ issued
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("INSERT INTO tasks (organization_id,id,schema_version,revision,office_code,number,team_id,title,status) "
+                            "VALUES ('org','none',1,1,'A',NULL,'payments','t','todo')")
+        self.db.rollback()
+        insert(self.db, "tasks", **base, id="unknown-office", office_code="Z", number=1)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+        # codes are one or two capital letters without I and O; an office has one current code
+        for bad in ("I", "O", "a", "A1", "ABC", ""):
+            with self.subTest(code=bad), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "office_codes", organization_id="org", code=bad, office_id="numbering-a", issued_at="2026-11-15T09:00:00Z")
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "office_codes", organization_id="org", code="C", office_id="numbering-a", issued_at="2026-11-16T09:00:00Z")
+        self.db.rollback()
+        self.db.execute("UPDATE office_codes SET retired_at='2026-11-16T09:00:00Z' WHERE code='B'")
+        insert(self.db, "office_codes", organization_id="org", code="AA", office_id="numbering-b", issued_at="2026-11-16T09:00:00Z")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT key FROM tasks WHERE id='east-42'").fetchone()[0], "T-B42")
+        # the durable mark is never below the last number used
+        insert(self.db, "office_task_counters", organization_id="org", office_code="A", last_number=42, reserved_through=100)
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE office_task_counters SET last_number=101")
+        self.db.rollback()
+        # HQ no longer keeps a task counter
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "reference_counters", organization_id="org", scope_kind="project", scope_id="project",
+                   entity_kind="task", last_number=1)
+        self.db.rollback()
+
+    def test_task_priority_is_a_closed_list_and_effort_is_a_whole_number_of_points(self):
+        self.assertEqual(tuple(self.db.execute("SELECT priority, effort FROM tasks WHERE id='task'").fetchone()), ("normal", None))
+        for priority in ("urgent", "high", "normal", "low"):
+            self.db.execute("UPDATE tasks SET priority=?", (priority,))
+        for effort in (0, 3, 13, None):
+            self.db.execute("UPDATE tasks SET effort=?", (effort,))
+        self.db.commit()
+        for column, bad in (("priority", "critical"), ("priority", ""), ("effort", -1), ("effort", "large"), ("effort", 2.5)):
+            with self.subTest(column=column, value=bad), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(f"UPDATE tasks SET {column}=?", (bad,))
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET priority=NULL")
+        self.db.rollback()
+
+    def test_task_status_is_a_closed_list_ending_in_done(self):
+        for status in ("todo", "in_progress", "blocked", "cancelled", "done"):
+            self.db.execute("UPDATE tasks SET status=?", (status,))
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET status='closed'")
+        self.db.rollback()
+
+    def test_milestone_and_release_are_done_when_their_tasks_are(self):
+        common = dict(organization_id="org", schema_version=1, revision=1)
+        insert(self.db, "releases", **common, id="with-milestone", project_id="project", title="Has a milestone")
+        insert(self.db, "releases", **common, id="plain", project_id="project", title="No milestones")
+        insert(self.db, "releases", **common, id="empty", project_id="project", title="Nothing in it")
+        insert(self.db, "milestones", **common, id="m1", project_id="project", release_id="with-milestone", title="M")
+        task = self.db.execute("SELECT id FROM tasks").fetchone()[0]
+        self.db.execute("UPDATE tasks SET project_id='project', team_id='payments', milestone_id='m1', status='in_progress'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="plain", project_id="project", task_id=task)
+        self.db.commit()
+        done = lambda view, key, value: self.db.execute(
+            f"SELECT is_done FROM {view} WHERE {key}=?", (value,)).fetchone()[0]
+        self.assertEqual(done("milestone_progress", "milestone_id", "m1"), 0)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 0)
+        self.assertEqual(done("release_progress", "release_id", "plain"), 0)
+        self.assertEqual(done("release_progress", "release_id", "empty"), 0)
+        self.db.execute("UPDATE tasks SET status='done'")
+        self.db.commit()
+        self.assertEqual(done("milestone_progress", "milestone_id", "m1"), 1)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 1)
+        self.assertEqual(done("release_progress", "release_id", "plain"), 1)
+        self.assertEqual(done("release_progress", "release_id", "empty"), 0)
+        counts = self.db.execute("SELECT task_count, done_task_count FROM release_progress WHERE release_id='plain'").fetchone()
+        self.assertEqual(tuple(counts), (1, 1))
+        counts = self.db.execute("SELECT task_count, done_task_count FROM release_progress WHERE release_id='with-milestone'").fetchone()
+        self.assertEqual(tuple(counts), (1, 1))  # counted from its milestones, not from a manifest
+        # a cancelled task counts as done
+        self.db.execute("UPDATE tasks SET status='cancelled'")
+        self.db.commit()
+        self.assertEqual(done("milestone_progress", "milestone_id", "m1"), 1)
+        self.assertEqual(done("release_progress", "release_id", "plain"), 1)
+        # a second milestone with no tasks keeps its release open
+        insert(self.db, "milestones", **common, id="m2", project_id="project", release_id="with-milestone", title="Empty")
+        self.db.commit()
+        self.assertEqual(done("milestone_progress", "milestone_id", "m2"), 0)
+        self.assertEqual(done("release_progress", "release_id", "with-milestone"), 0)
+        # a manifest entry whose task no longer exists is ignored, so it cannot make a release done
+        insert(self.db, "record_refs", organization_id="org", kind="task", id="gone", is_deleted=1)
+        insert(self.db, "release_tasks", organization_id="org", release_id="empty", project_id="project", task_id="gone")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, is_done FROM release_progress WHERE release_id='empty'").fetchone()
+        self.assertEqual(tuple(row), (0, 0))
 
     def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
         insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",
@@ -844,7 +995,7 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
     def test_release_cap_cannot_acquire_a_stop_hold(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0",status="planned")
+        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0")
         self.db.commit()
         self.budget(scope="release");self.period()
         with self.assertRaises(sqlite3.IntegrityError):

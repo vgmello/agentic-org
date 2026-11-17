@@ -3,7 +3,7 @@ kind: spec
 title: "Features: a project's capabilities, defined in organization Git (UX)"
 status: for-review
 revision: 4
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -29,7 +29,7 @@ Revision 4 reconciles the body and criteria with [features/tasks](../design/orga
    | Feature | `projects/<project-id>/features/<feature-id>/feature.md` in organization Git | Stable ID, project-scoped F- reference, durable capability definition |
    | Task (`type: task`, `bug`, or another type) | Same task storage and model as requests | T- reference; closure does not erase retained history or release attribution |
 
-   New stable IDs use UUIDv7. Existing IDs and imported references remain unchanged; old REQ-/FEAT-/B- values need explicit mappings rather than number reuse. Inside P-8 show T-42 or F-6; outside it show P-8/T-42 or P-8/F-6. Projectless tasks use TEAM-12/T-42.
+   Stable IDs are UUIDv7. A task reference such as T-A42 is the same everywhere. Inside P-8 show F-6; outside it show P-8/F-6.
 2. **A feature describes one capability:** purpose, intended users, current behavior, rules, known limitations, non-goals and acceptance criteria. Product requirements belong in this canonical definition; supporting designs explain implementation, decisions explain choices and reports retain findings. “PRD” describes content, not another document kind or duplicate feature record. Detailed designs and decisions are separate documents with required project and same-project feature scope. Shared architecture stays project-wide.
 3. **Request scoping is a proposed workflow.** A scoping review may draft a feature and tasks or extend an existing feature. Approval must persist each resulting record and preserve the originating request as a typed task; it does not convert a request ID into a feature ID or delete its evidence. No automatic scoping engine is selected.
 4. **Tasks do not need features.** A project task links to at most one same-project feature. Projectless team tasks cannot link to a feature. Bug/request records remain typed tasks. A bug may additionally store `details.affects_feature_id`, a same-project affected capability distinct from task `feature_id` (the feature implementing the fix). The feature page labels these relationships separately; they do not create new entities or counters. Each project task retains the project's accountable owner team; assignment is independent.
@@ -39,7 +39,7 @@ Revision 4 reconciles the body and criteria with [features/tasks](../design/orga
 
 ## 1. The feature file
 
-At `projects/<project-id>/features/<feature-id>/feature.md` (illustrative existing stable IDs; use UUIDv7 for new records):
+At `projects/<project-id>/features/<feature-id>/feature.md` (illustrative stable IDs):
 
 ```markdown
 ---
@@ -95,7 +95,7 @@ feature definitions and selected data relationships remain the same.
 - **Feature page:** metadata card, definition body, supporting designs/decisions/reports, tasks grouped by current state, affected bugs queried by `details.affects_feature_id`, separately from bug-typed implementation tasks linked by `feature_id`, cost/time where authorized, and Git revision history. A Retros section is deferred with the retrospective engine.
 - **New feature:** requires a title and valid project, creates the selected Planned record and opens its definition editor. No code repository is required; a locally accepted pending number remains usable by stable ID. The editor preserves valid authored fields instead of overwriting them from office-only status. **Break into tasks…** is a proposal: drafts are editable before creation. Each created task has required accountable team, same project/feature and independent nullable team/individual assignments. Assignment writes update the pair atomically with expected revision and retain activity history and immutable reporter.
 - **Overview tile:** “Features: 2 in progress · 1 planned · 5 live”. Cost totals come from captured usage attribution; missing usage is shown as incomplete and never zero. Amounts obey owner/project-manager scope.
-- **States:** loading skeletons; malformed metadata names the field and keeps the body readable; unresolved origin references show retained identity; archived tasks resolve through history/tombstones. Retiring needs a reason and preserves task links. Closing or unlinking open tasks is a separate explicit action with its own authorization/history; retirement does not silently rewrite them. Optional replacement must be another feature in the same project with no replacement cycle. Preserve `legacy_definition_path` only as import provenance, never a filesystem instruction.
+- **States:** loading skeletons; malformed metadata names the field and keeps the body readable; unresolved origin references show retained identity; archived tasks resolve through history/tombstones. Retiring needs a reason and preserves task links. Closing or unlinking open tasks is a separate explicit action with its own authorization/history; retirement does not silently rewrite them. Optional replacement must be another feature in the same project with no replacement cycle.
 
 **Membership actions:** New task prefills this project/feature. Link a task lists eligible same-project tasks and asks before moving one already attached to another feature, naming both old and new features. Accepted link/unlink changes preserve task identity, attribution and history; they do not automatically advance either feature. Retiring does not unlink or close tasks. Mutation availability follows the actual supported handler and authorization, never an “anyone” or owner grant inferred from this screen.
 

@@ -32,6 +32,10 @@ and the acknowledgement sentence in
    message send completes with a median of at most 1 ms and a 95th percentile of at
    most 2 ms on the reference Mac. One-shot process mode is measured and reported; it
    is bounded by process start and is not held to this target.
+   A plain send is acknowledged within single-digit milliseconds in every topology
+   (owner decision 2026-11-17, conflict plan entry E-02): the target above applies to
+   the sender's office whether the recipient is local or in another office, because
+   relaying is never part of the acknowledgement (decision 9).
 2. **Two acknowledgement classes.**
    - **Committed.** The office answers once the write is committed in its durable
      local store, without forcing the drive. The write survives a crash of the office process. It
@@ -47,8 +51,13 @@ and the acknowledgement sentence in
    - Committed, non-critical task activity: `work.comment`, `work.watch` and
      `checklist.check`. A comment that opens or answers an owner question is the
      exception: it starts or ends a waiting span, so it is durable.
+   - Committed, creating a task (owner decision 2026-11-17): `task.create` and the
+     typed creation calls such as `bug.report`. This is safe for numbering because the
+     creating office mints the number under a durable mark
+     ([ADR-0019](0019-office-coded-task-numbers.md) decision 7), so a power cut can
+     lose the newest task but can never cause a number to be given twice.
    - Reads involve no write, and presence is not persisted.
-   - Durable: everything else. That includes task creation, status and resolution
+   - Durable: everything else. That includes status and resolution
      changes, assignment, ownership and scope changes, links, every other `checklist.*`
      method, the bug lifecycle methods,
      organization commands, numbering, turn permits and placement, budget actions, HQ
@@ -99,6 +108,17 @@ and the acknowledgement sentence in
      interval; a durable write is not acknowledged before it would survive a power
      cut. These guarantees are tested by a suite that does not depend on the engine.
    Conflict plan entry B-13 lists this as one of its steps.
+9. **Send relays after it answers; ask holds with a deadline.** `msg.send` and
+   `msg.reply` commit in the sender's office and return. Delivery to another office is
+   relayed afterwards through HQ and retried with backoff until it is acknowledged or
+   the message expires; a failure becomes a delivery notice, never a slower send.
+   `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
+   the caller may state how long it expects a reply to take, otherwise the default
+   for the recipient's kind applies (ADR-0003 §2.5: 120 seconds for an agent, 24 hours
+   for a person), and the wait ends at the deadline with a timeout result. [ADR-0020](0020-required-asks-suspend-and-resume.md)
+   replaces those two defaults with one organization setting for the wait, and adds the
+   required ask, which suspends the agent until it is answered. The ask itself
+   is committed and acknowledged like a send; only waiting for the reply is slow.
 
 ## Acceptance criteria
 
@@ -108,9 +128,11 @@ and the acknowledgement sentence in
 | ACK-2 | A committed-class write is present after the office process is killed immediately after the acknowledgement. |
 | ACK-3 | A durable-class operation is never acknowledged before its full flush; a fault injected between commit and flush yields no acknowledgement. |
 | ACK-4 | The class of every operation is declared in one place in its domain crate and matches decision 3; no operation's class depends on load. |
+| ACK-5 | The bounded flush interval is enforced under continuous committed-class load. |
 | ACK-6 | No domain crate refers to an engine-specific durability mechanism; the store adapter alone maps the two classes, and the engine-independent suite passes against it. |
 | ACK-7 | A committed-class task change killed mid-write is either fully present or fully absent after restart, with its event and idempotency result consistent. |
-| ACK-5 | The bounded flush interval is enforced under continuous committed-class load. |
+| ACK-8 | With the recipient in another office and HQ unreachable, `msg.send` still returns within the session-mode target of decision 1, and the message is delivered after HQ returns. |
+| ACK-9 | An ask with no stated wait uses the system setting of ADR-0020; an ask whose deadline passes returns a timeout to the caller, and a late reply is handled as the messaging contract states. |
 
 ## Consequences
 

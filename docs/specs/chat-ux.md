@@ -3,7 +3,7 @@ kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
 revision: 11
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -15,7 +15,7 @@ builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-it
 
 ## Scope and contract
 
-This is the Chat UX target. [Messaging data](../design/organization-data/15-messaging-and-chat.md) owns conversations, protected sources, per-recipient lifecycle and import codecs; [recovery](../design/organization-data/16-recovery-and-office-continuity.md) owns retained receipts/checkpoints. See the [authority map](../design/documentation-authority.md). Existing implemented directed messaging remains versioned separately in ADR-0003 and `apps/agent-os/README.md`. Channel UI, wake/default/digest engines and bridge sketches below are requirements, not claims of available commands or services.
+This is the Chat UX target. [Messaging data](../design/organization-data/15-messaging-and-chat.md) owns conversations, protected sources, and per-recipient lifecycle; [recovery](../design/organization-data/16-recovery-and-office-continuity.md) owns retained receipts/checkpoints. See the [authority map](../design/documentation-authority.md). The directed messaging implemented in the code today is described in ADR-0003 and `apps/agent-os/README.md`. Channel UI, wake/default/digest engines and bridge sketches below are requirements, not claims of available commands or services.
 
 Chat is conversation, not session/tool output or an automatic project/feature knowledge store. Shared task comments remain shared; author-only private task notes live in a separate durable database with no owner/admin exception and must never be included automatically in Chat. The selected model does not implement a process resolver or automatic scheduler. Existing process guidance is overridable unless an explicit structural prohibition applies.
 
@@ -25,7 +25,7 @@ Chat is conversation, not session/tool output or an automatic project/feature kn
 
 **Revision 11 (2026-11-15):** unified Inbox/presence, tied ask outcomes and withdrawal, linked hand-off identity, System notices, noninterrupting delivery, and bounded conversation loading. Selected addressed-actor/task/hold contracts remain authoritative; automatic defaults/wakes/routines remain deferred.
 
-**Revision 10 (2026-11-15): selected messaging and recovery reconciliation.** Rewrites protected-source storage, imported directed-thread visibility, scoped T- links, card mutation/assignment boundaries and acceptance criteria. Preserves layout, drafts, accessibility and failure requirements from revisions 1–9. The old `ac-B-`/`REQ-` examples belong to historical identifiers and require explicit migration mappings; they are not current link formats. Earlier revisions and wire sketches remain available in Git history and ADR-0003; their automatic wake/default/bridge behavior remains proposed until implemented.
+**Revision 10 (2026-11-15): selected messaging and recovery reconciliation.** Rewrites protected-source storage, scoped T- links, card mutation/assignment boundaries and acceptance criteria. Preserves layout, drafts, accessibility and failure requirements from revisions 1–9. Earlier revisions and wire sketches remain available in Git history and ADR-0003; their automatic wake/default/bridge behavior remains proposed until implemented.
 
 ## 0. Decisions
 
@@ -37,14 +37,14 @@ Chat is conversation, not session/tool output or an automatic project/feature kn
    - **announcements that someone must act on or know**: a feature delivered, a branch ready for review, blocked, a status report.
 
    Never tool output, logs, diffs, routine progress or "thinking". Those stay in the session log and Activity. This is enforced by the tool, not only asked of agents (§5).
-3. **The same messages, two views.** Chat shows conversations. Activity keeps showing everything that happens (with **Open in Chat** on message rows). Messages are organization-owned protected operational data exposed through office messaging. Conversation/message envelopes, memberships/preferences, recipient states and attachments are durable outside disposable office state; SQL is their indexed projection (§4). Activity applies the same message visibility as Chat, including imported directed threads.
+3. **The same messages, two views.** Chat shows conversations. Activity keeps showing everything that happens (with **Open in Chat** on message rows). Messages are organization-owned protected operational data exposed through office messaging. Conversation/message envelopes, memberships/preferences, recipient states and attachments are durable outside disposable office state; SQL is their indexed projection (§4). Activity applies the same message visibility as Chat.
 4. **Channels exist where the organization already has structure:** **#general** (everyone), one channel per project (**#agentic-org**), and one per team (**#office**). The UX requires structure-derived channels, with explicit admitted memberships; project owner/contributor teams do not alone select a membership-sync algorithm. The source data records automatic organization/team/project scope, while creation/sync services remain implementation work. People can add channels (**#release-v1**) and invite members.
 5. **DMs** with any member: an agent, a person or a group (up to 8). An authenticated owner may read under the existing owner policy (A17). Conversations the owner is not in are marked "You're reading as the owner"; reading changes no recipient state/presence. Posting still requires an authorized sender/admission path. The owner security principal is separate from employee membership: an owner employee/person record must have a home team.
-6. **Questions are answerable cards.** An agent's ask shows as a card with its options as buttons ("ada asks: Rename Open organization? **Yes** · **No** · **Reply…**"). An authorized answer is durably recorded with the card revision and response identity before acknowledgement. Needs you updates from that outcome; any waiting-turn or task transition must use its owning service, not infer completion from a button click.
+6. **Questions are answerable cards** (the agent-side question schema and the component per question type are the owner's [REQ-04](req-04-channel-messaging-and-question-components.md))**.** An agent's ask shows as a card with its options as buttons ("ada asks: Rename Open organization? **Yes** · **No** · **Reply…**"). An authorized answer is recorded in the answerer's own answer record, with its response identity, before acknowledgement. Needs you updates from that outcome; any waiting-turn or task transition must use its owning service, not infer completion from a button click.
 7. **Threads keep channels readable.** Agent conversations reply in threads by default. A thread can be sent to the channel ("Also send to #agentic-org") like Slack.
 8. **Talking to an asleep agent may request a wake** (run modes). Messages queue behind busy turns (§4.2); urgency never interrupts. Until a run is admitted, the composer says "HR lead is asleep. A reply waits for its next permitted run." An implemented wake path must respect mode, manual/security/budget holds, quota permits and placement fencing. Show "HR lead is typing…" only for observed live work; presence/typing are runtime state, not durable message facts.
-9. **Chat SDK is an earlier optional bridge proposal** *(ada, A42; unselected)*. Protected organization messaging sources are authoritative, agents use the current `agent-os` CLI, and the app's chat is our own UI over the same messages. The proposed Chat SDK process (`org-chat-bridge`, supervised by the office) would bring platform bridges and its card and approval semantics. Optional **bridges** (Chat SDK's platform adapters) mirror chosen channels to Slack, Teams or Discord, so people can follow and join chosen channels there, never acting as the owner (§6, decision 11, A42).
-10. **What an agent can read** *(ada, C1)*: an agent reads a channel/group DM only under its admitted membership and history policy, and a thread through the parent conversation. Leaving stops new delivery/reads; the earlier read-by-ID exception requires explicit contract validation, not a membership-row inference. A new DM has two members. Imported v1 chains are internal `directed_thread` conversations, not group DMs: only each message's sender/recipient (or authenticated owner under A17) may read it. Filter counts, last-message, subjects, previews, search and Activity to visible messages; never expose a hidden parent's text through a reply. A participant union is not a grant. Rejoining grants no implicit historical backfill.
+9. **Chat SDK is an earlier optional bridge proposal** *(ada, A42; unselected; owner, 2026-11-17: there are no external channels, the product's own chat is the only one)*. Protected organization messaging sources are authoritative, agents use the current `agent-os` CLI, and the app's chat is our own UI over the same messages. The proposed Chat SDK process (`org-chat-bridge`, supervised by the office) would bring platform bridges and its card and approval semantics. Optional **bridges** (Chat SDK's platform adapters) mirror chosen channels to Slack, Teams or Discord, so people can follow and join chosen channels there, never acting as the owner (§6, decision 11, A42).
+10. **What an agent can read** *(ada, C1)*: an agent reads a channel/group DM only under its admitted membership and history policy, and a thread through the parent conversation. Leaving stops new delivery/reads; the earlier read-by-ID exception requires explicit contract validation, not a membership-row inference. A new DM has two members. Filter counts, last-message, subjects, previews, search and Activity to visible messages; never expose a hidden parent's text through a reply. Rejoining grants no implicit historical backfill.
 11. **Bridges never act as the owner** *(earlier optional proposal, unselected; ada, C3)*: a message arriving from Slack, Teams or Discord is posted as the bridged **person** (their own handle, with a person's rights only). Asks addressed to the owner and every approval are answered **only in the app**: on a bridge they show read-only with **Open in Agentic Org**. An agent's ask addressed to a bridged person can be answered from the bridge.
 
 ## 1. Layout
@@ -57,7 +57,7 @@ Chat is conversation, not session/tool output or an automatic project/feature kn
  │                           │ ┌ [question-mark-circle] codex-dev asks you ──────────────────────────────┐   │
  │ CHANNELS                  │ │ Who should own the new team-scoped bug task?        │   │
  │ # general                 │ │ [Care Platform] [Reservations] [Reply…]              │   │
- │ # agentic-org          3  │ │ Waiting 12 min · blocks TEAM-12/T-42                 │   │
+ │ # agentic-org          3  │ │ Waiting 12 min · blocks T-A42                 │   │
  │ # office                  │ └──────────────────────────────────────────────────────┘   │
  │ # app                     │ [S] server-dev  10:02                                     │
  │ + Add channel             │   [megaphone] Ready for review: server-dev/create-org @ 9c1e0b2    │
@@ -72,7 +72,7 @@ Chat is conversation, not session/tool output or an automatic project/feature kn
 ```
 
 - **Sidebar:** **Inbox** link with the common owner-waiting count · **Mentions** · **Threads** · Channels (unread in bold, mention count) · Direct messages · **Between agents**. Use initial avatars, Agent/Person words and the shared truthful presence in `our-org-in-the-app.md` §5; people have no speculative runtime presence. Owner-read agent threads stay read-only unless the viewer is an authorized participant, with “Reading as the owner. To weigh in, message {agent}”.
-- **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: [question-mark-circle] ask · [megaphone] announcement · [arrow-path] hand-off. Typed task references (`P-8/T-17`, `TEAM-12/T-42`) become chips; task/bug/request all use T-. Project-local F-/R- and release-local M- links include their containing scope when needed. Imported B-/REQ- links resolve through explicit mappings and keep old stable IDs; never replace a prefix or reuse its number.
+- **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: [question-mark-circle] ask · [megaphone] announcement · [arrow-path] hand-off. Typed task references (`T-A17`, `T-A42`) become chips; task/bug/request all use T-. Project-local F-/R- and release-local M- links include their containing scope when needed.
 - **Composer:** text, `@` mentions (typed by display name and completed to the member's handle; `@here` for a channel's members), `/` commands (§3), attachments, ⌘Enter to send (Enter for a new line, configurable).
 
 ### 1.1 Narrow widths *(rev 9)*
@@ -112,13 +112,13 @@ Titles follow `app-shell-ux.md` §4.
 
 | Kind | Who | Shown as | What answering does |
 | --- | --- | --- | --- |
-| **Ask** (ADR-0003 kind `request`: urgent, blocking) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
+| **Ask** (ADR-0003 kind `request`: urgent, blocking; an ask may be marked required, and a required ask left unanswered stops the asking agent until it is answered, [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks, including that the agent is stopped waiting when the ask is required | the authorized answer/reply is stored under the expected envelope revision and shows **Answered by <name>**; the waiting service reconciles the retained outcome before resuming, and Needs you reflects that outcome |
 | **Hand-off** (`handoff`) | agent → agent or person | "[arrow-path] ada → server-dev: review the store traits" with **Accept** · **Reply…** (*rev 5:* only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept durably records card acceptance, then the card reads "Accepted by <name> · <time>" with no buttons for authorized readers. A linked assignment change is a separate authorized atomic `(assigned_team_id, assignee_id)` update with expected task revision and durable task event; accountable team/reporter remain unchanged. Handoff never closes a task or removes its worktree |
 | **Announcement** | an agent, for something to act on or know | [megaphone] with links (branch, feature, report) and reactions | reactions are acknowledgements (Seen, Looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject; answered only in the app, never through a bridge, decision 11) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
 - An ask to the owner appears once in **Inbox › Questions** and Home's Needs you summary, with the same count/state. Chat's earlier Needs you destination links to Inbox rather than creating a second queue.
-- An ask with a **default** ("If no answer by 18:00, I'll allow it") may display its saved deadline/options. Show a default as applied only after an authorized durable outcome exists. Automatic application is deferred scheduler work; the data fields alone do not execute it.
+- An ask with a **default** ("If no answer by 18:00, I'll allow it") may display its saved deadline/options. The default is preselected in the component. Nothing is ever recorded as the person's answer unless they give it. For an ask that is not required, when the asker's wait ends the asker receives the default with the timeout; if it continues with it, the card shows that nobody answered and what the agent continued with ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 14). A default never answers a required ask.
 - Cards use versioned `metadata_json.card` data (addressed actor, options, linked reference, answer/acceptance). Only the addressed authorized actor answers/accepts; approvals use the authorized application path. Concurrent answer/reaction changes use expected envelope revisions and reconcile conflicts; a lost response is an unknown outcome to reconcile with the same operation ID, not a fresh send. Mutable card state is separate from immutable content hashes.
 
 Ask option buttons and Reply share height, horizontal padding and centered labels. Options use `px-2.5` with rem-scaled dimensions; a wrapped option label increases height only, preserving padding and alignment. Approval-card Approve and Reject use the same padding.
@@ -159,20 +159,21 @@ They use app-only calls, so agents don't use them. Agents use available `agent-o
 
 ## 4. Search and history
 
-Search authorized channels/DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Apply the same per-message imported visibility to search results, snippets, counts, attachments and deep links as to history. Pins per channel retain the same scope. No new purge policy is selected; retention UI must not imply a shipped deletion service.
+Search authorized channels/DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Apply the same message visibility to search results, snippets, counts, attachments and deep links as to history. Pins per channel retain the same scope. No new purge policy is selected; retention UI must not imply a shipped deletion service.
 
 ```text
 <data-root>/<organization-id>/durable/messaging/ # protected; never shared org Git
 ├── conversations/<conversation-id>/
-│   ├── conversation.json                      # memberships, preferences, read markers
-│   └── messages/<message-id>.json             # envelope, recipients, reactions, attachments
+│   ├── conversation.json                      # definition and memberships
+│   ├── messages/<message-id>.json             # content and attachment references
+│   └── participants/<employee-id>/            # that employee's preferences, read markers, received state, reactions
 └── attachments/<sha256>                       # immutable verified content
 <data-root>/<organization-id>/runtime/<office-id>/ # SQL/unread/thread indexes; rebuildable
 ```
 
 Whole source envelopes have stable IDs, schema/revision and expected-revision checks. Durably flush an atomic source update, required receipt/journal evidence and verified attachments before acknowledgement through a demonstrated recoverable commit boundary. (Amended by [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md): message sends, replies and recipient-state changes are acknowledged once committed, with the flush and the envelope following within a bounded interval.) Agent office moves do not change conversation ownership. Losing an office cache must retain acknowledged unresolved asks, handoffs and undelivered messages; organization Git alone cannot restore these or their authority.
 
-On import, preserve every original message/thread/root ID, origin/incarnation/sequence and recipient triage fact. Retain `source_content_sha256`, `source_hash_codec: v1_lenprefixed_sha256` and immutable original seven-input `source_envelope` alongside the normalized RFC 8785 `content_sha256`; never compare/recompute the old hash using the new codec. Mutable card state is excluded from immutable normalized content. Invalid/unresolved imported values stay in controlled staging, not guessed history. New stable IDs use UUIDv7.
+Message content is hashed as the normalized RFC 8785 `content_sha256`. Mutable card state is excluded from immutable normalized content. Stable IDs use UUIDv7.
 
 ### 4.1 Finding the right teammate (proposed, rev 6)
 
@@ -214,7 +215,7 @@ Messages, including urgent asks and System notices, queue behind a busy turn and
 
 ### 4.3 Bounded history and memory
 
-A conversation opens at its latest message, composer ready, loading only its latest 200 authorized messages. Load older at the top fetches at most 200 older authorized messages per page, preserves reading position and disappears at the beginning. Page limits, result counts, fetches and anchors must obey per-message visibility for imported directed threads.
+A conversation opens at its latest message, composer ready, loading only its latest 200 authorized messages. Load older at the top fetches at most 200 older authorized messages per page, preserves reading position and disappears at the beginning. Page limits, result counts, fetches and anchors must obey message visibility.
 
 Use a fresh browser on /chat and a 1,000-message DM for AC-CP-1–5. Measure after garbage collection. Linux Chromium CI: opening adds at most 60 MB JS heap; scrolling to the top and pressing Load older twice keeps renderer RSS at most 1.5× the just-open level; leaving/returning 20 times grows JS heap at most 2 MB. Manual desktop Chrome: opening adds at most 60 MB tab footprint; the same two older-page loads stay at most 1.5× the just-open footprint and at most 250 MB total throughout. CI and manual metrics are separate, not cross-comparable. In latest stable Firefox and latest Safari major, verify the same reading flow and actions; these checks do not by themselves cover Firefox ESR or the second supported Safari major.
 
@@ -248,7 +249,7 @@ Optional and unselected for this data change; the following is an earlier UX pro
 - CHAT-3 · DMs work with authorized agents, registered people or groups of up to 8. Presence uses the common truthful vocabulary; people never receive invented live presence.
 - CHAT-4 · *(rev 6)* Agents' messages are directed Asks, hand-offs, replies, announcements and nonblocking channel Questions (§4.1). Tool output, logs and routine progress never appear in Chat.
 - CHAT-5 · An ask shows options and Reply; only its addressed authorized actor can answer. Persist the revisioned outcome/reply before acknowledgement; Needs you and waiting execution reconcile that outcome rather than infer a completed transition from the UI.
-- CHAT-6 · An ask may show saved default/deadline data. Automatic application is deferred; an applied label requires a recorded authorized outcome.
+- CHAT-6 · An ask shows its default preselected and its deadline. A default is never recorded as the person's answer; when an agent continues with it after its wait ends, the card says so. A required ask is never closed by a default.
 - CHAT-7 · A proposed wake respects execution admission, permits, placement and all holds. Until admitted, the UI says the reply waits for a permitted run; typing requires live observed work.
 - CHAT-8 · Agent conversations reply in threads by default, and a thread reply can also be sent to the channel.
 - CHAT-9 · Slash task/bug/request conversion requires scoped typed-task creation/assignment validation; Turn into… uses the same path. Wake is gated by execution admission; /remind remains individually deferred scheduler work.
@@ -258,7 +259,7 @@ Optional and unselected for this data change; the following is an earlier UX pro
 - CHAT-13 · Search filters by text, member, channel, kind and date.
 - CHAT-14 · Messages render Markdown with the safety rules, item numbers as chips, long messages collapsed.
 - CHAT-15 · Activity message rows open the message in Chat.
-- CHAT-16 · An agent sees admitted channel/group-DM history under the authorized policy and stops new reads/delivery when it leaves. Every imported directed-thread message and derived preview/count is additionally restricted to its original sender/recipient; hidden parent content never leaks.
+- CHAT-16 · An agent sees admitted channel/group-DM history under the authorized policy and stops new reads/delivery when it leaves. Previews and counts cover only messages the reader may see; hidden parent content never leaks.
 - CHAT-17 · *(earlier optional bridge requirement; unselected)* A bridged message is posted as the bridged person, never as the owner, and the owner's asks and approvals can't be answered from a bridge (read-only there, with Open in Agentic Org).
 - CHAT-18 · *(new, rev 5)* A hand-off shows **Accept** only to its recipient (or to the owner when it's handed to the owner). Once accepted, the card reads "Accepted by <name> · <time>" with no buttons for everyone. Presence follows the shared truth rules, with words/accessibility, never color alone.
 
@@ -282,8 +283,8 @@ Optional and unselected for this data change; the following is an earlier UX pro
 - CHAT-35 · *(new, rev 9)* With the office not running, a banner above the conversation reads "Read-only from the last copy. The office isn't running.", and the composer's note reads "The office isn't running. Restart it from Offices."
 
 - CHAT-36 · Protected envelopes/attachments and required receipts survive office-cache loss; SQL is rebuildable and Git alone is insufficient. Private task notes never appear automatically in chat, search or attachments.
-- CHAT-37 · Imported IDs and directed visibility remain stable; preserve and verify original v1 source hash/envelope separately from normalized canonical-JSON hashes. Retries retain original delivery identity.
-- CHAT-38 · Scoped task links use T- for task/bug/request and qualify project/team scope outside it; legacy B-/REQ- links use explicit mappings with no blind renumbering.
+- CHAT-37 · Message content is verified by its normalized canonical-JSON hash. Retries retain original delivery identity.
+- CHAT-38 · Task links use T- for task/bug/request and are complete on their own (`T-B37`); there are no B-/REQ- links.
 - CHAT-39 · Accepting a handoff does not close a task/delete a worktree. Any assignment mutation commits both assignment fields atomically with expected revision and durable task history.
 - CHAT-40 · Concurrent card updates surface revision conflicts; an unknown command/send outcome is reconciled through its retained operation/message identity before retry, without duplicate replies or approvals.
 
@@ -293,7 +294,7 @@ Optional and unselected for this data change; the following is an earlier UX pro
 
 ## 9. Open questions
 
-- Core conversation/recipient source shapes and directed import visibility are selected by document 15. Final wire/API adapters and recoverable source/SQL commits remain implementation work; old `chat.*`/`channel.*` sketches are not available command claims.
-- Join/backfill/leave-history policy must explicitly resolve the earlier read-by-ID proposal without widening imported directed-thread access.
+- Core conversation/recipient source shapes are selected by document 15. Final wire/API adapters and recoverable source/SQL commits remain implementation work; old `chat.*`/`channel.*` sketches are not available command claims.
+- Join/backfill/leave-history policy must explicitly resolve the earlier read-by-ID proposal.
 - Automatic channel sync, wake/default/digest services, announcement folding and task-transition integration require their owning services. Structural data does not select a scheduler/process engine.
 - Optional Chat SDK bridges remain unselected; credentials/start lifetime must use the authorized standalone service boundary before shipping. Earlier A42/A44/bridge UX is retained in ADR-0003 for review.

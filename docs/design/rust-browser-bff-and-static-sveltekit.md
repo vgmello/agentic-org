@@ -15,7 +15,7 @@ Future integrations -> Integration API adapters -> the same modules
 
 The browser BFF authenticates browser requests, maps authorized inputs into typed operations, and shapes results for screens. It can compose results and return summaries, pagination, or focused projections to avoid unnecessary browser requests and payloads.
 
-Business rules, domain authorization invariants, reusable queries, state transitions, validation, and durable behavior belong to their owning application/domain modules. Those modules expose deliberate typed capabilities to callers and remain independent of browser cookies, routes, browser DTOs, and HTTP response objects. Existing gateway, host, and office privilege/process boundaries remain in force; the gateway does not acquire database/key custody to implement a projection.
+Business rules, domain authorization invariants, reusable queries, state transitions, validation, and durable behavior belong to their owning application/domain modules. Those modules expose deliberate typed capabilities to callers and remain independent of browser cookies, routes, browser DTOs, and HTTP response objects. Existing web, host, and office privilege/process boundaries remain in force; the web process does not acquire database/key custody to implement a projection.
 
 Future integration adapters will map their own versioned contracts and principal/authentication models onto those capabilities. They reuse the same business rules rather than calling browser endpoints or duplicating policy. Separate adapters can coexist in the same Rust service where their deployment and privilege boundaries allow it; a BFF does not require a separate executable.
 
@@ -27,7 +27,7 @@ Use `@sveltejs/adapter-static` with a navigation fallback (`index.html`), `ssr =
 
 The static build does not freeze application data. Browser JavaScript fetches current data from the Rust BFF and consumes the existing live-event transport. SvelteKit provides browser routing and route loading without a SvelteKit server process. Request-time server routes, server load functions, and SvelteKit server actions are not part of this deployment profile.
 
-The topology works for both local and remote HQ hosting. A local installation serves the browser from the local gateway. A remote installation runs the gateway and backend on the remote host, with only the browser required on the user's computer. No SvelteKit runtime SSR requirement is introduced.
+The topology works for both local and remote HQ hosting. A local installation serves the browser from the local web. A remote installation runs the web process and backend on the remote host, with only the browser required on the user's computer. No SvelteKit runtime SSR requirement is introduced.
 
 ## Navigation and preloading
 
@@ -39,11 +39,11 @@ Keep preloaded operations safe to run speculatively: reads must not perform comm
 
 ## Existing design alignment and references
 
-This decision preserves the existing domain modules containing vertical slices and Rust gateway/office boundaries. It clarifies that browser-oriented HTTP contracts are adapters over reusable capabilities, with future integration adapters planned as separate callers.
+This decision preserves the existing domain modules containing vertical slices and Rust web/office boundaries. It clarifies that browser-oriented HTTP contracts are adapters over reusable capabilities, with future integration adapters planned as separate callers.
 
 - [Product structure and module ownership](project-structure.md)
 - [Standalone deployment and HTTP contract](standalone-server.md#5-http-and-browser-contract)
-- [Existing browser gateway contract](gateway-api-v1.md)
+- [Existing web process contract](web-api-v1.md)
 - [SvelteKit single-page application deployment](https://svelte.dev/docs/kit/single-page-apps)
 - [SvelteKit preloading](https://svelte.dev/docs/kit/link-options#data-sveltekit-preload-data)
 - [SvelteKit browser and server load functions](https://svelte.dev/docs/kit/load#Universal-vs-server)

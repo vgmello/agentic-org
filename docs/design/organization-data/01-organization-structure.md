@@ -1,6 +1,6 @@
 # Organization structure
 
-Structural draft for v1. Document revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.6. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -66,7 +66,7 @@ erDiagram
     teams {
         TEXT organization_id PK, FK "required"
         TEXT id PK, FK "required"
-        INTEGER number "optional"
+        INTEGER number "required"
         TEXT key "derived"
         INTEGER schema_version "required"
         INTEGER revision "required"
@@ -146,6 +146,7 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── projects/<project-id>/...       # Defined in document 02
 ├── identity/counters/<scope-kind>/<scope-id>/<entity-kind>.yaml
 ├── identity/allocations/<scope-kind>/<scope-id>/<entity-kind>/<number>.yaml
+├── identity/office-codes.yaml       # Office letter codes for task references, document 06
 ├── work-history/tasks/<task-id>/<revision>.json  # Immutable task activity, document 05
 └── tombstones/<kind>/<id>.yaml
 ```
@@ -170,27 +171,27 @@ with its original operation. Before create completion, the worker publishes the
 exact committed package at that root's `security/ca-escrow.v1.bin`, using immutable
 publication and the required file/parent flushes. A missing copy is repairable
 from committed bytes on reopen; a different copy is retained and refused, never
-overwritten. The binary envelope is the versioned copied record; the existing
-legacy native organization snapshot codec does not acquire secret or escrow
-fields implicitly. Selected Git/adoption copies retain this public file verbatim.
+overwritten. The binary envelope is the versioned copied record; the organization snapshot codec
+does not acquire secret or escrow fields implicitly. Copies in Git keep this public
+file verbatim.
 
 ## Repository types
 
 ```yaml
 repositories:
-  - id: 01J00000000000000000000001
+  - id: 01930000-0000-7000-8000-000000000001
     key: organization
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/organization.git
-  - id: 01J00000000000000000000002
+  - id: 01930000-0000-7000-8000-000000000002
     key: infrastructure
     schema_version: 1
     revision: 1
     kind: remote
     remote_url: https://example.com/restaurant-saas/infrastructure.git
-  - id: 01J00000000000000000000003
+  - id: 01930000-0000-7000-8000-000000000003
     key: kitchen-prototype
     schema_version: 1
     revision: 1
@@ -245,7 +246,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | `roles` | Front matter and body of `roles/<id>.md`; agent-specific setup is pending document 04. |
 | `teams` | Same-named fields in `team.yaml`, including `number`, `status` and common attribution, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
-| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content only; no process engine is specified. |
+| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
 | `repository_caches` | Runtime-only `office_id`, `repository_id`, `bare_path`; not authored in durable organization files. |
 
@@ -322,7 +323,7 @@ UNIQUE (organization_id, key),
 CREATE TABLE teams (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  number INTEGER CHECK (number > 0),
+  number INTEGER NOT NULL CHECK (number > 0),
   key TEXT GENERATED ALWAYS AS (CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END) VIRTUAL,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),

@@ -3,7 +3,7 @@ kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
 revision: 9
-owner: ac-product-designer-eden
+owner: lead
 created: "2026-11-08"
 updated: "2026-11-15"
 requested_by: owner
@@ -21,7 +21,7 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 **Revision 9 (2026-11-15): integrated reporting requirements.** Adds shared metric references and condensed deferred Flow/digest behavior. Status and report presentation remain a UX proposal; automatic reporting schedules, delivery triggers and Reporter orchestration are deferred. [Projects and documents](../design/organization-data/02-project-structure.md), [typed tasks/features](../design/organization-data/03-features-and-work.md), [accounting](../design/organization-data/10-usage-and-cost-accounting.md) and [budget controls](../design/organization-data/17-budgets-and-controls.md) own their data. Budget/accounting services are not implemented by this spec. Compatible earlier PRD requirements are integrated into these existing contracts; contradictory older rules do not override them. Retrospective actions and area-based metrics are independently deferred.
 
-A report is a supporting document in organization Git: required project, optional at most one same-project feature/release/deployment scope, stable ID, schema/revision, title, `kind: report`, `status: draft | current | deprecated`, owner and creation/update attribution. Current requires an active owner. Store a project report at `projects/<project-id>/reports/<document-id>.md`; use feature `reports/` or release/deployment `documents/` for those narrower scopes. Dates belong in metadata, not identity. New IDs use UUIDv7; retained imported IDs do not change. Keep the report narrative and safe fact snapshot separate from protected monetary snapshots.
+A report is a supporting document in organization Git: required project, optional at most one same-project feature/release/deployment scope, stable ID, schema/revision, title, `kind: report`, `status: draft | current | deprecated`, owner and creation/update attribution. Current requires an active owner. Store a project report at `projects/<project-id>/reports/<document-id>.md`; use feature `reports/` or release/deployment `documents/` for those narrower scopes. Dates belong in metadata, not identity. IDs use UUIDv7. Keep the report narrative and safe fact snapshot separate from protected monetary snapshots.
 
 ## 0. Decisions
 
@@ -130,6 +130,8 @@ Budget state distinguishes `stop_pending` from `held`: reaching a threshold does
 ### Deferred Progress and Flow requirements
 
 These requirements retain the earlier project-insights direction without selecting an analytics or planning engine. When selected, Insights follows Conversations as the last tab, with Progress, Speed, then Cost. Progress shows project completion, open-release rows followed by collapsed closed rows newest close first, a release-switchable burn-up, then open milestones. Period/team/member filters live in the URL and affect Flow only; say “Progress isn't filtered”.
+
+**Release states are derived.** The owner decided on 2026-11-17 that a release stores no status and that *done* is derived; the reading of the other words below is the lead's. Where this spec says Planned, In progress, open, closed or Released, read: *done* when the [completion rule](../design/organization-data/02-project-structure.md#completion-of-milestones-and-releases) holds; *in progress* when it is not done and at least one of its tasks has left `todo`; *planned* otherwise; *released* when it has a succeeded production deployment record ([document 07](../design/organization-data/07-release-deployments.md)).
 
 The proposed Flow tile shows rolling-7d completed count/median cycle time, current-release completion and at most three open milestone rows, then “+N more”. Current release means earliest In progress, else earliest Planned in the release picker order; no open release leaves count/cycle only. Its link preserves 7d. Use the shared sample/population rules; no member ranking view.
 

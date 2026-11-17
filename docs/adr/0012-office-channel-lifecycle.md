@@ -9,13 +9,13 @@ it does not replace their authority, custody, revocation or production gates.
 
 - P1 REQUIRED: ordinary authenticated client capacity exhaustion must not terminate
   an office or disconnect unrelated clients. Preserve bounded descriptors/threads
-  and one local slot beyond the gateway allowance. Existing worker policy is
-  eight physical channels total and seven gateway channels; writer-control is a
+  and one local slot beyond the web process allowance. Existing worker policy is
+  eight physical channels total and seven web channels; writer-control is a
   distinct single stream, not one of these eight. Recovery public reads consume
   the ordinary local/total budget. Authority: active assignment contract and
   current worker transfer/channels.rs register. Verified source at c3ada005.
 - P2 DISPROVED implementation assumption: host MAX_CHANNELS64 matches worker
-  admission. Actual host Endpoint::open allows63gateway, worker rejects eighth;
+  admission. Actual host Endpoint::open allows 63 web channels, worker rejects eighth (observed at the commit reviewed; since fixed: the host registry enforces seven);
   transfer::run treats register error as fatal _exit(1). This is a defect in the
   implementation, not permission to enlarge worker budgets.
 - P3 DISPROVED implementation assumption: Session ChannelSlot lifetime represents
@@ -37,7 +37,7 @@ it does not replace their authority, custody, revocation or production gates.
 
 ## Selected candidate mechanism
 
-Put physical budget constants8total/7gateway and a fixed channel profile name
+Put physical budget constants8 total/7 web and a fixed channel profile name
 in org-office-launch::v3, consumed by both endpoints. Add mandatory-known
 channel_profile=office-channels/1 to ReadyForSecrets. Keep v3 framing, strict
 unknown-field validation and existing identity checks. A missing/different profile
@@ -94,7 +94,7 @@ Treat this64 as independent cross-office permission-record bound, not office
 physical capacity. Endpoint failure invalidates every physical witness and pending
 receipt waiter. Cross-office64/65 boundary tests must retain the original limit.
 
-The native and gateway control listener uses the SAME per-channel liveness witness
+The native and web control listener uses the SAME per-channel liveness witness
 for pending descriptor receipts and acknowledged channel IDs, replacing the
 unconditional received-ID set. This is an internal host interface change only:
 Authentication::open_channel returns a cloned witness alongside ID/socket for
@@ -133,11 +133,11 @@ lock across ACK: can deadlock the lifecycle receiver needed to resolve the wait.
 
 ## Validation and remaining limits
 
-Required real host/worker tests:7live gateway + reserved local;8thgateway refusal
+Required real host/worker tests:7live web + reserved local;8th web refusal
 BEFORE FD transfer; forced worker-side ordinary capacity refusal via actual transfer
 keeps office and existing hello/RPC alive; malformed descriptor/identity/receipt
 still fatal. Closing peer releases occupancy with control session alive, including
-more than512sequential native AND gateway control cycles, multiple sessions and concurrent closes/opens without
+more than512sequential native AND web control cycles, multiple sessions and concurrent closes/opens without
 underflow/overadmission. Immediate EOF preserves ACK→closed order. Pretransfer,
 spawn, ACK/write, endpoint-death paths dispose FD copies and cannot mask EOF or
 leave live grants. Recovery uses total/local slot and releases on EOF; writer
@@ -164,7 +164,7 @@ and retains one overall plan and acceptance contract.
 Revision1 fresh independent architecture review session
 01a1e402-2351-7161-9aba-899c9b6b55bf returned CHANGES_REQUIRED. The candidate was
 otherwise feasible; it required resolving actual retained listener512IDs and
-shared-control failure, concurrent receipt accounting, native/gateway>512cycles,
+shared-control failure, concurrent receipt accounting, native/web>512cycles,
 and exact ACK handling. Actual376.252s execution/result/ordered in-memory
 preflight are retained under channel-architecture-review-1. Filesystem read-only
 prevented reviewer artifact writes; source reading/hash checks and preflight

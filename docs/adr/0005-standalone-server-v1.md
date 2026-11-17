@@ -1,7 +1,7 @@
 # ADR-0005 · Standalone server, HQ web application and named instances
 
 Status: **product direction accepted by the owner** 2026-11-09;
-**implementation proposal for review**. Owner: ada.
+**implementation proposal for review**. Owner: lead.
 Amends ADR-0001's desktop access/packaging, ADR-0002's platform and instance key
 scope, and ADR-0003's app-bound human authorization. It does not supersede their
 domain ownership, durability or employee permission rules.
@@ -54,9 +54,7 @@ still require implementation.
 7. **Delete superseded code directly.** No dual desktop/web implementation, legacy
    IPC adapter or old-app data importer is required. Retain domain logic, useful
    tests and security invariants. Installers/tests never erase user data merely
-   because this is an undeployed product. Existing live Phase A coordination and
-   retained stable IDs still require explicit preservation; the selected data model
-   is not a blanket authorization to reset them.
+   because this is an undeployed product.
 
 Selected entity, storage and recovery contracts are owned by
 [organization-data](../design/organization-data/README.md), with precedence and
@@ -86,22 +84,23 @@ Remaining domain-layout changes are implementation requirements. Explicit baseli
 ## Review clarifications (2026-11-10)
 
 - The instance-scoped `agentic-org-web` process (production handoff pending) terminates browser HTTP/TLS
-  separately from the key-custody host and per-office workers. The gateway holds no
+  separately from the key-custody host and per-office workers. The web process holds no
   office DB key. Create organization requires instance-admin authority; owning an
   organization alone is insufficient.
 - Browser authority requires a session cookie plus an independently generated,
   origin-scoped proof on every protected operation/stream/refresh; cookies alone
   are insufficient because browsers do not isolate them by port. Browser tabs
   share one authenticated streaming fetch or use bounded short polling.
-- First standalone local `org-proto` uses API_VERSION 2 for breaking retirements
-  and changed authority. Retained versions remain additive-only. HTTP `/api/v1`
-  and launch/sync versions are independent. `home`/`clear_home` mutations retire;
+- The local `org-proto` API version is 1 and changes in place until v1 ships
+  (owner, 2026-11-17); no retained version is kept. HTTP `/api/v1` and launch/sync
+  versions are independent. `home`/`clear_home` mutations retire;
   managed launch paths come only from instance/office/member identity.
 - Pause durably commits at HQ while a disconnected office's stop remains pending.
   New goal changes to a known-offline office are rejected before admission; an
   already-forwarded uncertain outcome remains Pending confirmation by operation ID.
-- Existing live Phase A messaging has a conditional, verified cutover; no old
-  desktop application import is required. HR approval still precedes provisioning.
+- No old desktop application import is required, and nothing is carried over from
+  the earlier coordination tool's message queue (owner decision 2026-11-17). HR
+  approval still precedes provisioning.
 - V1 creation includes CA escrow/recovery-code provisioning and protected delivery.
   REC-1 explicitly remains an open production-release decision for the reviewed
   manual HQ-loss recovery/fencing procedure; automatic promotion remains deferred.

@@ -10,4 +10,4 @@ Reviewed 2026-11-15 against base b1256c97. Navigation guidance; source and ownin
 - docs/adr/ remains canonical. Selected data design differs from implemented migrations/commands; see docs/design/executable-migration.md.
 - [Tooling capsule](maps/tooling.md), [active decisions](DECISIONS.md), [skill catalog](skill-catalog.json), [adoption checkpoint](tasks/adoption-state.md).
 
-Reassess after ownership, interface, dependency, executable or architecture changes. Prepare indexes per worktree. Installed ~/.local/bin/org-agent and its Phase A spool remain live coordination tools.
+Reassess after ownership, interface, dependency, executable or architecture changes. Prepare indexes per worktree. No earlier coordination tool or message queue is carried over; the team is onboarded onto the product itself as it becomes usable.

@@ -4,7 +4,7 @@ name: Decide, consult, escalate
 kind: process
 level: organization          # repository seed metadata; selected structural scopes are organization | team | project
 version: 1
-owner: ada (Staff Engineer)
+owner: lead
 status: active
 summary: Decide routine calls yourself; when unsure, reach consensus with a fresh peer; escalate only critical or unresolved decisions, with options and a recommendation.
 applies_to: every agent

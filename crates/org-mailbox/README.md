@@ -34,12 +34,12 @@ The Mailbox rechecks that member on every call: an offboarded, removed or moved 
 
 | Slice 1/current contract | Required target adapter |
 | --- | --- |
-| `MessageStore` delivery envelope and `content_hash` | Protected `messaging/conversations/<conversation-id>/messages/<message-id>.json`, with original seven-field v1 hash/envelope retained as source evidence and a separate normalized RFC 8785 content hash. Never compare the two codecs. |
-| Directed message/thread ID and sender/recipient | Import as `directed_thread` preserving IDs, per-message visibility, triage and origin identity. Thread participant unions never grant access; summaries/counts/previews must filter visible messages. |
+| `MessageStore` delivery envelope and `content_hash` | Protected `messaging/conversations/<conversation-id>/messages/<message-id>.json`, with one RFC 8785 content hash (document 15). The code's seven-field hash is not carried over. |
+| Directed message/thread ID and sender/recipient | Replaced by DMs, group DMs and channels with per-employee state (document 15). Nothing is imported. |
 | Office SQL/store commit and events | SQL becomes a projection of protected durable source envelopes/attachments. Integrate document 16 actor-bound receipts and recoverable source/journal commit before acknowledgement; losing an office cache must not lose acknowledged asks/handoffs. |
 | Member directory and authenticated bound member | Employee identity has one required home team, separate execution config/placement. Conversation membership and authorized owner principal are separate grants; no profile flag authorizes a read. |
 
-New messages use UUIDv7 while imported stable IDs remain unchanged. New channel/group-DM admission, per-member states, expected envelope revisions, card/attachment validation and visibility-safe search are target work, not slice 1 features. Chat is never shared organization Git; private task notes stay author-only in their own durable database with no owner/admin exception. Git alone cannot recover chat or receipts. Typed task links use scoped T- references; old B-/REQ- references need explicit mappings.
+Target message IDs are UUIDv7. New channel/group-DM admission, per-member states, expected envelope revisions, card/attachment validation and visibility-safe search are target work, not slice 1 features. Chat is never shared organization Git; private task notes stay author-only in their own durable database with no owner/admin exception. Git alone cannot recover chat or receipts. Typed task links use office-minted T- references such as `T-B37`; there are no B-/REQ- references.
 
 ## Ports
 

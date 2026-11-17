@@ -3,7 +3,7 @@
 This module owns the browser cookie/proof pair for one gateway origin. P6a adds
 its foundation without enabling production routes; P6b composes it with the UI.
 The gateway owns cookies, session authorization and authoritative permissions.
-All HTTP uses the same-origin bounded JSON transport and gateway-api-v1 §2/§4/§5
+All HTTP uses the same-origin bounded JSON transport and web-api-v1 §2/§4/§5
 (api_version 1, minimum contract_revision 2); there is no local-server fallback.
 
 `createSessionController` receives storage, gateway, read transport, Web Locks,
