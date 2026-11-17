@@ -41,7 +41,7 @@
 /// agentic-org-office with it. The signing identifier is stable across filename changes.
 pub const SERVER_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-server";
 /// The browser service has no office-worker or Keychain authority (ADR-0008).
-pub const GATEWAY_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-gateway";
+pub const WEB_SIGNING_ID: &str = "com.ellosoft.agentic-org.web";
 
 use crate::peer::AuditToken;
 
@@ -113,7 +113,7 @@ impl ServerCheck {
             return Ok(Self::Skip);
         }
         match team_id {
-            Some(team) => crate::code_signing::developer_id_requirement(GATEWAY_SIGNING_ID, team)
+            Some(team) => crate::code_signing::developer_id_requirement(WEB_SIGNING_ID, team)
                 .map(Self::Gateway),
             None => Ok(Self::WebRefused(
                 "no app team id (ORG_APP_TEAM_ID at build time)",
@@ -382,7 +382,7 @@ mod tests {
         else {
             panic!("release gateway policy")
         };
-        assert!(requirement.contains(GATEWAY_SIGNING_ID));
+        assert!(requirement.contains(WEB_SIGNING_ID));
         assert!(!requirement.contains(SERVER_SIGNING_ID));
         assert!(matches!(
             ServerCheck::gateway_for_build(false, None).unwrap(),

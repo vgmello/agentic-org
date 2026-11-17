@@ -98,8 +98,8 @@ use crate::supervisor::{Supervisor, SupervisorConfig};
 pub mod test_support;
 
 pub use crate::app_auth::APP_BUNDLE_ID;
-pub use crate::server_check::GATEWAY_SIGNING_ID;
 pub use crate::server_check::SERVER_SIGNING_ID;
+pub use crate::server_check::WEB_SIGNING_ID;
 
 /// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
 /// the agentic-org executable in host mode. The signing identifier remains stable
