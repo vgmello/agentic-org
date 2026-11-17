@@ -25,7 +25,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 11 | 1 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 1 | 12 | 0 | 1 | 0 |
-| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks, handoffs and transport cutover | 14 | 2 | 6 | 5 | 0 | 1 | 0 |
+| [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 14 | 2 | 6 | 4 | 0 | 2 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
 | [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 14 | 1 | 2 | 7 | 0 | 4 | 0 |
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 1 | 0 | 5 | 0 |
@@ -33,7 +33,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 13 | 1 | 4 | 5 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **166** | **9** | **60** | **54** | **2** | **41** | **0** |
+| **Total** | | **166** | **9** | **60** | **53** | **2** | **42** | **0** |
 
 ## AREA-01
 
@@ -105,7 +105,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Boundary:** Owns conversation behavior and delivery. Assignment semantics belong to AREA-04; execution wake/stop primitives belong to AREA-08; durable cross-office restoration belongs to AREA-12. Shared Git is never chat storage.
 
-**Verification focus:** Check visibility-safe mentions/search/attachments/reactions, drafts/history/pagination and performance, ask resolution/withdrawal, atomic task handoff and actual wake/pause/noninterrupting delivery. Phase A ask/reply is narrower than the selected production conversation contract.
+**Verification focus:** Check visibility-safe mentions/search/attachments/reactions, drafts/history/pagination and performance, ask resolution/withdrawal, atomic task handoff and actual wake/pause/noninterrupting delivery. The existing command-line ask/reply is narrower than the selected production conversation contract.
 
 **Requirements:** [Chat UX](specs/chat-ux.md), [Messaging contract](design/organization-data/15-messaging-and-chat.md), [Messaging ADR](adr/0003-agent-messaging-office-first.md).
 

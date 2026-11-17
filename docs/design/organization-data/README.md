@@ -103,8 +103,7 @@ Nothing has been deployed. Until the owner declares v1 shipped (owner decision 2
 - Wire names, method names, file formats, schemas, identifiers and the local API version may change freely. The local API version is 1.
 - Where a document says to preserve, import, adopt, stage or map "v1", "legacy" or "existing" data, identifiers, references such as `B-` and `REQ-`, hashes or events, that requirement is withdrawn and the selected shape is built directly. This covers the legacy adoption profile of document 05 and ADR-0010, the imported `directed_thread` conversation kind, the `v1_lenprefixed_sha256` and schema-1 task-event codecs, and import staging. The draft schema still carries some of these structures; removing them is tracked in the [conflict resolution plan](../conflict-resolution-plan.md).
 - The better design wins. When rebuilding is the cleaner architecture, rebuild; the result must be fast, memory-efficient and reliable.
-- This rule is about the product's documents and code. It does not authorize deleting files on a real machine, such as the installed tool and spool that `AGENTS.md` says to leave alone.
-- **One open point.** `AGENTS.md` and the cutover section of ADR-0003 require the development team's own Phase A message queue to be carried over (FC-082). That cutover uses the `directed_thread` kind, the `v1_lenprefixed_sha256` codec and import staging. Until the owner says whether the queue is carried over or dropped, those three stay in the draft schema for that purpose only.
+- The former development team's message queue is dropped too (owner, 2026-11-17). The `directed_thread` conversation kind, the `v1_lenprefixed_sha256` codec and import staging have no remaining purpose and leave the draft schema with the other legacy structures.
 
 ## Outside this set: what the host owns
 

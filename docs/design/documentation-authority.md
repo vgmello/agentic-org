@@ -83,7 +83,7 @@ runtime/<office-id>/
 
 Workspaces survive handoff until task closure; changing current agent/office placement requires an explicit safe workspace migration, not recursive deletion. This diagram defines ownership, not a completed sandbox migration. Re-derive Git metadata, credential, other-task and managed-state denies for the target paths and verify them before launching against that layout. Do not transplant old allowlists based on a renamed prefix.
 
-Deleting an office cache is safe only with protected acknowledged sources, rebindable credentials and process reconciliation. A Git checkout alone does not restore chat, budgets, usage or authority. Preserve live Phase A asks/replies/triage until the separately verified transport cutover.
+Deleting an office cache is safe only with protected acknowledged sources, rebindable credentials and process reconciliation. A Git checkout alone does not restore chat, budgets, usage or authority. No earlier message queue is carried over (owner, 2026-11-17).
 
 ## Deferred requirements and historical evidence
 

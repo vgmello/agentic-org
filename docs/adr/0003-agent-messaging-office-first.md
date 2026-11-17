@@ -10,7 +10,7 @@
 | `thread_id`, participant union and per-message `from_member_id`/`to_member_id` | Import one `directed_thread` with the original thread/root IDs; preserve each message's sender/recipient visibility. A participant union never authorizes another message. Filter subject, last-message, counts, previews and search by visible messages. |
 | v1 `content_hash` (§3.4, version byte + seven length-prefixed fields) | Preserve as `source_content_sha256`, `source_hash_codec: v1_lenprefixed_sha256` and immutable `source_envelope`; verify the original codec separately from normalized RFC 8785 `content_sha256`. Do not rename or recompute the old wire hash with the new algorithm. |
 | v1 origin/incarnation/sequence and recipient triage generation | Retain original delivery identities and independent state origin. Content/state share the old allocator/high-water; import must not split it into overlapping sequences. Local cursors remain derived. |
-| Cutover of the development team's installed Phase A command-line tool and its message queue (see `AGENTS.md`) | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
+| Cutover of the former development team's message queue: **withdrawn 2026-11-17**, nothing is carried over | Preserve the commands and source state in the final cutover section. The current built executable is `agent-os`; a documentation edit never switches a live transport. |
 
 The target office/session integration also follows [Chat's noninterrupting
 message-delivery policy](../specs/chat-ux.md#42-system-notices-and-delivery).
@@ -992,30 +992,12 @@ for the narrowly scoped agent calls below. Bridge bindings gain no new rights. U
 
 ## Live Phase A coordination cutover and person-started context
 
-This is a conditional cutover of the team's **active messaging transport**, not
-an import of an undeployed desktop application or a new team/member importer.
-Fresh disposable organizations have no Phase A state and skip it.
-
-1. Before redirecting a live Phase A producer, explicitly select the source spool,
-   target immutable instance and HQ office IDs. Pause/fence old producers, record
-   the import watermark and use an idempotent owner-authorized import operation
-   run by the **live HQ worker**, which already holds the office lock and key: `agentic-org`
-   signs the owner in on `host.sock` (`account.verify`; the host checks the account), opens
-   a host-made local channel to that office and calls the import there with the owner's grant, naming the immutable instance and office IDs and the source
-   path (2026-11-10: replaces an earlier stand-alone `import-v1-old-spool` command,
-   which would have needed key custody and competed for the office lock; see X-02 §4.5, a draft not yet in this repo: office-host-boundary.md §3, "Pending: launch v3").
-2. Preserve message/reply ULIDs, ask correlations and original deadlines, unresolved
-   asks, read/unread, snooze/defer and done state. Expired asks remain expired and
-   import does not wake every historical recipient. Retries deduplicate by source
-   identity/watermark and item ID, with an inspectable result and failure report.
-3. Preserve legacy profiles/statuses as attributed history only. They do not create
-   members, bypass hire approval, select a managed home, or replace authoritative
-   role/run/pause state. Validate member mappings before redirecting producers.
-4. Verify counts, representative pending asks/replies and read/triage state through
-   the real target office, then explicitly switch the selected CLI context. Keep
-   the old spool read-only for at least the prior one-week rollback window and until
-   verification/owner acknowledgement. No automatic deletion of live state. A
-   fixture-based interrupted/repeated cutover is required before real team use.
+**Withdrawn (owner decision 2026-11-17).** The cutover that carried the former
+development team's message queue into the product is dropped: nothing from before is
+carried over, and the team is onboarded onto the product itself as it becomes usable.
+No import operation, watermark, rollback window or fixture for it is built. The
+heading is kept so that older links resolve. What remains of this section is the
+rule for person-started commands.
 
 **Person-started CLI selection (proposed standalone contract):** use explicit
 `agent-os --instance <name> --office <id> ...` or a deliberately saved CLI context

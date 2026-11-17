@@ -3,7 +3,7 @@
 Status: **accepted by the owner 2026-11-17**. Implementation pending. The rule in
 decisions 1 to 8 is the owner's, stated when he answered the open point in
 [REQ-04](../specs/req-04-channel-messaging-and-question-components.md). Decisions 9 to 13
-and the proposed setting values are the lead's design for it. Amends
+are the lead's design for it; the owner confirmed the two default values. Amends
 [ADR-0003](0003-agent-messaging-office-first.md) §2.5 and §3.3,
 [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9, the
 [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md).
@@ -24,8 +24,8 @@ arrives. For the person, the agent is simply idle until they reply.
 
 ## Decision
 
-1. **Every ask waits for a bounded time.** The default wait is an organization setting
-   (the owner's example is 10 minutes). It is the same whether the recipient is a
+1. **Every ask waits for a bounded time.** The default wait is an organization setting,
+   10 minutes unless changed. It is the same whether the recipient is a
    person or an agent. The asker may state how long it expects a reply to take, up to
    a configured maximum.
 2. **The asker says whether the answer is required.** `required: true` means: I cannot
@@ -60,7 +60,7 @@ The lead's design for the rule:
      so that an office restart neither loses the suspension nor misses the answer.
    - The agent decides honestly whether an answer is required and winds down when told.
 10. **Background work and the grace period.** After the notice of decision 5 the agent
-    has a grace period (an organization setting; proposed 2 minutes) to end its turn.
+    has a grace period (an organization setting, 2 minutes unless changed) to end its turn.
     When the turn ends, or the grace period passes, the office stops the process the
     normal way and then checks for processes the agent started that are still running.
     It stops those too, records which, and tells the agent on resume what was stopped.
@@ -77,6 +77,10 @@ The lead's design for the rule:
     its asker in the inbox and on the card, with how long the agent has been stopped.
     Guidance on when to mark an ask required ships with the product as built-in
     guidance, not as an organization process.
+14. **A default value never answers a required ask.** For an ask that is not required and
+    carries a default, the timeout result includes the default, so the agent can
+    continue with it; the card then shows that nobody answered and what the agent
+    continued with. A person's later answer still arrives as a message.
 
 ## How this changes the earlier rules
 
@@ -106,7 +110,7 @@ The lead's design for the rule:
 
 ## Open points
 
-- The setting values (10 minutes, 2 minutes, the maximum wait) are proposals to confirm.
+- The owner confirmed 10 minutes for the wait and 2 minutes for the grace period on 2026-11-17. The maximum wait an asker may state is still to be set.
 - Whether each vendor tool reports its own background work, or the office can only see
   the processes it started. This is part of the first runtime adapter's spike.
 - An ask whose asker is a person is unchanged: a person is not suspended.

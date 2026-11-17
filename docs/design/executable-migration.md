@@ -50,7 +50,7 @@ the source commit of each delivered unit.
 | agentic-org | apps/agentic-org / agentic-org | Human CLI composes org-host. Selected HQ setup journals its original inputs/operations, admits a complete pinned release, invokes protected bootstrap/provisioning, reconciles per-user launchd registration and probes local readiness. Missing trusted build inputs or platform prerequisites refuse setup. Recovery collection remains unfinished; end-to-end production setup is not verified. |
 | agentic-org-office | apps/agentic-org-office / agentic-org-office | Existing daemon and legacy protocols retained, with versioned selected writer admission, canonical bootstrap/adoption, durable task acceptance and escrow prerequisites. |
 | agentic-org-web | apps/agentic-org-web / agentic-org-web | Supervised authenticated listener/control handoff, real account/session backend and selected-task routes are wired. Selected release startup independently authenticates the pinned manifest, kernel image and static assets before confinement and secrets. Production publisher/platform signing evidence remains required. |
-| agent-os | apps/agent-os / agent-os | Existing employee CLI, preserving binding, environment variables and live Phase A spool behavior. |
+| agent-os | apps/agent-os / agent-os | Existing employee CLI, with its binding, environment variables and offline queue behaviour. |
 
 The static browser application is `apps/agentic-org-ui`, frontend package
 `agentic-org-ui`. CI, build scripts and licensed UI containment use that path. It
