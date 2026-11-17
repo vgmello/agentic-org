@@ -121,17 +121,17 @@ erDiagram
 
 ## Creating an organization
 
-Setup creates the instance; it creates no account, no organization and no office. The first account is registered through a one-time link that setup prints, and it is an instance administrator ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)). A signed-in instance administrator creates the organization, and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
+Setup creates no account, organization or office. The server's administrator, registered through setup's one-time link ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)), creates the organization and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
 
 Creation is one accepted transaction, the first of the organization's acceptance journal ([document 16](16-recovery-and-office-continuity.md#how-the-directory-begins)). It writes:
 
 1. the organization;
 2. its HQ office;
 3. one top-level team (null `parent_team_id`) named after the organization;
-4. the creator's person record (`kind: person`) in that team, appointed its lead, and tied by the host to the creator's account;
-5. the built-in HR lead (`kind: agent`) in that team ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
+4. the creator's person record in that team, appointed its lead, and tied by the host to the creator's account;
+5. the built-in HR lead in that team ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
 
-Every record it writes is attributed to the creator's person record. Teams for projects are created with each project ([document 02](02-project-structure.md#creating-a-project)); other teams are created by ordinary HQ commands.
+Every record it writes is attributed to that person. A project's team is created with the project ([document 02](02-project-structure.md#creating-a-project)).
 
 ## Team structure
 

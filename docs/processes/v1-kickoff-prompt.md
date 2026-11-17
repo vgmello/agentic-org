@@ -17,7 +17,7 @@ Read first, in this order:
 4. docs/implementation-plan.md: the milestones and increments. Read your increment and
    every document it lists under "Read".
 
-Your track is <A, B or C> and your first increment is <for example A1 or B1>.
+Your track is <A, B or C> and your first increment is <for example A2 or A1>.
 
 Rules that always apply:
 - Nothing has shipped. Write no migration, import, compatibility shim, version
@@ -40,7 +40,8 @@ the row in docs/FEATURES.md with evidence, get an independent review, then merge
 v1-integration. Never push to main. Tests never touch a real organization's data.
 ```
 
-Suggested start: one engineer takes Track A from A1, the other takes Track B from B1.
-B1, the store foundation, is the largest increment and starts with a written plan
-recorded in the repository. A1 and B1 both change the office store: A1's change lands
-first, while B1 is being planned.
+Suggested start: one engineer takes Track A from A2 (setup's registration link), then
+A3 and A4, so that installing, registering and creating the organization work first.
+The other takes A1, the clean-up the store rebuild depends on, and then Track B from
+B1. B1, the store foundation, is the largest increment and starts with a written plan
+recorded in the repository.

@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "a44742d06a8fc174b913a2b46a29c28dd8d787d0b915909d115eb64cc82bb6de"
+      "sha256": "fd15d862554c6c0cf7a94ba4871552c9b2fa8d8d71bb022b0245df633d07098d"
     },
     {
       "path": "Cargo.lock",
@@ -122,7 +122,7 @@
     },
     {
       "path": "docs/adr/0005-standalone-server-v1.md",
-      "sha256": "9ec59a0d7284bdfd83c9dcf515ce650fbf5ea75a409b5b1860207134a588cf05"
+      "sha256": "46bca00bed148f5c823632a85e357ae5f723fe1decbff237f3403bc465f3f9a3"
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
@@ -142,7 +142,7 @@
     },
     {
       "path": "docs/adr/0011-protected-recovery-delivery.md",
-      "sha256": "c34a33bd6095481d017fc3efa8b37a6b5d98fb4f8cca255e23371dde7785d1d5"
+      "sha256": "4603e8f1856cff991f820a6a209c1c46feeb5e93d761ffc3969270fdb12fd15e"
     },
     {
       "path": "docs/architecture-rules.md",
@@ -182,7 +182,7 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "0c5322e6eece9034087730ba0c52ee7986572dd65ebc9e1f79c881379fb43adf"
+      "sha256": "ff142e6ac2bd9077ab02ef3fccf4eb8173ab22a50a506fd0b06fc2f88d532bf6"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",

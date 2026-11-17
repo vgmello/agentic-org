@@ -64,10 +64,11 @@ Engineers and their agents make architectural decisions themselves, inside the
 Owner direction, 2026-11-17. Two engineers and their agents are building this
 product, and they are to be onboarded onto it as early as it can carry them, so that
 they talk to each other, track their tasks and run their agents through the product
-they are building. The lead's reading of what that means for the order of work:
-creating an organization, signing in, people and teams, tasks and chat come first,
-because they are what onboarding needs. As each milestone lands, the people and agents building
-the product start using that feature.
+they are building. The owner's order of work: milestone one is one office on a Mac
+(getting in, the organization with its office, projects, teams and people, agents
+hired through HR, messages, then tasks); milestone two is Linux; milestone three is
+a second office. As each step lands, the people and agents building the product
+start using it.
 
 Nothing from before is carried over. The earlier command-line tool that the former
 development team used to message each other, and its message queue, are dropped:

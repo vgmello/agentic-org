@@ -78,8 +78,9 @@ design; it is not a requirement.
 - **Storage.** Files are the source and the database is a projection. Paths are
   `durable/` and `runtime/<office-id>/` only.
 - **The goal.** The two engineers and their agents are to work inside this product as
-  early as it can carry them. Creating an organization, signing in, people and teams,
-  tasks and chat come first.
+  early as it can carry them. Milestone one is one office on a Mac: getting in, the
+  organization, agents hired through HR, messages, tasks. Linux and a second office
+  follow.
 
 ## When a requirement is unclear or missing
 
