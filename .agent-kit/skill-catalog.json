@@ -6,35 +6,35 @@
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
-      "sha256": "3dffb0f0f5049d132c93883a578474af1bdcc8cf29e7cea47083cddf2e63face"
+      "sha256": "3a1126e9d29b1fbbc526f5290e8133d666a7edc8ef763d11168be8c8851bfcc5"
     },
     {
       "path": ".agent-kit/project-roles/codebase-scout.md",
-      "sha256": "8496989201b03e7ae118b946cfeaf0b0a38e83cfa389a3e6814771490a109b5d"
+      "sha256": "eab077f845496d3a677536b44e31589728a8738f9f3cd650352a0eb0c7cbe640"
     },
     {
       "path": ".agent-kit/project-roles/fullstack-engineer.md",
-      "sha256": "c8b08462ddc1aa384be8b53b3060a526782195a05c05987fb83dffbb870b15d5"
+      "sha256": "de8c62418b8041c74fb9d5b330b108b3d394bf25ccf5bd73c467489bc6a3a7bc"
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "59e141eb8bf375f65217409398c7bba45b67f9f69fef2d2200b18ece81c973e1"
+      "sha256": "9df6019afd5837ba5e13c3658b47190f2edeb15701b29a2682a287b0794661ed"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "d64c7f7190fb9c24567d530475ea8ded4840d24159ee206ebbed2c416f3a0186"
+      "sha256": "c0343c5f725d6ea9ff0a75ad34003c14e3edd4bb0dcc1b1bc9ff53afe00ea2eb"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
-      "sha256": "81f015f00facd62575b961b5d0275d49d97e2f0e48dda11cbbd350a868d64a91"
+      "sha256": "af5efc05a1295d5284ed19b749987ca4aec0470dbf82958a0cef2c3a003d1426"
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "a00694890e74108d8c4f0e96261f404713fbaf02b8da5d065ddc769a9ec94a1e"
+      "sha256": "2bb8b7c66b1f6d86e04ebbc65a46f5f32cbf1eac34206dd99bb90c4facb1f47a"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
-      "sha256": "5c9cdf68662568d41bf88b8a0f5ee87398394d6d76a14017da50c4e611aa2de1"
+      "sha256": "11d116e4c74230df0151bf8a3a7581f9884416d4cfdf4a80911c61c8477cae9b"
     },
     {
       "path": ".agents/skills/caveman/SKILL.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "fd15d862554c6c0cf7a94ba4871552c9b2fa8d8d71bb022b0245df633d07098d"
+      "sha256": "a15b6116e8a91665610d61634b7e41a0127fc35f82d360344388e153f0da36fe"
     },
     {
       "path": "Cargo.lock",
@@ -146,11 +146,11 @@
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "ea6f7921ef3f5e88dd8f62feb658272d08ccfc618e97357055c3771229f64393"
+      "sha256": "b6dc265e2c54b4b2896235da47e32793671e7d437c19dfd28e1424c72c0395a6"
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "4e3e626378854f9e0643e32df9c9d6dc408705aa03375e2da23b7127974f6396"
+      "sha256": "6773e7878f6a9cc48d8ddc64e240324f873efd6baec26d7ae183fdd9ad2c822e"
     },
     {
       "path": "docs/design/organization-data/README.md",
@@ -162,7 +162,7 @@
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "ff38b0feb582d04f94e059a703c1bf98855c8f65199da480690d20945cd6f6db"
+      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
     },
     {
       "path": "rust-toolchain.toml",
@@ -170,7 +170,7 @@
     },
     {
       "path": "docs/independent-delivery.md",
-      "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
+      "sha256": "5775049de3b761e08c41100c816f71156918ef6ded100d60f86590083de0bd67"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -178,7 +178,7 @@
     },
     {
       "path": ".agent-kit/tasks/v1-creation-admission-interface.md",
-      "sha256": "39c08afab75d48f478840f23682e52f88269234bf72c9ee855d691b15a442298"
+      "sha256": "a1781d7d7883f73bac20c1f1413ab7e9b76d175591baff0a73e3876cc4012781"
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
@@ -190,11 +190,11 @@
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "093f01ee6979ae90d5cc818a21cf9fc59caf97f18f9a82bceab017b0b7aea833"
+      "sha256": "554bb2c00ac92aeaec675a58e02f33c5a6fc1f5ad5a4f76f352f1fc80eb1b4b1"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
-      "sha256": "9624f8714b0c5ff44b7fbd43a7963588cf81c5596ca3130499a111284a1b3b9f"
+      "sha256": "77bac99ef8ac2069ad0fafb054643063712700c0d2a7c2e59b90645c51f7b3b8"
     }
   ],
   "roles": {

@@ -11,19 +11,20 @@ change; the behaviour is what the linked requirement documents say. Every increm
 follows "For every increment" in that plan and the workflow in
 [AGENTS.md](../../AGENTS.md).
 
-- **Milestone one: one office.** People and agents on board and talking, all in a
-  single office:
+- **Milestone one: one office on a Mac.** People and agents on board and talking, all
+  in a single office on macOS:
   1. Getting in: install, register from the link setup prints, create the organization
-     (A1 to A5).
+     (A2, A3, A4, then A5; A1 alongside).
   2. The organization: the office, projects, teams and people; a second person signs
-     in; Linux and containers (B1, B2, B3, O1, A6, U1, A7).
+     in (B1, B2, B3, O1, A6, U1).
   3. Agents: hired through HR, started by the office, with a view of what they did
      (C1 to C5).
   4. Messages: chat and asks that wait for an answer (B6, B7, C6).
   5. Tasks: in the browser and with `agent-os`; an agent works in a repository (B4, B5,
      C7).
-- **Milestone two: a second office** on another machine (S1). It starts only when
-  milestone one works in one office.
+- **Milestone two: Linux,** including a container (X1), once milestone one works on a
+  Mac.
+- **Milestone three: a second office** on another machine (S1).
 - **Later, still v1:** the increments listed under "Later, in no fixed order".
 
 ## State
@@ -42,4 +43,4 @@ today" line of each increment.
 - At commit 04041dc, `crates/org-host` does not compile on Linux:
   `supervisor/channels.rs` calls `org_socket::peer_process_allowed`, which does not
   exist. CI excludes `org-host` and `agentic-org` from its Linux workspace runs.
-  Increment A7 brings the host to Linux.
+  Increment X1 brings the host to Linux.

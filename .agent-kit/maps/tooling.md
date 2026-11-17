@@ -1,6 +1,6 @@
 # Tooling and verification capsule
 
-Owner: codex-dev for adoption tooling; ada retains standards/merge ownership. Reviewed at b1256c97 on 2026-11-15.
+Reviewed at b1256c97 on 2026-11-15.
 
 The target is the whole monorepo. WORKFLOW.md adds task/review gates. Root AGENTS.md retains team rules and the managed pointer; scoped UI guidance still applies. .codex/config.toml and five native roles select Sol and a two-child limit. Roles inherit host permissions; the review wrapper explicitly launches read-only review processes.
 

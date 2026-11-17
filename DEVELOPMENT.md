@@ -20,7 +20,7 @@ On Linux, CI runs workspace Clippy and tests with `--exclude org-host --exclude
 agentic-org`, lints those two packages separately with `dead_code` and
 `unused_imports` allowed, and runs only `cargo test -p agentic-org --lib --test cli`
 for them (`.github/workflows/ci.yml`). The host runs office workers only on macOS
-today; increment A7 of the [implementation plan](docs/implementation-plan.md) brings
+today; increment X1 of the [implementation plan](docs/implementation-plan.md) brings
 it to Linux and containers.
 
 Install `cargo-deny` 0.20.2 and Gitleaks 8.30.1, for example through Homebrew.
