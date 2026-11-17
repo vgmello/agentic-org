@@ -57,7 +57,7 @@ Full requirements: [Application and browser](specs/app-shell-ux.md).
 | [ ] | FC-006 | [Search, New and scoped lookup](specs/app-shell-ux.md) | Planned | No global Search/New controls, /search route or authorized grouped lookup composition; implement selected entry points, references and shortcuts. |
 | [ ] | FC-007 | [Device preferences and keyboard settings](specs/app-shell-ux.md) | Planned | No /preferences Keyboard switch or required device-storage key/fallback; implement persistence and shortcut/hint coupling. |
 | [ ] | FC-008 | [Account timezone persistence](specs/costs-and-insights-ux.md) | Planned | Account-zone contract/persistence remains gated; browser-local time is not equivalent. |
-| [ ] | FC-009 | [Native desktop shell](adr/0005-standalone-server-v1.md) | Deferred | Tauri is deferred to v2. |
+| [ ] | FC-009 | [Native desktop shell](adr/0005-standalone-server-v1.md) | Deferred | A native desktop application is not in v1. |
 
 ### Installation, access and office operations
 
@@ -174,7 +174,7 @@ Full requirements: [Chat and agent messaging](specs/chat-ux.md).
 
 | Check | ID | Feature / short description | Status | Evidence / remaining work |
 | --- | --- | --- | --- | --- |
-| [x] | FC-072 | [Phase A agent messaging CLI](../apps/agent-os/README.md) | Done | [Agent CLI] documents send/ask/reply, inbox/read/wait, defer/done/notify/due and relay over the file-queue transport, which the chat work deletes. |
+| [x] | FC-072 | [Agent messaging command line over the file queue](../apps/agent-os/README.md) | Done | [Agent CLI] documents send/ask/reply, inbox/read/wait, defer/done/notify/due and relay over the file-queue transport, which the chat work deletes. |
 | [x] | FC-073 | [Local mailbox delivery library slice](../crates/org-mailbox/README.md) | Done | [Mailbox] documents send/inbox/read/wait against in-memory testkit; no server/SQL/cross-office integration claimed. |
 | [ ] | FC-074 | [Chat layout, threads and readable messages](specs/chat-ux.md) | In progress | Chat/followup/layout/accessibility tests exist in [browser tests]; production conversation adapter remains unavailable [UI]. |
 | [ ] | FC-075 | [Protected conversation sources and memberships](design/organization-data/15-messaging-and-chat.md) | Planned | [Mailbox] lists target durable sources, channel/group admission and safe membership as follow-up adapters. |

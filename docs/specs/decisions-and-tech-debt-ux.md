@@ -110,7 +110,7 @@ Open tasks of every type are canonical organization-Git files; immutable task ac
  Older · 5 (deprecated)
 
  Decision · ADR-0002 · Storage: SQLite, one writer
- Current · Owner ada · Updated 8 Nov · organization Git
+ Current · Owner sam · Updated 8 Nov · organization Git
  Context · Options considered · Decision · Consequences · Evidence
 ```
 
@@ -176,7 +176,7 @@ links: []
 ```text
  Decision · ADR-0004                                  Draft
  Docs storage
- Owner ada · Created 15 Nov · Updated 15 Nov
+ Owner sam · Created 15 Nov · Updated 15 Nov
  Project Agentic Org · organization Git
  Related: T-A17 · Storage evaluation report
  ────────────────────────────────────────────────────

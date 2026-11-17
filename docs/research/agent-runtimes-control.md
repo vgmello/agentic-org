@@ -11,7 +11,7 @@ Research for Agentic Org's office worker (now `agentic-org-office`). It answers 
 - **[doc]**: official documentation (URLs under Sources).
 - **[3p]**: third-party write-up. Treat as a lead, not a fact.
 - **[unverified]**: not confirmed. Each one says why.
-- **[review]**: checked later by the independent reviewer of the agent-sessions design (rev 2) against the binary's `--help`. Not re-run on this Mac.
+- **[review]**: checked later by the independent reviewer of the agent-sessions design against the binary's `--help`. Not re-run on this Mac.
 
 ## Versions
 

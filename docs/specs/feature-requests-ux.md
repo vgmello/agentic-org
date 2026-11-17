@@ -38,9 +38,9 @@ Capture an idea quickly in the browser and route it to someone who can scope it,
  Project [Reservations P-8 ▾]   Accountable team Payments (from project)
  Type Request                  Priority Normal
  Assigned team [No assigned team ▾]
- Scope with    [Eden ▾]  Product designer: a new user-facing flow
-               Alternatives: ada · architecture; Ana · booking expertise
- [Just save]  [Message instead]                           [Send to Eden ⌘↵]
+ Scope with    [Mira ▾]  Product designer: a new user-facing flow
+               Alternatives: sam · architecture; Ana · booking expertise
+ [Just save]  [Message instead]                           [Send to Mira ⌘↵]
 ```
 
 The dialog names the selected authorized organization. Its text field gets initial focus, grows to twelve lines then scrolls. ⌘Enter sends when text and accountable scope are valid. Project, priority, work classification and routing need no extra typing when the context supplies a valid scope; the chosen team stays visible. With no project or team context the dialog shows **Accountable team — Choose team** and explains why Save needs it. Changing the project derives its owner; removing the project asks the person to confirm a valid accountable team rather than silently changing scope.
@@ -51,7 +51,7 @@ Without a copilot, a configured rule may suggest the product designer for capabi
 
 Esc or close with text asks **Keep as a draft?** Keep keeps the open-page draft; Discard removes it; Back returns to editing. A draft has no reference and no shared task history. Keep draft and Just save are distinct.
 
-Submit uses a stable creation ID and a durable operation identity. Success means the task snapshot, event and receipt are accepted; the dialog says "T-A43 sent to Eden · Open." at once, online or offline, because the creating office numbers the task. A transient banner lasts about three seconds without taking focus. A lost response stays uncertain and is resolved by looking up or retrying the same operation, never by creating a second request.
+Submit uses a stable creation ID and a durable operation identity. Success means the task snapshot, event and receipt are accepted; the dialog says "T-A43 sent to Mira · Open." at once, online or offline, because the creating office numbers the task. A transient banner lasts about three seconds without taking focus. A lost response stays uncertain and is resolved by looking up or retrying the same operation, never by creating a second request.
 
 ### 1.1 Capture details
 
@@ -71,7 +71,7 @@ Work › Requests filters the common task list by `type: request`. A project ove
 ```
  Requests  [Status ▾] [Accountable team ▾] [Assigned team ▾] [People ▾]
            [Project / No project ▾] [Search]                  [New request]
- T-A43   Adjacent table booking    Payments | Platform | Eden
+ T-A43   Adjacent table booking    Payments | Platform | Mira
  T-A9    Review onboarding         People   | —        | Ana
  T-A44   New starter guide         People   | People   | Unassigned
 ```
