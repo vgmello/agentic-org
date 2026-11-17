@@ -20,10 +20,8 @@ and connect outward to HQ. Opening the website never installs or enrolls an offi
 There is no desktop application. Installers and tests never erase existing user
 directories.
 
-The design is [standalone-server.md](../design/standalone-server.md), the decision
-is [ADR-0005](../adr/0005-standalone-server-v1.md), and the
-[removal inventory](../design/standalone-server-removal-inventory.md) names the
-code to delete, keep or replace.
+The design is [standalone-server.md](../design/standalone-server.md) and the decision
+is [ADR-0005](../adr/0005-standalone-server-v1.md).
 
 The executables are `agentic-org` (the person's CLI and the service host),
 `agentic-org-web` (the browser server), `agentic-org-office` (one office worker)
@@ -1290,7 +1288,6 @@ rules, which are distinct from uninstalling software on a machine.
 **REC-1 remains open:** a reviewed manual HQ-loss recovery/re-certification/fencing
 procedure and disaster-recovery evidence are required before production recovery
 claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
-See [review decisions](../design/standalone-v1-review-decisions.md).
 
 The server and installer document the supported OS and architecture matrix,
 minimum versions and Linux service prerequisites. The host's credential custody on

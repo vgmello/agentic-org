@@ -97,8 +97,6 @@ employees; a built-in HR agent is not exempt from the employee constraints.
   ([ADR-0007](0007-hq-creation-escrow.md), [ADR-0011](0011-protected-recovery-delivery.md)).
   Manual recovery after losing HQ is REC-1 in the
   [installation UX](../specs/server-installation-and-access-ux.md).
-- The [review decisions](../design/standalone-v1-review-decisions.md) map each
-  review item to its acceptance evidence.
 
 ## Consequences
 
@@ -109,10 +107,8 @@ continues. Named instances share installed release payloads, with a per-instance
 version pin. Repository transport for cross-office coding is a separate
 dependency.
 
-The [UX requirements](../specs/server-installation-and-access-ux.md),
-[implementation design](../design/standalone-server.md) and
-[removal inventory](../design/standalone-server-removal-inventory.md) define the
-scope and evidence.
+The [UX requirements](../specs/server-installation-and-access-ux.md) and the
+[implementation design](../design/standalone-server.md) define the scope and evidence.
 
 ## Not in v1
 
