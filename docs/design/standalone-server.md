@@ -722,7 +722,7 @@ reservation: account/fingerprint, normalized name and explicit slug, exact prepa
 UUIDv7 ID plan, owner security member, opaque recovery handle, nullable office-key
 fingerprint, and linked/completion status. Its replay window uses operation ULID
 time plus 30 days; unfinished reservations and their custody are never pruned as
-completed receipts. Schema-1 rows retain their identities and semantics.
+completed receipts.
 
 Credential staging precedes the reservation and is bound to its account,
 fingerprint and exact prepared IDs. A key-pending reservation may finish an

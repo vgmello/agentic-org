@@ -20,10 +20,9 @@ Revision 14 retains the deferred model-policy requirements below; revision 13 re
 [16](../design/organization-data/16-recovery-and-office-continuity.md) and
 [17](../design/organization-data/17-budgets-and-controls.md).
 The selected target is explicit execution; automatic run modes/schedules, native
-delegates and semantic memory remain earlier UX proposals. No runtime engine,
-public wire command or migration is implemented by this spec. Existing v1
-run_mode/schedule fields retain compatibility behavior and must be staged on
-import without inventing a selected scheduling schema. See the
+delegates and semantic memory remain earlier UX proposals. No runtime engine
+or public wire command is implemented by this spec. The run_mode/schedule
+fields in the code today are not a selected scheduling schema. See the
 [authority map](../design/documentation-authority.md).
 
 ## The request (the user, 2026-11-08)
@@ -116,7 +115,7 @@ selected and implemented.
 
 The proposed editor would appear at Hire Review and profile › Settings › **How it
 runs** (a slide-over). Keep unavailable controls out of the current hiring flow;
-there is no selected automatic On-call default for imported employees:
+there is no selected automatic On-call default:
 
 ```
  How HR lead runs
@@ -202,8 +201,7 @@ Fast/Balanced/Frontier tiers, exact pinning, neutral efforts and presets need a 
 
 Named helpers, escalation recording, per-slot price hints, activity-based estimates and Main/Helpers/Reviews cost breakdowns need selected runtime/helper/accounting evidence. Until then, show them unavailable rather than a functional four-slot editor or estimate. Any future implementation must retain the one-open-turn/main-process exclusion, shared permits, actual consumer attribution, aggregate/component deduplication and cost visibility. Revisioned changes apply to the next admitted turn, never mutate its frozen input. Target checks must prove unavailable models launch nothing and no role/model setting installs helper tools or exposes credentials.
 
-These retained earlier answers document the deferred proposal and legacy v1
-compatibility. A25/A26 do not authorize a target scheduler, automatic fresh-start
+These retained earlier answers document the deferred proposal. A25/A26 do not authorize a target scheduler, automatic fresh-start
 recovery or embedding execution in employee identity. A28 cleanup applies only to
 safe throwaway inputs; task workspaces survive handoff/run end. A108 is a deferred
 one-off display/counter proposal, not a selected T-/R- numbering change.

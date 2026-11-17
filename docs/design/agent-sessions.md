@@ -11,7 +11,7 @@ Use the [authority map](documentation-authority.md) for precedence.
 
 This document retains the runtime research, adapter restrictions and security
 validation from revisions 3.2–3.7. Exact `work.git`, instance-home, API v1 and native
-CLI examples are labeled compatibility evidence where retained. They are not a
+CLI examples are labeled as evidence where retained. They are not a
 second target layout or a claim of implemented launches. The earlier complete
 proposal is available in [the pre-reconciliation revision](https://github.com/vgmello/agentic-org/blob/c6e520a36c4dc7c738c68915fac5e7d5d1cbe804/docs/design/agent-sessions.md).
 Research fixtures are in [agent runtimes control](../research/agent-runtimes-control.md).
@@ -28,11 +28,10 @@ The macOS Keychain/sandbox evidence below does not establish Linux adapter readi
 
 ### Managed home contract (standalone v1)
 
-The following is the earlier standalone v2 managed-home/retired-field proposal,
-not the selected task tree or a claim that transport v2 has shipped. The selected
-launcher still rejects arbitrary caller-set paths and resolves approved workspace
-keys; any legacy home metadata is provenance only. Preserve versioned callers and
-security checks while the target mapping is implemented.
+The following is the earlier managed-home/retired-field proposal, not the
+selected task tree. The selected launcher still rejects arbitrary caller-set
+paths and resolves approved workspace keys. Keep the security checks while the
+target mapping is implemented.
 
 Resolve every home launch from the configured instance root and stable office/member
 IDs. Preflight validates the actual resolved path and filesystem identity against
@@ -43,10 +42,9 @@ office reports this effective path as status, with its office and freshness (X-0
 in office-host-boundary.md §3), so PROF-4 displays the same home the launcher uses.
 
 Retire `member.update_agent`'s caller-settable `home` and `clear_home`, and refuse
-home overrides in all create/update inputs before filesystem access. The first
-standalone local protocol is API_VERSION 2 under ADR-0001; remove/update affected
-callers and fixtures together. Historical or imported profile paths are provenance
-only, never launch authority. Test forged absolute paths, traversal, `clear_home`,
+home overrides in all create/update inputs before filesystem access. The local
+API version is 1 and changes in place until v1 ships; remove/update affected
+callers and fixtures together. A profile path is never launch authority. Test forged absolute paths, traversal, `clear_home`,
 stale placement, and symlink redirection without creating an external directory.
 
 ## Decisions
@@ -114,7 +112,7 @@ stale placement, and symlink redirection without creating an external directory.
      - Antigravity: `--dangerously-skip-permissions`.
 6. **Isolation by default.** The exact instance/temp/`work.git`/native-auth
    mappings below are the earlier adapter restrictions (revisions 3.3–3.7), retained
-   as compatibility/security evidence. They do not select jobs, memory or user-global
+   as security evidence. They do not select jobs, memory or user-global
    authentication for the target. Re-derive target paths and private connection
    bindings before launch, without relaxing any deny or fail-closed fallback.
    - **Environment allowlist.** The child gets only:
@@ -242,13 +240,13 @@ stale placement, and symlink redirection without creating an external directory.
 A native conversation/session is adapter context; it is neither the logical turn
 nor a process-lifetime Run. UI grouping may retain run history without renaming
 turn/attempt/process identities or introducing a release-style R- prefix. Stable
-IDs and legacy IDs remain valid; new stable entity IDs follow document 06.
+entity IDs follow document 06.
 
 ### Existing adapter contract mapping
 
 The following `org-runtime` types are the existing adapter-side contract, not the
 new durable data schema. Preserve their validation and hash semantics. In
-particular, `spec_hash` is a legacy change detector; it cannot substitute for the
+particular, `spec_hash` is an adapter-side change detector; it cannot substitute for the
 selected SHA-256 input, command, checkpoint and launch evidence. The session runner
 must map admitted routes/bindings and immutable inputs into these types before
 launch. Changes to public types require their normal versioned contract review.
@@ -280,7 +278,7 @@ route/attempt metadata, partial/unavailable counts and immutable corrections.
 The earlier native observations below inform normalization; they do not select
 an aggregate process-lifetime cost counter as the source of truth.
 
-- **Legacy adapter usage per native turn:** tokens in, out and cached; estimated `cost_usd` and model. New ledger events use document 10's integer micro-USD, price versions and explicit completeness; never persist a missing report as zero.
+- **Adapter usage per native turn (code today):** tokens in, out and cached; estimated `cost_usd` and model. New ledger events use document 10's integer micro-USD, price versions and explicit completeness; never persist a missing report as zero.
   - **Claude:** a turn's `result` reports its usage, and so did a turn interrupted during a tool. **A turn aborted mid-stream (`terminal_reason: aborted_streaming`) reported zero usage**, and its `total_cost_usd` didn't grow. So the office keeps a running per-message sum from the turn's `assistant` events, once per API message (one message can arrive as several events with the same `message.id`). It uses that sum when the `result`'s usage is all zero, and when no `result` comes at all (a crash, a kill, a stop mid-turn). Such a turn's cost isn't in `total_cost_usd`, so the cost estimate undercounts it (a known limit). The `assistant` copy of `usage` is the message's start snapshot, so it can undercount output tokens; the final count is in `message_delta`. The Claude adapter launches with `--include-partial-messages` (live text deltas need it too), so it uses `message_delta` where it has one.
   - Codex: `thread/tokenUsage/updated.last`.
   - Otherwise (Antigravity's cumulative `usage`): a baseline at the first report after any start or resume, then deltas.
@@ -365,13 +363,12 @@ warns; it is neither zero nor an automatic stop. Release caps never stop turns.
 
 Automatic always-on/on-call/scheduled behavior, memory extraction and native
 helpers remain earlier UX proposals, individually marked in
-[RUN](../specs/agent-run-modes-ux.md). Existing `AgentProfile.run_mode`, `schedule`
-and `member.set_run_mode` in the v1 wire contract are compatibility fields; they
+[RUN](../specs/agent-run-modes-ux.md). `AgentProfile.run_mode`, `schedule`
+and `member.set_run_mode` exist in the code's wire contract today; they
 do not turn a target employee profile into scheduler state or prove an engine.
 Unknown run modes/statuses still fail closed under the current authentication
-contract. Employee identity remains in profile.md, execution in execution.md,
-placement in HQ authority, and scheduler import must preserve legacy values
-without making up a target scheduling schema.
+contract. Employee identity remains in profile.md, execution in execution.md and
+placement in HQ authority.
 
 Pause records desired/manual state independently of observed cleanup, employment
 active/inactive and budget/security holds. HQ may durably accept Pause while the
@@ -379,13 +376,12 @@ office stop is pending. Reconnect applies the latest revision; stale delivery mu
 not override a later Resume/offboard. Resume clears only its authorized manual
 reason and is not permission to clear any other hold or launch automatically.
 `StopAgent` stops current active/idle processes and creates no future wake policy.
-The existing legacy `agent.stop` → Pause semantics are retained only in the
-versioned transport sketch below; they are not a renaming of `StopAgent`.
+The earlier `agent.stop` → Pause semantics appear only in the transport sketch
+below; they are not a renaming of `StopAgent`.
 
 ### Offboard and remove
-Current v1 `member.offboard`/`member.remove` are legacy transport behavior, not
-permission to delete the selected durable employee identity. Import maps offboarded
-to inactive, retains the handle/stable ID/history and preserves missing timestamps.
+`member.offboard`/`member.remove` in the code today are not permission to delete
+the selected durable employee identity.
 Target removal must archive referenced identity and historical work. On applied
 offboard/removal authority:
 - **Sessions stop at once**, with no checkpoint turn: the agent no longer works for the organization. The live run ends `offboarded`.
@@ -459,7 +455,7 @@ injection into a busy turn. Queue messages for the next permitted boundary;
 paused agents remain paused and hand-run agents read through their own message
 checks. A reply can satisfy an existing wait without creating a second turn.
 The earlier `Session::Send` urgent/NeedsInterrupt behavior below is runtime-port
-compatibility evidence and remains available only through an explicitly
+evidence and remains available only through an explicitly
 admitted control path, not automatically from message priority. Explicit owner
 Interrupt/Stop and mandatory security, offboarding, fencing and recovery stops
 retain their selected authority. A queued message does not admit an automatic
@@ -485,7 +481,7 @@ wake or bypass an independent hold/permit.
   - an offboarded or paused agent, or one whose status is `Unknown`
   - an id or handle that resolves to no member
 
-  So **M-A is closed for office-run agents**, and **forging a person's or the owner's message through the spool is closed for everyone**. A hand-run agent can still spool as another hand-run agent: that's ADR-0003's accepted risk for them. The one-time `import-v1-old-spool` at cutover is a separate path, run by the owner, and imports Phase A's history as it is.
+  So **M-A is closed for office-run agents**, and **forging a person's or the owner's message through the spool is closed for everyone**. A hand-run agent can still spool as another hand-run agent: that's ADR-0003's accepted risk for them.
 - **Presence** (ADR-0003, amended): `busy`, `idle`, `needs_you`, `with_you`, `asleep` (derived) and `offline`. An agent whose connection holds an `agent-os` wait (`msg.wait` or `msg.ask`) counts as **idle**, though the time still counts toward the run's busy time.
 - `agent-os` works the same in both: agents read, answer and defer through it.
 
@@ -687,24 +683,23 @@ A home session has no writable root inside `<office home>` at all, since the hom
 
 ## Contract (org-proto, additive)
 
-### Legacy v1 contract and proposed standalone v2 mapping
+### Earlier wire contract sketches
 
-These exact earlier wire sketches retain security/compatibility obligations.
-They are not new public commands or proof that handlers are implemented. Existing
-code and negotiated transport versions remain the current contract. Target
+These earlier wire sketches carry security obligations. They are not new public
+commands or proof that handlers are implemented. Target
 RunTurn/ResumeTurn/CancelTurn/StopAgent and connection operations are internal
 execution-service contracts in document 11, not automatically aliases for
-agent.wake/run.one_off or this proposed API_VERSION 2. Adapt them with actor-bound
+agent.wake/run.one_off. Adapt them with actor-bound
 operation receipts, expected config/placement/turn revisions, immutable input
-references and explicit unknown-outcome recovery. Keep legacy session-token and
-peer-ancestry enforcement until a reviewed versioned mapping replaces it.
+references and explicit unknown-outcome recovery. Keep session-token and
+peer-ancestry enforcement.
 
-The additive sketches below apply within their negotiated protocol version. ADR-0001 defines the first standalone API_VERSION 2 transition for retired fields/calls and changed authorization/control semantics; the inspected source still declares version 1. HTTP `/api/v1` and the private launch protocol have independent versions.
+The local API version is 1 and its contract changes in place until v1 ships ([pre-release rule](organization-data/README.md#no-compatibility-obligations-before-v1-ships)), so retired fields/calls and changed authorization/control semantics need no version step. HTTP `/api/v1` and the private launch protocol have independent versions.
 **Authorization (standalone v1):** the human controls below require an authenticated, authorized principal through HQ; the browser receives no `app_token`. HQ preserves the actor, scope and operation identity when routing to the owning office. Agent-bound connections are refused unless a specific reviewed contract grants a narrowly scoped operation; an office certificate grants no human powers. ADR-0003 §2.1 and its standalone amendment retain per-call role and owner checks. Tests must refuse unauthorized browser, agent and relay callers. **Org commands** (`member.*`, `team.*`, `project.*` and the rest) from agents remain refused unless a row in that authorization table allows one.
 - **Sessions:** where a call takes `session`, it's `"home"` or `{ "task_id": "…" }`.
 - **Agents:**
   - `agent.wake { member_id, session?, prompt? }` → `{ run_id }` (the live run's id when the wake is merged). `session` defaults to `home`.
-  - `agent.stop { member_id }`: Pause via the durable HQ status command and separate office stop acknowledgement (see "Run modes"); the HTTP envelope supplies operation ID and expected member version. This is part of the API_VERSION 2 standalone transition, not an unversioned reinterpretation of a v1 live RPC.
+  - `agent.stop { member_id }`: Pause via the durable HQ status command and separate office stop acknowledgement (see "Run modes"); the HTTP envelope supplies operation ID and expected member version.
   - `agent.interrupt { member_id }`
   - `agent.send { member_id, session?, text, urgent? }`: the owner talks to an agent directly. `session` defaults to `home`.
   - `permission_policy.get { member_id }`, `permission_policy.set { member_id, policy, expected_version }`. `set` refuses an allow rule for a tool that always escalates (`invalid_request`, reason `escalating_tool`) and one whose absolute path pattern reaches managed state (reason `managed_state`); see decision 7.
@@ -784,11 +779,11 @@ future optional persistence. Their automatic services are still unimplemented.
 | `org-office-sessions` (planned integration) | Map admitted immutable input/routes to SessionSpec/LaunchContext, pump pipes/ticks/events and invoke OS control. Preserve token ancestry/security. It runs inside the office worker, not another daemon. | server-dev, River (OS identity) |
 | `agentic-org-office` | Thin composition of supervisor/router/session runner and the one writer/recovery owner. HQ additionally owns shared permits/cooldowns and placement authority. Full runner/coordinator remains implementation work. | server-dev |
 | `org-host` | Host lifecycle, key custody and worker recovery ordering. Never race a live worker's agent ownership or treat in-memory launch inventory as durable placement authority. | River |
-| `crates/org-office-launch` | Existing signed/private launch contract; new child/control/version fields require reviewed compatibility changes. | ada (contract), River |
+| `crates/org-office-launch` | Existing signed/private launch contract; new child/control/version fields require reviewed contract changes. | ada (contract), River |
 | `org-git` | Hardened repository/cache/worktree operations. Target organization registrations and task paths require adapted per-runtime grants; preserve unpushed work through handoff. | River |
 | `org-mailbox`, `agent-os` | Current messaging/directory transport and agent authentication; preserve exact peer/token/spool admission. One-off extensions stay proposed until wired. | Remy |
 | `apps/agentic-org-ui` | Target explicit turn/readiness/attempt/approval and desired-versus-observed stop views with cost scope. Automatic mode/delegate/memory and browser takeover views remain deferred. | app-frontend-dev |
-| `org-proto` | Existing negotiated wire contract; internal execution service shapes are not public aliases until versioned adaptation is implemented. | ada |
+| `org-proto` | The wire contract in the code; internal execution service shapes are not public aliases of it. | ada |
 
 Dependency direction remains office composition → integration → domain/adapter/OS
 ports, and adapters → org-runtime. Domain code must not depend back on its
@@ -811,7 +806,7 @@ explicit turns. Exact legacy path tests must be rerun against the target layout.
 | S1 | `org-runtime` (first version), `org-supervise` and the Claude adapter, with fixture tests and a fake runtime. With the real Claude it runs the open Claude checks above, including: a user line whose body starts with `/` runs no slash command (rev 3.4); `init.tools` holds no disallowed tool under `--tools` and `--disallowedTools`, `init.plugins` only built-ins and `mcp_servers` only the office's, and with `ENABLE_TOOL_SEARCH=false` the office's MCP tools appear in `init.tools` and can be called | River | S0 Claude |
 | S2 | Contract in org-proto, and the ADR-0003 amendments | ada | S0 Claude |
 | S2b | The session token: `SessionAuth` in the messaging library, the token and ancestry on `msg.bind`, one-off binding and its allowed recipients, closing bound connections, capped waits, no spool for office-run agents, and spool ingest that accepts only active hand-run agents | Remy (the messaging owner) | S2 |
-| S2c | Deferred scheduler handler for legacy `member.set_run_mode`; do not create a target schedule schema. Retain current handle/security rules: `run:` and ULID-shaped handles refused for people and agents (`invalid_name`), `owner` and `office` reserved, the owner's display name exempt | server-dev | S2 |
+| S2c | Deferred scheduler handler for the code's `member.set_run_mode`; do not create a target schedule schema. Retain current handle/security rules: `run:` and ULID-shaped handles refused for people and agents (`invalid_name`), `owner` and `office` reserved, the owner's display name exempt | server-dev | S2 |
 | S2d | The `subscribe` filter: agent-session events only to app-bound subscribers, with its test | server-dev | S2 |
 | S2e | The price table for Codex and Antigravity (API prices in US dollars) | codex-dev, alongside phase-1 plan item W14 (costs, time and insights) | S2 |
 | S3a | Office explicit turn/attempt/process runner, frozen input and receipts, binding/discovery readiness, safe checkpoint/recovery, independent holds, `org-office-sessions` and SessionAuth ancestry integration. Automatic trigger queues/switch scheduling remain deferred | server-dev, River (the process table and ancestry walk) | S1, S2, S2b, the HQ office server (server-dev's phase 1 storage + server) |

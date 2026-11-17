@@ -65,7 +65,7 @@ updated_by_id: existing-employee-id
 
 The Markdown body explains the procedure. Standards use the same structural envelope with `kind: standard` and describe required constraints. Current requires an active owner; Draft can be unassigned. Content does not enact an approval or inherited resolution engine.
 
-**Versioned earlier library contract:** `org-process`/`org-docs` parsing helpers use `process`, `name`, `level`, `scope`, `version`, `owner`, `summary`, `applies_to`, statuses active/off/retired, `overrides`, `moments` and `checklist`. Those are not aliases that may be blindly serialized as selected fields. Target adaptation maps identity/key/title/owner/revision/scope explicitly; current→active is only a candidate resolver input mapping, not authority to overwrite selected file status. Off, drift metadata, moments and checklist merge rules need separately selected extension contracts. Preserve existing helper tests until an intentional compatibility change.
+**Versioned earlier library contract:** `org-process`/`org-docs` parsing helpers use `process`, `name`, `level`, `scope`, `version`, `owner`, `summary`, `applies_to`, statuses active/off/retired, `overrides`, `moments` and `checklist`. Those are not aliases that may be blindly serialized as selected fields. Target adaptation maps identity/key/title/owner/revision/scope explicitly; current→active is only a candidate resolver input mapping, not authority to overwrite selected file status. Off, drift metadata, moments and checklist merge rules need separately selected extension contracts. Existing helper tests stay until the helpers are changed.
 
 Retained parser limits for the earlier proposal: key 1–64 ASCII lowercase letters/digits/hyphens starting alphanumeric; summary and applies_to one line ≤200 characters; moment prompt ≤500 characters; checklist ≤50 steps. Invalid metadata names the field and leaves readable content available; a future resolver must visibly exclude invalid content rather than invent rules.
 
@@ -197,7 +197,7 @@ It runs at A54's two points, each in one write transaction with the record it cr
 **Guarded moves** (decision 11). When a task is set to Done (either resolution) while its record is open, or reassigned or unassigned (a reassignment to no one), the office first checks the caller's role and binding (decision 15), then marks the record closing (pushes refused) and, under the repository's lock, fetches the integration branch (a failed fetch is `unavailable`) and force-copies the `work.git` branch to `refs/office/task/<b>` and the worktree's HEAD to `refs/office/task-head/<b>` in `mirror.git`. **Own unmerged work** means any of those copies, the recorded `own_tip` or the remote head descends from `base_sha`, differs from it and isn't in the integration branch, or the worktree has uncommitted changes (untracked files that aren't ignored included). A missing branch, an unreadable HEAD or a failed copy counts as own work. So does a copy that neither descends from `base_sha` nor is in the integration branch (a reset onto another branch's history), while a missing `own_tip` or remote head (none yet) doesn't (ruled 2026-11-13: ada). So a reset or a detached HEAD hides nothing; work only in `git stash` or on another local branch is a residual. The record is merged instead only if `own_tip` is in the integration branch and no copy has work beyond it.
 - **Sessions** (decided 2026-11-08), for every caller: the office answers first. A refusal clears closing and ends nothing; an accepted move ends the task's sessions gracefully after the answer. This is safe because the push freeze keeps the remote head still, the copies are refs only the office writes, and commits made after the copy are caught by §4.5's local checks.
 - **Re-check.** The record's version, `own_tip`, the remote head and the stored copy shas go into the work write, which refuses (`conflict`) if any changed. The owner's cascades that unassign or close tasks (offboarding, `work.delete`, a retired feature's tasks) are guarded moves by the owner. Uncommitted work now blocks the assignee's own Done (W7 open question 2).
-- With own unmerged work, the move needs a project lead (not the assignee) or the owner, also on the owner's own task; a lead who is the assignee counts as the assignee (ruled 2026-11-13: ada): from the assignee it's `one_branch_open`, naming the branch; from anyone else, `not_authorized`. On confirmed closure, preserve/archive the branch before closure cleanup (§4.5). On reassignment, record the full old/new assignment pair atomically with expected revision and preserve the worktree/branches; require a verified workspace transfer before any replacement process starts. The earlier helper archiving every guarded move is legacy behavior requiring adaptation, not the selected handoff rule.
+- With own unmerged work, the move needs a project lead (not the assignee) or the owner, also on the owner's own task; a lead who is the assignee counts as the assignee (ruled 2026-11-13: ada): from the assignee it's `one_branch_open`, naming the branch; from anyone else, `not_authorized`. On confirmed closure, preserve/archive the branch before closure cleanup (§4.5). On reassignment, record the full old/new assignment pair atomically with expected revision and preserve the worktree/branches; require a verified workspace transfer before any replacement process starts. The earlier helper archives on every guarded move; that is the helper's behavior, not the selected handoff rule.
 - With no own work, an authorized revision-checked assignment can proceed while retaining the task workspace. Only a separately confirmed closure enters archive/merge cleanup.
 
 These permission checks, and those of §4.3, amend W7 decision 8 ("no permissions in phase 1") for these calls only. A non-assignee's guarded move, a grant and a mark need a trusted binding (decision 15).
@@ -230,7 +230,7 @@ Process files are docs written with W7's write path (office-made `docs/…` bran
 
 **Approval** (spec decisions 8, 10, 11). `process.approve` and `process.reject` name the changed file's doc id and the exact branch commit the approver saw; a moved branch is `conflict`, and a later save voids an approval. The caller is the level's approver, on a trusted binding (decision 15), and none of the change's authors (everyone who saved on the branch), except the owner. *Interim (A62):* an approved handbook branch is merged by the office with a real merge, since nothing else can reach the handbook; if it doesn't merge cleanly, it's `conflict` and re-proposed. A project branch's approval is recorded, and the merge flow merges it (A62). Retro items are approved by the owner's approval of the retro (spec decision 10).
 
-**Version.** Selected files advance `revision`; the older protocol uses `version: <base> + 1` as a compatibility input, not a second authored counter; if another change merged first, the branch needs a new save and approval.
+**Version.** Selected files advance `revision`; the older protocol uses `version: <base> + 1`, which is not a second authored counter; if another change merged first, the branch needs a new save and approval.
 
 **Drift fixes** (PROC-9): **Keep my override** rewrites `overrides` to the parent's version; **Take the new version** sets `status: retired`; **Edit**, **Fix** and **Rename…** are ordinary changes for the level's approver.
 
@@ -238,8 +238,8 @@ Process files are docs written with W7's write path (office-made `docs/…` bran
 
 ## 6. The contract (additive)
 
-**Versioned legacy protocol proposal, not target wire commands.** Check org-proto support before claiming availability. Target commands must use selected document identity/scope/revision and organization repository publication; repository-specific branch operations need explicit target IDs. Private-layer access, approval receipts and durable branch/exception history require separate design.
-A new module, `crates/org-proto/src/process.rs`. The historical sketch was additive under API_VERSION 1; the first standalone release uses local API_VERSION 2 under ADR-0001, with additive evolution within that version. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
+**Earlier protocol proposal, not target wire commands.** Check org-proto support before claiming availability. Target commands must use selected document identity/scope/revision and organization repository publication; repository-specific branch operations need explicit target IDs. Private-layer access, approval receipts and durable branch/exception history require separate design.
+A new module, `crates/org-proto/src/process.rs`. The local API version is 1 and its contract changes in place until v1 ships. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
 
 `For`: `current` (default) · `none` (O ⊕ G) · `project { project_id }` · `item { item }`.
 
@@ -267,7 +267,7 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 
 **Errors.** One new code, **`one_branch_open`**; its message names the branch, task and stage, and `work.branch_state` gives them as data. Reused: `invalid_request`, `already_exists`, `not_found`, `not_authorized`, `conflict`, `unavailable` (reasons `handbook_unreachable`, `repository_busy`, `integration_branch_missing`, `forwarded_to_owner`, `sealed` and `private_only_adds` on `ApiError.reason`, which the agent-sessions contract adds; R1 and R2 depend on that field landing in `org-proto` first).
 
-**Obsolete organization-data sketch (retained for compatibility review only).** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
+**Obsolete organization-data sketch (retained for review only).** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
 
 ## 7. Where the code lives
 
@@ -283,7 +283,7 @@ One new library, three stable-ward dependencies, no cycle.
 
 ## 8. Phases
 
-Every R phase is deferred product integration/earlier planning, not a selected rollout or proof that storing the data implements its engine. Preserve existing helper code/tests while designing explicit target adapters.
+Every R phase is deferred product integration/earlier planning, not a selected rollout or proof that storing the data implements its engine. Existing helper code/tests stay until the target design replaces them.
 | Phase | What | Owners |
 | --- | --- | --- |
 | **R1** | The contract (§6). `org-process` with its tests (Appendix C). Needs `org-docs`' parser first (A70). | ada; `org-process` owner |
@@ -302,19 +302,19 @@ Each step: its own branch, an independent review, the reviewer's READY, a merge 
 - A65 / A66 · Assignment, office placement and workspace transfer must preserve task work/history and execution fencing; caches cannot be the accepted-write authority.
 - A68 / A71 · Contributor-chain conflict resolution remains open. One owner team is required; no sibling/project edit can defeat an explicit applicable ancestor prohibition.
 - A69 · Private process storage/access is unselected; do not infer owner read access to author-only private task notes.
-- A70 · Existing parser helpers must be adapted through explicit selected-envelope mappings, preserving legacy IDs/tests.
+- A70 · Existing parser helpers are changed to the selected envelope.
 - A72 · Import/direct Git publication validation and approval provenance remain design work; invalid authored content must be visible without granting powers.
 - U25–U28 · Earlier UX preferences remain proposal context. They do not select process/branch/autonomy engines or override selected structure.
 
 ## Appendix A. Migration
 
-**Deferred legacy migration sketch.** No backfill or data move is authorized/enacted by this document. Preserve stable IDs and evidence, and preview exact mappings before any future migration.
+**Deferred sketch.** No backfill or data move is authorized/enacted by this document.
 - **R2 backfill.** Records come from each task's `branch`: `base_sha` is its merge base with the integration branch, `own_tip` its tip when not in the integration branch. Merged when the tip is in the integration branch and the task is Done · Completed; archived (with its tag) for a cancelled or deleted task, or a closed one with no own work; open otherwise. An existing `integration_branch` with a reserved prefix goes to the owner's Needs you. A squash-merged Done task shows as stuck, for **Mark merged…**.
 - **Software repository documentation remains here.** Earlier plans to move branch-and-merge.md into a handbook are superseded for selected storage. A future explicit organization import may map generic/project-specific content to selected scoped process records; this documentation reconciliation moves no files and changes no AGENTS.md rules.
 
 ## Appendix B. The CLI (PROC-8)
 
-**Deferred legacy CLI proposal:** these agent-os command names are not claims of implemented agent-os entry points.
+**Deferred earlier CLI proposal:** these agent-os command names are not claims of implemented agent-os entry points.
 `process list` is `process.effective` (`--level`: `process.view`); `why`, `show`, `ack`, `approve` and `reject` are their calls. `new`, `override`, `off`, `edit`, `rename`, `keep` and `take-parent` build the content and send it with `process.save` (handbook) or `doc.save` (project). `new --private "<name>"` slugs the key from the name, with a clash check, as for doc keys. `task allow-second-branch` and `task mark-merged` are the work calls.
 
 ## Appendix C. Tests that prove the rules

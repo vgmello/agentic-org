@@ -13,7 +13,7 @@ builds_on: [work-items-ux, our-org-in-the-app]
 
 # Spec · Decisions, evaluations, designs and tech debt (UX)
 
-Revision 12 reconciles authored knowledge with [project documents](../design/organization-data/02-project-structure.md), [tasks/features and retained shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This is a UX proposal over selected target data, not implementation of commands, approval engines or a migration. The [authority map](../design/documentation-authority.md) distinguishes current contracts and deferred work.
+Revision 12 reconciles authored knowledge with [project documents](../design/organization-data/02-project-structure.md), [tasks/features and retained shortcut provenance](../design/organization-data/03-features-and-work.md), [identity](../design/organization-data/06-identity-and-numbering.md), [record contracts](../design/organization-data/08-record-contracts.md) and [release content](../design/organization-data/09-release-content-and-flags.md). This is a UX proposal over selected target data, not implementation of commands or approval engines. The [authority map](../design/documentation-authority.md) distinguishes current contracts and deferred work.
 
 ## The request (the user, 2026-11-08)
 
@@ -96,7 +96,7 @@ The earlier “persistent in Git, transitional only in SQL” rule is obsolete. 
 4. **Proposed specialized workflows:** design review/build stages and evaluation Planned/Running/Done verdicts are body content or deferred metadata, never substitutes for selected document lifecycle.
 5. **Evaluations have a fixed useful shape:** question, options tried, criteria, evidence (numbers, links, commits), verdict and open questions. Record one as `kind: report`; link it from a decision's evidence.
 6. **Why is a link on everything.** Tasks of every type, commits, files and documents can expose decisions/designs/reports behind them. Authored `relates_to` edges carry stable source/target IDs; derived task feature membership is not duplicated as authored `implements` edges.
-7. **Deferred debt subsystem:** the earlier DEBT records, payment states, category views and automation below remain a proposal. Selected task details share task identity/revision and are saved atomically with its activity event. They preserve definition-of-done, branch, done-anyway evidence, reproduction/expected/steps/environment, closure/reopen/duplicate/merge context, separate same-project affects_feature_id, request content/routing/outcome, draft IDs and proposal estimates. Suggested triager/verifier fields are suggestions, not assignments/authority. Selected `details.shortcut` preserves `{type: none}` or `{type: debt, ids: [...]}` and imported debt IDs without creating a debt table/kind/counter. A selected decision/report can already explain a shortcut; it must not silently acquire the proposed debt schema.
+7. **Deferred debt subsystem:** the earlier DEBT records, payment states, category views and automation below remain a proposal. Selected task details share task identity/revision and are saved atomically with its activity event. They preserve definition-of-done, branch, done-anyway evidence, reproduction/expected/steps/environment, closure/reopen/duplicate/merge context, separate same-project affects_feature_id, request content/routing/outcome, draft IDs and proposal estimates. Suggested triager/verifier fields are suggestions, not assignments/authority. Selected `details.shortcut` holds `{type: none}` or `{type: debt, ids: [...]}` without creating a debt table/kind/counter. A selected decision/report can already explain a shortcut; it must not silently acquire the proposed debt schema.
 8. **Deferred capture workflow:** capture at the shortcut, a review finding, a TODO or a decision; one sentence can begin a draft. Prompts/scans create nothing without explicit acceptance.
 9. **Debt is never shaming.** A shortcut records a trade-off, who took it and why. Area grouping and automated payback/Undo are individually deferred.
 10. **Import our history deliberately.** This repository's software `docs/` remains its own source documentation. Importing knowledge into an organization is an explicit copy/mapping with stable-ID provenance, not a request to move this repository's files now. Old v0 decisions retain distinct identities even when display numbers collide.
@@ -222,7 +222,7 @@ links: []
 
 ### 3.1 The agent's side: `agent-os doc` (C16)
 
-**Deferred legacy CLI proposal.** These are earlier command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
+**Deferred earlier CLI proposal.** These are earlier command sketches, not available `agent-os` commands or a new wire contract. Their path/branch output requires adaptation to organization Git and selected scope; `--here` cannot put canonical metadata in an arbitrary code worktree.
 
 The retained command words below describe the earlier specialized CLI, including its unsupported `adr` kind/accepted status and same-task-branch convenience; they are historical syntax examples only. Target adaptation must use the selected kind/lifecycle envelope, stable ID/derived organization-Git path, optional display key, admitted attribution and explicit publication result. No next-number allocation or editable stable-ID filename carries forward. `--here`/debt convenience needs an explicit cross-repository staging contract, not a canonical file in a code worktree:
 
@@ -309,7 +309,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 ### 6.1 Known limitations and exceptions (docs in the repository)
 
-**Deferred specialized kinds/lifecycle.** The legacy `docs/limitations/` and `docs/exceptions/` examples below describe earlier extension templates only. Selected feature limitations belong in `feature.md`; project-wide findings may use a report and rule rationale a decision. No limitation/exception counters, area model, approval or expiration engine are selected.
+**Deferred specialized kinds/lifecycle.** The earlier `docs/limitations/` and `docs/exceptions/` examples below describe earlier extension templates only. Selected feature limitations belong in `feature.md`; project-wide findings may use a report and rule rationale a decision. No limitation/exception counters, area model, approval or expiration engine are selected.
 
 **Known limitation** (`docs/limitations/0003-<slug>.md`, `LIM-0003`): what the product doesn't do or doesn't handle, so nobody reports it as a bug or rediscovers it.
 - Front matter: `kind: limitation` · `id` · `title` ("Offices can't sync while HQ is unreachable for more than 30 days") · `status: current | lifted` · `scope` (area or feature) · `since` (version or date) · `because: [ADR-…]` · `lifted_by` (task or version, when lifted) · `debt: [DEBT-…]` (when it's also debt).
@@ -324,7 +324,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 ### 6.2 Agent guidance: the prompts that steer agents (rev 5, the user)
 
-**Deferred configurable guidance engine.** Moment storage, scheduling/wakes, answers and process/checklist composition below remain a proposal. Legacy `docs/.guidance/` is not a selected organization-data path; durable configuration schema, migration and privacy must be decided before implementation.
+**Deferred configurable guidance engine.** Moment storage, scheduling/wakes, answers and process/checklist composition below remain a proposal. The earlier `docs/.guidance/` is not a selected organization-data path; durable configuration schema and privacy must be decided before implementation.
 
 The tool helps agents work the way the organization wants by **prompting them at set moments**, like the shortcut question. These prompts are a product feature, and the owner shapes them to their own way of working.
 
@@ -379,7 +379,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Tech debt (DBT)**
 - DBT-1 · **Deferred debt workflow:** Record debt needs only "What we did". Missing fields show "Needs details" on the item.
 - DBT-2 · **Deferred debt workflow:** Marking a task Done asks "Did you take a shortcut?", and Yes opens Record debt prefilled with the task, branch and commits.
-- DBT-3 · **Deferred debt schema:** the earlier docs/debt template and DEBT reference proposal is not selected. Task shortcut provenance retains imported debt IDs; area membership requires a separate decision.
+- DBT-3 · **Deferred debt schema:** the earlier docs/debt template and DEBT reference proposal is not selected. Area membership requires a separate decision.
 - DBT-4 · **Deferred debt workflow:** The Debt tab groups by area, sorts by cost then effort, and shows the summary bar with open, High, quick wins and paid this week.
 - DBT-5 · **Deferred debt workflow:** *(rev 8)* A debt doc becomes Planned when a payback task is linked and Paid when all of them are Done and at least one is Done · Completed, each written to the front matter in a commit on a docs branch (never the default branch), with an activity entry and Undo. While the debt doc isn't merged into the integration branch yet, it shows "Planned once merged", and the status is written after it lands.
 - DBT-6 · **Deferred debt workflow:** Accept needs a reason and can link the ADR that accepts it.
@@ -395,10 +395,10 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 
 **Authoring through the tool (AUTH)**
 - AUTH-1 · Tool authoring writes selected documents at canonical organization-Git scopes with stable IDs, required metadata and admitted attribution; reviewed branch publication remains a proposal. Code-task --here convenience requires explicit cross-repository adaptation.
-- AUTH-2 · **Deferred specialized editor/approval workflow:** a future status edit uses only Draft/Current/Deprecated and selected revision/attribution. Decision acceptance/rejection semantics stay in explicit body evidence or a separately selected extension; legacy accepted/decided front-matter writes are superseded.
+- AUTH-2 · **Deferred specialized editor/approval workflow:** a future status edit uses only Draft/Current/Deprecated and selected revision/attribution. Decision acceptance/rejection semantics stay in explicit body evidence or a separately selected extension; the earlier accepted/decided front-matter writes are superseded.
 - AUTH-3 · Canonical files changed directly in organization Git are validated/indexed from its state branch without losing content, stable identity or provenance. Code-repository files are import sources, not automatically canonical.
 - AUTH-4 · Proposed activity records link creation/content/link changes to the admitted actor and stable document ID, displaying its optional key/title; no document number counter or editable identity is assumed. Specialized approval/supersede activity remains deferred.
-- AUTH-5 · **Deferred CLI adaptation:** list/show use the same selected kinds, optional keys, stable identities, lifecycle and scope as the app; legacy numbered ADR/EVAL kinds/statuses are not target fields.
+- AUTH-5 · **Deferred CLI adaptation:** list/show use the same selected kinds, optional keys, stable identities, lifecycle and scope as the app; the earlier numbered ADR/EVAL kinds/statuses are not target fields.
 - AUTH-6 · **Deferred debt capture:** a one-sentence shortcut can prefill task/branch/commit evidence; preserve task details.shortcut tagged IDs. Canonical knowledge cannot silently be placed on a code task branch.
 - AUTH-7 · Commit co-authors and from-git fields are displayed as evidence without granting authority. Feature lifecycle facts remain in feature.md; progress derives from task membership and valid file edits are not overwritten from office-only state.
 
@@ -428,14 +428,14 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - TPL-5 · **Deferred specialized editor/approval workflow:** Add a doc kind creates a new kind with its folder and fields, which shows as a group in the Docs tab. Built-in kinds can't be deleted.
 - TPL-6 · **Deferred specialized editor/approval workflow:** Changing a template never rewrites existing docs. New required fields show "Missing: <field>" with Fill in, and removed fields show under "Other fields".
 - TPL-7 · Moving or indexing a doc with a bold status line offers Add front matter with a per-file diff, Apply or Skip.
-- TPL-8 · Every selected document has an immutable stable ID separate from its optional display key. New IDs use UUIDv7; imported stable IDs remain. Title/key changes preserve stable-ID filenames and relationships.
+- TPL-8 · Every selected document has an immutable stable ID separate from its optional display key. IDs use UUIDv7. Title/key changes preserve stable-ID filenames and relationships.
 
 ## 9. Open questions
 
 - C11 / TPL-7 · Front-matter import remains useful; map to selected fields and show a per-file diff, never fabricate provenance.
 - C17 / TPL-4–6 · Deferred custom schema/template storage and extensibility; earlier docs/.templates locations are not selected organization-data paths.
-- C12 / C18 / AUTH-6 · Deferred debt subsystem and cross-repository capture/recovery. Preserve tagged shortcut IDs without inventing debt tables or changing old IDs.
-- C16 · Legacy doc/debt CLI command proposal needs a supported agent-os contract and selected organization-Git scope mapping before availability is claimed.
+- C12 / C18 / AUTH-6 · Deferred debt subsystem and cross-repository capture/recovery. Preserve tagged shortcut IDs without inventing debt tables.
+- C16 · The earlier doc/debt CLI command proposal needs a supported agent-os contract and selected organization-Git scope mapping before availability is claimed.
 - C13 / A36 · Organization knowledge uses state_branch; required integration_branch belongs to each code-repository association. Reviewed metadata publication still needs implementation design.
 - A18 / A19 / A23 / A24 · Historical software docs remain import sources. Selected organization files use stable-ID paths, while protected operational records remain outside shared Git.
 - A20 / U14 · Record useful rationale and shortcuts; automatic guidance/capture is independently deferred.

@@ -53,9 +53,9 @@ RPC method or managed storage path.
 | Task workspaces | Employee/team hierarchy from [document 04](organization-data/04-agent-structure.md#runtime-location), project/task/repository stable IDs; retained through handoff until closure, with explicit safe migration when placement changes. |
 
 The current worker's encrypted `org.db`/`office.db` still contain authoritative
-records and machine credentials. They are **not currently disposable target
-projections**. Adopting the target requires lossless source extraction, verified
-restore and separately reviewed paths/sandbox policies. Preserve Git-metadata,
+records and machine credentials. They are **not disposable projections in the
+code today**; they become so only when the store writes the selected durable
+sources, with verified restore and separately reviewed paths/sandbox policies. Preserve Git-metadata,
 credential, other-task and managed-state denies; do not relabel an old allowlist.
 Instance roots, service names, sockets and orphan-key sweeps must be scoped without
 rewriting the existing credential service/signature identifiers. Cross-instance
@@ -64,8 +64,8 @@ catalog loss is never proof of orphaned credentials.
 ### Additive HQ creation context (REC-ESC-1)
 
 Launch v3 create has an optional `hq_creation` object with exactly
-`{version:1,operation_id:<canonical ULID>,escrow_profile:1,public_root:<absolute canonical state root>}`. Omission preserves
-legacy create semantics and does not claim selected bootstrap readiness. A
+`{version:1,operation_id:<canonical ULID>,escrow_profile:1,public_root:<absolute canonical state root>}`. In the code today the object is optional and a create without it is the earlier
+create; under the decision of 2026-11-17 every create carries it (FC-142). A
 protected host provisioning operation supplies this context, its stable
 `owner_member_id` security principal, and the retained recovery code over the
 existing post-admission handoff. Neither this object nor assignment grants
@@ -79,8 +79,7 @@ from replication and selected journal capture. Interrupted preparation resumes
 only the identical intent; it verifies retained material rather than generating
 again. An empty version-zero database from interrupted initialization may finish;
 foreign schemas, missing committed material or changed input remain intact and
-require recovery. Existing legacy office identities and create behavior remain
-unchanged. This local intent does not establish protected writer custody or
+require recovery. This local intent does not establish protected writer custody or
 copy/restore authority. Those must be verified by the host before selected
 readiness. See [ADR-0007](../adr/0007-hq-creation-escrow.md).
 
@@ -141,25 +140,23 @@ connection available.
 > kept, and the check that an HQ create carries its creation context applies to every
 > create (FC-142).
 
-New selected organization and office entities use canonical lowercase UUIDv7
-text, including hyphens. Existing IDs retain their exact spelling. Launch-v3
-adds the explicit optional `id_profile: "selected_v1"` to its office context;
-absence retains its original alphanumeric-ID validator and bytes. The selected
-profile requires UUIDv7 office/organization IDs and explicit HQ creation context
-on create. Instance IDs, security-member IDs and operation IDs keep their own
-existing contracts. This does not confer writer or owner authority.
+**What the code does today (replaced by the decision above).** Organization and
+office entities created under the selected profile use canonical lowercase UUIDv7
+text, including hyphens. Launch-v3 adds the explicit optional
+`id_profile: "selected_v1"` to its office context; without it the code applies
+its older alphanumeric-ID validator. The selected profile requires UUIDv7
+office/organization IDs and explicit HQ creation context on create. The profile
+does not cover instance IDs, security-member IDs or operation IDs. This does not
+confer writer or owner authority.
 
 The plaintext runtime marker uses `office.json` version 2 for this profile,
-requiring UUIDv7 office and organization IDs. Version 1 stays unchanged; readers
-retain the stored version and never rewrite an existing version-1 identity into
-version 2. The safe storage-path validator accepts the union of existing plain
-IDs and canonical UUIDv7 solely as a single path component. Legacy command and
-wire validators retain their narrower rules. Host custody/catalog and worker
+requiring UUIDv7 office and organization IDs; the code also still reads
+version 1. The safe storage-path validator accepts both the older plain
+IDs and canonical UUIDv7, solely as a single path component, and the command and
+wire validators keep their narrower rules. Host custody/catalog and worker
 open/discard paths use the shared safe storage validator; no arbitrary opaque ID
-is interpolated into a path. Other incompatible imported IDs remain staged.
-Socket handles remain separately bounded and collision-checked. Version 2 is
-persistent compatibility state, not permission to run an older executable over
-selected acknowledged data.
+is interpolated into a path.
+Socket handles remain separately bounded and collision-checked.
 
 ### Selected provisioning port (implementation in progress)
 
@@ -195,8 +192,8 @@ review. The executables had other names at that review; today they are
 `agentic-org-office` and `agentic-org`, and reusable host code is
 `org-host`. `office.json` v1 and launch v2 are independent of organization-data
 `schema_version`/`revision`. No extra slug/repository/home-team fields are added to
-the v2 first line by this documentation change. A reviewed versioned provisioner
-must bridge the full selected create plan and current stored-marker adoption rules
+the v2 first line by this documentation change. A reviewed provisioner
+must carry the full selected create plan and current stored-marker adoption rules
 before enabling target creation. Initial setup and production web handoff remain
 unavailable; launch v3 and satellite create remain separate pending contracts.
 
@@ -240,8 +237,8 @@ A registered host with an opened protected account registry uses launch v3 for
 existing office starts. The rendezvous reader must match the admitted child audit
 token (and PID), immediately before any key is sent. The host retains transferred
 descriptors until `fds_received`; unknown receipts, timeout or a broken transfer
-connection close that worker's channel service. Unregistered legacy starts and
-the legacy create/discard contract retain launch v2 during this integration.
+connection close that worker's channel service. In the code today, unregistered starts and
+the earlier create/discard contract still use launch v2.
 This transition does not itself admit selected storage or publish its capability.
 
 On local host-control connections, `office.open_channel` carries its existing
@@ -278,13 +275,13 @@ remains in crates/org-office-launch.
 ### Phase-1 launch-v2 evidence
 
 The remaining numbered sections record the inspected phase-1 host/worker contract
-and its review constraints, including the macOS app-token caller path. Retain exact
-wire/key/signature values for compatibility and implementation review. The retired
+and its review constraints, including the macOS app-token caller path. Exact
+wire/key/signature values are kept here for implementation review. The retired
 signed-Tauri public caller, account-wide home and bundle-relative installation are
 not target installation requirements; standalone principal grants, scoped instances
 and verified packaged helper admission replace those roles without relaxing custody.
-Where code differs, describe it as implementation evidence and resolve/version the
-contract explicitly; this documentation does not enact a migration or override code.
+Where code differs, describe it as implementation evidence and resolve the
+contract explicitly; this documentation does not override code.
 
 ## 1. Who owns what on disk
 
@@ -595,7 +592,7 @@ first line is `invalid_request`.
     Closing that needs the key handed only to an authenticated reader (e.g. a per-spawn socket
     whose peer audit token must equal the admitted one): a launch-contract and server change.
     Debug builds don't check (their servers are unsigned; logged at startup).
-  - **Historical no-desktop-migration decision:** no compatibility import is required from the undeployed desktop. This does not authorize discarding real local office state, protected source journals, credentials or live spool. Use disposable development fixtures only.
+  - **Historical no-desktop-migration decision:** no compatibility import is required from the undeployed desktop. This does not authorize discarding real local office state, protected source journals or credentials. Use disposable development fixtures only.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,

@@ -80,14 +80,14 @@ Existing OrgSnapshot and positions are reused. The response's opaque resume
 cursor continues exactly after the snapshot position, without a gap or duplicate;
 a raw Position alone is not a browser resume token.
 
-## Selected target adaptation and compatibility
+## Selected target adaptation
 
 ### Selected task assignment capability (additive contract)
 
 ADR-0006 r4 selects `selected_tasks_v1` as a separately negotiated contract. Its
 codecs do not make it available: runtime publication requires verified recovery,
 directory generation, writer admission, host authentication and actual service
-composition. Existing revision-2 routes/validators remain compatible; the web process
+composition. The web process
 contract revision must advance when this capability is wired.
 
 Native `task.set_assignment` takes `{change_id,task_id,command}` on an authenticated
@@ -101,18 +101,20 @@ HTTP `POST /api/v1/organizations/{org}/tasks/{task}/assignment` takes the existi
 command, with `expected_revision` a canonical positive decimal **string** through
 `9223372036854775807`. Decode raw bytes directly into strict object DTOs; never
 collapse duplicate wrapper/scope/command keys through `Value`. Selected IDs are
-opaque, nonempty values resolved by registries; unchanged legacy plain-ID/ULID
-validators are not their policy. Operation IDs keep existing ULID admission rules.
+opaque, nonempty values resolved by registries; the code's plain-ID/ULID
+validators are not their policy. Operation IDs are ULIDs in the code today and
+become UUIDv7 with every other ID (identity contract).
 
 The task namespace also supplies authorized list/detail/history/assignment-target
-reads, task-scoped content-reference chunks, and authenticated adoption staging and
-commit calls. Keep work lookup at `GET /api/v1/operations/work/{id}` with its fixed
+reads and task-scoped content-reference chunks. The adoption staging and commit
+calls of the earlier text are withdrawn with legacy adoption
+([ADR-0010](../adr/0010-legacy-task-adoption.md)). Keep work lookup at `GET /api/v1/operations/work/{id}` with its fixed
 instance/org/office query fields, using the selected scope adapter for selected IDs.
 Completion returns compact revision/event identity, pair and admitting office;
 full revisions are strings. Chunks are <=256 KiB raw and <=1 MiB fully encoded.
-The additive native read adapter is `task.selected.read` with an authenticated
+The native read is `task.selected.read` with an authenticated
 principal and an object query tagged by `kind`: `status`, `list`, `detail`,
-`history`, `targets` or `chunk`. It never changes legacy work reads. Pages contain
+`history`, `targets` or `chunk`. Pages contain
 at most 50 compact cards/references. Queue filters distinguish accountable team,
 assigned team and assigned employee. Snapshot/event content references include
 the authorized task, exact revision, kind, digest and byte length. `chunk` rechecks
@@ -120,15 +122,15 @@ the same task/actor scope and exact reference, returns at most 256 KiB raw bytes
 as hexadecimal (therefore <=512 KiB encoded content), and never accepts a path or
 an unrestricted blob URL. Clients concatenate bytes before UTF-8 decoding.
 Display previews may be shortened explicitly; original source bytes, IDs and
-numeric tokens remain in the referenced content. History coverage comes from
-verified adoption evidence; absence is `unknown`, never invented completeness.
+numeric tokens remain in the referenced content. History coverage that is not
+established is `unknown`, never invented completeness.
 HTTP adapters preserve decimal-string entity revisions in every card/reference.
 The `selected_tasks_v1` capability requires a live verified host admission,
 coherent journal/files, protected owner binding and admitted directory generation;
 field/configuration presence alone does not enable it.
 
-The selected HTTP adapter uses contract revision 3, separately from retained
-revision-2 vectors. `GET /api/v1/organizations/{org}/tasks` takes exact
+The selected HTTP routes use contract revision 3; the revision-2 vectors cover
+the earlier routes. `GET /api/v1/organizations/{org}/tasks` takes exact
 `instance_id`, `office_id`, `kind=status|list`; list additionally takes
 `queue=all|owned|assigned_team|assigned_employee`, an explicit `target_id` for
 non-all queues, optional `after`, and `limit` (1–50). The task path supplies
@@ -153,7 +155,7 @@ assignment fields at its decision barrier and remains part of the protected
 receipt. Earlier receipts without that coverage retain its absence. Selected
 `operation.get {kind:"work",id}` uses `status: committed` with that result, or
 `status: rejected` with `{code,message,current?}` in `refusal`; the selected
-adapter preserves current state rather than reducing it to legacy `ApiError`.
+route returns current state rather than reducing it to the plain `ApiError`.
 Every revision in browser assignment results and lookup refusals is a decimal
 string too. Errors after possible publication are unresolved; clients keep the
 original operation ID for reconciliation.
@@ -191,14 +193,14 @@ available merely because its codec exists. Because nothing has shipped, a route 
 its target is built; no adapter, version negotiation or second DTO is kept. A changed
 route still needs its conformance vectors updated in the same change.
 
-| Published v1 revision 2 surface | Selected target and required adaptation |
+| HTTP v1 revision 2 surface in the code | Selected target |
 | --- | --- |
 | `POST /organizations` with `{name}` | Create also needs explicit slug, remote organization repository registration and state branch, plus valid team references for bootstrap employees. The request is changed in place to the [selected payload](#selected-create-organization-payload); offline validation checks URL/branch and local credential configuration only, keeps the registration remote and marks connectivity/publication unverified until authorized online. The old request cannot fabricate these fields or claim complete target bootstrap. |
-| OrganizationView / OrgSnapshot / `member_id` | Map retained stable member IDs to employee IDs without changing wire spelling. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. Old snapshots must not imply those target fields already exist. |
-| `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Current multi-membership rules remain current wire semantics. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. Preserve unmapped memberships in controlled import staging. |
+| OrganizationView / OrgSnapshot / `member_id` | The code's `member_id` identifies what the target calls an employee. Target employees require one home team, optional role/reporting and separate execution configuration/placement; an authenticated owner account is not inferred from a profile flag. The current snapshot shapes do not carry those target fields. |
+| `team.add_member`, `team.remove_member`, `team.set_title`, `member.move` | Multi-membership is what the code does today. Target mutations set or move one required `home_team_id` atomically, preserve optional home-team title and paths, and require a direct-member lead. Reject a teamless result; do not translate remove-member into a target home-team deletion. |
 | `project.add_team`, `project.remove_team` | Target project requires `owner_team_id` plus optional contributors. Publish a mutation distinguishing transfer of accountability from contributor editing; an old linked-team list does not select an owner or require an Area. Areas remain unselected. |
-| Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. Current command versions/legacy B-/REQ- references cannot be renamed or stripped into selected numbering. |
-| Current ULID operation IDs / plain-ID lookup checks | Preserve current admission and retained IDs. In the target every ID is a UUIDv7, operation IDs included (identity contract); the code's operation IDs are ULIDs today. ID validators, filenames and scoped reference resolvers require explicit versioned adaptation before accepting new IDs through legacy restrictions. |
+| Later work/messaging capabilities | All task types use T- references, required accountable team, optional project and independent nullable assigned team/assignee. An atomic assignment pair requires expected entity revision and durable activity. The code's per-kind B-/REQ- numbering is replaced, not converted. |
+| Current ULID operation IDs / plain-ID lookup checks | In the target every ID is a UUIDv7, operation IDs included (identity contract); the code's operation IDs are ULIDs today. ID validators, filenames and scoped reference resolvers change with it. |
 | Protected domain views and lookup outcomes | Read only authorized projections of protected chat, usage, budget and recovery sources. Private task notes stay author-only in a separate durable DB, with no owner/admin exception or shared receipt disclosing their existence. Never expose raw paths, source envelopes, amounts or private result blobs through a generic SQL or lookup endpoint. |
 
 Readiness and runtime operations must map to document 11's selected profile/model,

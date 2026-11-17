@@ -65,8 +65,8 @@ name, lead appointment or reporting line is inferred from the word HR.
    `agentic-org-office` using its private launch contract. The worker owns its
    stored `office.json` marker. Retain adopt-versus-discard and quarantine rules:
    never discard a committed office after a lost response, nor invent replacement
-   keys. The current launch-v2 first line cannot carry the full target plan; its
-   versioned adaptation and the cross-store durable commit/recovery boundary must
+   keys. The launch-v2 first line in the code cannot carry the full target plan; the
+   launch contract that replaces it and the cross-store durable commit/recovery boundary must
    be implemented before this flow is enabled. Do not add guessed wire fields.
 6. Provision versioned encrypted CA escrow and the same owner recovery code on
    retry. Protected delivery may remain Waiting or Shown, not confirmed while HQ
