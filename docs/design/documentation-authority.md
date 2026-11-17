@@ -54,8 +54,7 @@ in the "What the code does today" section of each design.
 | Processes and standards | [Process design](processes.md), [process UX](../specs/processes-ux.md) | 01 |
 
 Library and CLI READMEs describe the interfaces the code implements. Research
-records in [`docs/research/`](../research/) and audits in
-[`docs/verification/`](../verification/) are dated observations; they are not
+records in [`docs/research/`](../research/) are dated observations; they are not
 rewritten to match a target, and they are not requirements.
 
 ## Relationships at a glance
