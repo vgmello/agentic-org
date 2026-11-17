@@ -12,7 +12,7 @@ builds_on: [offices-and-teams-ux]
 
 [Organization-data 02](../design/organization-data/02-project-structure.md), [03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the fields, sources and assignment and history semantics. The [task ports](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) describe the domain interface. This spec owns what people see.
 
-A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `done`, shown as To do, In progress, Blocked, Cancelled and Done. Workflows specific to one task type (a bug's fix-and-verify cycle, a request's scoping) are [not in v1](#16-not-in-v1); their UI copy is kept there so that v1 does not contradict it.
+A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `done`, shown as To do, In progress, Blocked, Cancelled and Done. A bug's fix-and-verify cycle and a request's scoping are built on these five statuses with history events and task details; no task type has statuses of its own.
 
 ## 0. Decisions in this spec
 
@@ -159,7 +159,9 @@ Create fix task opens capture with the bug context, a valid accountable team and
 
 ### 7.3 Verify, close and reopen
 
-A bug is closed like any task, as Done or Cancelled, with its resolution and reason kept in task details: Duplicate needs a resolvable original and no self-link (`details.duplicate_of_task_id`); Won't fix and Can't reproduce need a reason; reopening needs a note. Status events keep actors, times and reasons. Task deletion keeps tombstone identity, history and the reference; no reference is reused. The fix-and-verify cycle is not in v1.
+A bug is closed like any task, as Done or Cancelled, with its resolution and `closed_reason` kept in task details: Duplicate needs a resolvable original and no self-link (`details.duplicate_of_task_id`); Won't fix and Can't reproduce need a reason; reopening needs a note. Status events keep actors, times and reasons. Task deletion keeps tombstone identity, history and the reference; no reference is reused.
+
+**Fix and verify.** **Mark as fixed** asks what fixed it (a linked fix task, commit or a note) and records a fixed event with actor and time in the bug's history; the bug moves to Done only through the ordinary status change. The original reporter, or the suggested verifier (`details.suggested_verifier_id`, a suggestion, not a grant), is asked to verify: **Fixed** records a verification event; **Still happens** requires a note, records the verification event, moves the bug back to To do or In progress and increments `reopen_count`. The acting verifier is shown separately from the reporter, and the current assignee is never labelled as the historical fixer ([document 12](../design/organization-data/12-task-assignment-and-history.md#reporter-and-resolution-actors)). Linked fix tasks (`fixes` links) show their progress as evidence; their completion never changes the bug by itself. A Critical bug is raised in the owner's Needs you until it is assigned or closed.
 
 ## 8. Areas (withdrawn)
 
@@ -247,7 +249,7 @@ Severity/priority/status always have icon and word. Example screen-reader row: �
 
 ## 14. UX acceptance criteria
 
-Criteria marked "Not in v1" belong to the type-specific workflows of §16.
+Criteria marked "Not in v1" belong to §16.
 
 **Project page (PRJ)**
 
@@ -301,7 +303,7 @@ Criteria marked "Not in v1" belong to the type-specific workflows of §16.
 - TRI-2 · Triage UX confirms available severity/priority and saves a complete desired assigned-team/individual pair atomically at the expected task revision; either or both may be null.
 - TRI-3 · Changing assignment can route work to any active same-organization team/employee without changing accountable team/project or number. An individual need not belong to the assigned team.
 - TRI-4 · Reported severity and detail keep reporter and time provenance separately from current triage values.
-- TRI-5 · Not in v1: Critical bugs raised in the owner's Needs you.
+- TRI-5 · A Critical bug appears in the owner's Needs you until it is assigned or closed; triage alone does not clear it.
 - TRI-6 · A stale assignment revision conflicts and changes neither field; show current and desired pair with actor/time and an explicit retry, preserving the user draft.
 - TRI-7 · Work filters distinguish accountable team, assigned team, individual and reporter.
 - TRI-8 · Withdrawn: there are no areas, so there is no area-lead fallback. Accountable ownership never becomes null.
@@ -312,7 +314,7 @@ Criteria marked "Not in v1" belong to the type-specific workflows of §16.
 - BUG-11 · Group headings show assigned team and severity counts with words, including unset severity; accountable ownership remains visible separately.
 - BUG-12 · Status filters keep recorded values and are remembered per scope.
 - BUG-13 · Grouping by severity, priority, status, accountable or assigned team, assignee or none works and keeps row identity.
-- BUG-14 · Not in v1: a Verify action on fixed bugs. The assignee is never relabelled as the historical fixer.
+- BUG-14 · A bug marked as fixed shows a Verify action to its reporter (or suggested verifier) and keeps the immutable reporter visible; the assignee is never relabelled as the historical fixer.
 - BUG-15 · The empty, no open bugs and no matches states show the copy from Flow 4, with Retry on failures and explicit read-only stale state when disconnected.
 - BUG-16 · Copilot field provenance is visible/accessibly named until edited/kept; suggested severity remains explicit. Retry/Dismiss clears only its panel's stale error, retaining input, Undo draft and manual submission.
 
@@ -320,10 +322,10 @@ Criteria marked "Not in v1" belong to the type-specific workflows of §16.
 
 - FIX-1 · Create fix task retains bug context and valid required accountability; authored fixes points at the stable bug-task ID and inverse fixed_by is derived.
 - FIX-2 · Linked-task progress changes no other record. Not in v1: automatic propagation from fix tasks to the bug, and Undo.
-- FIX-3 · Not in v1: Mark as fixed with an explanation.
-- FIX-4 · Not in v1: verification by the original reporter.
-- FIX-5 · Not in v1: Still happens with a reopen note.
-- FIX-6 · Not in v1: an acting verifier shown separately from the reporter.
+- FIX-3 · Mark as fixed records an explanation (fix task, commit or note), actor and time as a history event; the current assignment does not prove who did the work.
+- FIX-4 · Verification asks the original reporter (or the suggested verifier) Fixed or Still happens, and records a verification event; no notification is claimed before it is delivered.
+- FIX-5 · Still happens requires a note, records actor and time, returns the bug to an open status and increments `reopen_count` once.
+- FIX-6 · The acting verifier is shown separately from the immutable reporter; who may verify is decided by the task service, never by a field.
 - FIX-7 · Closing as Duplicate requires a resolvable original, rejects a self-reference, and keeps navigation and evidence in `details.duplicate_of_task_id`, with same-organization target and cycle validation.
 - FIX-8 · Closing as Won't fix or Can't reproduce requires a kept reason; no notification is claimed before it is delivered.
 - FIX-9 · Reopening requires a note, actor and time and keeps the original history.
@@ -358,7 +360,7 @@ Criteria marked "Not in v1" belong to the type-specific workflows of §16.
 
 - WORK-1 · Work spans projects and projectless teams with type views Tasks, Bugs and Requests, task references, and project, no-project and team filters.
 - WORK-2 · Saved filters distinguish Owned by my team, Assigned to my team, Assigned to me, Reported by me, Blocked and All.
-- WORK-3 · The badge counts owner questions and work blocked on the owner; account ownership does not imply employee assignment.
+- WORK-3 · The badge counts owner questions, bugs waiting for the owner's verification and work blocked on the owner; account ownership does not imply employee assignment.
 - WORK-4 · Every task type displays its type word and icon and its T- reference.
 - WORK-5 · Displayed severity, priority and status have a meaningful icon and word, announced to screen readers. Severity/priority remain separate meta text, with neutral priority icons and no amber except an actual owner blocker; Normal may be omitted on rows/cards. Each row has one work-status signal.
 - WORK-6 · Changes by others appear without a reload and never reorder a list while a menu is open in it.
@@ -386,7 +388,7 @@ Criteria marked "Not in v1" belong to the type-specific workflows of §16.
 
 ## 16. Not in v1
 
-- **Type-specific workflows.** A bug's fix-and-verify cycle: Mark as fixed asks what fixed it; the original reporter verifies (Fixed or Still happens, with a note), the acting verifier shown separately; a Reopened count; Critical bugs raised in Needs you; and automatic propagation from fix tasks. A request's scoping lifecycle (`feature-requests-ux.md`).
+- **Automatic propagation** from fix tasks to the bug they fix.
 - **Advanced checklists:** completion gates with Mark done anyway, promotion of a step to a task, named templates and steps derived from processes.
 - **Undo**, automatic feature and decision propagation, scheduling and memory.
 - **Attachments**, until attachment storage exists.

@@ -8,7 +8,7 @@ and Linux, including a container ([ADR-0017](0017-linux-and-container-hosting.md
 
 The owner wants a service installable from one command, operating as HQ or
 satellite offices, with the application served by HQ over HTTP. People use a
-browser; there is no desktop application.
+browser; there is no native application.
 
 ## Decisions
 
@@ -92,10 +92,9 @@ employees; a built-in HR agent is not exempt from the employee constraints.
 - The local `org-proto` API, HTTP `/api/v1`, the launch contract and the sync
   contract are independent contracts that change in place until v1 ships. Managed
   launch paths come only from instance, office and member identity.
-- Pause commits durably at HQ while a disconnected office's stop is pending. A new
-  goal change for an office known to be offline is rejected before admission; an
+- Pause commits durably at HQ while a disconnected office's stop is pending; an
   already-forwarded uncertain outcome stays Pending confirmation by operation ID.
-- HR approval precedes provisioning.
+- A person's approval precedes provisioning a hire.
 - Creation includes CA escrow, recovery-code provisioning and protected delivery
   ([ADR-0007](0007-hq-creation-escrow.md), [ADR-0011](0011-protected-recovery-delivery.md)).
   Manual recovery after losing HQ is REC-1 in the
@@ -115,5 +114,5 @@ The [UX requirements](../specs/server-installation-and-access-ux.md) and the
 
 ## Not in v1
 
-A desktop application, tray management, global shortcuts and native notifications.
+A native application, tray management, global shortcuts and native notifications.
 Automatic HQ promotion.

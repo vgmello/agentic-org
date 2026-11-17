@@ -69,7 +69,7 @@ Follow approved processes and enforced permission policy.
 
 ## 2. Flow 2 · What the agent reads
 
-An agent's instructions come from its execution configuration (document 11) and the processes that apply to its task ([processes design](../design/processes.md)). A referenced role alone does not authorize or start anything.
+The office composes an agent's instructions ([session design](../design/agent-sessions.md), decision 8) from its identity and role (`profile.md`, including the referenced role's body), its prompt and tools (`execution.md`), the turn's explicit objective, the effective processes and standards, built-in `agent-os` help, and the project's instruction files from the verified integration-branch cache. A referenced role grants no authority and starts nothing. Composing a per-agent role override is not in v1.
 
 - **Hire:** when the HR lead can't run, the requester can leave `role_id` unset or select an existing role (`our-org-in-the-app.md` §7). The Hire review shows the role (name and revision) and any execution suggestions for the owner to confirm; suggestions are not role fields.
 
@@ -81,7 +81,7 @@ An agent's instructions come from its execution configuration (document 11) and 
 - ROLE-4 · Not in v1: composing role and override text with processes into an agent's instructions with per-line provenance.
 - ROLE-5 · The roles view lists role name, revision and employee count and shows body, provenance and history. Labels use words plus icons.
 - ROLE-6 · Not in v1: drift review between a role revision and an override.
-- ROLE-7 · An agent's instructions come from its execution configuration and applicable processes; editable home notes never become authority-bearing instructions. Execution configuration stays distinct from identity and role records.
+- ROLE-7 · An agent's instructions are composed by the office from its identity and role, its execution configuration, the turn's objective, the applicable processes and standards, `agent-os` help and the project's instruction files (session design, decision 8); editable home notes never become authority-bearing instructions, and execution configuration stays distinct from identity and role records.
 - ROLE-8 · Withdrawn: there is no `agent-os role` command family.
 - ROLE-9 · An employee's `role_id` is updated with the expected employee revision; free-text `role_text` is kept without inventing a role.
 - ROLE-10 · Role views cover loading, no roles, no role association, stale or unreachable organization data, invalid role details and revision conflicts without losing input. Empty copy never promises that HR can run.

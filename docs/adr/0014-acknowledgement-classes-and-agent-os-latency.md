@@ -1,23 +1,19 @@
 # ADR-0014 · Acknowledgement classes and the agent-os latency target
 
-Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
-plan entry F-02), including the operations of decision 3 and the engine-independent
-contract of decision 8. Implementation pending. Amends
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 4,
-the performance targets of the first revision of [ADR-0003](0003-agent-messaging-office-first.md),
-[ADR-0006](0006-selected-task-acceptance.md) for the task changes named in decision 3,
-and the acknowledgement sentence in
-[messaging data](../design/organization-data/15-messaging-and-chat.md).
+Status: **accepted by the owner**, including the operations of decision 3 and the
+engine-independent contract of decision 8. Implementation pending. Durability in
+[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md), task acceptance in
+[ADR-0006](0006-selected-task-acceptance.md) and the
+[messaging contract](../design/organization-data/15-messaging-and-chat.md) follow the
+classes defined here.
 
 ## Context
 
-- The first revision of ADR-0003 targeted a same-office send at a median of 15 ms. Its own
-  breakdown is about 2 ms to start the `agent-os` process, 0.5 ms to connect, and 6 to
-  10 ms for one full flush to the drive. Those are design estimates for an Apple
-  Silicon Mac, not measurements.
-- ADR-0002 decision 4 acknowledges every write only after a full flush, so that an
-  acknowledged write survives a power cut. On macOS that requires the slow full-flush
-  operation.
+- A send that starts `agent-os`, connects and waits for one full flush costs about
+  2 ms to start the process, 0.5 ms to connect, and 6 to 10 ms for the flush (design
+  estimates for an Apple Silicon Mac, not measurements).
+- Acknowledging every write only after a full flush makes every acknowledged write
+  survive a power cut. On macOS that requires the slow full-flush operation.
 - Measured on a Linux build machine on 2026-11-17: starting a program that does nothing
   takes a median of 1.1 ms and `agent-os --version` 1.5 ms. A SQLite commit in WAL
   mode takes a median of 0.29 ms with a flush per commit and 0.013 ms without one. A
@@ -33,7 +29,7 @@ and the acknowledgement sentence in
    most 2 ms on the reference Mac. One-shot process mode is measured and reported; it
    is bounded by process start and is not held to this target.
    A plain send is acknowledged within single-digit milliseconds in every topology
-   (owner decision 2026-11-17, conflict plan entry E-02): the target above applies to
+   (owner decision): the target above applies to
    the sender's office whether the recipient is local or in another office, because
    relaying is never part of the acknowledgement (decision 9).
 2. **Two acknowledgement classes.**
@@ -45,13 +41,13 @@ and the acknowledgement sentence in
      browser API outcome `accepted` (HTTP 202), which reports a durable record.
    - **Durable.** The office answers only after the full flush. This is the existing
      rule of ADR-0002 decision 4.
-3. **Which operations use which class (owner decision 2026-11-17).**
+3. **Which operations use which class (owner decision).**
    - Committed, messaging: `msg.send`, `msg.reply`, `msg.ask`, and the recipient-state
      changes `msg.read`, `msg.done` and `msg.defer`; and `status.set`.
    - Committed, non-critical task activity: `work.comment`, `work.watch` and
      `checklist.check`. A comment that opens or answers an owner question is the
      exception: it starts or ends a waiting span, so it is durable.
-   - Committed, creating a task (owner decision 2026-11-17): `task.create` and the
+   - Committed, creating a task (owner decision): `task.create` and the
      typed creation calls such as `bug.report`. This is safe for numbering because the
      creating office mints the number under a durable mark
      ([ADR-0019](0019-office-coded-task-numbers.md) decision 7), so a power cut can
@@ -106,7 +102,6 @@ and the acknowledgement sentence in
      write survives a crash of the office process and is flushed within the bounded
      interval; a durable write is not acknowledged before it would survive a power
      cut. These guarantees are tested by a suite that does not depend on the engine.
-   Conflict plan entry B-13 lists this as one of its steps.
 9. **Send relays after it answers; ask holds with a deadline.** `msg.send` and
    `msg.reply` commit in the sender's office and return. Delivery to another office is
    relayed afterwards through HQ and retried with backoff until it is acknowledged or

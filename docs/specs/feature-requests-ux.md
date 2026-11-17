@@ -25,7 +25,7 @@ Capture an idea quickly in the browser and route it to someone who can scope it,
 4. **Capture may need only text when scope is already valid.** The dialog shows the chosen project or team, shows the derived accountability, and requires a team when the context provides none. Text not yet sent from the browser is a draft.
 5. **Routing is an explicit assignment choice.** `assigned_team_id` and `assignee_id` are independent nullable fields; either, both or neither is valid. Assignment changes neither accountability nor reference. Suggestions have reasons; the person decides. Just save clears the pair explicitly rather than inferring it from employee membership.
 6. **Reporter is immutable.** The admitted actor is the original requester; rerouting, scoping or approval never overwrites it. Latest updater, current scoper and recorded outcome actor are distinct facts.
-7. **Scoping outcome data is stored now; the scoping lifecycle is not in v1.** `details.request_outcome` (document 03) holds a scoped outcome. The New → Routed → Scoping → Scoped → Approved, Declined or Merged flow, with its approval, bulk creation and notification handlers, is listed under [Not in v1](#7-not-in-v1).
+7. **Scoping is a person's or agent's review, then an approval.** The person or agent the request is assigned to scopes it and records the outcome in `details.request_outcome` (document 03): a new or extended feature, documents, draft tasks and an estimate. The request uses the ordinary five task statuses; scoping is shown from the recorded outcome and history, not from a status of its own. **Approve and create** creates exactly the previewed records and links them to the request. **Decline** requires a reason (`decline_reason`) and closes the request as Cancelled; **Merge into…** names another open request (`merged_into_task_id`) and closes this one as Cancelled. Each step is a history event with actor and time. There is no automatic scoping engine.
 8. **Definitions and shared knowledge live in organization Git.** A scoped feature uses F-6 and `projects/<project-id>/features/<feature-id>/feature.md`; designs, decisions and reports are stable-ID supporting documents with a required project and at most one same-project feature, release or deployment scope. No code repository is required.
 9. **Shared and private differ.** Request conversation is shared task metadata. Private notes are author-only in the separate durable store, have no administrator exception, and leak no existence metadata into queue, search or activity.
 10. **Assignment does not start work.** Suggestions can consider actual availability; assignment is not permission, a wake, a session start or a transfer of accepting-writer authority. Execution and budgets follow their owning contracts.
@@ -94,7 +94,7 @@ The request's origin is linked through stable identities and task relationships 
 
 **Private notes:** a separate author-only pane holds several notes with revision-aware create, edit and delete, an explicit publish preview, and no implicit administrator or team-lead access. Publishing creates a shared comment only after the author confirms and normal task-post authorization passes; the private original stays private. No private body, ID, count or author association enters shared task events, queue, search or export, and reassigning the request does not expose a note. See PN-01 to PN-06 in document 05.
 
-**Controls:** Change assignment uses the task assignment operation. Existing `request.*` calls and exact executable support follow [executable migration](../design/executable-migration.md). Routing a request never wakes or schedules an agent.
+**Controls:** Change assignment uses the task assignment operation. **Ask for changes** returns the outcome to the scoper with a comment; **Approve and create**, **Decline…** and **Merge into…** follow decision 7. Approval is by the owner or a person with authority over the request's accountable team, checked by the service; the scoper never approves its own outcome. The same actions are `agent-os` request commands for agents with authority. Routing a request never wakes or schedules an agent. Closing a request with an unresolved owner question asks what to do with the question first.
 
 ## 4. States and edge cases
 
@@ -125,10 +125,10 @@ RQS IDs are criterion identities; requests themselves use T- references.
 - RQS-6 · A bug hint carries text and valid scope into bug capture, allows projectless bugs and can be dismissed for this capture.
 - RQS-7 · Requests is a type-filtered task view across project and team scopes, with clear ownership and assignment columns. Grouping never synthesizes acceptance from an assignment.
 - RQS-8 · Assignment shows actual availability and never promises an automatic wake.
-- RQS-9 · Not in v1: approving a scoped outcome and creating its tasks in bulk. The stored outcome keeps editable proposals and estimates; no task creation or feature change is inferred from a status field.
+- RQS-9 · Approving a scoped outcome shows exactly what will be created (feature, documents and tasks with their accountability, type and assignment), lets the approver edit or remove drafts, then creates those records and links them to the request in one recoverable operation. A feature requires a project; the request itself may stay projectless. No task creation or feature change is inferred from a status field.
 - RQS-10 · Accepted assignment, content and shared-question changes have durable immutable task history with actors and times.
 - RQS-11 · Request text, identity and history persist in organization Git plus the unpublished durable journal. Feature definitions and supporting documents use their stable-ID scopes; rationale links do not replace request history.
-- RQS-12 · Not in v1: accept, ask for changes, reroute acceptance, scope, approve, decline and merge commands for requests.
+- RQS-12 · Scope, ask for changes, approve, decline (with a reason) and merge (into another open request) work the same in the app and in `agent-os`, with actor, time and reason in the request's history; the scoper never approves its own outcome.
 - RQS-13 · Up to two similar permitted shared requests show their references; Add to appends a shared comment without changing the reporter or creating a record. Private notes never take part.
 - RQS-14 · A team-only route stays in the team's queue with no invented individual owner; assignment alone is never shown as acceptance.
 - RQS-15 · Queue filters separate accountable team, assigned team, assignee, reporter and project or no project, remember choices and state actual search coverage. Loading, empty, no-match, retry and read-only states keep the last data. Project and team links open the correct scope.
@@ -145,5 +145,6 @@ RQS IDs are criterion identities; requests themselves use T- references.
 
 ## 7. Not in v1
 
-- The request scoping lifecycle (New → Routed → Scoping → Scoped → Approved, Declined or Merged): its transitions, approval and bulk task creation, decline and merge rules, notifications and wakes, and closure rules for unresolved questions.
+- Request-specific statuses; a request uses the five task statuses.
+- Waking an agent when a request is routed to it.
 - Attachment storage.

@@ -21,7 +21,7 @@ The data contract owns the records: [project documents](../design/organization-d
 
 **What "great" looks like:** anyone, the owner or an agent, can open a piece of code, a task, a bug or a commit and answer in one or two clicks: *why is it like this? what else did we try? what did we knowingly leave unfinished, and what will it cost us?*
 
-v1 delivers project knowledge documents, the Docs tab, the editor and Why links. A debt register, limitations and exceptions as their own kinds, agent guidance moments, decision approval and custom templates are [not in v1](#7-not-in-v1).
+v1 delivers project knowledge documents, the Docs tab, the editor, Why links, `agent-os doc` commands and a view of each feature's known limitations. A debt register, exception records, agent guidance moments, decision approval and custom templates are [not in v1](#7-not-in-v1).
 
 ## 0. Decisions in this spec
 
@@ -190,7 +190,7 @@ links: []
 
 ## 4. Flow 2 · Decisions over time
 
-- **Supersede:** on a Current decision, ⋯ › **Supersede with a new decision** opens a new decision prefilled with "Supersedes ADR-0002" and the context. The two records link both ways; when the new one becomes Current, the old one becomes Deprecated and keeps its rationale.
+- **Supersede:** on a Current decision, ⋯ › **Supersede with a new decision** opens a new decision prefilled with "Supersedes ADR-0002" and the context. The two records link both ways. Superseding changes no status: a person deprecates the old decision explicitly if that is wanted, and its rationale stays.
 - **Editing a Current decision** warns once: "Decisions are a record. Supersede it if the decision changed, or edit only to fix a mistake." **Edit anyway** is allowed.
 
 ## 5. Flow 3 · "Why?" everywhere
@@ -210,7 +210,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - DEC-3 · New Decision, Design or Evaluation opens the envelope and the right body template, derives the stable-ID file path and shows its scope; there is no numeric document counter and Save is explicit.
 - DEC-4 · Not in v1: Accept, Reject and Request changes on a proposed decision.
 - DEC-5 · Not in v1: proposed decisions in the owner's Needs you.
-- DEC-6 · Supersede drafts a new decision linked to the old stable record, with links both ways; the old record becomes Deprecated when the new one becomes Current and keeps its rationale.
+- DEC-6 · Supersede drafts a new decision linked to the old stable record, with links both ways, and changes neither record's status; the old rationale is kept.
 - DEC-7 · Invalid metadata names the field and offers Fix while keeping a readable body. Display-key clashes show both identities and Resolve key; stable IDs never change.
 - DEC-8 · Deprecated content collapses under Older.
 
@@ -241,14 +241,14 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - AUTH-1 · Tool authoring writes documents at canonical organization-Git scopes with stable IDs, required metadata and admitted attribution, and never on a code task branch.
 - AUTH-2 · A status edit uses only Draft, Current and Deprecated with revision and attribution. Decision acceptance or rejection is written in the body.
 - AUTH-3 · Canonical files changed directly in organization Git are validated and indexed from its state branch without losing content, stable identity or provenance. Files in a code repository are not canonical organization records.
-- AUTH-4 · Activity records link creation, content and link changes to the admitted actor and the stable document ID, displaying its optional key and title.
-- AUTH-5 · Not in v1: `agent-os doc` commands.
+- AUTH-4 · Each accepted document revision records the admitted actor and time (the document's attribution fields and its Git history), and Activity shows it by stable document ID with the optional key and title.
+- AUTH-5 · `agent-os doc list`, `show`, `new`, `edit` and `link` use the same kinds, optional keys, stable identities, lifecycle and scopes as the app; `new` and `edit` write the canonical organization-Git record with the agent's admitted attribution and report the publication result, and never write into a code worktree.
 - AUTH-6 · A task's `details.shortcut` keeps its tagged IDs; canonical knowledge is never placed on a code task branch.
 - AUTH-7 · Commit co-authors and Git-derived fields are displayed as evidence without granting authority. Feature lifecycle facts stay in feature.md; progress derives from task membership and valid file edits are never overwritten from office state.
 
 **Known limitations (LMT)**
-- LMT-1 · Not in v1: limitation documents as their own kind. A feature's known limitations are in its feature.md.
-- LMT-2 · Not in v1: matching a limitation in Report bug.
+- LMT-1 · Known limitations live in each feature's `feature.md` (Known limitations section). The Docs tab lists them per feature, linked to the feature definition; there is no separate limitation record or counter.
+- LMT-2 · When Report bug has a feature (chosen or affected), it shows that feature's known limitations with **Read it** and **Report anyway**; it never blocks the report.
 - LMT-3 · Not in v1: Record as known limitation from a Won't fix bug.
 
 **Exceptions (EXN)**
@@ -267,7 +267,7 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 **Templates (TPL)**
 - TPL-1 · Every kind has a built-in template (fields with type, required flag, allowed values and hint, plus sections with hints), and New fills a document from it.
 - TPL-2 · The editor's Details panel is generated from the template's fields, and the Source toggle edits the YAML directly, with both kept in sync.
-- TPL-3 · Not in v1: `agent-os doc schema` and `doc validate`.
+- TPL-3 · `agent-os doc schema <kind>` prints a kind's fields and sections, and `doc validate` reports each front-matter problem by field, with the same rules as the app.
 - TPL-4 · Not in v1: editing templates in Settings.
 - TPL-5 · Not in v1: adding document kinds.
 - TPL-6 · Not in v1: template changes and their effect on existing documents.
@@ -277,9 +277,9 @@ Criterion IDs for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 ## 7. Not in v1
 
 - **A tech-debt register:** a debt kind with cost and effort, capture at the shortcut, at task Done, from review findings, from "Tech debt accepted" and from `TODO(debt)` scans, a Debt tab grouped and sorted by cost, and Planned and Paid states driven by payback tasks. Until then, `details.shortcut` on the task and a decision or report record shortcuts.
-- **Known limitations and exceptions** as their own kinds, with Report-bug matching, approval and review dates.
+- **Exception records** with approval and review dates, and recording a known limitation from a Won't fix bug.
 - **Agent guidance moments:** configurable prompts at set moments (starting a task, taking a shortcut, finishing, asking the owner, posting to chat), with organization defaults and project overrides.
 - **Decision approval:** Accept, Reject and Request changes with authenticated actors, and proposed decisions in Needs you.
-- **Custom templates and kinds**, and `agent-os doc` commands.
+- **Custom templates and kinds.**
 - **Document comments** and frozen release-note workflows.
 - Project navigation follows the [integrated IA](work-items-ux.md#3-flow-1--project-page); a Docs tab is not required before this experience is served.

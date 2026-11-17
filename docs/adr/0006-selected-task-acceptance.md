@@ -233,7 +233,7 @@ The assignment command fingerprint is computed over the validated typed command,
 never over the incoming JSON text: equivalent string escapes give the same
 fingerprint, and fractional or exponent spellings of a revision are invalid.
 
-Resource limits are the `selected-task-resources/1` profile of document 05. Native
+Resource limits are the `selected-task-resources/1` profile, defined across [document 03](../design/organization-data/03-features-and-work.md) (task snapshots), [document 05](../design/organization-data/05-operational-data.md) (events and public blobs) and [document 16](../design/organization-data/16-recovery-and-office-continuity.md) (journal manifests). Native
 `MAX_FRAME_BYTES` and HTTP `MAX_BUSINESS_BODY_BYTES` stay at 1 MiB; large history
 reads and content use byte-bounded pages and authenticated content-reference
 chunks of at most 256 KiB raw bytes per request or response.
