@@ -39,10 +39,17 @@ struct Fixture {
     thread: Option<std::thread::JoinHandle<()>>,
     calls: Arc<Mutex<Vec<String>>>,
 }
-fn reply(request: &serde_json::Value, issued: &mut usize) -> serde_json::Value {
+fn reply(
+    request: &serde_json::Value,
+    issued: &mut usize,
+    end_delay: Duration,
+) -> serde_json::Value {
     let id = request["id"].as_u64().unwrap();
     let method = request["method"].as_str().unwrap();
     assert!(ALLOWED.contains(&method), "unexpected host method {method}");
+    if method == "session.end" {
+        std::thread::sleep(end_delay);
+    }
     let result = match method {
         "hello" => serde_json::to_value(
             org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE),
@@ -68,6 +75,10 @@ impl Fixture {
         Self::with_secure(false)
     }
     fn with_secure(secure: bool) -> Self {
+        Self::scripted(secure, Duration::ZERO)
+    }
+    /// `end_delay` stalls every scripted `session.end` answer.
+    fn scripted(secure: bool, end_delay: Duration) -> Self {
         let (gateway, host) = UnixStream::pair().unwrap();
         let stop = host.try_clone().unwrap();
         let (transfer, host_transfer) = UnixDatagram::pair().unwrap();
@@ -82,7 +93,7 @@ impl Fixture {
                 seen.lock()
                     .unwrap()
                     .push(request["method"].as_str().unwrap().to_owned());
-                let answer = reply(&request, &mut issued);
+                let answer = reply(&request, &mut issued, end_delay);
                 if org_proto::frame::write_message(host.get_mut(), &answer).is_err() {
                     break;
                 }
@@ -317,8 +328,52 @@ fn idle_and_absolute_expiry_end_the_pair() {
     assert!(f.refused(&absolute.cookie, absolute.proof.expose()));
     assert!(f.sessions.sessions.lock().unwrap().is_empty());
     // Browser expiry also ends both host sessions instead of leaving their
-    // host slots held until the host's own idle timeout.
+    // host slots held until the host's own idle timeout (off the request path).
+    let until = Instant::now() + Duration::from_secs(5);
+    while f.count("session.end") < 2 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert_eq!(f.count("session.end"), 2);
+}
+
+#[test]
+fn reap_never_waits_for_a_stalled_host_end() {
+    // Every host end stalls for 2 s; before the fix reap waited for each one.
+    let f = Fixture::scripted(false, Duration::from_secs(2));
+    let expired = f.sign_in();
+    let live = f.sign_in();
+    let key = ticket(&f.sessions, &expired).key;
+    {
+        let mut map = f.sessions.sessions.lock().unwrap();
+        let stale = Instant::now()
+            .checked_sub(IDLE + Duration::from_secs(1))
+            .expect("monotonic clock far enough from boot");
+        *map[&key].touched.lock().unwrap() = stale;
+        // More expired pairs than the cleanup queue holds: overflow is dropped.
+        let session = Arc::clone(&map[&key]);
+        for n in 0..CLEANUP_QUEUE + 8 {
+            let mut filler = [0xeeu8; 32];
+            filler[..8].copy_from_slice(&(n as u64).to_be_bytes());
+            map.insert(filler, Arc::clone(&session));
+        }
+    }
+    let started = Instant::now();
+    assert!(f.refused(&expired.cookie, expired.proof.expose()));
+    // An unrelated live pair is also served without waiting for host cleanup.
+    let parts = parts(&live.cookie, live.proof.expose());
+    assert!(f.sessions.authenticate(&parts).is_ok());
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "reap blocked on host cleanup: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
+    // The cleanup thread does reach the host.
+    let until = Instant::now() + Duration::from_secs(5);
+    while f.count("session.end") == 0 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(f.count("session.end") >= 1);
 }
 
 #[test]

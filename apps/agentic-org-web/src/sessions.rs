@@ -20,7 +20,11 @@ use org_proto::gateway::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
+        Arc, Mutex,
+    },
+    thread,
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
@@ -28,6 +32,9 @@ use zeroize::Zeroizing;
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
 const IDLE: Duration = Duration::from_secs(30 * 60);
 const MAX_SESSIONS: usize = 1024;
+/// Host ends queued behind one cleanup thread. A full queue drops the end: the
+/// host's own idle/absolute expiry still reclaims that session.
+const CLEANUP_QUEUE: usize = 64;
 type ProofMac = Hmac<Sha256>;
 pub struct BrowserSessions {
     host: Arc<HostControl>,
@@ -36,6 +43,7 @@ pub struct BrowserSessions {
     secure: bool,
     proof_key: Zeroizing<[u8; 32]>,
     sessions: Mutex<BTreeMap<[u8; 32], Arc<Session>>>,
+    cleanup: SyncSender<Arc<SessionHandle>>,
 }
 struct Session {
     handle: Arc<SessionHandle>,
@@ -108,6 +116,19 @@ fn datetime(ms: u64) -> Result<String, ApiReply> {
     Ok(time::format_ms(ms))
 }
 mod time;
+/// The single host-cleanup worker. It ends when the registry (the only sender)
+/// drops or the host control connection is no longer live.
+fn end_expired(host: &HostControl, queued: &Receiver<Arc<SessionHandle>>) {
+    while host.live() {
+        match queued.recv_timeout(Duration::from_millis(100)) {
+            Ok(handle) => {
+                let _ = host.end(&handle);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
 impl BrowserSessions {
     pub fn new(
         host: Arc<HostControl>,
@@ -118,8 +139,15 @@ impl BrowserSessions {
             return Err(unavailable());
         }
         let suffix = hex(&Sha256::digest(instance.as_bytes()));
+        let (cleanup, queued) = mpsc::sync_channel(CLEANUP_QUEUE);
+        let ending = Arc::clone(&host);
+        thread::Builder::new()
+            .name("gateway-session-cleanup".into())
+            .spawn(move || end_expired(&ending, &queued))
+            .map_err(|_| unavailable())?;
         Ok(Arc::new(Self {
             host,
+            cleanup,
             instance,
             cookie_name: format!("org_session_{}", &suffix[..16]),
             secure,
@@ -214,12 +242,14 @@ impl BrowserSessions {
                 keep
             });
         // Browser expiry ends the host session too (§4), so an expired pair
-        // never holds a host slot until the host's own idle timeout. Best
-        // effort, outside the map lock; after control EOF the host has
-        // already ended every session on this connection.
+        // does not hold a host slot until the host's own idle timeout. This
+        // runs on the async request path, so it only queues: the cleanup
+        // thread makes the host call. After control EOF the host has already
+        // ended every session on this connection.
         if host_live {
             for session in expired {
-                let _ = self.host.end(&session.handle);
+                // Full or closed: dropped; the host's own expiry covers it.
+                let _ = self.cleanup.try_send(Arc::clone(&session.handle));
             }
         }
         Ok(())
