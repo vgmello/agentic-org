@@ -1,6 +1,6 @@
 # Messaging and chat data structure
 
-Status: **selected** data contract, revision 2. Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It does select who stores and routes messages at run time: see [Runtime ownership and routing](#runtime-ownership-and-routing), merged from ADR-0003. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
+Status: **selected** data contract, revision 3. Data specification for the selected organization model. This document adds conversations and messages to the same organization data model; it does not implement a transport, chat UI, wake scheduler or external platform bridge. It does select who stores and routes messages at run time: see [Runtime ownership and routing](#runtime-ownership-and-routing), merged from ADR-0003. It preserves existing v1 directed-message facts and defines the core channel/group-conversation relationships already described in the chat UX. External bridges and their credentials remain outside this change.
 
 ## Relationships and identity
 

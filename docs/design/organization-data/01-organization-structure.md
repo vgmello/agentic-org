@@ -245,7 +245,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | `roles` | Front matter and body of `roles/<id>.md`; agent-specific setup is pending document 04. |
 | `teams` | Same-named fields in `team.yaml`, including `number`, `status` and common attribution, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
-| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content only; no process engine is specified. |
+| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
 | `repository_caches` | Runtime-only `office_id`, `repository_id`, `bare_path`; not authored in durable organization files. |
 

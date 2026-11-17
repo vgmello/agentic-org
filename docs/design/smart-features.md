@@ -122,7 +122,7 @@ revision). A project bug uses its project's owner team; a projectless bug uses i
 team scope. New records use T- references such as P-8/T-42 or TEAM-12/T-42; legacy
 B-/REQ- IDs require explicit mappings, never prefix substitution or renumbering.
 The confirmation form must resolve these fields through the normal task mutation,
-retain bug detail and create its durable event history. Areas are unselected:
+retain bug detail and create its durable event history. Areas are removed (owner decision 2026-11-17, conflict plan entry B-05: the `area.*` calls and tables leave the code, and a task's accountable team supplies that context). Areas are unselected:
 this v2 area behavior is legacy evidence, not a target area requirement. A future
 feature version must define the selected task-form mapping and omit unselected
 area dependencies rather than promoting them through context resolution.

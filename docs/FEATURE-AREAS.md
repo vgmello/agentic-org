@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. This preserves the area-by-area explanation alongside the repository requirements.
 
-Reviewed: **2026-11-16**, by Ada. There are **13 categories, 162 feature rows and 0 rows needing verification** (four rows added 2026-11-17 for the owner decisions in ADR-0013 to ADR-0016). Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+Reviewed: **2026-11-16**. There are **13 categories, 165 feature rows and 0 rows needing verification** (seven rows added 2026-11-17 for owner decisions: ADR-0013 to ADR-0018 and the split of hosting-provider integrations from local Git). Counts reflect the current checklist after the [first-five](verification/2026-11-16-first-five-features.md) and [remaining-58](verification/2026-11-16-remaining-feature-audit.md) source/test audits. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 F1a source update: FC-011 is partial because the pure complete-release verifier is present. This internal foundation does not provide installation, onboarding or an authentic signed release; full-row acceptance remains open. Counts below include that scoped update. F1b-socket adds internal OS adapter evidence to already-partial FC-017; no status/category count changes or production handoff claim. Accepted F2a adds separately scoped lossless source/codec evidence to already-partial FC-042; no count change or durable/usable history claim. F2b now adds scoped journal/capture source and storage tests, including recovery of interrupted directory creation and ancestor-flush failure fencing: FC-146 moves Planned to In progress, while FC-042 remains partial. F2b was accepted/integrated at `d55e3c25`/`eacb505d` with current checks and author/fresh reviews; protected host/service composition and usable feature acceptance remain. F3a adds the internal REC-ESC-1 crypto adapter and five targeted tests: FC-016 moves Planned to In progress. F3a was accepted/integrated at `065a0824`/`0d4035d7` after full checks and author/fresh reviews. F3b worker HQ persistence/admission was accepted/integrated at `4abca318`/`55c7d762` after full checks (3074 Rust tests, zero failures), original-author validation and fresh initial/separate final reviews. Root source update, 2026-11-17: F3c checkpoint `1ce54471` adds unaccepted native protected bootstrap/account/session/host-recovery composition and actual temporary-root native runtime evidence. FC-012 and FC-014 move to In progress; neither is a usable browser or installed-service delivery. Current full checks, independent reviews, browser/physical-authentication and release gates remain; full-row scope stays partial.
 
@@ -21,19 +21,19 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 3 | 3 | 0 | 1 | 0 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 20 | 1 | 12 | 5 | 2 | 0 | 0 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 21 | 1 | 12 | 6 | 2 | 0 | 0 |
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 11 | 1 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring and release/deployment records | 14 | 0 | 1 | 12 | 0 | 1 | 0 |
 | [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks, handoffs and transport cutover | 13 | 2 | 6 | 4 | 0 | 1 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
 | [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 14 | 1 | 2 | 7 | 0 | 4 | 0 |
-| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 0 | 0 | 6 | 0 |
+| [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content and deferred learning engines | 9 | 0 | 3 | 1 | 0 | 5 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
-| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 11 | 1 | 4 | 5 | 0 | 1 | 0 |
+| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 13 | 1 | 4 | 5 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **162** | **9** | **60** | **51** | **2** | **40** | **0** |
+| **Total** | | **165** | **9** | **60** | **53** | **2** | **41** | **0** |
 
 ## AREA-01
 
@@ -137,9 +137,9 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Roles, processes and retrospectives** · [Feature checklist](FEATURES.md#roles-processes-and-retrospectives)
 
-**Scope:** Role identity/assignment, scoped process and standard content, process editor UI and the separately deferred inheritance/autonomy/retrospective engines.
+**Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction (selected 2026-11-17), and the separately deferred enforcement/autonomy/retrospective engines.
 
-**Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling belongs to AREA-05. Structural records can be selected while their resolver/execution engine remains Deferred.
+**Boundary:** Owns guidance content and proposed learning workflows. Execution configuration belongs to AREA-08; general document tooling belongs to AREA-05. Resolution is selected; mechanical enforcement, approvals and execution engines remain Deferred.
 
 **Verification focus:** Check actual role record/assignment persistence and organization/team/project process or standard document storage. Existing content and editor UI do not establish runtime composition, inheritance, agent injection or retrospective execution.
 
@@ -173,11 +173,11 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Git, identity, synchronization and recovery** · [Feature checklist](FEATURES.md#git-identity-synchronization-and-recovery)
 
-**Scope:** Registered repositories/GitHub/worktrees, canonical source/projection contracts, stable identity/number allocation and imports, sync primitives and protected-source office continuity/recovery.
+**Scope:** Registered repositories, local Git caches and worktrees (hosting-provider integrations are Deferred to v2), canonical source/projection contracts, a replaceable storage engine, stable identity/number allocation, sync primitives and protected-source office continuity/recovery.
 
 **Boundary:** Owns common durability/identity/transport mechanics. Domain payload and access rules remain in the relevant area. Organization Git alone cannot restore chat, private notes, accounting, budgets, credentials or execution authority.
 
-**Verification focus:** Check repository/project branch associations and supported GitHub/worktree operations; canonical round-trip/concurrency/tombstones; ULID and durable scoped allocations; preserved legacy IDs, provenance and unresolved import staging. A draft schema or core sync library is insufficient.
+**Verification focus:** Check repository/project branch associations and supported plain-Git/worktree operations; canonical round-trip/concurrency/tombstones; ULID and durable scoped allocations; storage reached only through engine-independent contracts. A draft schema or core sync library is insufficient.
 
 **Requirements:** [Git design](design/projects-git-github.md), [Identity contract](design/organization-data/06-identity-and-numbering.md), [Record contract](design/organization-data/08-record-contracts.md), [Recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
 
@@ -185,7 +185,7 @@ The [unaccepted assignment branch checkpoint](verification/2026-11-16-assignment
 
 **Session inspection and private memory** · [Feature checklist](FEATURES.md#session-inspection-and-private-memory)
 
-**Scope:** Authorized browser session/transcript inspection, office-local CLI takeover/PTY handback and the separately deferred human-facing private notes/memory reader.
+**Scope:** Authorized read-only browser session/transcript inspection (no browser terminal, ADR-0004), office-local CLI takeover and handback and the separately deferred human-facing private notes/memory reader.
 
 **Boundary:** Owns human inspection/control of a session and profile memory access. Process execution belongs to AREA-08; author-private task notes belong to AREA-04. A profile placeholder or runtime transcript does not establish a private memory store.
 

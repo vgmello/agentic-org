@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.9 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.10 (2026-11-17). It specifies the selected data relationships and storage, including task assignment and activity history. The owner authorized moving the code to this model on 2026-11-17, one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **selected target data relationships, fields and canonical sources**. Current code and older designs remain evidence of existing behavior until an explicit migration is approved; they do not override later selected data decisions. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes historical requirements, implementation status and deferred scope.
 
@@ -161,6 +161,7 @@ Every numbered document carries one status line. The vocabulary is: **draft** (s
 | Date | Set revision | Change |
 | --- | --- | --- |
 | 2026-11-17 | 2.9 | Owner architecture review. One storage tree (`durable/`, `runtime/`). HQ named as organization authority. Hash codec registry. Messaging runtime rules merged from ADR-0003. Budget hold checked at the turn permit. Agent re-placement separated from office relocation. IDs are ULIDs. No compatibility obligations before v1 ships. Task status is a closed list; milestone and release completion is derived. Employee state is one status field; the owner marker is removed. HQ-created records always carry a number. Host-owned records are listed. Document 14 no longer repeats SQL. Schema coverage gains implementation status. No application-level data encryption (ADR-0016); acknowledgement classes (ADR-0014). |
+| 2026-11-17 | 2.10 | Second review round. Messaging: one writing office per file, with each employee's state in that employee's own files; a send relays after it answers and an ask always has a deadline. Process and standard resolution selected for v1. Numbering and permit rules stated without naming a database statement (ADR-0018). Office-minted task references proposed in ADR-0019, not yet applied. |
 | 2026-11-15 | 2.8 | Reconciled set, before the review. |
 
 The SQL is a structural draft for the selected scope. Document 11 owns model/execution behavior within this integrated document set; application migrations, task mutation/replication implementation, private task-note storage/access controls, memory consolidation, analytics retention and remaining v1 migration choices still require their own work. Existing data not mapped by this set must stay intact in import staging until a disposition is chosen. Run `python3 docs/design/organization-data/test_schema.py` for executable draft-schema checks.
