@@ -31,7 +31,9 @@ use zeroize::Zeroizing;
 
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
 const IDLE: Duration = Duration::from_secs(30 * 60);
-const MAX_SESSIONS: usize = 1024;
+/// The browser map holds at most the host's gateway budget, never more, so the
+/// host's local reserve stays free for local sign-in.
+const MAX_SESSIONS: usize = org_host_control::ops::GATEWAY_SESSIONS;
 const CAPACITY_RECHECK: Duration = Duration::from_secs(5);
 /// Host ends queued behind one cleanup thread. A full queue drops the end: the
 /// host's own idle/absolute expiry still reclaims that session.

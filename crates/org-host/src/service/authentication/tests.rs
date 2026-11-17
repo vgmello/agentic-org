@@ -354,7 +354,7 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
 }
 
 #[test]
-fn gateway_connection_holds_browser_capacity_while_local_and_global_caps_hold() {
+fn gateway_budget_leaves_the_local_reserve_while_local_and_global_caps_hold() {
     use crate::service::listener::{GatewayConnection, Handler};
     use std::os::unix::net::{UnixDatagram, UnixStream};
     struct Idle;
@@ -389,7 +389,18 @@ fn gateway_connection_holds_browser_capacity_while_local_and_global_caps_hold() 
     }
     assert!(auth.authorize(gateway, &first.session).is_ok());
 
-    // A local connection still refuses session 33.
+    // The gateway stops at its own budget, below the global cap.
+    for _ in BROWSERS..GATEWAY_SESSIONS {
+        auth.issue(gateway, account()).unwrap();
+    }
+    assert_eq!(
+        auth.issue(gateway, account()).unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert_eq!(auth.sessions.lock().unwrap().len(), GATEWAY_SESSIONS);
+
+    // With the gateway at its cap, local sign-in still has its reserve, and a
+    // local connection still refuses session 33.
     for _ in 0..MAX_CONNECTION_SESSIONS {
         auth.issue(&local, account()).unwrap();
     }
@@ -398,23 +409,15 @@ fn gateway_connection_holds_browser_capacity_while_local_and_global_caps_hold() 
         ErrorCode::Unavailable
     );
 
-    // The global cap still bounds every connection, the gateway included.
-    let held = auth.sessions.lock().unwrap().len();
-    assert_eq!(held, BROWSERS + MAX_CONNECTION_SESSIONS);
-    for _ in held..MAX_SESSIONS {
-        auth.issue(gateway, account()).unwrap();
-    }
-    assert_eq!(
-        auth.issue(gateway, account()).unwrap_err().code,
-        ErrorCode::Unavailable
-    );
+    // The global cap still bounds every connection.
+    assert_eq!(auth.sessions.lock().unwrap().len(), MAX_SESSIONS);
     assert_eq!(
         auth.issue(&Connection::for_test(), account())
             .unwrap_err()
             .code,
         ErrorCode::Unavailable
     );
-    assert_eq!(auth.sessions.lock().unwrap().len(), MAX_SESSIONS);
+    assert!(auth.authorize(gateway, &first.session).is_ok());
 }
 
 #[test]

@@ -126,3 +126,4 @@ production bypass, preservation of the CH-LIFE-1r2 budget/ACK. Changing these be
     duplicate or out-of-order notification is refused. Tests: Running only after serving; a missing notification leads to Failed after the
     deadline, with readiness false; real-process test unchanged (it still waits for gateway_ready).
   - Status: ACTIVE revision 4 (lead decision, narrow additive change inside the r3 reviewed design; the fresh final review covers it).
+  - Final-review B1 (2026-11-17): host global cap stays 1024 with LOCAL_SESSION_RESERVE 32 (one Local connection's cap); the gateway connection budget is `org_host_control::ops::GATEWAY_SESSIONS` = 992, and the web map MAX_SESSIONS (D2's 1024) is now that same constant, 992.

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
 use org_host_control::{
-    ops::{self, AccountVerifyResult, LinkedOrg},
+    ops::{self, AccountVerifyResult, LinkedOrg, GATEWAY_SESSIONS},
     Password, SessionHandle,
 };
 use org_proto::{ApiError, ErrorCode};
@@ -27,6 +27,10 @@ use crate::hostdb::{
 const MAX_HASHES: usize = 2;
 const MAX_SESSIONS: usize = 1024;
 const MAX_CONNECTION_SESSIONS: usize = 32;
+/// Global headroom the gateway can never take: one local connection's cap, so
+/// browser sign-ins cannot lock local (host.sock/setup) sign-in out.
+const LOCAL_SESSION_RESERVE: usize = MAX_CONNECTION_SESSIONS;
+const _: () = assert!(GATEWAY_SESSIONS == MAX_SESSIONS - LOCAL_SESSION_RESERVE);
 const ABSOLUTE: Duration = Duration::from_secs(12 * 3600);
 const IDLE: Duration = Duration::from_secs(30 * 60);
 
@@ -408,12 +412,13 @@ impl Authentication {
             return Err(denied());
         }
         // Every browser sign-in arrives over the single admitted gateway control
-        // connection, so that connection gets the whole host budget (matching the web
-        // gateway's own 1024-session map). Local and setup connections keep the small
-        // per-connection cap; the global MAX_SESSIONS cap applies to every connection.
+        // connection, so that connection gets the shared GATEWAY_SESSIONS budget (the
+        // web gateway's own map uses the same bound). That is MAX_SESSIONS minus the
+        // local reserve. Local and setup connections keep the small per-connection
+        // cap; the global MAX_SESSIONS cap applies to every connection.
         let per_connection =
             if connection.channel_kind() == org_office_launch::v3::ChannelKind::Gateway {
-                MAX_SESSIONS
+                GATEWAY_SESSIONS
             } else {
                 MAX_CONNECTION_SESSIONS
             };
