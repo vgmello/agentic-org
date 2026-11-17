@@ -130,7 +130,7 @@
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
-      "sha256": "3ea5bb50698ca19d8df4471a7ad4c2a47b289bf29355f49d95bffb8a1b2af756"
+      "sha256": "75b5722bbaef0bb361c205c949d0b7b7675a30827792e7cbd496daa06455eafb"
     },
     {
       "path": "docs/adr/0009-complete-release-verification.md",

@@ -108,7 +108,10 @@ agentic-org-office --discard <id>    # remove an unfinished office, then exit (t
 
 ### Admission and the verified rendezvous
 
-There is one launch contract (version 1), in `crates/org-office-launch`:
+There is one launch contract (version 1), in `crates/org-office-launch`. It covers every child the host
+supervises: office workers and the web process (owner-delegated decision 2026-11-17). No secret is ever on
+argv, in the environment or on the first line. The steps for an office worker are below; the web process
+uses the same steps with its own identifier, image and listener handoff (see "The web process" below):
 
 1. The host spawns the worker **suspended**, with only its three pipes.
 2. It checks that the suspended child is the intended program through the platform's
@@ -212,7 +215,7 @@ carries host control; neither `host.sock` nor an office path is a fallback. `tls
 supplies the verified listener configuration before HTTP accepts. Host EOF ends the web
 process.
 
-On macOS the web process is admitted as `com.ellosoft.agentic-org.org-gateway`, with
+On macOS the web process is admitted as `com.ellosoft.agentic-org.web`, with
 the compiled team, hardened runtime, no debug or injection entitlements and no Keychain
 access group. The host rechecks the reader's audit token, image and kernel sandbox
 before sending either descriptor. Browser sessions are stored at the host and survive a
