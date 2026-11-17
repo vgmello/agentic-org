@@ -30,10 +30,10 @@ const sameAccount = (a: SessionRecord, b: SessionRecord) =>
 const matches = (view: SessionView, record: SessionRecord) =>
 	view.instance_id === record.instance_id && view.account.id === record.account_id;
 
-/** Owns the browser pair. UI receives views only; every pair change shares the cross-tab lock. */
 /** Sign-out replies that prove the gateway ended or never held this browser's pair. */
 const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401, 503]);
 
+/** Owns the browser pair. UI receives views only; every pair change shares the cross-tab lock. */
 export function createSessionController({
 	store,
 	gateway,
@@ -295,8 +295,12 @@ export function createSessionController({
 				// The gateway invalidates an authenticated pair before it replies and clears the
 				// cookie half on 200, on an unauthenticated 401 and on the 503 (pool refusal or
 				// timeout) that follows an invalidation, so those replies end this browser's pair.
-				// A 400/403 is refused before authentication and changes nothing; no reply at all
-				// may mean HQ was never reached (UX: "Couldn't sign out"). Both keep the session.
+				// A 400/403 before authentication changes nothing; no reply at all may mean HQ was
+				// never reached (UX: "Couldn't sign out"). Both keep the session. Documented limit:
+				// a refusal after authentication (a 400 body, a 413 too-large body) has already
+				// invalidated the binding and cleared the cookie half, but a 400 is
+				// indistinguishable by status from one before authentication, so this record is
+				// kept until the next 401. This controller always sends `{}`, so it never causes one.
 				let refusal: SessionRequestError | undefined;
 				try {
 					await gateway.signOut(stored.proof, signal);

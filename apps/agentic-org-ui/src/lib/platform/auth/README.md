@@ -27,9 +27,13 @@ Until the final P4 trigger policy lands, refresh is an explicit locked
 invalidates an authenticated logout's pair before replying and clears the cookie
 half on success, on an unauthenticated 401 and on the 503 (pool refusal or
 timeout) that follows, so those replies clear the record before notification
-and then surface any refusal. A 400/403 is refused before authentication and,
-like a failure without a reply (HQ unreachable), preserves storage and state
-and is rethrown ("Couldn't sign out").
+and then surface any refusal. A 400/403 refused before authentication changes
+nothing and, like a failure without a reply (HQ unreachable), preserves storage
+and state and is rethrown ("Couldn't sign out"). Documented limit: a refusal
+after authentication (a 400 body or a 413 too-large body) has already
+invalidated the binding and cleared the cookie, but the UI keeps its record
+until the next 401. Pre- and post-authentication 400s are indistinguishable by
+status, and the UI always sends `{}`, so only a foreign request meets this.
 Dispose detaches notifications and rejects new operations/late read results.
 Already-dispatched pair changes may finish persisting, without publishing to the
 disposed view. HTTP errors expose status, validated duration and session reason,

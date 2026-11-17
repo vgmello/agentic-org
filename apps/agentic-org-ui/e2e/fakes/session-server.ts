@@ -53,6 +53,20 @@ async function body(req: IncomingMessage) {
 	}
 	return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
+/** Whether a request body is exactly an empty JSON object, as the gateway requires of sign-out. */
+async function emptyObjectBody(req: IncomingMessage) {
+	try {
+		const value = await body(req);
+		return (
+			typeof value === 'object' &&
+			value !== null &&
+			!Array.isArray(value) &&
+			Object.keys(value).length === 0
+		);
+	} catch {
+		return false;
+	}
+}
 /**
  * Mirrors the gateway's `authenticate`: exactly one canonical proof header and exactly one canonical
  * session cookie. Like the gateway, each Cookie item is trimmed, and items that cannot be ours (no `=`
@@ -229,6 +243,14 @@ export function sessionTestMiddleware() {
 				// The authenticated pair is invalidated before the pool is asked, so a pool
 				// refusal or timeout (503) ends it as surely as success; the host end is queued.
 				state.pair = undefined;
+				// The body is checked only after that invalidation, so a refused body (anything
+				// but `{}`) is a 400 that still ends the pair and clears the cookie half. The UI
+				// cannot tell it from a 400 before authentication and keeps its record until the
+				// next 401; it always sends `{}`, so only a foreign request reaches this.
+				if (!(await emptyObjectBody(req))) {
+					json(invalidRequest, 400, ended);
+					return;
+				}
 				if (state.signOutFails)
 					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
 				else respond({}, ended);

@@ -178,6 +178,38 @@ test.describe('P6a auth foundation @webkit', () => {
 			});
 			expect((await getSession(page, pair.proof)).status).toBe(200);
 		});
+	test('SIGN-OUT 400 after authentication: a refused body ends the pair, the UI keeps its record until the next 401', async ({
+		page,
+		context
+	}) => {
+		await backend(context);
+		await mount(page);
+		await page.evaluate(() =>
+			window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
+		);
+		const proof = await storedProof(page);
+		const statesBefore = await page.evaluate(() => window.p6.states.length);
+		// A foreign authenticated sign-out with a non-`{}` body; the UI itself always sends `{}`.
+		const refused = await page.evaluate(async (proof) => {
+			const response = await fetch('/api/v1/session/sign-out', {
+				method: 'POST',
+				headers: { 'X-Org-Session-Proof': proof!, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ unexpected: true }),
+				credentials: 'same-origin'
+			});
+			return { status: response.status, body: await response.json() };
+		}, proof);
+		expect(refused).toEqual({
+			status: 400,
+			body: { error: { code: 'invalid_request', message: 'Invalid session request.' } }
+		});
+		// The binding was invalidated and the cookie half cleared before the body was refused.
+		expect(await browserCookie(context)).toBeUndefined();
+		expect(await getSession(page, proof)).toMatchObject({ status: 401, body: denied });
+		// Documented limit: the UI saw no reply of its own and keeps its record until a 401.
+		expect(await storedProof(page)).toBe(proof);
+		expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
+	});
 	test('unknown /api/v1 paths are a JSON 404 decided by shape before the pair', async ({
 		page,
 		context
