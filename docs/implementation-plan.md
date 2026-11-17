@@ -665,12 +665,18 @@ says, and agree those commits with the Track A lead.
   - Landed as small commits in the order the design gives, each merged the same day.
 - **Read:** [Linux host design](design/linux-host.md) sections 1, 2 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
-- **Code today:** platform conditionals in about 80 files: `org-host` (`spawn.rs`,
-  `server_check.rs`, `code_signing.rs`, `peer.rs`, `keys/`, `host_secrets`,
-  `supervisor/channels.rs`, `instance/directory.rs`, `recovery/presence.rs`,
-  `release/platform.rs` and more), `org-socket` (`confinement.rs`, `image.rs`,
-  `rights.rs`), `org-supervise/src/platform.rs`, `org-office`'s durable flush,
-  `org-client` and `org-spool`. CI lints `org-host` and `agentic-org` on Linux with
+- **Code today:** 44 source files and 35 test files outside any adapter contain a
+  platform conditional. The source files are in `org-host` (among them `spawn.rs`,
+  `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs`,
+  `human.rs`, `offices.rs`, `writer.rs`, `hostdb.rs`, `keys/mod.rs`, `host_secrets.rs`,
+  `supervisor/mod.rs`, `supervisor/child.rs`, `supervisor/channels.rs`,
+  `instance/directory.rs`, `instance/mod.rs`, `recovery/presence.rs`,
+  `release/platform.rs`), `org-socket` (`confinement.rs`, `image.rs`, `peer.rs`,
+  `rights.rs`), `org-supervise` (`platform.rs`, `spawn.rs`, `child.rs`), `org-office`'s
+  `store/acceptance/durable.rs`, `org-client`'s `agent.rs` and `org-spool`'s
+  `safe_read.rs`; the [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform)
+  maps each to its contract. Milestone-one work in those files adds no new
+  conditional; a new platform need goes into `org-platform` once X1 has created it. CI lints `org-host` and `agentic-org` on Linux with
   `dead_code` and `unused_imports` allowed and runs none of their tests there.
 - **Done when:** no file outside `org-platform` and the allowlist contains a platform
   conditional; the full macOS checks pass unchanged; on Linux `cargo clippy --workspace
