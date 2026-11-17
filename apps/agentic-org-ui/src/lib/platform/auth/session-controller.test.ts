@@ -326,11 +326,23 @@ describe('P6a session ownership', () => {
 		expect(s.postMessage.mock.calls).toEqual([[{ kind: 'signed-out' }]]);
 	});
 	// No reply means the cookie half may be intact: the UX spec keeps the session until HQ ends it.
-	it('keeps session and storage unchanged if the HQ cannot be reached to sign out', async () => {
+	// A 400/403 is refused before authentication: the gateway kept the pair and the cookie.
+	it.each([
+		['no reply (HQ unreachable)', () => new Error('offline')],
+		[
+			'400 before authentication',
+			() => new SessionRequestError(400, { code: 'invalid_request', message: 'x' })
+		],
+		[
+			'403 origin refusal',
+			() => new SessionRequestError(403, { code: 'not_authorized', message: 'x' })
+		]
+	] as const)('keeps session and storage unchanged on a sign-out %s', async (_outcome, failure) => {
 		const s = setup();
 		await s.controller.boot();
-		s.gateway.signOut.mockRejectedValue(new Error('offline'));
-		await expect(s.controller.signOut()).rejects.toThrow('offline');
+		const error = failure();
+		s.gateway.signOut.mockRejectedValue(error);
+		await expect(s.controller.signOut()).rejects.toBe(error);
 		expect(s.states).toEqual([{ kind: 'signed-in', session: view }]);
 		expect(s.stored()).toEqual(record);
 		expect(s.postMessage).not.toHaveBeenCalled();

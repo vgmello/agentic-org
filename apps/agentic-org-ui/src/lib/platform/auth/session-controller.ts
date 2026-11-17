@@ -31,6 +31,9 @@ const matches = (view: SessionView, record: SessionRecord) =>
 	view.instance_id === record.instance_id && view.account.id === record.account_id;
 
 /** Owns the browser pair. UI receives views only; every pair change shares the cross-tab lock. */
+/** Sign-out replies that prove the gateway ended or never held this browser's pair. */
+const SIGN_OUT_ENDED: ReadonlySet<number> = new Set([401, 503]);
+
 export function createSessionController({
 	store,
 	gateway,
@@ -289,14 +292,17 @@ export function createSessionController({
 					ended(stored ? 'changed-account' : 'signed-out', stored?.login);
 					return;
 				}
-				// Every gateway reply on this route clears the cookie half, so a typed refusal
-				// (401, 503 or timeout) ends this browser's pair as surely as success does.
-				// Only a failure without a reply keeps the pair: HQ may not have been reached.
+				// The gateway invalidates an authenticated pair before it replies and clears the
+				// cookie half on 200, on an unauthenticated 401 and on the 503 (pool refusal or
+				// timeout) that follows an invalidation, so those replies end this browser's pair.
+				// A 400/403 is refused before authentication and changes nothing; no reply at all
+				// may mean HQ was never reached (UX: "Couldn't sign out"). Both keep the session.
 				let refusal: SessionRequestError | undefined;
 				try {
 					await gateway.signOut(stored.proof, signal);
 				} catch (error) {
-					if (!(error instanceof SessionRequestError)) throw error;
+					if (!(error instanceof SessionRequestError) || !SIGN_OUT_ENDED.has(error.status))
+						throw error;
 					refusal = error;
 				}
 				await store.clear();

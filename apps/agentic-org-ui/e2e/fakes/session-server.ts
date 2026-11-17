@@ -19,6 +19,14 @@ export interface SessionPair {
 }
 const draw = () => randomBytes(32).toString('hex');
 const lowerHex64 = /^[0-9a-f]{64}$/;
+const notFound = { error: { code: 'not_found', message: 'Not found.' } };
+const invalidRequest = { error: { code: 'invalid_request', message: 'Invalid session request.' } };
+const knownSessionPaths = new Set([
+	'/api/v1/session',
+	'/api/v1/session/sign-in',
+	'/api/v1/session/refresh',
+	'/api/v1/session/sign-out'
+]);
 function newCase() {
 	return {
 		pair: undefined as SessionPair | undefined,
@@ -27,6 +35,8 @@ function newCase() {
 		refreshCount: 0,
 		gets: 0,
 		signOutFails: false,
+		/** A 400/403 refused before authentication: the pair and the cookie are kept. */
+		signOutRefused: undefined as 400 | 403 | undefined,
 		revision: 2,
 		hold: false,
 		release: undefined as (() => void) | undefined,
@@ -103,6 +113,9 @@ export function sessionTestMiddleware() {
 						controlled.release?.();
 					} else if (value.action === 'signOutFails')
 						controlled.signOutFails = value.value === true;
+					else if (value.action === 'signOutRefused')
+						controlled.signOutRefused =
+							value.value === 400 || value.value === 403 ? value.value : undefined;
 					else if (value.action === 'revision') controlled.revision = value.value;
 					else {
 						json({}, 400);
@@ -134,8 +147,25 @@ export function sessionTestMiddleware() {
 				state.issued.push(pair);
 				respond({ ...state.view, proof: pair.proof }, { value: pair.cookie });
 			};
-			if (url.pathname === '/api/v1/version' && req.method === 'GET') {
-				respond({ api_version: 1, contract_revision: state.revision });
+			// Like the gateway: a query on a session path is refused, then every unknown /api/v1
+			// path is decided by its shape alone (JSON 404) before any pair is inspected.
+			const sessionPath =
+				url.pathname === '/api/v1/session' || url.pathname.startsWith('/api/v1/session/');
+			if (sessionPath && url.search !== '') {
+				json(invalidRequest, 400);
+				return;
+			}
+			if (
+				url.pathname !== '/api/v1/version' &&
+				!(sessionPath && knownSessionPaths.has(url.pathname))
+			) {
+				json(notFound, 404);
+				return;
+			}
+			if (url.pathname === '/api/v1/version') {
+				if (req.method === 'GET' && url.search === '')
+					respond({ api_version: 1, contract_revision: state.revision });
+				else json(invalidRequest, 400);
 				return;
 			}
 			if (url.pathname === '/api/v1/session/sign-in' && req.method === 'POST') {
@@ -147,8 +177,18 @@ export function sessionTestMiddleware() {
 				establish();
 				return;
 			}
-			// Like the gateway, every reply on the sign-out route (success, 401 or 503) clears the cookie half.
 			const signOut = url.pathname === '/api/v1/session/sign-out' && req.method === 'POST';
+			// Host/origin refusals come before authentication: nothing changes, the cookie stays.
+			if (signOut && state.signOutRefused) {
+				json(
+					state.signOutRefused === 403
+						? { error: { code: 'not_authorized', message: 'Request origin is not authorized.' } }
+						: invalidRequest,
+					state.signOutRefused
+				);
+				return;
+			}
+			// A sign-out that authenticates or is refused with 401 clears the cookie half.
 			const ended = signOut ? { value: '', clear: true } : undefined;
 			// Cookie-only, proof-only, stale and mismatched pairs share the gateway's single denial shape.
 			const presented = presentedPair(req);
@@ -186,18 +226,18 @@ export function sessionTestMiddleware() {
 				return;
 			}
 			if (signOut) {
-				// A pool refusal or timeout leaves the HQ session alive, but the browser's pair still ends.
+				// The authenticated pair is invalidated before the pool is asked, so a pool
+				// refusal or timeout (503) ends it as surely as success; the host end is queued.
+				state.pair = undefined;
 				if (state.signOutFails)
 					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503, ended);
-				else {
-					state.pair = undefined;
-					respond({}, ended);
-				}
+				else respond({}, ended);
 				return;
 			}
-			json({}, 404);
+			// A known session path with another method is an invalid request after authentication.
+			json(invalidRequest, 400);
 		} catch {
-			json({}, 400);
+			json(invalidRequest, 400);
 		}
 	};
 }

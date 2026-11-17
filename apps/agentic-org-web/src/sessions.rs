@@ -74,6 +74,38 @@ pub struct Ticket {
     key: [u8; 32],
     session: Arc<Session>,
 }
+/// The host end of a sign-out whose browser pairs are already invalid. It runs
+/// exactly once: [`SignOut::end`] asks the host directly; dropping it unexecuted
+/// (a refused body, a refused pool admission) queues the end on the cleanup
+/// thread instead. A full queue leaves the session to the host's own
+/// idle/absolute expiry, and control EOF ends it.
+pub struct SignOut {
+    handle: Option<Arc<SessionHandle>>,
+    host: Arc<HostControl>,
+    cleanup: SyncSender<Arc<SessionHandle>>,
+}
+impl SignOut {
+    pub fn end(mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        match self.host.end(&handle) {
+            // Ended, or the host had already ended or forgotten it.
+            Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {}
+            // Retry once on the cleanup thread.
+            Err(control::Failure::Unavailable) => {
+                let _ = self.cleanup.try_send(handle);
+            }
+        }
+    }
+}
+impl Drop for SignOut {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = self.cleanup.try_send(handle);
+        }
+    }
+}
 pub struct Established {
     pub view: SessionView,
     pub proof: org_proto::gateway::SessionProof,
@@ -430,27 +462,24 @@ impl BrowserSessions {
     /// that follows cannot keep a signed-out pair usable (gateway-api-v1 §4).
     pub fn sign_out(&self, ticket: Ticket) -> Result<(), ApiReply> {
         self.current(&ticket)?;
-        self.end_bound(&ticket)
+        self.begin_sign_out(ticket)?.end();
+        Ok(())
     }
-    fn end_bound(&self, ticket: &Ticket) -> Result<(), ApiReply> {
-        let handle = &ticket.session.handle;
-        // Invalidate locally first: evict every pair bound to this host session,
-        // including one a concurrent refresh rotated after this request passed
-        // current(). A refresh that has not swapped yet then finds its ticket gone.
+    /// Invalidates every browser pair bound to the authenticated ticket's host
+    /// session now, including one a concurrent refresh rotated after the ticket
+    /// was issued (a refresh that has not swapped yet then finds its ticket
+    /// gone). The returned [`SignOut`] owns the host end that follows.
+    pub fn begin_sign_out(&self, ticket: Ticket) -> Result<SignOut, ApiReply> {
+        let handle = Arc::clone(&ticket.session.handle);
         self.sessions
             .lock()
             .map_err(|_| unavailable())?
-            .retain(|_, current| !Arc::ptr_eq(&current.handle, handle));
-        match self.host.end(handle) {
-            // Ended, or the host had already ended or forgotten it.
-            Ok(()) | Err(control::Failure::Denied | control::Failure::NotFound) => {}
-            // Retry once on the cleanup thread; a full queue leaves the session
-            // to the host's own idle/absolute expiry, and control EOF ends it.
-            Err(control::Failure::Unavailable) => {
-                let _ = self.cleanup.try_send(Arc::clone(handle));
-            }
-        }
-        Ok(())
+            .retain(|_, current| !Arc::ptr_eq(&current.handle, &handle));
+        Ok(SignOut {
+            handle: Some(handle),
+            host: Arc::clone(&self.host),
+            cleanup: self.cleanup.clone(),
+        })
     }
     pub fn refresh(&self, ticket: Ticket) -> Result<Established, ApiReply> {
         self.refresh_watched(ticket, &Watch::never())

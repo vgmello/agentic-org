@@ -23,10 +23,13 @@ URLs, localStorage/sessionStorage or published state. Missing proof has no
 cookie-only recovery. Another account clears prior views and requires Reload.
 
 Until the final P4 trigger policy lands, refresh is an explicit locked
-`refresh(triggered_at_ms)` only: no timer or guessed scheduling. Every gateway
-reply to logout (success, 401, 503 or timeout) clears the cookie half, so each
-clears the record before notification and then surfaces any refusal. A logout
-failure without a reply (HQ unreachable) preserves storage and state.
+`refresh(triggered_at_ms)` only: no timer or guessed scheduling. The gateway
+invalidates an authenticated logout's pair before replying and clears the cookie
+half on success, on an unauthenticated 401 and on the 503 (pool refusal or
+timeout) that follows, so those replies clear the record before notification
+and then surface any refusal. A 400/403 is refused before authentication and,
+like a failure without a reply (HQ unreachable), preserves storage and state
+and is rethrown ("Couldn't sign out").
 Dispose detaches notifications and rejects new operations/late read results.
 Already-dispatched pair changes may finish persisting, without publishing to the
 disposed view. HTTP errors expose status, validated duration and session reason,

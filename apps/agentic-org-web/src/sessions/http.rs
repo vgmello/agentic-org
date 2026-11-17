@@ -1,7 +1,7 @@
 //! Production session routes (gateway-api-v1 §2 rows 1-5). Native authority is
 //! the admitted HostControl, never a test capability flag. Every other
 //! `/api/v1` route is a JSON 404; nothing forwards to a local socket.
-use super::{BrowserSessions, Established, SecretBody, Ticket};
+use super::{BrowserSessions, Established, SecretBody, SignOut, Ticket};
 use crate::{
     blocking::Watch,
     body::BusinessBody,
@@ -20,7 +20,8 @@ pub enum Route {
     SignIn,
     Get(Ticket),
     Refresh(Ticket),
-    SignOut(Ticket),
+    /// Built only after authentication: the browser pairs are already invalid.
+    SignOut(SignOut),
 }
 pub enum Command {
     Version,
@@ -30,7 +31,7 @@ pub enum Command {
     },
     Get(Ticket),
     Refresh(Ticket),
-    SignOut(Ticket),
+    SignOut(SignOut),
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,7 +107,19 @@ impl ApiBackend for SessionApi {
             if parts == ["api", "v1", "session", "sign-in"] && request.method == Method::POST {
                 return Ok(Route::SignIn);
             }
-            let ticket = self.sessions.authenticate(request)?;
+            let sign_out =
+                parts.len() == 4 && parts[3] == "sign-out" && request.method == Method::POST;
+            let ticket = match self.sessions.authenticate(request) {
+                Ok(ticket) => ticket,
+                // An unauthenticated sign-out ends nothing, but its pair is already
+                // unusable: the shared 401 clears the cookie half.
+                Err(reply) if sign_out && reply.status() == StatusCode::UNAUTHORIZED => {
+                    return Err(reply
+                        .cookie(&self.sessions.clear_cookie())
+                        .unwrap_or_else(|reply| reply));
+                }
+                Err(reply) => return Err(reply),
+            };
             return match (
                 parts.len(),
                 parts.last().map(String::as_str),
@@ -114,7 +127,10 @@ impl ApiBackend for SessionApi {
             ) {
                 (3, _, &Method::GET) => Ok(Route::Get(ticket)),
                 (4, Some("refresh"), &Method::POST) => Ok(Route::Refresh(ticket)),
-                (4, Some("sign-out"), &Method::POST) => Ok(Route::SignOut(ticket)),
+                // Invalidated here, before any preparation or pool admission.
+                (4, Some("sign-out"), &Method::POST) => {
+                    Ok(Route::SignOut(self.sessions.begin_sign_out(ticket)?))
+                }
                 _ => Err(invalid()),
             };
         }
@@ -149,9 +165,10 @@ impl ApiBackend for SessionApi {
                 object::<Empty>(body.as_bytes())?;
                 Command::Refresh(ticket)
             }
-            Route::SignOut(ticket) => {
+            // A refused body drops the SignOut, which queues the host end.
+            Route::SignOut(sign_out) => {
                 object::<Empty>(body.as_bytes())?;
-                Command::SignOut(ticket)
+                Command::SignOut(sign_out)
             }
             _ => return Err(invalid()),
         };
@@ -181,16 +198,18 @@ impl ApiBackend for SessionApi {
                 .sessions
                 .refresh_with(ticket, watch, |result| self.established(result))
                 .unwrap_or_else(|reply| reply),
-            // `finish` adds the clearing cookie to this and every other reply.
-            Command::SignOut(ticket) => match self.sessions.sign_out(ticket) {
-                Ok(()) => ApiReply::json(StatusCode::OK, serde_json::json!({"result":{}})),
-                Err(reply) => reply,
-            },
+            // `finish` adds the clearing cookie to this and every other routed reply.
+            Command::SignOut(sign_out) => {
+                sign_out.end();
+                ApiReply::json(StatusCode::OK, serde_json::json!({"result":{}}))
+            }
         }
     }
-    /// Every reply on the sign-out route clears the browser's cookie half,
-    /// including refusals before execution (authentication, body, preparation,
-    /// pool admission) and a backend timeout: the browser's pair ends either way.
+    /// A routed sign-out has authenticated and already invalidated its pairs, so
+    /// every reply that follows clears the browser's cookie half: success, a
+    /// refused body, a pool refusal and a backend timeout. Refusals before
+    /// authentication never reach here and keep the cookie; route()'s own 401
+    /// carries the clearing cookie itself.
     fn finish(&self, request: &Parts, path: &RequestPath, reply: ApiReply) -> ApiReply {
         if request.method == Method::POST && path.segments() == ["api", "v1", "session", "sign-out"]
         {

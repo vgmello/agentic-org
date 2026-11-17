@@ -66,9 +66,9 @@ pub trait ApiBackend: Send + Sync + 'static {
         let _ = watch;
         self.execute(call)
     }
-    /// Adjusts every reply on an `/api/v1` request, including refusals before
-    /// or after execution: routing, body reading, preparation, pool admission
-    /// and backend timeouts.
+    /// Adjusts every reply on an `/api/v1` request that [`Self::route`] accepted:
+    /// body reading, preparation, pool admission, execution and backend
+    /// timeouts. A routing refusal is returned unchanged.
     fn finish(&self, request: &Parts, path: &RequestPath, reply: ApiReply) -> ApiReply {
         let _ = (request, path);
         reply
@@ -82,6 +82,9 @@ pub struct ApiReply {
 }
 
 impl ApiReply {
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
     #[cfg(test)]
     pub(crate) fn inspected(&self) -> (StatusCode, &[u8]) {
         (self.status, &self.body)
@@ -357,10 +360,12 @@ impl<B: ApiBackend> Gateway<B> {
                     )
                     .into_http(head)
                 }
-                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") =>
-                {
-                    let reply = self.api_response(&parts, &path, body).await;
-                    self.backend.finish(&parts, &path, reply).into_http(head)
+                Ok(path) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
+                    match self.api_response(&parts, &path, body).await {
+                        Ok(reply) => self.backend.finish(&parts, &path, reply),
+                        Err(refused) => refused,
+                    }
+                    .into_http(head)
                 }
                 Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
             }
@@ -376,15 +381,18 @@ impl<B: ApiBackend> Gateway<B> {
         response
     }
 
-    async fn api_response<T>(&self, parts: &Parts, path: &RequestPath, body: T) -> ApiReply
+    /// `Err` is a routing refusal; `Ok` is every reply after routing.
+    async fn api_response<T>(
+        &self,
+        parts: &Parts,
+        path: &RequestPath,
+        body: T,
+    ) -> Result<ApiReply, ApiReply>
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        let route = match self.backend.route(parts, path) {
-            Ok(route) => route,
-            Err(reply) => return reply,
-        };
+        let route = self.backend.route(parts, path)?;
         let prepared = if self.backend.credentials(&route) {
             match crate::sessions::read_secret_body(body).await {
                 Ok(body) => {
@@ -408,7 +416,7 @@ impl<B: ApiBackend> Gateway<B> {
         };
         let (prepared, bytes) = match prepared {
             Ok(prepared) => prepared,
-            Err(reply) => return reply,
+            Err(reply) => return Ok(reply),
         };
         let backend = Arc::clone(&self.backend);
         let call = prepared.call;
@@ -418,12 +426,14 @@ impl<B: ApiBackend> Gateway<B> {
                 backend.execute_watched(call, watch)
             }) {
             Ok(ticket) => ticket,
-            Err(_) => return prepared.kind.unavailable(),
+            Err(_) => return Ok(prepared.kind.unavailable()),
         };
-        match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
-            Ok(Ok(reply)) => reply,
-            _ => prepared.kind.unknown(),
-        }
+        Ok(
+            match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
+                Ok(Ok(reply)) => reply,
+                _ => prepared.kind.unknown(),
+            },
+        )
     }
 }
 

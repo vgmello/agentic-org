@@ -861,7 +861,12 @@ fn sign_out_evicts_a_concurrently_rotated_pair_of_the_ended_session() {
         .sessions
         .refresh(ticket(&f.sessions, &first))
         .unwrap_or_else(|_| panic!("refresh"));
-    assert!(f.sessions.end_bound(&queued).is_ok());
+    let Ok(sign_out) = f.sessions.begin_sign_out(queued) else {
+        panic!("begin sign-out");
+    };
+    // Both pairs are invalid before the host end runs.
+    assert!(f.refused(&rotated.cookie, rotated.proof.expose()));
+    sign_out.end();
     assert!(f.refused(&rotated.cookie, rotated.proof.expose()));
     assert!(f.refused(&first.cookie, first.proof.expose()));
     assert_eq!(f.sessions.sessions.lock().unwrap().len(), 1);
@@ -1097,7 +1102,27 @@ fn send(
     headers: &[(&str, &str)],
     body: &str,
 ) -> Sent {
-    let mut builder = Request::builder().method(method).uri(target);
+    send_version(
+        gateway,
+        hyper::Version::HTTP_11,
+        method,
+        target,
+        headers,
+        body,
+    )
+}
+fn send_version(
+    gateway: &Gateway<SessionApi>,
+    version: hyper::Version,
+    method: Method,
+    target: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> Sent {
+    let mut builder = Request::builder()
+        .version(version)
+        .method(method)
+        .uri(target);
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }
@@ -1169,59 +1194,85 @@ fn http_sign_in(gateway: &Gateway<SessionApi>) -> (String, String) {
     (cookie_pair(set_cookie).to_owned(), proof)
 }
 
-#[test]
-fn every_sign_out_reply_clears_the_cookie_even_when_refused_before_execution() {
-    let f = Fixture::new();
-    let gateway = gateway(&f);
-    let unknown = format!("{}={}", f.sessions.cookie_name, "a".repeat(64));
-    let refused = send(
-        &gateway,
-        Method::POST,
-        "/api/v1/session/sign-out",
-        &[
-            ("host", HOST),
-            ("origin", ORIGIN),
-            ("cookie", &unknown),
-            (SESSION_PROOF_HEADER, &"b".repeat(64)),
-        ],
-        "{}",
+/// The paired headers of a signed-in browser, plus `extra`.
+fn paired<'a>(cookie: &'a str, proof: &'a str) -> [(&'a str, &'a str); 4] {
+    [
+        ("host", HOST),
+        ("origin", ORIGIN),
+        ("cookie", cookie),
+        (SESSION_PROOF_HEADER, proof),
+    ]
+}
+fn still_bound(gateway: &Gateway<SessionApi>, cookie: &str, proof: &str) -> bool {
+    let got = send(
+        gateway,
+        Method::GET,
+        "/api/v1/session",
+        &paired(cookie, proof),
+        "",
     );
-    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
-    assert!(clears_cookie(&refused), "{:?}", refused.headers);
-    // A known pair whose body preparation is refused also clears the cookie.
-    let (cookie, proof) = http_sign_in(&gateway);
+    assert!(got.headers.get(header::SET_COOKIE).is_none());
+    got.status == StatusCode::OK
+}
+fn wait_for_ends(f: &Fixture, expected: usize) {
+    let until = Instant::now() + Duration::from_secs(5);
+    while f.count("session.end") < expected && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(f.count("session.end"), expected);
+}
+
+/// I1: an authenticated sign-out invalidates every binding of its host session
+/// before preparation or pool admission; every reply after authentication
+/// clears the cookie, and the host end still runs (direct or queued).
+#[test]
+fn an_authenticated_sign_out_invalidates_first_and_every_later_reply_clears_the_cookie() {
+    // 400 after authentication: a refused body.
+    let f = Fixture::new();
+    let open = gateway(&f);
+    let (cookie, proof) = http_sign_in(&open);
+    let (other_cookie, other_proof) = http_sign_in(&open);
     let invalid = send(
-        &gateway,
+        &open,
         Method::POST,
         "/api/v1/session/sign-out",
-        &[
-            ("host", HOST),
-            ("origin", ORIGIN),
-            ("cookie", &cookie),
-            (SESSION_PROOF_HEADER, &proof),
-        ],
+        &paired(&cookie, &proof),
         "[]",
     );
     assert_eq!(invalid.status, StatusCode::BAD_REQUEST);
     assert!(clears_cookie(&invalid), "{:?}", invalid.headers);
-    // Other session routes never clear it.
-    let get = send(
-        &gateway,
-        Method::GET,
-        "/api/v1/session",
-        &[
-            ("host", HOST),
-            ("cookie", &cookie),
-            (SESSION_PROOF_HEADER, &proof),
-        ],
-        "",
+    assert!(!still_bound(&open, &cookie, &proof));
+    assert!(still_bound(&open, &other_cookie, &other_proof));
+    // The dropped sign-out queued its host end.
+    wait_for_ends(&f, 1);
+
+    // 503 pool refusal: the closure never runs.
+    let f = Fixture::new();
+    let open = gateway(&f);
+    let (cookie, proof) = http_sign_in(&open);
+    let full = gateway_with(
+        &f,
+        ApiLimits {
+            waiting_bytes: 1,
+            ..ApiLimits::default()
+        },
     );
-    assert_eq!(get.status, StatusCode::OK);
-    assert!(get.headers.get(header::SET_COOKIE).is_none());
+    let refused = send(
+        &full,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        &paired(&cookie, &proof),
+        "{}",
+    );
+    assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(refused.body["error"]["code"], "unavailable");
+    assert!(clears_cookie(&refused), "{:?}", refused.headers);
+    assert!(!still_bound(&open, &cookie, &proof));
+    wait_for_ends(&f, 1);
 }
 
 #[test]
-fn a_timed_out_sign_out_still_clears_the_cookie() {
+fn a_timed_out_sign_out_is_invalidated_clears_the_cookie_and_still_ends_the_host_session() {
     let f = Fixture::scripted(false, Duration::from_millis(1500));
     let gateway = gateway_with(
         &f,
@@ -1235,16 +1286,128 @@ fn a_timed_out_sign_out_still_clears_the_cookie() {
         &gateway,
         Method::POST,
         "/api/v1/session/sign-out",
-        &[
-            ("host", HOST),
-            ("origin", ORIGIN),
-            ("cookie", &cookie),
-            (SESSION_PROOF_HEADER, &proof),
-        ],
+        &paired(&cookie, &proof),
         "{}",
     );
     assert_eq!(timed_out.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(timed_out.body["error"]["code"], "timeout");
     assert!(clears_cookie(&timed_out), "{:?}", timed_out.headers);
+    // Invalid before the host answered the end.
+    assert!(f.sessions.sessions.lock().unwrap().is_empty());
+    wait_for_ends(&f, 1);
+}
+
+/// I2: no pair, or a bad/expired pair, is the shared 401 that clears the
+/// cookie; it ends no host session and leaves every other binding alone.
+#[test]
+fn an_unauthenticated_sign_out_is_the_shared_401_and_clears_the_cookie() {
+    let f = Fixture::new();
+    let gateway = gateway(&f);
+    let (cookie, proof) = http_sign_in(&gateway);
+    let unknown = format!("{}={}", f.sessions.cookie_name, "a".repeat(64));
+    let wrong_proof = "b".repeat(64);
+    let no_pair: [(&str, &str); 2] = [("host", HOST), ("origin", ORIGIN)];
+    for headers in [
+        no_pair.to_vec(),
+        paired(&unknown, &wrong_proof).to_vec(),
+        paired(&cookie, &wrong_proof).to_vec(),
+        vec![("host", HOST), ("origin", ORIGIN), ("cookie", &cookie)],
+    ] {
+        let refused = send(
+            &gateway,
+            Method::POST,
+            "/api/v1/session/sign-out",
+            &headers,
+            "{}",
+        );
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{headers:?}");
+        assert_eq!(refused.body["error"]["session_reason"], "session_ended");
+        assert!(clears_cookie(&refused), "{:?}", refused.headers);
+    }
+    // None of those refusals ended a host session.
+    assert_eq!(f.count("session.end"), 0);
+    // An expired pair is refused the same way (its expiry, not the sign-out,
+    // ends its host session through the reaper).
+    let (expired_cookie, expired_proof) = http_sign_in(&gateway);
+    let value = expired_cookie.split_once('=').unwrap().1;
+    let key: [u8; 32] = Sha256::digest(value.as_bytes()).into();
+    *f.sessions.sessions.lock().unwrap()[&key]
+        .touched
+        .lock()
+        .unwrap() = Instant::now()
+        .checked_sub(IDLE + Duration::from_secs(1))
+        .expect("monotonic clock far enough from boot");
+    let expired = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        &paired(&expired_cookie, &expired_proof),
+        "{}",
+    );
+    assert_eq!(expired.status, StatusCode::UNAUTHORIZED);
+    assert!(clears_cookie(&expired), "{:?}", expired.headers);
+    // The signed-in pair the refusals named is still bound.
+    assert!(still_bound(&gateway, &cookie, &proof));
+}
+
+/// I3: refusals before authentication change nothing and keep the cookie.
+#[test]
+fn a_sign_out_refused_before_authentication_changes_nothing() {
+    let f = Fixture::new();
+    let gateway = gateway(&f);
+    let (cookie, proof) = http_sign_in(&gateway);
+    let pair = paired(&cookie, &proof);
+    let wrong_host = [
+        ("host", "evil.test:8080"),
+        ("origin", ORIGIN),
+        ("cookie", cookie.as_str()),
+        (SESSION_PROOF_HEADER, proof.as_str()),
+    ];
+    let wrong_origin = [
+        ("host", HOST),
+        ("origin", "http://evil.test:8080"),
+        ("cookie", cookie.as_str()),
+        (SESSION_PROOF_HEADER, proof.as_str()),
+    ];
+    let cases = [
+        (
+            hyper::Version::HTTP_11,
+            "/api/v1/session/sign-out",
+            &wrong_host,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            hyper::Version::HTTP_11,
+            "/api/v1/session/sign-out",
+            &wrong_origin,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            hyper::Version::HTTP_10,
+            "/api/v1/session/sign-out",
+            &pair,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            hyper::Version::HTTP_11,
+            "/api/v1/session/sign-out?x=1",
+            &pair,
+            StatusCode::BAD_REQUEST,
+        ),
+    ];
+    for (version, target, headers, status) in cases {
+        let sent = send_version(&gateway, version, Method::POST, target, headers, "{}");
+        assert_eq!(sent.status, status, "{target} {headers:?}");
+        assert!(
+            sent.headers.get(header::SET_COOKIE).is_none(),
+            "{target} {headers:?}"
+        );
+        assert!(
+            still_bound(&gateway, &cookie, &proof),
+            "{target} {headers:?}"
+        );
+    }
+    assert_eq!(f.count("session.end"), 0);
 }
 
 #[test]

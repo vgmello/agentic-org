@@ -48,6 +48,7 @@ async function backend(context: BrowserContext) {
 		holdRefresh: () => control('hold'),
 		releaseRefresh: () => control('release'),
 		setSignOutFails: (value: boolean) => control('signOutFails', value),
+		setSignOutRefused: (value: 400 | 403 | null) => control('signOutRefused', value),
 		setRevision: (value: number) => control('revision', value)
 	};
 }
@@ -144,6 +145,52 @@ test.describe('P6a auth foundation @webkit', () => {
 			.toEqual({ kind: 'signed-out', reason: 'signed-out' });
 		expect(await second.evaluate(() => window.p6.store.read())).toBeUndefined();
 		expect(await browserCookie(context)).toBeUndefined();
+		// The binding was invalidated before the 503: the old pair no longer authenticates.
+		await setBrowserCookie(context, page, secondPair.cookie);
+		expect(await getSession(page, secondPair.proof)).toMatchObject({ status: 401, body: denied });
+	});
+	for (const status of [400, 403] as const)
+		test(`SIGN-OUT ${status}: a refusal before authentication changes nothing`, async ({
+			page,
+			context
+		}) => {
+			const api = await backend(context);
+			await mount(page);
+			await page.evaluate(() =>
+				window.p6.controller.signIn({ login: 'alex', password: 'private-password' })
+			);
+			const [pair] = await api.issued();
+			const statesBefore = await page.evaluate(() => window.p6.states.length);
+			await api.setSignOutRefused(status);
+			expect(
+				await page.evaluate(() =>
+					window.p6.controller.signOut().then(
+						() => 'unexpected',
+						(error) => `${error.message} ${error.status}`
+					)
+				)
+			).toBe(`Session request failed ${status}`);
+			expect((await browserCookie(context))?.value).toBe(pair.cookie);
+			expect(await storedProof(page)).toBe(pair.proof);
+			expect(await page.evaluate(() => window.p6.states.length)).toBe(statesBefore);
+			expect(await page.evaluate(() => window.p6.broadcasts)).not.toContainEqual({
+				kind: 'signed-out'
+			});
+			expect((await getSession(page, pair.proof)).status).toBe(200);
+		});
+	test('unknown /api/v1 paths are a JSON 404 decided by shape before the pair', async ({
+		page,
+		context
+	}) => {
+		await backend(context);
+		await mount(page);
+		for (const path of ['/api/v1/session/other', '/api/v1/session/sign-out/x', '/api/v1/tasks'])
+			expect(
+				await page.evaluate(async (path) => {
+					const response = await fetch(path, { method: 'POST', body: '{}' });
+					return { status: response.status, body: await response.json() };
+				}, path)
+			).toEqual({ status: 404, body: { error: { code: 'not_found', message: 'Not found.' } } });
 	});
 	test('SIGN-7: a reload recovers the matching cookie/proof pair from actual IndexedDB', async ({
 		page,
