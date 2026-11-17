@@ -942,7 +942,7 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
 
 #[cfg(not(target_os = "macos"))]
 #[test]
-fn the_supervisor_refuses_an_os_without_process_confinement() {
+fn the_supervisor_refuses_a_platform_without_a_confinement_adapter() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
@@ -960,9 +960,14 @@ fn the_supervisor_refuses_an_os_without_process_confinement() {
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("no web process without macOS confinement")
+        panic!("no web process without a confinement adapter")
     };
-    assert!(error.to_string().contains("requires macOS"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("has no adapter on this platform"),
+        "{error}"
+    );
 }
 
 /// A receiver over one end of a fresh stream pair, and the other (sending) end.

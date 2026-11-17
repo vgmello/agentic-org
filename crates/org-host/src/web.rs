@@ -241,6 +241,9 @@ fn supervise<S: Serving>(
                         // Eligibility ended (HQ left Active or authentication went
                         // away): stop serving now and wait to become eligible again.
                         // This is not a failed start and spends no restart attempt.
+                        if running.elapsed() >= timing.stable {
+                            failures = 0; // a stable run resets the count, as documented
+                        }
                         *lock(state) = GatewayState::Starting;
                         drop(child); // end sessions/control, then kill/reap
                         log("authenticated browser stopped because the host is no longer eligible; it starts again once eligible");
