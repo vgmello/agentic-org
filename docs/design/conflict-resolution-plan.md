@@ -14,7 +14,7 @@ The interactive register with per-entry status is the companion view. This file 
 
 ## Status
 
-52 findings. 7 applied, 45 proposed and waiting for a decision.
+52 findings. 11 applied, 41 proposed and waiting for a decision.
 
 | ID | Finding | Priority | Size | State | Commit |
 | --- | --- | --- | --- | --- | --- |
@@ -65,13 +65,36 @@ The interactive register with per-entry status is the companion view. This file 
 | [D-05](#d-05) | The implemented-entry-points record lags the branch | Cleanup | S | Proposed |  |
 | [D-06](#d-06) | Code comments that still describe the desktop app | Cleanup | S | Proposed |  |
 | [D-07](#d-07) | The web process is still called the gateway in designs and code | Cleanup | S for prose, M for code | Proposed |  |
-| [E-01](#e-01) | Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner | Decide first | S to decide, M to apply | Proposed |  |
+| [E-01](#e-01) | Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner | Decide first | S to decide, M to apply | Applied | `b59b4e3` |
 | [E-02](#e-02) | Messaging latency targets assume a batched database commit; the data contract stores one file per message | Before building the area | M | Proposed |  |
-| [F-01](#f-01) | Browser sessions live in memory, so every restart signs everyone out | Before building the area | M | Proposed |  |
-| [F-02](#f-02) | A 15 ms send target for agent-os, against an owner target of 1 to 2 ms | Before building the area | M | Proposed |  |
-| [F-03](#f-03) | Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract | Decide first | S for the setting, M to L for the separate user | Proposed |  |
+| [F-01](#f-01) | Browser sessions live in memory, so every restart signs everyone out | Before building the area | M | Applied | `b59b4e3` |
+| [F-02](#f-02) | A 15 ms send target for agent-os, against an owner target of 1 to 2 ms | Before building the area | M | Applied | `b59b4e3` |
+| [F-03](#f-03) | Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract | Decide first | S for the setting, M to L for the separate user | Applied | `b59b4e3` |
 
 Size: S is one documentation change, M is several documents or a bounded code change, L is a code migration.
+
+## Handoff for implementing agents
+
+Implementation was paused on 2026-11-17 while the architecture was reviewed. Before resuming, an implementing agent reads this section.
+
+**Decisions in force.** These are requirements now, each with acceptance criteria:
+
+| Decision | Requirement | Checklist row | Affects work in progress |
+| --- | --- | --- | --- |
+| Stored browser sessions | [ADR-0013](../adr/0013-stored-browser-sessions.md) | FC-159 | The connection-bound session authentication recorded under FC-014 must change: sessions outlive the control connection. |
+| Acknowledgement classes, agent-os target | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) | FC-160 | The operation list awaits owner confirmation; do not implement the fast class before it is confirmed. |
+| Agent isolation modes | [ADR-0015](../adr/0015-agent-isolation-modes.md) | FC-161 | The launch contract in `org-runtime` and `org-supervise` gains an isolation mode. A macOS spike comes first. |
+| No application-level data encryption | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | FC-162 | Do not add or extend database-key custody. Removal waits for the CA private key relocation (ADR-0007 amendment). |
+| One storage layout, HQ as organization authority, budget hold at the permit, agent re-placement versus office relocation, hash codec registry, messaging runtime rules | Findings A-01 to A-06 below, applied in the organization-data documents | none | Use `durable/` and `runtime/<office-id>/` paths; no other root names. |
+
+**How the decisions reach an agent.** Four routes, all already updated:
+
+1. `AGENTS.md` sends every agent to the [documentation authority map](documentation-authority.md), which lists the new ADRs and this plan.
+2. Each affected design, ADR and spec carries a dated amendment note at the place an agent would read the old rule.
+3. The `security-boundaries` and `hq-creation-provider` project skills, which the skill catalog attaches to assignments in those areas, carry matching guardrails.
+4. [FEATURES.md](../FEATURES.md) has one Planned row per decision, so each is a tracked, assignable capability.
+
+**Not yet decided.** Every finding below whose state is Proposed. Do not implement a proposed resolution; it needs the owner's decision first.
 
 ## Order of work
 
@@ -824,7 +847,7 @@ The organization data was written after the ADRs. These are ADR decisions it rep
 
 **Encryption at rest: decided for databases, unstated for the files that replace them, and questioned by the owner**
 
-Priority: Decide first · Size: S to decide, M to apply · State: Proposed
+Priority: Decide first · Size: S to decide, M to apply · State: Applied
 
 - **ADR says:** "Organizations will hold confidential information, so the server's database must be encrypted at rest." Every reader and writer keys SQLCipher with a host-held key. *(adr/0002-storage-sqlite-sqlcipher-one-writer.md context and decisions 1 to 2)*
 - **Organization data says:** Sources move to files under `durable/`. Only the private-notes database is stated as SQLCipher. Document 15 asks for "encrypted storage … according to the existing storage boundary" without defining it; documents 10, 16 and 17 say "protected". *(05-operational-data.md lines 551, 563; 15-messaging-and-chat.md line 15; 10; 16; 17)*
@@ -834,6 +857,8 @@ Priority: Decide first · Size: S to decide, M to apply · State: Proposed
 - **What we gain:** If dropped: no key custody to lose, no signed-binary requirement for storage, Linux unblocked, files a person can inspect and repair. If extended instead: chat, receipts and budgets stay unreadable to a same-user process and to anyone holding a copy.
 - **What we lose:** If dropped: a second line of defence against an agent tool that escapes its sandbox, and protection for copies and backups of the data directory. If extended: throughput, simplicity, and recoverability when the key is lost.
 - **Impact of applying it:** Follows from F-03. If agents run as a separate user, drop application-level encryption and state that protection is disk encryption plus file permissions. If they stay same-user, decide between encrypting every protected source and accepting the risk. Either way the storage contract gets one explicit at-rest rule before B-01 moves any protected record family.
+- **Owner note:** "Owner, 2026-11-17: skip application-level encryption and remove that complexity."
+- **Applied in `b59b4e3`:** Decision recorded as ADR-0016 and checklist row FC-162; implementation pending. Organization data is not encrypted by the application; disk encryption, file permissions and the isolation mode protect it. Secrets stay in protected custody. One prerequisite before the code changes: three private keys live inside the encrypted office database today (the organization CA key, each office's TLS identity key and the invitation key). They need a designed protected location first, and existing rules say the host never receives two of them, so that is a real design question. The independent review found this.
 
 ### E-02
 
@@ -858,7 +883,7 @@ Choices that are internally consistent but that the owner questioned in review. 
 
 **Browser sessions live in memory, so every restart signs everyone out**
 
-Priority: Before building the area · Size: M · State: Proposed
+Priority: Before building the area · Size: M · State: Applied
 
 - **Design says:** The web process keeps only an in-memory link between cookie and session. "A gateway restart loses mappings; require reauthentication." The host's session list is also a map in memory. *(gateway-api-v1.md section 4; crates/org-host/src/service/authentication.rs line 39)*
 - **Owner asks:** Why keep sessions in memory at all? Sign tokens with a key pair generated at provisioning and verify them, so no session state is needed. *(Owner review, second round, 2026-11-17)*
@@ -868,12 +893,14 @@ Priority: Before building the area · Size: M · State: Proposed
 - **What we gain:** People stay signed in across updates, crashes and host restarts. The web process still holds no secret.
 - **What we lose:** Stored sessions: session rows on the host's disk, which the current design avoids. Signed tokens: instant sign-out, unless tokens are short-lived and a marker is kept; plus key rotation and clock handling to get right.
 - **Impact of applying it:** A change to section 4 of the browser API design and to the host's session code. Best decided before sign-in (FC-014) is finished. No office or domain change.
+- **Owner note:** "Owner, 2026-11-17: start with the cookie, cached in memory and reloaded from the database on restart; sign-out deletes from both. Expand to signed tokens in v2 if needed."
+- **Applied in `b59b4e3`:** Decision recorded as ADR-0013 and checklist row FC-159; implementation pending. Sessions are stored at the host as digests, cached in memory by the web process and re-checked once after a restart. Sign-out deletes from the store and the cache. Sessions of the local command-line tool stay tied to their connection. The cookie and proof contract is unchanged, so API tests sign in exactly as a browser does. Signed tokens are a v2 option. The key question is moot for v1 because nothing is signed; if tokens come later, the host signs, because the web process relays sign-in to the host and has nowhere durable to keep a key.
 
 ### F-02
 
 **A 15 ms send target for agent-os, against an owner target of 1 to 2 ms**
 
-Priority: Before building the area · Size: M · State: Proposed
+Priority: Before building the area · Size: M · State: Applied
 
 - **Design says:** Same-office send p50 under 15 ms and p95 under 30 ms: about 2 ms process start, 0.5 ms connect, 6 to 10 ms for one full flush to disk. Every write is acknowledged only after it would survive a power cut. *(adr/0003 section 5; adr/0002 decision 4)*
 - **Owner asks:** 15 ms is too long. It should be 1 to 2 ms at most; it is only a save to the local office database. *(Owner review, second round, 2026-11-17)*
@@ -883,12 +910,14 @@ Priority: Before building the area · Size: M · State: Proposed
 - **What we gain:** Sends in well under a millisecond once a process is kept open, and about 2 to 3 ms on a Mac with a process per call. Higher throughput with many agents.
 - **What we lose:** For the fast class only: a message acknowledged in the last few milliseconds before a power cut or kernel crash can be lost while the sender believes it was sent. It conflicts with the rule "acknowledge after durable evidence", so that rule needs a stated exception.
 - **Impact of applying it:** An amendment to ADR-0002 decision 4 and ADR-0003 section 5 naming which operations may use the fast acknowledgement; a long-running mode in `agent-os`; measurements on the target Mac. The binary built on Linux is 1.56 MB against a 1 MB target, which should be checked on a Mac too.
+- **Owner note:** "Owner, 2026-11-17: 15 ms is too long; target 1 to 2 ms. If the local office database accepted the write, that is acceptable."
+- **Applied in `b59b4e3`:** Direction recorded as ADR-0014 and checklist row FC-160; implementation pending. Named messaging operations (the committed class) are acknowledged once the office's durable local store commits, with the full flush following within a bounded interval; everything else keeps the strict rule. agent-os gains a long-running session mode. Target: median 1 ms, 95th percentile 2 ms. Measured here: a database commit takes 0.013 ms without a forced flush and 0.29 ms with one; starting a process takes 1.1 ms. The list of operations in the fast class is my proposal and needs your confirmation.
 
 ### F-03
 
 **Agents run as the same OS user as the data; isolation is not a replaceable part of the launch contract**
 
-Priority: Decide first · Size: S for the setting, M to L for the separate user · State: Proposed
+Priority: Decide first · Size: S for the setting, M to L for the separate user · State: Applied
 
 - **Design says:** "OS-user sharing is not a security isolation boundary … stronger isolation needs separate users/containers." Agents rely on the vendor runtime's tool sandbox and the office's permission policy. `SpawnSpec` has program, arguments, working directory and environment only. *(standalone-server.md line 299; agent-sessions.md security; crates/org-supervise/src/spawn.rs line 12)*
 - **Owner asks:** Run agents as a different user at least, if that needs no drastic re-architecture. Keep the runtime extensible: a separate user, a lightweight sandbox, or strong isolation. Not everything can be a container, because some agents build iOS features. *(Owner review, second round, 2026-11-17)*
@@ -898,6 +927,8 @@ Priority: Decide first · Size: S for the setting, M to L for the separate user 
 - **What we gain:** Agents cannot read the organization's data even if a tool escapes its own sandbox. Application-level encryption becomes unnecessary, which removes key custody and unblocks Linux (E-01, B-09). Isolation can differ per agent, so iOS work is not blocked.
 - **What we lose:** Zero-setup installs: a separate user needs one administrator step and a privileged launcher to maintain. More to set up for agents that use Xcode or a vendor sign-in. The OS-sandbox level may not work with tools that start their own sandbox.
 - **Impact of applying it:** Add an isolation field to the launch contract (`org-runtime`, `org-supervise`) and name the levels in document 11. Start, stop, cleanup and orphan recovery must work across users. Workspace ownership and the data-root permissions change. Needs a macOS spike before committing to the default.
+- **Owner note:** "Owner, 2026-11-17: provision the separate user at setup, and keep supporting same-user as today. Keep the runtime's isolation replaceable."
+- **Applied in `b59b4e3`:** Decision recorded as ADR-0015 and checklist row FC-161; implementation pending. Isolation is a mode in the launch contract with two v1 values: same-user (today) and dedicated-user, one account per instance, which setup provisions with one administrator step. The office's local socket must also admit that account, because today it admits only its own user. An agent is never silently downgraded. A macOS spike must pass before dedicated-user becomes the default.
 
 ## Checks
 

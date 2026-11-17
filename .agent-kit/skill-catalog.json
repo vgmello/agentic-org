@@ -30,7 +30,7 @@
     },
     {
       "path": ".agent-kit/project-skills/security-boundaries/SKILL.md",
-      "sha256": "eee8a83c9d048dcccb3d5574ecef2107fb4590cdd0756c984b7d4ee88f2acdb2"
+      "sha256": "24e032a654ca3b9b3256ca0731dfb67f475911c65b335279d5bba73ace112de5"
     },
     {
       "path": ".agent-kit/project-skills/ui-maintenance/SKILL.md",
@@ -154,7 +154,7 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "6d7cdfa5c9703bab77172d4b50b2b3be8d0b5275905d6c7fbffc53700db7207e"
+      "sha256": "a8ee9a993a1a3f83f95bca7cfd0121368a60d2fdfe13c7ed9471419243576130"
     },
     {
       "path": "docs/design/project-structure.md",
@@ -182,15 +182,15 @@
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "b1135ada988ae98b50c8138ba9748967c10ba0b9f87b09922f596bdc1ff7f6ac"
+      "sha256": "90c63c945a3b4bff87cee63e09d795804f670a83f0802838ed120dbc6759ae29"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "0d5a3270c5913ff373d585ed2a0f22b8a15f195ae3261e65c5379568ef49e543"
+      "sha256": "0107bb5910214700a7c9911f300471d950f03916a5168372828925831b334d00"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "a3a5460f5c2a2e555a3f8e96db309e08464d0e6b5fb1048871ef2a52c95a5d5c"
+      "sha256": "2e0bec8570b59b02e8345d34a3d370be5e8b1ac2041181acefce453f2a2fbd5e"
     },
     {
       "path": ".agent-kit/tasks/v1-hq-creation-provider-source-grant.json",
